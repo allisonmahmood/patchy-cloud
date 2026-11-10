@@ -12,6 +12,29 @@ type Viewer = RequireSession.Viewer["Service"];
 export type ShareRefusal =
   GuestGrants.NotOnPatchy | GuestGrants.AlreadyMember | GuestGrants.GuestsUnavailable;
 
+/** Sharing behavior belongs with the dialog; the server remains authoritative on save. */
+export const shareScriptPath = "/assets/share.js";
+export const shareScript = `(() => {
+  for (const form of document.querySelectorAll(".share-audience")) {
+    const warning = form.querySelector("[data-source-warning]");
+    if (!warning) continue;
+    const currentScope = form.querySelector('[name="scope"][data-current]').value;
+    // Unrendered teams are retained by the server. Only editable grants can be removed here.
+    const previous = [...form.querySelectorAll('[name="teamIds"][data-current]')];
+    const update = () => {
+      const narrowed = form.querySelector('[name="scope"]:checked')?.value === "teams" &&
+        (currentScope !== "teams" || previous.some(input => !input.checked));
+      warning.hidden = !narrowed;
+      const ack = warning.querySelector('[name="force"]');
+      ack.disabled = !narrowed;
+      if (!narrowed) ack.checked = false;
+    };
+    form.addEventListener("change", update);
+    form.addEventListener("reset", () => queueMicrotask(update));
+    update();
+  }
+})();`;
+
 /** The Share dialog's layout; every control is the shell's. */
 export const shareStyles = `
   .share-head { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
@@ -150,13 +173,13 @@ export const renderShareDialog = (input: {
   const teamChoices = (input.teams ?? [])
     .map(
       (team) =>
-        `<label class="field-choice"><input class="field-checkbox" type="checkbox" name="teamIds" value="${escapeAttribute(team.id)}"${selectedTeams.has(team.id) ? " checked" : ""}>${escapeHtml(team.name)}</label>`
+        `<label class="field-choice"><input class="field-checkbox" type="checkbox" name="teamIds" value="${escapeAttribute(team.id)}"${selectedTeams.has(team.id) ? " checked data-current" : ""}>${escapeHtml(team.name)}</label>`
     )
     .join("");
   const summary = input.dependants;
   const dependencyWarning =
     summary && summary.dependants.length + summary.hiddenCount > 0
-      ? `<aside class="note note-warn" data-source-warning data-teams="${escapeAttribute(JSON.stringify([...selectedTeams]))}" hidden><strong>Some people may lose shared reads</strong><ul>${summary.dependants.map((d) => `<li>${escapeHtml(d.name)}</li>`).join("")}${summary.hiddenCount ? `<li>${summary.hiddenCount} others</li>` : ""}</ul><p>Previously copied data stays with its destination.</p><label><input type="checkbox" name="force" value="true" disabled> Acknowledge shared-read failures</label></aside>`
+      ? `<aside class="note note-warn" data-source-warning hidden><strong>Some people may lose shared reads</strong><ul>${summary.dependants.map((d) => `<li>${escapeHtml(d.name)}</li>`).join("")}${summary.hiddenCount ? `<li>${summary.hiddenCount} others</li>` : ""}</ul><p>Previously copied data stays with its destination.</p><label><input type="checkbox" name="force" value="true" disabled> Acknowledge shared-read failures</label></aside>`
       : "";
   const audience = form(
     "scope",
@@ -169,7 +192,7 @@ export const renderShareDialog = (input: {
     input.receipt === undefined
       ? ""
       : `<p class="note note-ok" role="status">${escapeHtml(input.receipt)}</p>`;
-  return `<section class="modal-panel share-dialog" role="dialog" aria-modal="true" aria-labelledby="share-heading"><div class="share-head">${patchMark(patch.name, row.tier)}<h2 id="share-heading">Share ${escapeHtml(title)}</h2></div>${receipt}${refusal(input.notice)}${add}${guests}${audience}<div class="share-foot"><button class="btn" type="button" data-copy="${escapeAttribute(url)}" aria-live="polite" hidden>Copy link</button><a class="btn btn-primary" href="${escapeAttribute(input.back)}">Done</a></div></section>`;
+  return `<section class="modal-panel share-dialog" role="dialog" aria-modal="true" aria-labelledby="share-heading"><div class="share-head">${patchMark(patch.name, row.tier)}<h2 id="share-heading">Share ${escapeHtml(title)}</h2></div>${receipt}${refusal(input.notice)}${add}${guests}${audience}${dependencyWarning ? `<script defer src="${shareScriptPath}"></script>` : ""}<div class="share-foot"><button class="btn" type="button" data-copy="${escapeAttribute(url)}" aria-live="polite" hidden>Copy link</button><a class="btn btn-primary" href="${escapeAttribute(input.back)}">Done</a></div></section>`;
 };
 
 /**

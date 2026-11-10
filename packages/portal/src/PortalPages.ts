@@ -73,7 +73,9 @@ import {
   renderLeaveConfirmation,
   renderShareDialog,
   type ShareRefusal,
-  shareStyles
+  shareStyles,
+  shareScript,
+  shareScriptPath
 } from "./share.js";
 import * as UserLifecyclePage from "./UserLifecyclePage.js";
 
@@ -1666,6 +1668,14 @@ export const layer: Layer.Layer<
       "GET",
       guideScriptPath,
       HttpServerResponse.text(guideScript, {
+        contentType: "text/javascript",
+        headers: { "cache-control": "no-cache", "x-content-type-options": "nosniff" }
+      })
+    );
+    yield* router.add(
+      "GET",
+      shareScriptPath,
+      HttpServerResponse.text(shareScript, {
         contentType: "text/javascript",
         headers: { "cache-control": "no-cache", "x-content-type-options": "nosniff" }
       })

@@ -13,22 +13,6 @@ export const copyLine = (line: string, label: string, target?: string) =>
 
 /** Reveals each copy button and copies its line; a refused clipboard asks the person to select the line instead. */
 export const copyScript = `(() => {
-  for (const form of document.querySelectorAll(".share-audience")) {
-    const warning = form.querySelector("[data-source-warning]");
-    if (!warning) continue;
-    const previous = JSON.parse(warning.dataset.teams);
-    const update = () => {
-      const teams = [...form.querySelectorAll('[name="teamIds"]:checked')].map(input => input.value);
-      const narrowed = form.querySelector('[name="scope"]:checked')?.value === "teams" &&
-        (previous.length === 0 || previous.some(id => !teams.includes(id)));
-      warning.hidden = !narrowed;
-      const ack = warning.querySelector('[name="force"]');
-      ack.disabled = !narrowed;
-      if (!narrowed) ack.checked = false;
-    };
-    form.addEventListener("change", update);
-    update();
-  }
   for (const button of document.querySelectorAll("button[data-copy]")) {
     const label = button.textContent;
     let reset;

@@ -2099,10 +2099,11 @@ export const make = Effect.gen(function* () {
       companyId: Schema.String,
       resources: Schema.NullOr(Schema.Array(Schema.String))
     }),
-    Result: Dependant,
+    Result: Schema.Struct({ ...Dependant.fields, audience: PatchAudience }),
     execute: ({ patchId, companyId, resources: affected }) => sql`
       SELECT DISTINCT patches.id AS "patchId", patches.name,
-        jsonb_build_object('id', owner.id, 'name', owner.name) AS owner
+        jsonb_build_object('id', owner.id, 'name', owner.name) AS owner,
+        ${sql.unsafe(AUDIENCE_COLUMN)} AS audience
       FROM patches JOIN users owner ON owner.id = patches.owner_user_id
       JOIN patch_versions ON patch_versions.patch_id = patches.id
       CROSS JOIN LATERAL jsonb_each(patch_versions.manifest->'uses') AS declaration
@@ -2122,12 +2123,10 @@ export const make = Effect.gen(function* () {
     affected: readonly string[] | null = null
   ) {
     if (force || affected?.length === 0) return;
-    const dependants = yield* dependantRows({ patchId, companyId, resources: affected });
-    if (dependants.length > 0)
-      return yield* new HasDependants(
-        yield* visibleDependants(patchId, companyId, userId, affected)
-      );
-  }, Effect.catchTags(dieOnSchemaError));
+    const summary = yield* visibleDependants(patchId, companyId, userId, affected);
+    if (summary.dependants.length + summary.hiddenCount > 0)
+      return yield* new HasDependants(summary);
+  });
   const offSources = SqlSchema.findAll({
     Request: Schema.Struct({ patchId: Schema.String, companyId: Schema.String }),
     Result: Schema.Struct({
@@ -2801,14 +2800,11 @@ export const make = Effect.gen(function* () {
     const all = yield* dependantRows({ patchId, companyId, resources }).pipe(
       Effect.catchTags(dieOnSchemaError)
     );
+    if (all.length === 0) return { dependants: [], hiddenCount: 0 };
     const admitted = yield* memberAudience(companyId, userId);
-    const visible = [];
-    for (const dependant of all) {
-      const row = yield* companyPatchRow({ companyId, patchId: dependant.patchId }).pipe(
-        Effect.catchTags(dieOnSchemaError)
-      );
-      if (Option.isSome(row) && admitted(row.value.audience)) visible.push(dependant);
-    }
+    const visible = all
+      .filter((row) => admitted(row.audience))
+      .map(({ patchId, name, owner }) => ({ patchId, name, owner }));
     return { dependants: visible, hiddenCount: all.length - visible.length };
   });
   const sharingDependants = Effect.fn("Patches.sharingDependants")(

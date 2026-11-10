@@ -151,9 +151,18 @@ it.layer(services)("Patch audiences", (it) => {
         [own.patchId]
       );
       assert.equal(visible.hiddenCount, 1);
+      const retirementQueries: string[] = [];
+      const retirementTrace: Statement.Transformer = (statement) => {
+        retirementQueries.push(statement.compile()[0]);
+        return Effect.succeed(statement);
+      };
       const refusal = yield* patches
         .retire(source.patchId, { userId: uploader.user.id, admin: false })
-        .pipe(Effect.flip);
+        .pipe(Effect.provideService(Statement.CurrentTransformer, retirementTrace), Effect.flip);
+      assert.lengthOf(
+        retirementQueries.filter((query) => query.includes("AS owner")),
+        1
+      );
       assert.equal(refusal._tag, "HasDependants");
       if (refusal._tag === "HasDependants") {
         assert.equal(refusal.hiddenCount, 1);
@@ -165,6 +174,19 @@ it.layer(services)("Patch audiences", (it) => {
       const previous =
         visible.dependants.map((d) => d.patchId).join(",") + ":" + visible.hiddenCount;
       yield* Fixtures.record(Fixtures.recordInput(uploader, { manifest }));
+      const moreQueries: string[] = [];
+      const moreTrace: Statement.Transformer = (statement) => {
+        moreQueries.push(statement.compile()[0]);
+        return Effect.succeed(statement);
+      };
+      yield* patches
+        .sharingDependants(source.patchId, { userId: uploader.user.id, admin: false })
+        .pipe(Effect.provideService(Statement.CurrentTransformer, moreTrace));
+      assert.equal(moreQueries.length, queries.length);
+      assert.lengthOf(
+        queries.filter((query) => query.includes("AS owner") && query.includes("AS audience")),
+        1
+      );
       const narrowing = yield* team("Source narrowing", [uploader.user.id]);
       const stale = yield* patches
         .setSharing({
