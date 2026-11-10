@@ -1109,7 +1109,7 @@ printf '%s' "$PATCHY_SETUP_TOKEN" | patchy auth set --token-stdin --api-url "$PA
 
 ### `patchy whoami [--api-url <url>]`
 
-Verify the configured credentials against the instance. Prints the user, company, role (`member`, `admin` or `super_admin`) and machine.
+Verify the configured credentials against the instance. Prints the user, company, role (`member` or `admin`), `superAdmin` flag and machine.
 
 ```sh
 patchy whoami
@@ -1120,7 +1120,7 @@ patchy whoami
 ```
 
 `--json` returns `Identity` directly, with no `ok` wrapper:
-`{ user: { id, email, name }, company: { id, handle, name }, role, machine: { id, name } }`.
+`{ user: { id, email, name }, company: { id, handle, name }, role, superAdmin, machine: { id, name } }`.
 The machine id is its token id. With no key, this command exits 1 (`local`),
 `Run: patchy login`; a rejected key is exit 2.
 

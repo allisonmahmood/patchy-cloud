@@ -1580,7 +1580,7 @@ export const make = Effect.gen(function* () {
       // Companies serializes roles and memberships on this same company row.
       yield* sql`SELECT id FROM companies WHERE id = (SELECT company_id FROM users WHERE id = ${userId}) FOR SHARE`;
       const actors =
-        yield* sql`SELECT ${sql.unsafe(Users.roleFromStorage)} AS role FROM users WHERE id = ${userId} AND deactivated_at IS NULL`;
+        yield* sql`SELECT role FROM users WHERE id = ${userId} AND deactivated_at IS NULL`;
       if (actors.length === 0) return [];
       // Lock the patch before joining its owner. A join planned before a lock
       // wait can lose the row when PostgreSQL rechecks a concurrent reassignment.
@@ -1622,7 +1622,7 @@ export const make = Effect.gen(function* () {
   const manageable = Effect.fn("Patches.manageable")(function* (patchId: string, actor: Actor) {
     const row = yield* lockOpenable({ patchId, userId: actor.userId, oversight: actor.admin });
     const roles =
-      yield* sql`SELECT ${sql.unsafe(Users.roleFromStorage)} AS role FROM users WHERE id = ${actor.userId} AND deactivated_at IS NULL`;
+      yield* sql`SELECT role FROM users WHERE id = ${actor.userId} AND deactivated_at IS NULL`;
     const administrator = actor.admin && roles.length > 0 && roles[0]!.role !== "member";
     if (Option.isNone(row)) return yield* new PatchUnavailable({ patchId });
     if (row.value.ownerUserId !== actor.userId && !administrator)
@@ -2650,7 +2650,7 @@ export const make = Effect.gen(function* () {
     patchIds?: readonly string[]
   ) {
     const actors =
-      yield* sql`SELECT ${sql.unsafe(Users.roleFromStorage)} AS role FROM users WHERE id = ${userId} AND company_id = ${companyId} AND deactivated_at IS NULL`;
+      yield* sql`SELECT role FROM users WHERE id = ${userId} AND company_id = ${companyId} AND deactivated_at IS NULL`;
     if (!actors.length) return [];
     const role = actors[0]!.role;
     const rows = yield* managementRows({
@@ -3034,7 +3034,7 @@ export const make = Effect.gen(function* () {
   ) {
     const row = yield* manageable(patchId, actor);
     const administrators =
-      yield* sql`SELECT id FROM users WHERE id = ${actor.userId} AND (role = 'admin' OR is_regular_admin) AND deactivated_at IS NULL`;
+      yield* sql`SELECT id FROM users WHERE id = ${actor.userId} AND (role IN ('admin', 'super_admin')) AND deactivated_at IS NULL`;
     if (!actor.admin || administrators.length === 0)
       return yield* new AdminRequired({ userId: actor.userId });
     if (expectedOwnerUserId !== undefined && row.ownerUserId !== expectedOwnerUserId)

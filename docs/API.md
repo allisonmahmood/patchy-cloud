@@ -9,7 +9,7 @@ Every route lives under `/api`. Most speak JSON; runtime file routes carry raw b
 
 ### `GET /api/me`
 
-Who the bearer acts as: the user, company, role (`member`, `admin` or `super_admin`) and machine.
+Who the bearer acts as: the user, company, role (`member` or `admin`), superAdmin flag and machine.
 
 Responses:
 
@@ -1568,11 +1568,12 @@ RuntimeSuccess | HandlerFailure
     handle: string,
     name: string
   },
-  role: "member" | "admin" | "super_admin",
+  role: "member" | "admin",
   machine: {
     id: string,
     name: string
-  }
+  },
+  superAdmin?: boolean
 }
 ```
 
