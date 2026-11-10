@@ -3,17 +3,14 @@ import { escapeAttribute } from "@patchy/core";
 import * as Redacted from "effect/Redacted";
 import type * as ConnectionStore from "../ConnectionStore.js";
 import * as View from "../ConnectionsView.js";
+import * as Fields from "../Fields.js";
 
 /** What the connections pages say about Postgres; the layout around it is every integration's. */
 
 type Connection = Extract<ConnectionStore.Connection, { readonly integration: "postgres" }>;
 
-export const integration = { key: "postgres", label: "Postgres" } as const;
-export const offer = {
-  integration,
-  reads: "Queries against your own database, through a role you supply.",
-  mode: "Company-wide · read-only"
-};
+export const integration = { key: "postgres", label: "Postgres", mark: "Pg" } as const;
+export const offer = { integration, line: "Your own database, read-only" };
 /** What recent calls keep of a Postgres call. */
 export const logged =
   "Query text keeps its first 8 KiB; parameters and returned rows are never logged.";
@@ -21,6 +18,9 @@ export const actions = {
   refresh: "Refresh schema",
   rotate: "Replace credentials",
   retarget: "Point elsewhere"
+};
+export const results = {
+  reconnect: "Tested and resumed. Its schema revision is unchanged."
 };
 
 export const source = (connection: Connection) =>
@@ -30,6 +30,16 @@ export const facts = (connection: Connection): ReadonlyArray<readonly [string, s
   ["Database", connection.display.database],
   ["Role", connection.display.role]
 ];
+/** What it holds, as Settings names it: the connection string, never shown, and whose role. */
+export const credential = (connection: Connection) => ({
+  label: "Connection string",
+  detail: `Stored · as the role ${connection.display.role}`
+});
+/** Where it reads, which Point elsewhere changes. */
+export const target = (connection: Connection) => ({
+  label: "Database",
+  value: source(connection)
+});
 
 const plural = (count: number, one: string, many = `${one}s`) =>
   `${count} ${count === 1 ? one : many}`;
@@ -147,17 +157,29 @@ export const connectFields = (
   return `<label class="field-label" for="connection-handle">Name</label><div class="field field-group"><label class="field-prefix" for="connection-handle">postgres/</label><input id="connection-handle" name="handle" value="${escapeAttribute(submitted.handle ?? "")}" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9\\-]{1,30}[a-z0-9]" autocomplete="off" autocapitalize="none" spellcheck="false"${handle.attributes}></div>${handle.note}<label class="field-label" for="connection-description">Description</label><input class="field" id="connection-description" name="description" maxlength="500" value="${escapeAttribute(submitted.description ?? "")}"${description.attributes}>${description.note}${credentialsField(refusal, promise)}`;
 };
 
+/** The connection string, as Replace credentials and Point elsewhere ask for it. */
+const connectionString: Fields.Spec = {
+  kind: "secret",
+  name: "credentials",
+  field: "credentials",
+  label: "Connection string",
+  hint: "With a password and sslmode=verify-full, for a database reachable from the internet.",
+  autocomplete: "new-password"
+};
+
 export const rotate = {
   title: (name: string) => `Replace credentials for ${name}`,
   consequence:
     "Patchy tests the new credentials against the same database before saving them. The connection keeps its identity and what patches can read, but a different role changes what every declaring patch can reach. To use another database, point it elsewhere instead.",
-  fields: (_submitted: Readonly<Record<string, string | undefined>>, refusal?: View.Notice) =>
-    credentialsField(refusal)
-};
+  fields: (submitted: Fields.Submitted, refusal?: View.Notice) =>
+    Fields.render(connectionString, submitted, refusal, true),
+  shows: ["credentials"]
+} as const;
 export const retarget = {
   title: (name: string) => `Point ${name} elsewhere`,
   consequence:
-    "Patchy tests the new destination and discovers its schema before switching. Every declaring patch then reads the new database through the schema it was published with, until it is refreshed and published again. A disconnected connection stays disconnected.",
-  fields: (_submitted: Readonly<Record<string, string | undefined>>, refusal?: View.Notice) =>
-    credentialsField(refusal, promise)
-};
+    "Patchy tests the new destination and discovers its schema before switching. Every declaring patch then reads the new database through the schema it was published with, until it is refreshed and published again. A paused connection stays paused.",
+  fields: (submitted: Fields.Submitted, refusal?: View.Notice) =>
+    Fields.render(connectionString, submitted, refusal, true),
+  shows: ["credentials"]
+} as const;

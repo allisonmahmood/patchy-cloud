@@ -4,6 +4,7 @@ import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import type * as ConnectionStore from "../ConnectionStore.js";
 import * as View from "../ConnectionsView.js";
+import * as Fields from "../Fields.js";
 import * as Source from "./Source.js";
 
 /**
@@ -11,18 +12,14 @@ import * as Source from "./Source.js";
  * integration's. The connect page is the shared form inside a walkthrough: what a mailbox needs,
  * then its login (one choice for port and security, which follows the port), then using it. The
  * password is typed into this page only and never written back. The connection page names the
- * server and username, counts the folders, and keeps a paused connection's way out on top.
+ * server and username, counts the folders, and keeps a refused login's way out on top.
  */
 
 type Connection = Extract<ConnectionStore.Connection, { readonly integration: "imap" }>;
 type Submitted = Readonly<Record<string, string | undefined>>;
 
-export const integration = { key: "imap", label: "Email (IMAP)" } as const;
-export const offer = {
-  integration,
-  reads: "A mailbox's folders, messages and attachments, read-only, through its IMAP login.",
-  mode: "Company-wide · read-only"
-};
+export const integration = { key: "imap", label: "Email (IMAP)", mark: "@" } as const;
+export const offer = { integration, line: "A mailbox's messages and attachments" };
 export const actions: View.Actions = { refresh: "Refresh folders", rotate: "Replace password" };
 export const results = {
   connect: "Mailbox connected and its folders listed.",
@@ -30,10 +27,10 @@ export const results = {
   rotate: (connection: ConnectionStore.Connection) =>
     connection.status === "connected"
       ? "Password replaced and tested. Patches keep reading the same mailbox."
-      : "Password replaced and tested. The connection stays disconnected until you Reconnect.",
+      : "Password replaced and tested. The connection stays paused until you resume it.",
   refresh:
     "Folders refreshed. Existing patches keep their pinned folders; regenerate before publishing against the new ones.",
-  reconnect: "Mailbox tested and reconnected. Its snapshot revision is unchanged."
+  reconnect: "Mailbox tested and resumed. Its snapshot revision is unchanged."
 };
 /** What recent calls keep of an IMAP call, an attachment's stage included. */
 export const logged =
@@ -45,14 +42,6 @@ const ports = [
   { port: 143, security: "starttls", label: "143 (STARTTLS)" }
 ] as const;
 
-/** The label beside a paused connection's name, on the index and its page. */
-export const tag = (connection: Connection) =>
-  connection.display.paused === undefined ? undefined : "Paused";
-/** Why a connected one needs an admin anyway, as Needs attention says it after its name. */
-export const attention = (connection: Connection) =>
-  connection.display.paused === undefined
-    ? undefined
-    : "is paused because its mail server refused the password";
 export const source = (connection: Connection) =>
   `${connection.display.username} at ${connection.display.host}`;
 export const facts = (connection: Connection): ReadonlyArray<readonly [string, string]> => [
@@ -62,38 +51,43 @@ export const facts = (connection: Connection): ReadonlyArray<readonly [string, s
   ],
   ["Username", connection.display.username]
 ];
+/** What it holds, as Settings names it: the password, never shown, and whose login it is. */
+export const credential = (connection: Connection) => ({
+  label: "Password",
+  detail: `Stored · for ${connection.display.username}`
+});
 
-const whose = { test: "Test", refresh: "Refresh", reconnect: "Reconnect" } as const;
+const whose = { test: "Test", refresh: "Refresh", reconnect: "Resume" } as const;
 /**
- * A paused connection, until a Test or Replace password logs in: whose login the server refused,
- * when, and the two ways out.
+ * A login the mail server refused, until a Test or Replace password logs in: whose login it was,
+ * when, and the two ways out. Patchy stops logging in meanwhile, its login pause, which the pages
+ * call Needs attention: Paused is what an admin does, and stays separate, since an admin's pause
+ * changes the connection's status and the login pause doesn't.
  */
-export const standing = (
+export const attention = (
   connection: Connection,
   people: ReadonlyMap<string, string>,
   now: number
-): ReadonlyArray<View.Standing> => {
+): View.Attention | undefined => {
   const paused = connection.display.paused;
-  if (paused === undefined) return [];
+  if (paused === undefined) return undefined;
   const who =
     paused.during === "call"
       ? "a patch's call"
       : `${(paused.by === undefined ? undefined : people.get(paused.by)) ?? "an admin"}'s ${whose[paused.during]}`;
-  return [
-    {
-      tone: "refused",
-      title: "Paused: the mail server refused the password",
-      text: `It refused ${who} ${ago(paused.at, now)}${paused.reply === null ? "" : ` (${paused.reply})`}. Patchy stopped logging in so the mail host won't block it, and calls stop until Test or Replace password succeeds.`,
-      actions: [
-        {
-          href: View.connectionPath(connection.id, "rotate"),
-          label: "Replace password…",
-          primary: true
-        },
-        { href: View.connectionPath(connection.id, "test"), label: "Test again", post: true }
-      ]
-    }
-  ];
+  return {
+    tone: "danger",
+    title: "The mail server refused the password",
+    text: `It refused ${who} ${ago(paused.at, now)}${paused.reply === null ? "" : ` (${paused.reply})`}. Patchy stopped logging in so the mail host won't block it, and calls stop until Test or Replace password succeeds.`,
+    fixes: [
+      {
+        href: View.connectionPath(connection.id, "rotate"),
+        label: "Replace password…",
+        primary: true
+      },
+      { href: View.connectionPath(connection.id, "test"), label: "Test again", post: true }
+    ]
+  };
 };
 
 const plural = (count: number, one: string, many = `${one}s`) =>
@@ -109,7 +103,7 @@ export const reads = (snapshot: ImapSnapshot) => ({
 
 export const consequences = {
   disconnect:
-    "Patches that declare it can't read the mailbox until an admin reconnects it. What they already imported stays in each patch. Reconnecting logs in again first."
+    "Patches that declare it can't read the mailbox until an admin resumes it. What they already imported stays in each patch. Resuming logs in again first."
 };
 
 // ---------- connecting ----------
@@ -212,12 +206,25 @@ export const connectFields = (submitted: Submitted, refusal?: View.Notice) => {
   return `<label class="field-label" for="connection-handle">Name</label><div class="field field-group"><label class="field-prefix" for="connection-handle">imap/</label><input id="connection-handle" name="handle" value="${escapeAttribute(submitted.handle ?? "")}" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9\\-]{1,30}[a-z0-9]" autocomplete="off" autocapitalize="none" spellcheck="false"${handle.attributes}></div>${handle.note}<label class="field-label" for="connection-description">Description</label><input class="field" id="connection-description" name="description" maxlength="500" value="${escapeAttribute(submitted.description ?? "")}"${description.attributes}>${description.note}${loginFields(submitted, refusal)}${access}`;
 };
 
+/** The password, as Replace password asks for it. */
+const newPassword: Fields.Spec = {
+  kind: "secret",
+  name: "password",
+  field: "password",
+  label: "New password",
+  hint: "Or an app password.",
+  autocomplete: "new-password",
+  maxlength: 1024
+};
+
 export const rotate = {
   title: (name: string) => `Replace the password for ${name}`,
   consequence: (connection: ConnectionStore.Connection) =>
-    `Patchy logs in${connection.integration === "imap" ? ` to ${connection.display.host} as ${connection.display.username}` : ""} with the new password before saving it. If it works, a paused connection resumes.`,
-  fields: (_submitted: Submitted, refusal?: View.Notice) => passwordField(refusal, "New password")
-};
+    `Patchy logs in${connection.integration === "imap" ? ` to ${connection.display.host} as ${connection.display.username}` : ""} with the new password before saving it. If it works, Patchy logs in with it again.`,
+  fields: (submitted: Submitted, refusal?: View.Notice) =>
+    Fields.render(newPassword, submitted, refusal, true),
+  shows: ["password"]
+} as const;
 
 const refused = (field: Source.InvalidCredentials["field"]): View.Notice => ({
   message: new Source.InvalidCredentials({ field }).message,

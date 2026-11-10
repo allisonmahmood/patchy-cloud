@@ -677,7 +677,7 @@ it.layer(layer, { excludeTestServices: true, timeout: "60 seconds" })(
           const who = { companyId: DEV_SEED.companyId, userId: DEV_SEED.userId, id: found.id };
           yield* store.disconnect(who);
           const disconnected = yield* query(DEV_SEED.token).pipe(Effect.flip);
-          assert.include(disconnected.message, "posthog/product is disconnected");
+          assert.include(disconnected.message, "posthog/product is paused");
           assert.deepInclude((yield* devCalls)[0], {
             connectionId: found.id,
             outcomeCode: "access_denied"
@@ -1195,7 +1195,7 @@ it.layer(layer, { excludeTestServices: true, timeout: "60 seconds" })(
             Effect.flip
           );
           assert.strictEqual(disconnected.code, "access_denied");
-          assert.include(disconnected.message, "pidgeon/closed is disconnected");
+          assert.include(disconnected.message, "pidgeon/closed is paused");
           assert.deepInclude((yield* devCalls)[0], {
             connectionId: closed.id,
             outcomeCode: "access_denied"

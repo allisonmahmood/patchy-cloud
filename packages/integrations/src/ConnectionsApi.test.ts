@@ -503,8 +503,8 @@ it.layer(layer)("connections group", (it) => {
         const listed = yield* api.listConnections({ query: { integrations: "imap" } });
         const row = listed.connections.find((connection) => connection.id === "conn_paused");
         assert.deepInclude(row, { status: "connected", paused: true });
-        assert.include(row?.hint, "Paused: its mail server refused the password");
-        assert.include(row?.hint, "Test it or replace the password at /settings/integrations");
+        assert.include(row?.hint, "Its mail server refused the password");
+        assert.include(row?.hint, "replace the password or test it at /settings/integrations");
         assert.notInclude(row?.hint, "patchy add");
         const detail = yield* api.getIntegrationConnection({
           params: { integration: "imap", handle: "paused" }

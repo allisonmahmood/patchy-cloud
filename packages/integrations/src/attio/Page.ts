@@ -1,25 +1,22 @@
 import type { AttioAttribute, AttioExclusion, AttioObject, AttioSnapshot } from "@patchy/api";
-import { ago, escapeAttribute, escapeHtml } from "@patchy/core";
+import { ago, escapeAttribute } from "@patchy/core";
 import * as Redacted from "effect/Redacted";
 import type * as ConnectionStore from "../ConnectionStore.js";
 import * as View from "../ConnectionsView.js";
+import * as Fields from "../Fields.js";
 import * as Source from "./Source.js";
 
 /**
  * What the connections pages say about Attio; the layout around it is every integration's. The
  * connect page is the shared form inside a walkthrough, one submit: the key check refuses within
- * a second, then discovery reads the workspace. The connection page opens with what discovery
- * skipped and left out, then each object and list as a counted row that opens to its attributes.
+ * a second, then discovery reads the workspace. The connection page says what discovery skipped
+ * and left out, then lists each object and list as a counted row that opens to its attributes.
  */
 
 type Connection = Extract<ConnectionStore.Connection, { readonly integration: "attio" }>;
 
-export const integration = { key: "attio", label: "Attio" } as const;
-export const offer = {
-  integration,
-  reads: "A workspace's objects, lists and members, read-only.",
-  mode: "Company-wide · read-only"
-};
+export const integration = { key: "attio", label: "Attio", mark: "At" } as const;
+export const offer = { integration, line: "CRM records, lists and members" };
 /** What recent calls keep of an Attio call. */
 export const logged =
   "Each call keeps the object or list it read and how many rows came back; filters, ids, values and records are never logged.";
@@ -29,10 +26,10 @@ export const results = {
   rotate: (connection: ConnectionStore.Connection) =>
     connection.status === "connected"
       ? "Key replaced and the workspace discovered again. Existing patches keep what they were published with."
-      : "Key replaced and the workspace discovered again. The connection stays disconnected until you Reconnect.",
+      : "Key replaced and the workspace discovered again. The connection stays paused until you resume it.",
   refresh:
     "Workspace refreshed. Existing patches keep their pinned shape; regenerate before publishing against the new one.",
-  reconnect: "Key checked and the connection reconnected. Its snapshot revision is unchanged."
+  reconnect: "Key checked and resumed. Its snapshot revision is unchanged."
 };
 
 const workspace = (connection: Connection) =>
@@ -58,6 +55,11 @@ const reading = (scopes: ReadonlyArray<string>) => {
 };
 
 export const source = (connection: Connection) => connection.display.workspace.name;
+/** What it holds, as Settings names it: the token, never shown, by the last characters it showed at connect. */
+export const credential = (connection: Connection) => ({
+  label: "Access token",
+  detail: `Stored · ${connection.display.keyHint}`
+});
 export const facts = (connection: Connection): ReadonlyArray<readonly [string, string]> => {
   const writable = connection.display.writable;
   return [
@@ -70,44 +72,42 @@ export const facts = (connection: Connection): ReadonlyArray<readonly [string, s
   ];
 };
 
-const checks = { test: "Test", refresh: "Refresh", reconnect: "Reconnect" } as const;
+const checks = { test: "Test", refresh: "Refresh", reconnect: "Resume" } as const;
 /**
- * A key a check found writable, until Replace key or a Reconnect's check finds a read-only one:
- * whose check it was, when, which scopes, and the way back.
+ * A key a check found writable, until Replace key or a Resume's check finds a read-only one:
+ * whose check it was, when, which scopes, and the way back. Patchy paused it for this.
  */
-export const standing = (
+export const attention = (
   connection: Connection,
   people: ReadonlyMap<string, string>,
   now: number
-): ReadonlyArray<View.Standing> => {
+): View.Attention | undefined => {
   const writable = connection.display.writable;
-  if (writable === undefined) return [];
+  if (writable === undefined) return undefined;
   const who = people.get(writable.by) ?? "An admin";
   const scopes = named(writable.scopes);
-  return [
-    {
-      tone: "refused",
-      title: "Disconnected: this key can now write",
-      text: `${who}'s ${checks[writable.during]}, ${ago(writable.at, now)}, found ${scopes} set to Read-write on this key, so Patchy stopped using it. Patches that declare attio/${connection.handle} can't read until it's reconnected. In Attio, set ${scopes} back to Read or off, then Reconnect. Or replace the key with a read-only one, then Reconnect.`,
-      actions: [
-        {
-          href: View.connectionPath(connection.id, "reconnect"),
-          label: "Reconnect",
-          primary: true,
-          post: true
-        },
-        { href: View.connectionPath(connection.id, "rotate"), label: "Replace key…" }
-      ]
-    }
-  ];
+  return {
+    tone: "danger",
+    title: "This key can now write",
+    text: `${who}'s ${checks[writable.during]}, ${ago(writable.at, now)}, found ${scopes} set to Read-write on this key, so Patchy paused the connection. Patches that declare attio/${connection.handle} can't read until it resumes. In Attio, set ${scopes} back to Read or off, then Resume. Or replace the key with a read-only one, then Resume.`,
+    paused: true,
+    fixes: [
+      {
+        href: View.connectionPath(connection.id, "reconnect"),
+        label: "Resume",
+        primary: true,
+        post: true
+      },
+      { href: View.connectionPath(connection.id, "rotate"), label: "Replace key…" }
+    ]
+  };
 };
 
 // ---------- what patches can read ----------
 
 const plural = (count: number, one: string, many = `${one}s`) =>
   `${count.toLocaleString("en-US")} ${count === 1 ? one : many}`;
-const code = (value: string) => `<code>${escapeHtml(value)}</code>`;
-/** Rows a group shows before the rest fold behind "more", and attributes a row's table shows. */
+/** Rows a group shows before the rest fold away, and attributes a row's table shows. */
 const SHOWN = 10;
 const ATTRIBUTES_SHOWN = 100;
 const OPTIONS_SHOWN = 5;
@@ -123,31 +123,22 @@ const type = (attribute: AttioAttribute) =>
   `${attribute.type.replaceAll("-", " ")}${attribute.targets === undefined ? "" : ` → ${attribute.targets.map((target) => target.slug).join(", ") || "nothing Patchy reads"}`}${attribute.multiselect ? " · many" : ""}`;
 const options = (attribute: AttioAttribute) =>
   attribute.optionsSkipped === true
-    ? '<br><span class="tag">Options skipped</span>'
+    ? " · options skipped"
     : attribute.options === undefined
       ? ""
-      : `<br><span class="supporting-text">${escapeHtml(
+      : ` · ${
           attribute.options.length === 0
             ? "no active options"
             : attribute.options.length <= OPTIONS_SHOWN
               ? attribute.options.join(" · ")
               : `${attribute.options.slice(0, OPTIONS_SHOWN - 1).join(" · ")} · +${attribute.options.length - OPTIONS_SHOWN + 1}`
-        )}</span>`;
-const table = (attributes: ReadonlyArray<AttioAttribute>) =>
-  `<div class="attio-attributes"><table class="table"><thead><tr><th scope="col">Attribute</th><th scope="col">Title</th><th scope="col">Type</th></tr></thead><tbody>${attributes
-    .slice(0, ATTRIBUTES_SHOWN)
-    .map(
-      (attribute) =>
-        `<tr><td>${code(attribute.slug)}</td><td>${escapeHtml(attribute.title)}</td><td>${escapeHtml(type(attribute))}${options(attribute)}</td></tr>`
-    )
-    .join(
-      ""
-    )}</tbody></table></div>${attributes.length > ATTRIBUTES_SHOWN ? `<p class="supporting-text">${escapeHtml(`And ${attributes.length - ATTRIBUTES_SHOWN} more, in the context agents get.`)}</p>` : ""}`;
+        }`;
 
 type Container = AttioSnapshot["objects"][number] & {
   readonly parents?: AttioSnapshot["lists"][number]["parents"];
 };
-const row = (
+/** One object or list: its name and counts, a table of its attributes, and what was left out of it. */
+const entry = (
   kind: "object" | "list",
   container: Container,
   excluded: ReadonlyArray<AttioExclusion>
@@ -157,55 +148,92 @@ const row = (
     (item) => item.kind === "attribute" && item.in?.kind === kind && item.in.slug === container.slug
   );
   const skipped = container.attributes.filter((item) => item.optionsSkipped === true).length;
-  return `<li class="list-row"><details><summary>${code(container.slug)} ${escapeHtml(container.name)}${container.parents === undefined ? "" : ` <span class="supporting-text">of ${escapeHtml(container.parents.map((parent) => parent.slug).join(", "))}</span>`} <span class="count">· ${plural(container.attributes.length, "attribute")}</span>${left.length === 0 ? "" : ` <span class="tag">${left.length} left out</span>`}${skipped === 0 ? "" : ` <span class="tag">${skipped} options skipped</span>`}</summary>${table(container.attributes)}${left.length === 0 ? "" : `<p class="supporting-text">Left out: ${left.map((item) => `${code(item.name)} (${reasons[item.reason]})`).join(", ")}.</p>`}</details></li>`;
+  const shown = container.attributes.slice(0, ATTRIBUTES_SHOWN);
+  return {
+    name: container.slug,
+    label: [
+      container.name,
+      container.parents === undefined
+        ? null
+        : `of ${container.parents.map((parent) => parent.slug).join(", ")}`,
+      plural(container.attributes.length, "attribute"),
+      left.length === 0 ? null : `${left.length} left out`,
+      skipped === 0 ? null : `${skipped} options skipped`
+    ]
+      .filter((part) => part !== null)
+      .join(" · "),
+    columns: ["Attribute", "Title", "Type"],
+    rows: shown.map((attribute) => [
+      attribute.slug,
+      attribute.title,
+      `${type(attribute)}${options(attribute)}`
+    ]),
+    notes: [
+      ...(container.attributes.length > ATTRIBUTES_SHOWN
+        ? [`And ${container.attributes.length - ATTRIBUTES_SHOWN} more, in the context agents get.`]
+        : []),
+      ...(left.length === 0
+        ? []
+        : [`Left out: ${left.map((item) => `${item.name} (${reasons[item.reason]})`).join(", ")}.`])
+    ]
+  };
 };
 const group = (
   title: string,
   kind: "object" | "list",
   containers: ReadonlyArray<Container>,
   excluded: ReadonlyArray<AttioExclusion>
-) =>
+): ReadonlyArray<View.ReadsGroup> =>
   containers.length === 0
-    ? ""
-    : `<h3>${escapeHtml(title)} <span class="count">${containers.length}</span></h3><ul class="list list-compact">${containers
-        .slice(0, SHOWN)
-        .map((container) => row(kind, container, excluded))
-        .join("")}${
-        containers.length > SHOWN
-          ? `<li class="list-row"><details><summary>${escapeHtml(`${containers.length - SHOWN} more ${title.toLowerCase()}`)}</summary><ul class="list list-compact">${containers
-              .slice(SHOWN)
-              .map((container) => row(kind, container, excluded))
-              .join("")}</ul></details></li>`
-          : ""
-      }</ul>`;
+    ? []
+    : [
+        {
+          title: `${title} · ${containers.length}`,
+          entries: containers.slice(0, SHOWN).map((container) => entry(kind, container, excluded)),
+          ...(containers.length > SHOWN
+            ? {
+                rest: {
+                  label: `${containers.length - SHOWN} more ${title.toLowerCase()}`,
+                  entries: containers
+                    .slice(SHOWN)
+                    .map((container) => entry(kind, container, excluded))
+                }
+              }
+            : {})
+        }
+      ];
 
-/** What discovery left out, grouped by why. */
+/** What discovery left out, grouped by why, a line each. */
 const leftOut = (excluded: ReadonlyArray<AttioExclusion>) => {
-  if (excluded.length === 0) return "";
+  if (excluded.length === 0) return [];
   // An attribute by its owner and name; a list's is marked, so it's never taken for an object's.
   const owned = (item: AttioExclusion) =>
     item.in === undefined
-      ? code(item.name)
-      : `${code(`${item.in.slug}.${item.name}`)}${item.in.kind === "list" ? " (list)" : ""}`;
+      ? item.name
+      : `${item.in.slug}.${item.name}${item.in.kind === "list" ? " (list)" : ""}`;
   const archived = excluded.filter((item) => item.reason === "archived");
   const slugless = excluded.filter((item) => item.reason === "no_slug");
   const unsupported = excluded.filter((item) => item.reason === "unsupported_type");
   const orphans = excluded.filter((item) => item.reason === "no_parent");
-  const rows = [
-    archived.length === 0
-      ? ""
-      : `${escapeHtml(plural(archived.length, "archived attribute"))}: ${archived.map(owned).join(", ")}`,
-    slugless.length === 0
-      ? ""
-      : `No API slug: ${slugless.map((item) => (item.kind === "attribute" ? `the attribute ${owned(item)}` : `the ${item.kind} <strong>${escapeHtml(item.name)}</strong>`)).join(", ")}`,
-    unsupported.length === 0
-      ? ""
-      : `A type Patchy doesn't read: ${unsupported.map(owned).join(", ")}`,
-    orphans.length === 0
-      ? ""
-      : `Its parent object isn't read: ${orphans.map((item) => `the list ${code(item.name)}`).join(", ")}`
-  ].filter((text) => text !== "");
-  return `<div class="note"><strong class="note-title">Left out: ${excluded.length}</strong><ul class="list list-compact">${rows.map((text) => `<li class="list-row">${text}</li>`).join("")}</ul></div>`;
+  return [
+    {
+      title: `Left out: ${excluded.length}`,
+      lines: [
+        archived.length === 0
+          ? ""
+          : `${plural(archived.length, "archived attribute")}: ${archived.map(owned).join(", ")}`,
+        slugless.length === 0
+          ? ""
+          : `No API slug: ${slugless.map((item) => (item.kind === "attribute" ? `the attribute ${owned(item)}` : `the ${item.kind} ${item.name}`)).join(", ")}`,
+        unsupported.length === 0
+          ? ""
+          : `A type Patchy doesn't read: ${unsupported.map(owned).join(", ")}`,
+        orphans.length === 0
+          ? ""
+          : `Its parent object isn't read: ${orphans.map((item) => `the list ${item.name}`).join(", ")}`
+      ].filter((text) => text !== "")
+    }
+  ];
 };
 
 /** Skipped options, then exclusions, then every object and list, each opening to its attributes. */
@@ -217,18 +245,31 @@ export const reads = (snapshot: AttioSnapshot) => {
     containers.flatMap((container) =>
       container.attributes
         .filter((item) => item.optionsSkipped === true)
-        .map((item) => `${code(`${container.slug}.${item.slug}`)}${list ? " (list)" : ""}`)
+        .map((item) => `${container.slug}.${item.slug}${list ? " (list)" : ""}`)
     );
   const skipped = [...skippedIn(snapshot.objects, false), ...skippedIn(snapshot.lists, true)];
   return {
     summary: `${plural(snapshot.objects.length, "object")} and ${plural(snapshot.lists.length, "list")}, ${plural(attributes, "attribute")}.`,
     items: [],
     more: 0,
-    detail: `${
-      skipped.length === 0
-        ? ""
-        : `<div class="note note-warn"><strong class="note-title">Options skipped on ${escapeHtml(plural(skipped.length, "attribute"))}</strong>Discovery ran out of time before reading their options. Patches still read and filter them; their context lists no options.<details><summary>The ${skipped.length} attributes</summary><p class="supporting-text">${skipped.join(", ")}</p></details></div>`
-    }${leftOut(snapshot.excluded)}${group("Objects", "object", snapshot.objects, snapshot.excluded)}${group("Lists", "list", snapshot.lists, snapshot.excluded)}`
+    caveats: [
+      ...(skipped.length === 0
+        ? []
+        : [
+            {
+              title: `Options skipped on ${plural(skipped.length, "attribute")}`,
+              lines: [
+                "Discovery ran out of time before reading their options. Patches still read and filter them; their context lists no options.",
+                skipped.join(", ")
+              ]
+            }
+          ]),
+      ...leftOut(snapshot.excluded)
+    ],
+    groups: [
+      ...group("Objects", "object", snapshot.objects, snapshot.excluded),
+      ...group("Lists", "list", snapshot.lists, snapshot.excluded)
+    ]
   };
 };
 
@@ -303,12 +344,23 @@ export const connectFields = (submitted: Submitted, refusal?: View.Notice) => {
   return `<label class="field-label" for="connection-handle">Name</label><div class="field field-group"><label class="field-prefix" for="connection-handle">attio/</label><input id="connection-handle" name="handle" value="${escapeAttribute(submitted.handle ?? "")}" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9\\-]{1,30}[a-z0-9]" autocomplete="off" autocapitalize="none" spellcheck="false"${handle.attributes}></div>${handle.note}<label class="field-label" for="connection-description">Description</label><input class="field" id="connection-description" name="description" maxlength="500" value="${escapeAttribute(submitted.description ?? "")}"${description.attributes}>${description.note}${keyField(refusal)}${notes}`;
 };
 
+/** The access token, as Replace key asks for it. */
+const tokenSpec: Fields.Spec = {
+  kind: "secret",
+  name: "key",
+  field: "key",
+  label: "Access token",
+  autocomplete: "new-password"
+};
+
 export const rotate = {
   title: (name: string) => `Replace the key for ${name}`,
   consequence: (connection: ConnectionStore.Connection) =>
     `Patchy checks the new key and reads the workspace again before saving either. The key must read ${connection.integration === "attio" ? workspace(connection) : "the same workspace"}.`,
-  fields: (_submitted: Submitted, refusal?: View.Notice) => keyField(refusal)
-};
+  fields: (submitted: Submitted, refusal?: View.Notice) =>
+    Fields.render(tokenSpec, submitted, refusal, true),
+  shows: ["key"]
+} as const;
 
 /** The pasted key, or the refusal under its field. Attio itself says whether it's a token. */
 export const credentials = (form: Submitted): Redacted.Redacted<string> | View.Notice => {
@@ -323,8 +375,7 @@ export const credentials = (form: Submitted): Redacted.Redacted<string> | View.N
   return Redacted.make(key);
 };
 
-/** Layout only: a long attribute table scrolls inside its row, and the scope table stays narrow. */
+/** Layout only: the connect walkthrough's scope table stays narrow. */
 export const styles = `
-  .attio-attributes { max-height: 26rem; overflow: auto; }
   .attio-scopes { max-width: 30rem; }
 `;

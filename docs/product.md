@@ -313,7 +313,7 @@ Signed-in pages share one sidebar of places: **Home**, **All patches**, **Your a
 
 Patch detail returns cumulative inventory and reads across retained versions, not dependants or version history. Table detail returns column kinds, optionality, explicit defaults including `null`, ref targets, indexes with `unique`, sharing and schema revision, never rows. An unavailable company database yields `inventory: null` and text `Tables: unavailable`, not empty definitions. Shared live tables and stores carry copy-ready `patchy add shared-table <patchId>/<table>` or `patchy add shared-store <patchId>/<store>` hints. Agents branch on `declarable` and `reason`, not the human `hint`; unshared resources name the owner and off sources need restoration. Store reads and dependants use a `store` field, never a `table` field.
 
-`list connections [--all]` lists the company's connections, with offered integrations when requested. Connected entries carry an `add` hint; disconnected ones carry `reason: not_connected` and a `/settings/integrations` pointer; a paused IMAP connection carries `paused: true` and a hint to ask an admin to Test it or replace its password, instead of the `add` hint. `list connections <integration>/<handle>`, or a handle only one connection has, returns the current immutable snapshot with its revision and `takenAt`. A handle is unique within its integration, so `postgres/warehouse` names one connection. A null snapshot is unavailable, not an empty database. Discovery reads no source rows or credentials.
+`list connections [--all]` lists the company's connections, with offered integrations when requested. Connected entries carry an `add` hint; disconnected ones carry `reason: not_connected` and a `/settings/integrations` pointer; an IMAP connection whose server refused its password carries `paused: true` and a hint to ask an admin to replace the password or test it, instead of the `add` hint. `list connections <integration>/<handle>`, or a handle only one connection has, returns the current immutable snapshot with its revision and `takenAt`. A handle is unique within its integration, so `postgres/warehouse` names one connection. A null snapshot is unavailable, not an empty database. Discovery reads no source rows or credentials.
 
 Every discovery level accepts `--json`. The top level merges `{ patches, connections }` from `GET /api/patches` and `GET /api/connections`; other levels print their wire body without an `ok` wrapper. Agents filter those documents locally. Patch detail includes `descriptionUpdatedAt` for repo synchronization. The patch read query carries live dependant edges for the portal, while agent detail exposes inventory and reads.
 
@@ -678,31 +678,41 @@ Personal-connection credentials and the takedown of owner-only patches wait for 
 Patchy ships the **integration** — today Postgres, PostHog, Pidgeon, Attio and Email (IMAP) — as a company-scoped capability. A **connection** is the live, credentialed instance an admin connects for their company. Patches declare connections, not an integration in the abstract, and never receive their credentials. Personal connections and group grants are future extensions of this model; the implemented connect flow and its limits are spelled out under [Integrations](#integrations).
 
 **Integrations**, at `/settings/integrations`, is one table of the company's connections across
-integrations: each row is titled with the name agents type (`postgres/warehouse`),
-its source, status, the live patches that use it and, for admins, its last call.
-Healthy rows read Connected; only a problem gets a pill, and admins see
-disconnected sources named above the table. From nine connections the page adds
-search over names and descriptions, a source filter, Needs attention and, for
-admins, Unused; they are plain links and a GET form, and combine. **Used by**
-counts live patches whose served version declares the connection, and reads "None
-live · 3 retired" or "None live · 2 older versions" when only those still declare
-it; **Unused** means no stored version of any company patch declares it, which is
-exactly when Delete is offered. One "Connect an integration" button leads admins to the **catalogue**, which says
-what each offered integration reads, how it connects and how many the company
-already has. With nothing connected, admins get the catalogue inline and members
-are told which admins can connect a source.
+integrations: each row is titled with the name agents type (`postgres/warehouse`) beside its
+integration's mark, then its state, the live patches that use it and, for admins, its last call
+and a menu. A connection is **Connected**, a quiet dot; **Paused**, a badge, when an admin
+paused it; or **Needs attention**, a badge, when Patchy stopped it or something about it waits
+on an admin, in its integration's own words with its fix: an Attio key a check found writable,
+an IMAP login its mail server refused (its login pause), a Pidgeon key Patchy replaced but
+couldn't revoke, or a Pidgeon test address. From nine connections the page adds search over names and descriptions and the
+views All, Needs attention and Paused while any are, and for admins Unused, then the
+integrations its connections come from; they are plain links and a GET form, and combine. **Used by** names the live patches
+whose served version declares the connection, and reads "None live · 3 retired" or "None live ·
+2 older versions" when only those still declare it; **Unused** means no stored version of any
+company patch declares it, which is exactly when it can be disconnected. One "Connect an
+integration" button leads admins to the **catalogue**, one row per offered integration with its
+mark, a line on what it gives patches, how many the company already has and Connect, and a last
+row to ask for another. With nothing connected, the catalogue is the page, the same rows at the
+same width; members read it without Connect and are told which admins can connect a source.
 
-Each connection's page has one layout for every integration: the `patchy add`
-line and what patches can read on the left; its facts, who added it, Used by and
-the actions on the right; recent calls across the page below, introduced in the
-integration's own words for what a call keeps and never keeps. A connected
-connection an admin still has to fix, such as a paused mailbox, counts under
-Needs attention as a disconnected one does. Replacing credentials, pointing elsewhere,
-editing the description, disconnecting and deleting each open their own page, as
-the portal confirms retire and delete. Members see the index without Last call,
-the attention notice or Unused, and connection pages without recent calls or
-actions. Connections are company-wide, not per patch. Personal connections and
-group grants remain future work.
+Each connection's page has one layout for every integration: a header with its name, state,
+integration, when it was tested and who added it, and for admins **Test** and a menu; then
+**Overview**, what patches can read and the `patchy add` line beside its facts, Used by and
+guests; **Calls**, admins only, the latest calls introduced in the integration's own words for
+what a call keeps and never keeps; and **Settings**, admins only, its description, credentials
+(read as Stored, never shown), where it points and what it may do where those can change, its
+guests switch and, last, **Pause** or **Resume** and **Disconnect**. One word per action: Pause
+stops patches reading it and keeps its credentials, and Resume tests them before patches read
+again; Disconnect forgets the credentials and frees the name, refused while any stored version
+declares it, naming the live patches to remove it from and every other patch whose stored
+versions declare it; Replace key (or credentials, or password)
+gives it new ones for the same place, and Change project, Point elsewhere and Change access keep
+their own names. The page holds one notice: why it needs attention with its fix, or that it's
+paused with Resume. Replace, Change, Pause and Disconnect open as dialogs over Settings, each at
+its own address. Members read Overview without the actions, told which admins can change it; a
+direct link to Calls, Settings or a dialog answers with the refusal inside the app.
+Connections are company-wide, not per patch. Personal connections and group grants remain
+future work.
 
 ### The company look
 
@@ -1175,10 +1185,11 @@ their deadline.
 
 Connect tests the role and discovers metadata before saving credentials encrypted
 under the operator's keyring. Stored secrets never appear on a page or in generated
-metadata. Admins can test, rotate credentials on the same endpoint, retarget to a
-new host or database with discovery, refresh schema, disconnect, reconnect and edit
-the description. Rotation and retargeting preserve identity; disconnect keeps data.
-A connection may be deleted only when no stored patch version declares it.
+metadata. Admins can test, replace credentials on the same endpoint, point it
+elsewhere to a new host or database with discovery, refresh schema, pause, resume
+and edit the description. Replacing and pointing elsewhere preserve identity; pausing
+keeps data. A connection may be disconnected, forgetting its credentials, only when
+no stored patch version declares it.
 
 ### Connecting PostHog
 
@@ -1290,7 +1301,7 @@ deadline, is named, so an admin can revoke it in Pidgeon.
 **Test mode.** A test admin key connects test addresses: their mail stays in
 Pidgeon, sends are stored as sent and reach only that Pidgeon account, and
 Pidgeon deletes a test address a day after it's made, when the connection says
-the address is gone. The connection keeps its mode, shows "Test · mail stays in
+the address is gone. The connection keeps its mode, shows "Test, mail stays in
 Pidgeon" beside its name wherever it's listed, and its snapshot, `patchy list
 connections` (`test: true` in its JSON) and generated context say so; Replace key and Change access take an admin key in the
 same mode.
@@ -1322,9 +1333,9 @@ Replace key can't bring it back. There's no retarget: a different address is a
 new connection. Pidgeon's 429 changed nothing, and the page says when to try
 again from its `Retry-After`.
 
-**Disconnect and reconnect** keep the key, so reconnecting needs no admin key, only
-a check that it still works. **Delete** is refused while a stored version declares
-the connection, as for every integration; once the row is gone, the stored key
+**Pause and Resume** keep the key, so resuming needs no admin key, only a check
+that it still works. **Disconnect** is refused while a stored version declares the
+connection, as for every integration; once the row is gone, the stored key
 and any retired ones revoke themselves, even if the request was interrupted or
 the COMMIT's answer lost, and one that won't is named. The address and its mail stay in
 Pidgeon.
@@ -1421,13 +1432,13 @@ protection work as for Postgres.
 **Lifecycle.** Test runs the check. Refresh runs the check and discovery, as
 the admin who asked. Replace key runs both for the new key and saves the key and
 snapshot together or not at all; it refuses a key for another workspace, since a
-connection never moves, and a disconnected connection stays disconnected.
-Disconnect and Delete work as for PostHog; there is no retarget and no Rotate
-key. A check at Test, Refresh or Reconnect that finds the stored key has gained
-a write scope disconnects the connection exactly as Disconnect does, unless a
-newer key replaced it meanwhile, and the page keeps naming the scopes, the admin
-whose check found them and when, with the way back: set them to Read or off in
-Attio, or replace the key, then Reconnect, which runs the check again. Patchy
+connection never moves, and a paused connection stays paused. Pause and
+Disconnect work as for PostHog; there is no retarget. A check at Test, Refresh or
+Resume that finds the stored key has gained a write scope pauses the connection
+exactly as Pause does, unless a newer key replaced it meanwhile, and the page says
+it needs attention, naming the scopes, the admin whose check found them and when,
+with the way back: set them to Read or off in Attio, or replace the key, then
+Resume, which runs the check again. Patchy
 never keeps using a key it knows can write, and its guarantee doesn't rest on
 the key: the integration has no write operation.
 
@@ -1505,7 +1516,7 @@ mailbox, not a person's own.
 `STORE`, `COPY`, `MOVE`, `EXPUNGE`, `APPEND` or SMTP. The password itself can
 still change the mailbox. Patchy keeps no mirror of the mailbox: a patch imports
 what it needs into its own tables and files, and that copy stays in the patch
-after a disconnect, as the Disconnect confirmation says. Nothing refreshes on
+after a pause, as the Pause confirmation says. Nothing refreshes on
 its own.
 
 **Connecting.** The connect page is the shared walkthrough: what a mailbox
@@ -1545,22 +1556,23 @@ freshness and historical snapshots work as for every integration.
 **The login pause.** When the host refuses the credentials, the connection
 records it durably on its row and stops logging in: every process refuses its
 calls `auth_failed` without contacting the host, until an admin's Test, Replace
-password or Reconnect logs in again. Repeated failures make mail hosts refuse
+password or Resume logs in again. Repeated failures make mail hosts refuse
 the addresses Patchy connects from, and those addresses are shared. Only a real
 refusal pauses: a `NO` answering `LOGIN` or `AUTHENTICATE` coded
 `AUTHENTICATIONFAILED`, `AUTHORIZATIONFAILED`, `EXPIRED` or uncoded. A `BAD`, a
 throttle, a `NO` with `UNAVAILABLE`, `REFERRAL` or `LIMIT`, and a network failure
 don't. A refusal that arrives after a later login with the same password worked
 and was saved is stale and pauses nothing: each attempt carries the count of
-saved logins it started under. The connection page shows the pause, whose login
-it was and when, with Test and Replace password; `patchy list connections`
+saved logins it started under. The connection page says it needs attention, not
+Paused, which is an admin's: whose login was refused and when, with Replace password
+and Test; `patchy list connections`
 marks it paused (`paused: true` in its JSON, and `paused.at` on the connection's
 detail) with the same way out, rather than an `add` hint.
 
 **Lifecycle.** Test logs in on a fresh session. Replace password tests the new
 one, then saves it and clears a pause, keeping the snapshot. Refresh folders
-takes a new snapshot revision, and is refused while paused. Reconnect always
-logs in on a fresh session first. Disconnect and Delete when unused work as for
+takes a new snapshot revision, and is refused during a login pause. Resume always
+logs in on a fresh session first. Pause, and Disconnect when unused, work as for
 every integration; there's no retarget.
 
 ### Reading Email (IMAP)
@@ -1745,8 +1757,8 @@ Neither the alias, the handle nor the declaration is a permission.
 
 Every company patch that declares a connected source can use it as its admitted
 viewer without a separate per-patch consent step. A public runtime cannot use
-it. Disconnecting the source makes subsequent calls fail `access_denied`, with
-the shell's first-party notice; reconnecting retains the connection identity.
+it. Pausing the source makes subsequent calls fail `access_denied`, with the
+shell's first-party notice; resuming retains the connection identity.
 The current connect flow is admin-only, from `/settings/integrations`, not a door
 that walks ordinary viewers into creating credentials.
 

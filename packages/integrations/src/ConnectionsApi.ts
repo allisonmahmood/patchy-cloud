@@ -69,7 +69,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =
           return HttpServerResponse.jsonUnsafe(
             encodeConnections({
               connections: rows.map((row) => {
-                // A paused IMAP login fails every call until an admin fixes it, so it says so.
+                // An IMAP login its mail server refused fails every call until an admin fixes it, so it says so.
                 const paused = row.integration === "imap" && row.display.paused !== undefined;
                 return {
                   id: row.id,
@@ -84,11 +84,11 @@ export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =
                   ...(row.status !== "connected"
                     ? {
                         reason: "not_connected" as const,
-                        hint: "Ask an administrator to reconnect it at /settings/integrations."
+                        hint: "It's paused. Ask an administrator to resume it at /settings/integrations."
                       }
                     : paused
                       ? {
-                          hint: "Paused: its mail server refused the password, so every call fails auth_failed. Ask an administrator to Test it or replace the password at /settings/integrations."
+                          hint: "Its mail server refused the password, so every call fails auth_failed. Ask an administrator to replace the password or test it at /settings/integrations."
                         }
                       : { hint: `patchy add ${row.integration}/${row.handle}` })
                 };

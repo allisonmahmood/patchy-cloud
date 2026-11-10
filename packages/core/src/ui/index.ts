@@ -40,6 +40,8 @@ export { refusal, typedExactly } from "./refusal.js";
 export { badge, dot, emptyState, notice, receipt } from "./feedback.js";
 export { galleryPage, galleryPages, galleryPath } from "./gallery.js";
 export type { GalleryPage } from "./gallery.js";
+export { expandingTable } from "./expanding-table.js";
+export type { ExpandingRow } from "./expanding-table.js";
 export { icon } from "./icons.js";
 export { productMark } from "./product-mark.js";
 export type { IconName } from "./icons.js";

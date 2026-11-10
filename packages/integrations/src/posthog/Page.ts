@@ -3,18 +3,15 @@ import { escapeAttribute, escapeHtml } from "@patchy/core";
 import type * as Redacted from "effect/Redacted";
 import type * as ConnectionStore from "../ConnectionStore.js";
 import * as View from "../ConnectionsView.js";
+import * as Fields from "../Fields.js";
 import * as Source from "./Source.js";
 
 /** What the connections pages say about PostHog; the layout around it is every integration's. */
 
 type Connection = Extract<ConnectionStore.Connection, { readonly integration: "posthog" }>;
 
-export const integration = { key: "posthog", label: "PostHog" } as const;
-export const offer = {
-  integration,
-  reads: "SQL over a PostHog Cloud project's events and people.",
-  mode: "Company-wide · read-only"
-};
+export const integration = { key: "posthog", label: "PostHog", mark: "PH" } as const;
+export const offer = { integration, line: "Events and people from a project" };
 /** What recent calls keep of a PostHog call. */
 export const logged =
   "Each query keeps its name and the first 8 KiB of its HogQL; values and returned rows are never logged.";
@@ -30,7 +27,7 @@ export const results = {
     "Pointed at the new project and its events discovered. Existing patches keep the events they were published with.",
   refresh:
     "Events refreshed. Existing patches keep their pinned events; regenerate before publishing against the new ones.",
-  reconnect: "Connection tested and reconnected. Its events revision is unchanged."
+  reconnect: "Tested and resumed. Its events revision is unchanged."
 };
 
 const regionNames: { readonly [R in Source.Region]: string } = { us: "US Cloud", eu: "EU Cloud" };
@@ -41,6 +38,16 @@ export const facts = (connection: Connection): ReadonlyArray<readonly [string, s
   ["Project", `${connection.display.projectId}, ${regionNames[connection.display.region]}`],
   ["Key", connection.display.keyHint]
 ];
+/** What it holds, as Settings names it: the key, never shown, by the last characters it showed at connect. */
+export const credential = (connection: Connection) => ({
+  label: "Personal API key",
+  detail: `Stored · ${connection.display.keyHint}`
+});
+/** Where it reads, which Change project changes. */
+export const target = (connection: Connection) => ({
+  label: "Project",
+  value: `${connection.display.projectId}, ${regionNames[connection.display.region]}`
+});
 
 const plural = (count: number, one: string, many = `${one}s`) =>
   `${count} ${count === 1 ? one : many}`;
@@ -134,19 +141,58 @@ export const connectFields = (submitted: Submitted, refusal?: View.Notice) => {
   return `<label class="field-label" for="connection-handle">Name</label><div class="field field-group"><label class="field-prefix" for="connection-handle">posthog/</label><input id="connection-handle" name="handle" value="${escapeAttribute(submitted.handle ?? "")}" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9\\-]{1,30}[a-z0-9]" autocomplete="off" autocapitalize="none" spellcheck="false"${handle.attributes}></div>${handle.note}<label class="field-label" for="connection-description">Description</label><input class="field" id="connection-description" name="description" maxlength="500" value="${escapeAttribute(submitted.description ?? "")}"${description.attributes}>${description.note}${regionField(submitted, refusal)}${projectField(submitted, refusal)}${keyField(refusal)}${access}${building}`;
 };
 
+/** The region, project and key, as Replace key and Change project ask for them. */
+export const regionSpec: Fields.Spec = {
+  kind: "select",
+  name: "region",
+  field: "region",
+  label: "Region",
+  choices: (["us", "eu"] as const).map((region) => ({
+    value: region,
+    label: `${regionNames[region]} · ${new URL(Source.hosts[region]).host}`
+  })),
+  width: "md"
+};
+export const projectSpec: Fields.Spec = {
+  kind: "text",
+  name: "project",
+  field: "project",
+  label: "Project ID",
+  hint: "The number in your project's address: us.posthog.com/project/12345.",
+  inputmode: "numeric",
+  pattern: "[0-9]+",
+  maxlength: 15,
+  mono: true,
+  width: "sm"
+};
+export const keySpec: Fields.Spec = {
+  kind: "secret",
+  name: "key",
+  field: "key",
+  label: "Personal API key",
+  placeholder: "phx_…",
+  autocomplete: "new-password"
+};
+
 export const rotate = {
   title: (name: string) => `Replace the key for ${name}`,
   consequence:
     "Patchy tests the new key against the same project before saving it. The connection keeps its project and what patches can read. To read another project, change the project instead.",
-  fields: (_submitted: Submitted, refusal?: View.Notice) => keyField(refusal)
-};
+  fields: (submitted: Submitted, refusal?: View.Notice) =>
+    Fields.render(keySpec, submitted, refusal, true),
+  shows: ["key"]
+} as const;
 export const retarget = {
   title: (name: string) => `Change the project of ${name}`,
   consequence:
-    "Patchy tests the key and finds the new project's events before switching. Every declaring patch then reads the new project through the events it was published with, until it is refreshed and published again. A disconnected connection stays disconnected.",
+    "Patchy tests the key and finds the new project's events before switching. Every declaring patch then reads the new project through the events it was published with, until it is refreshed and published again. A paused connection stays paused.",
   fields: (submitted: Submitted, refusal?: View.Notice) =>
-    `${regionField(submitted, refusal)}${projectField(submitted, refusal)}${keyField(refusal)}${access}`
-};
+    Fields.renderAll([regionSpec, projectSpec, keySpec], submitted, refusal, true),
+  shows: ["region", "project", "key"],
+  // The region starts where it is: a project elsewhere is the rarer move.
+  initial: (connection: ConnectionStore.Connection) =>
+    connection.integration === "posthog" ? { region: connection.display.region } : {}
+} as const;
 
 const refused = (field: View.Field, message: string): View.Notice => ({
   message,
