@@ -98,9 +98,11 @@ export const make = Effect.gen(function* () {
     // before invocation, then keep only the sources actually attempted by the guest.
     const sources = new Set<string>([`patch:${binding.patchId}`]);
     for (const declaration of Object.values(binding.manifest.uses))
-      if (declaration.kind === "sharedTable" || declaration.kind === "sharedStore")
+      if (declaration.kind === "sharedTable" || declaration.kind === "sharedStore") {
         sources.add(`patch:${declaration.patchId}`);
-      else if (declaration.kind === "members") sources.add(`members:${binding.companyId}`);
+        // Shared-source admission traces membership even without a directory read.
+        sources.add(`members:${binding.companyId}`);
+      } else if (declaration.kind === "members") sources.add(`members:${binding.companyId}`);
     const before = yield* reads.revisions(binding.companyId, [...sources]);
     const attempted = new Set<string>([`patch:${binding.patchId}`]);
     for (const key of attempted) input.onDependency?.(key);
