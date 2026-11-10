@@ -275,6 +275,14 @@ function mount(frame: HTMLIFrameElement): void {
       `/~shell/notice/${code}?return=${encodeURIComponent(location.pathname + location.search + location.hash)}`
     );
   };
+  // A public document whose version stopped being public before it started, such as a copy a
+  // browser kept, would otherwise hand its patch a viewer it can never act as. Load it afresh.
+  const unshared = () => {
+    if (closed) return;
+    stop();
+    frame.remove();
+    location.reload();
+  };
   const stale = () => {
     if (closed) return;
     const url = new URL(location.href);
@@ -532,6 +540,14 @@ function mount(frame: HTMLIFrameElement): void {
       }
       if (frame.dataset.scope !== "public")
         principal = value === null ? null : { userId: value.user.id };
+      // Runtime answers a public version's `me` with null, so a viewer means the loaded version is no
+      // longer public: sharing went back to the company, or a newer version replaced it. This is
+      // the document's start check, which a failed `me` already ends with its notice.
+      else if (value !== null) {
+        release(heldBytes);
+        unshared();
+        throw lost();
+      }
       // The cached identity remains accounted for until this document closes.
       return value;
     });
