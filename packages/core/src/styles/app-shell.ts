@@ -57,7 +57,8 @@ export const appShell = `
     .app-whats-new { width: min(360px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; }
     /* Headlines only: the kind in muted text, then the change's title. */
     .app-headlines { display: grid; margin: 0; padding: 0; list-style: none; }
-    .app-headlines > li { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: var(--space-2); align-items: baseline; padding: 6px 10px; color: var(--ink); font: var(--text-meta); }
+    .app-headline { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: var(--space-2); align-items: baseline; align-content: center; min-height: var(--h-sm); padding: 6px 10px; border-radius: var(--r-control); color: var(--ink); font: var(--text-meta); text-decoration: none; }
+    @media (hover: hover) { .app-headline:hover { background: var(--hover); } }
     .app-headline-kind { color: var(--muted); font: var(--text-badge); font-weight: var(--weight-regular); }
     .app-whats-new .menu-item > svg { width: 14px; height: 14px; }
 
