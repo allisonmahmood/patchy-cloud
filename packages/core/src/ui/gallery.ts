@@ -19,9 +19,14 @@ import {
 } from "./controls.js";
 import { attentionRow } from "./attention.js";
 import { behindTheScenes, changeEntry } from "./changelog.js";
+import { choiceLinks } from "./choice-links.js";
+import { computerMark } from "./computer-mark.js";
 import { copyButton } from "./copy-button.js";
+import { canList } from "./door.js";
 import { region } from "./region.js";
 import { badge, dot, emptyState, notice, receipt } from "./feedback.js";
+import { flowOutcome } from "./flow-outcome.js";
+import { productMark } from "./product-mark.js";
 import {
   card,
   chip,
@@ -546,10 +551,50 @@ const templatesSection = section({
   )
 });
 
+const flowParts = demo(
+  "Choice links, a flow's outcome, product and computer marks",
+  `<div class="stack">${choiceLinks({
+    label: "App",
+    current: "Claude",
+    items: [
+      { label: "Claude", href: "#choices", mark: productMark("C") },
+      { label: "Codex", href: "#choices", mark: productMark("Cx") },
+      {
+        label: "Another agent",
+        href: "#choices",
+        mark: productMark("+", { dashed: true }),
+        dashed: true
+      }
+    ]
+  })}${flowOutcome({
+    title: "Once connected",
+    body: canList([
+      { can: true, text: "Claude uses the agent tools in patches you can open, as you" },
+      { can: true, text: "Every change it makes is logged under your name, via Claude" },
+      { can: false, text: "It can’t publish or change a patch’s code" }
+    ])
+  })}<div class="cluster">${productMark("At", { large: true })}${productMark("At")}${productMark("+", { dashed: true })}${computerMark}</div></div>`,
+  `${stateTable("Choice link", [
+    ["Rest", "a tile on a strong edge: the choice's mark and name, a link to its own URL"],
+    ["Current", "a 2px ink edge on the chosen fill, marked as the current page"],
+    ["Hover (fine pointer)", "an ink edge"],
+    ["Dashed", "one standing in for any other, muted until chosen"]
+  ])}${stateTable("Can list", [
+    ["Can", "under a check, each sentence saying what it can"],
+    ["Can't", "under a cross, each sentence saying what it can't"]
+  ])}${stateTable("Flow outcome", [
+    ["Rest", "a section title and what it holds, on the flow's own gap after the numbered sections"]
+  ])}${stateTable("Product mark", [
+    ["Rest", "another product's letters on a white square, flat in a list"],
+    ["Hero", "inked and lifted beside a page title"],
+    ["Dashed", "one that isn't listed"]
+  ])}${stateTable("Computer mark", [["Rest", "a laptop on the same white square, flat in a list"]])}`
+);
+
 const system = indexPage({
   title: "The system",
   meta: ["Every first-party page composes these parts and one of five templates"],
-  content: `${templatesSection}${type}${colours}${buttons}${fields}${choices}${status}${feedback}${navigation}${lists}${homeParts}${headers}${cards}${disclosures}${changes}${marks}${setupSteps}<script defer src="${copyScriptPath}"></script>`
+  content: `${templatesSection}${type}${colours}${buttons}${fields}${choices}${status}${feedback}${navigation}${lists}${homeParts}${headers}${cards}${disclosures}${changes}${marks}${setupSteps}${flowParts}<script defer src="${copyScriptPath}"></script>`
 });
 
 const sampleRows = ["kudos", "new-business", "spend"].map((name) => [

@@ -420,7 +420,7 @@ describe("patchy logout", () => {
       instanceUrl: url,
       revoked: false,
       warnings: [
-        "Logged out on this machine. The key could not be revoked; it expires on its own after 30 idle days, or revoke it now on Your agents."
+        "Logged out on this machine, but Patchy couldn't disconnect it. It ends on its own after 30 idle days, or disconnect it now on Your agents."
       ]
     });
     const whoami = await runCli(["whoami", "--json"], options);

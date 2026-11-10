@@ -1015,7 +1015,7 @@ They check the code, company and email, name the machine, and confirm;
 
 The poll mints the publishing key after confirmation; the CLI saves it locally
 and never prints it. It works for 90 days or 30 idle days, whichever comes
-first; revoke it on **Your agents** at `/agents`. Re-login with a saved
+first; disconnect this computer on **Your agents** at `/agents`. Re-login with a saved
 login key for the same user inherits its name and replaces it when the terminal
 completes, without changing ownership of any patches. Keys from `auth set`,
 the environment or the dev seed are not named as predecessors.
@@ -1071,7 +1071,7 @@ then revoke only the key just deleted through `POST /api/logout`. A 401 means
 it is already invalid and counts as success. An unreachable instance cannot
 undo the local logout: exit 0, with this warning:
 
-> Logged out on this machine. The key could not be revoked; it expires on its own after 30 idle days, or revoke it now on Your agents.
+> Logged out on this machine, but Patchy couldn't disconnect it. It ends on its own after 30 idle days, or disconnect it now on Your agents.
 
 Logout removes only local stored credentials. Inside a worktree it says
 _This worktree's dev instance still publishes with its seeded key_;

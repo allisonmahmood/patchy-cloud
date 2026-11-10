@@ -41,6 +41,7 @@ export { badge, dot, emptyState, notice, receipt } from "./feedback.js";
 export { galleryPage, galleryPages, galleryPath } from "./gallery.js";
 export type { GalleryPage } from "./gallery.js";
 export { icon } from "./icons.js";
+export { productMark } from "./product-mark.js";
 export type { IconName } from "./icons.js";
 export {
   card,
@@ -62,3 +63,7 @@ export {
 export type { Column, MenuItem, NavItem, Parent, Step } from "./structure.js";
 export { detailPage, doorPage, flowPage, indexPage, settingsPage } from "./templates.js";
 export type { FlowSection, Template } from "./templates.js";
+export { choiceLinks } from "./choice-links.js";
+export type { ChoiceLink } from "./choice-links.js";
+export { computerMark } from "./computer-mark.js";
+export { flowOutcome } from "./flow-outcome.js";

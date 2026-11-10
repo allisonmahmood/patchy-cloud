@@ -1,14 +1,21 @@
 /**
- * Your agents at `/agents`: what acts as the person, records first. Build patches lists their
- * machine tokens, the computers that publish as them; Use patches lists their agent connections.
- * Each section's way to add one is its own page: Add a computer at `/agents/computer`, and
- * Connect an app at `/agents/connect`, where `?app=` picks the app's steps. The links to them
- * keep the ids old `/machines#add-a-computer` and `#connect-an-agent` links name. Disconnect
- * everything confirms at `/agents/disconnect-all`. The app tabs are links, so the pages run no
- * script but the shell's copy buttons.
+ * Your agents at `/agents`: what acts as the person, records first. Use patches lists their
+ * agent connections, the apps that use patches as them; Build patches lists their machine tokens,
+ * the computers that publish as them. Each row says when it was last used, and a status only when
+ * there is one: Expires soon, or Access ended for one that ended on its own in the last 30 days.
+ * A live row's ⋯ holds Disconnect…, a dialog at the row's own `…/disconnect` that names what
+ * stops; an ended row's holds Reconnect. The header says whether agent access is on at the company.
+ *
+ * Connect an app (`/agents/connect`, `?app=` picks the app) and Add a computer
+ * (`/agents/computer`) are flows; Disconnect everything is a dialog at `/agents/disconnect-all`.
+ * The links to the flows keep the ids old `/machines#add-a-computer` and `#connect-an-agent`
+ * links name. Every dialog is a URL drawn over its page, and everything works without script but
+ * the copy buttons. A missing computer or app, and a store that can't answer, say so inside the
+ * app.
  */
 import * as ByteSize from "effect/ByteSize";
 import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import type * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -17,195 +24,82 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as UrlParams from "effect/http/UrlParams";
 import type * as SqlClient from "effect/sql/SqlClient";
+import type { SqlError } from "effect/sql/SqlError";
 import { Companies, Users } from "@patchy/companies";
 import {
   ago,
+  badge,
+  button,
+  canList,
+  card,
+  choiceLinks,
+  computerMark,
   copyLine,
   copyScriptPath,
   dateLabel,
+  dialog,
+  dot,
+  emptyState,
   escapeAttribute,
   escapeHtml,
-  sentenceList
+  flowOutcome,
+  flowPage,
+  type FlowSection,
+  idFor,
+  linkButton,
+  menu,
+  notice,
+  productMark,
+  row,
+  rows,
+  section,
+  sentenceList,
+  settingRow,
+  settingsPage
 } from "@patchy/core";
 import * as AgentConnections from "./AgentConnections.js";
 import * as MachineTokens from "./MachineTokens.js";
 import * as Receipt from "./Receipt.js";
 import * as RequireSession from "./RequireSession.js";
 import * as Session from "./Session.js";
-import { pageResponse, type Page } from "./page.js";
+import { pageResponse } from "./page.js";
 
-const WEEK_MS = 7 * 86_400_000;
+const DAY_MS = 86_400_000;
+const WEEK_MS = 7 * DAY_MS;
 /** Disconnect everything's form carries one id. */
 const MAX_FORM_BYTES = 1_024;
 
-const styles = `
-    .agents { max-width: 760px; }
-    .agents-row { display: flex; align-items: center; gap: 16px; }
-    .agents-row > div { flex: 1; min-width: 0; }
-    .agents-row > div > * { margin: 0; }
-    .agents-row > div > * + * { margin-top: 4px; }
-    .agents-add { margin-top: 16px; }
-    .agents-add-body { margin-top: 16px; }
-    .agents-add-body > * + * { margin-top: 16px; }
-    .agents-steps { margin-bottom: 0; padding-left: 1.4em; }
-    .agents-steps > li + li { margin-top: 20px; }
-    .agents-steps > li > * { margin: 0; }
-    .agents-steps > li > * + * { margin-top: 8px; }
-    .agents-foot { margin-top: 40px; }
-`;
-
-/** The agents with a tab, in tab order; `?app=` names one, and Claude's opens by default. */
-const agents = {
-  claude: "Claude",
-  "claude-code": "Claude Code",
-  codex: "Codex",
-  chatgpt: "ChatGPT",
-  another: "Another agent"
+/** The apps Connect an app offers, in its order; `?app=` names one, and Claude's opens by default. */
+const apps = {
+  claude: { label: "Claude", letters: "C" },
+  chatgpt: { label: "ChatGPT", letters: "G" },
+  "claude-code": { label: "Claude Code", letters: "CC" },
+  codex: { label: "Codex", letters: "Cx" },
+  cursor: { label: "Cursor", letters: "Cu" },
+  another: { label: "Another agent", letters: "+" }
 } as const;
-type Agent = keyof typeof agents;
-const isAgent = (value: string): value is Agent => Object.hasOwn(agents, value);
+type App = keyof typeof apps;
+const isApp = (value: string): value is App => Object.hasOwn(apps, value);
 
-/** One numbered instruction: its title, then its body as HTML. */
-interface Step {
-  readonly title: string;
-  readonly body: string;
-}
+/** The app a connection's client calls itself, or `another` for one Connect an app doesn't name. */
+const appNamed = (name: string): App =>
+  Object.keys(apps)
+    .filter(isApp)
+    .find((key) => key !== "another" && apps[key].label.toLowerCase() === name.toLowerCase()) ??
+  "another";
 
-const addressLine = (address: string) =>
-  copyLine(address, "Patchy’s address, select to copy", "Patchy’s address");
-const commandLine = (command: string, target: string) =>
-  copyLine(command, "Command to run, select to copy", target);
-
-/** One agent's instructions: what to paste, then the yes in the browser, then a first request. */
-const steps = (agent: Agent, address: string, company: string): ReadonlyArray<Step> => {
-  const name = agent === "another" ? "your agent" : agents[agent];
-  const allow = `Patchy asks, signed in as you, whether ${name} may act as you. Allow it.`;
-  const ask: Step = {
-    title: "Ask for something",
-    body: `<p>Ask ${name} what it can do at ${company}, or name a patch. It works in the patches you can open, as you.</p>`
-  };
-  switch (agent) {
-    case "claude":
-      return [
-        {
-          title: "Add Patchy as a connector",
-          body: `<p>In Claude, open <strong>Settings › Connectors</strong> and choose <strong>Add custom connector</strong>. Name it Patchy and paste:</p>${addressLine(address)}<p class="supporting-text">Works in Claude on the web, the desktop app and your phone: they share connectors.</p>`
-        },
-        { title: "Say yes in your browser", body: `<p>Choose Connect. ${allow}</p>` },
-        ask
-      ];
-    case "claude-code":
-      return [
-        {
-          title: "Add Patchy to Claude Code",
-          body: `<p>In a terminal, run:</p>${commandLine(`claude mcp add --transport http patchy ${address}`, "the command")}<p>Then, in Claude Code, run <code>/mcp</code> and choose patchy to sign in.</p>`
-        },
-        { title: "Say yes in your browser", body: `<p>Your browser opens. ${allow}</p>` },
-        ask
-      ];
-    case "codex":
-      return [
-        {
-          title: "Add Patchy to Codex",
-          body: `<p>In a terminal, run:</p>${commandLine(`codex mcp add patchy --url ${address}`, "the add command")}<p>Then sign in:</p>${commandLine("codex mcp login patchy", "the sign-in command")}`
-        },
-        { title: "Say yes in your browser", body: `<p>Your browser opens. ${allow}</p>` },
-        ask
-      ];
-    case "chatgpt":
-      return [
-        {
-          title: "Add Patchy as a connector",
-          body: `<p>In ChatGPT, add a custom connector named Patchy with this address:</p>${addressLine(address)}<p class="supporting-text">Only some ChatGPT plans can add custom connectors.</p>`
-        },
-        { title: "Say yes in your browser", body: `<p>Choose Connect. ${allow}</p>` },
-        ask
-      ];
-    case "another":
-      return [
-        {
-          title: "Give it Patchy’s address",
-          body: `<p>Add Patchy to your agent as an MCP server with this address:</p>${addressLine(address)}<p class="supporting-text">Some agents, such as Cursor and Gemini CLI, can’t connect yet.</p>`
-        },
-        { title: "Say yes in your browser", body: `<p>When your agent signs in, ${allow}</p>` },
-        ask
-      ];
-  }
+/** A connection's mark: its app's letters, or its own initial for an app Patchy doesn't name. */
+const appMark = (name: string) => {
+  const app = appNamed(name);
+  return productMark(
+    app === "another" ? (Array.from(name.trim())[0]?.toUpperCase() ?? "?") : apps[app].letters
+  );
 };
 
-/** What acts as the person now, which Disconnect everything would end. */
-const holdings = Effect.fn("MachinesPage.holdings")(function* (userId: string) {
-  return {
-    machines: yield* (yield* MachineTokens.MachineTokens).list(userId),
-    connections: yield* (yield* AgentConnections.AgentConnections).list(userId)
-  };
-});
-type Holdings = Effect.Success<ReturnType<typeof holdings>>;
-
-/** "2 computers and 1 agent", "1 computer": what ends, without a kind there are none of. */
-const ending = ({ machines, connections }: Holdings) =>
-  [[machines.length, "computer"] as const, [connections.length, "agent"] as const]
-    .flatMap(([count, noun]) => (count === 0 ? [] : [`${count} ${noun}${count === 1 ? "" : "s"}`]))
-    .join(" and ");
-
-/** Everything Your agents shows, gathered for one viewer. */
-interface View extends Holdings {
-  readonly viewer: RequireSession.Viewer["Service"];
-  /** `null` while agent access is on; otherwise the admins who can turn it on, by name. */
-  readonly admins: ReadonlyArray<string> | null;
-  readonly now: number;
-}
-
-const date = (iso: string) =>
-  `<time datetime="${escapeAttribute(iso)}">${escapeHtml(dateLabel(iso))}</time>`;
-const lastUsed = (iso: string, now: number) =>
-  `<time datetime="${escapeAttribute(iso)}" title="${escapeAttribute(dateLabel(iso))}">${escapeHtml(ago(iso, now))}</time>`;
-
-const machineRow = (machine: View["machines"][number], now: number) =>
-  `<li class="list-row agents-row"><div><h3 class="section-heading">${escapeHtml(machine.name)}</h3><p class="supporting-text">Used ${lastUsed(machine.lastUsedAt, now)} · expires ${date(machine.expiresAt)} or after 30 days unused</p></div><form method="post" action="/agents/computers/${encodeURIComponent(machine.id)}/disconnect"><button class="btn btn-danger" type="submit" aria-label="Revoke ${escapeAttribute(machine.name)}">Revoke</button></form></li>`;
-
-/**
- * A connection unused for a week says when it ends, and that a reconnect leaves it behind. Its
- * Disconnect names the date it connected too, since a reconnect lists two of the same name.
- */
-const connectionRow = (connection: AgentConnections.Listed, now: number) => {
-  const name = escapeHtml(connection.clientName);
-  const used = connection.lastUsedAt ?? connection.connectedAt;
-  const leftover =
-    now - Date.parse(used) >= WEEK_MS
-      ? `<p class="supporting-text">If you reconnected ${name} since, this is the old one; it ends on its own on ${date(connection.endsAt)}.</p>`
-      : "";
-  return `<li class="list-row agents-row"><div><h3 class="section-heading">${name}</h3><p class="supporting-text">${escapeHtml(connection.clientSite)} · connected ${date(connection.connectedAt)} · ${connection.lastUsedAt === null ? "no calls yet" : `last call ${lastUsed(connection.lastUsedAt, now)}`}</p>${leftover}</div><form method="post" action="/agents/apps/${encodeURIComponent(connection.id)}/disconnect"><button class="btn btn-danger" type="submit" aria-label="${escapeAttribute(`Disconnect ${connection.clientName}, connected ${dateLabel(connection.connectedAt)}`)}">Disconnect</button></form></li>`;
-};
-
-const buildSection = ({ machines, now }: View) =>
-  `<section class="section" aria-labelledby="build-heading"><h2 class="section-heading" id="build-heading">Build patches</h2><p class="supporting-text">Computers that publish as you.</p>${machines.length === 0 ? "<p>No computer publishes as you yet.</p>" : `<ul class="list">${machines.map((machine) => machineRow(machine, now)).join("")}</ul>`}<p class="agents-add"><a class="btn" id="add-a-computer" href="/agents/computer">Add a computer</a></p></section>`;
-
-/** With agent access off, who can turn it on, in place of a way to connect an app. */
-const accessOff = (viewer: View["viewer"], admins: ReadonlyArray<string>) =>
-  `<p class="note note-warn" id="connect-an-agent">Agent access is off at ${escapeHtml(viewer.company.name)}. ${sentenceList(admins)} can turn it on.${viewer.role === "admin" ? ' <a href="/settings/agent-access">Turn it on</a>' : ""}</p>`;
-
-const useSection = ({ viewer, admins, connections, now }: View) =>
-  `<section class="section" aria-labelledby="use-heading"><h2 class="section-heading" id="use-heading">Use patches</h2><p class="supporting-text">Apps that act as you, through the agent tools patches offer.</p>${connections.length === 0 ? "<p>No app uses patches as you yet.</p>" : `<ul class="list">${connections.map((connection) => connectionRow(connection, now)).join("")}</ul>`}${admins === null ? '<p class="agents-add"><a class="btn" id="connect-an-agent" href="/agents/connect">Connect an app</a></p>' : accessOff(viewer, admins)}</section>`;
-
-const render = (view: View): Page => ({
-  title: "Your agents",
-  app: { viewer: view.viewer, section: "agents" },
-  styles,
-  body: `<div class="agents">${buildSection(view)}${useSection(view)}<p class="agents-foot"><a class="btn btn-quiet btn-danger" href="/agents/disconnect-all">Disconnect everything…</a></p></div>`
-});
-
-/** One of Your agents' own pages: its way back, its heading, then what it holds. */
-const subpage = (viewer: View["viewer"], title: string, body: string): Page => ({
-  title,
-  app: { viewer, section: "agents" },
-  styles,
-  heading: "",
-  body: `<article class="agents"><p><a href="/agents">Back to Your agents</a></p><h1 class="page-heading">${escapeHtml(title)}</h1>${body}</article><script defer src="${copyScriptPath}"></script>`
-});
+type Viewer = RequireSession.Viewer["Service"];
 
 /** The admins who can turn agent access on, by name, or `null` while it is on. */
-const accessAdmins = Effect.fn("MachinesPage.accessAdmins")(function* (viewer: View["viewer"]) {
+const accessAdmins = Effect.fn("MachinesPage.accessAdmins")(function* (viewer: Viewer) {
   // The viewer's own company: it exists for as long as they can open this page.
   const access = yield* (yield* Companies.Companies)
     .agentAccess(viewer.company.id)
@@ -217,107 +111,650 @@ const accessAdmins = Effect.fn("MachinesPage.accessAdmins")(function* (viewer: V
     .sort((a, b) => a.localeCompare(b));
 });
 
-const machines = Effect.gen(function* () {
+/** Everything Your agents shows, gathered for one viewer. */
+const gather = Effect.fn("MachinesPage.gather")(function* (viewer: Viewer) {
+  const tokens = yield* MachineTokens.MachineTokens;
+  const connections = yield* AgentConnections.AgentConnections;
+  return {
+    viewer,
+    admins: yield* accessAdmins(viewer),
+    machines: yield* tokens.list(viewer.user.id),
+    endedMachines: yield* tokens.ended(viewer.user.id),
+    connections: yield* connections.list(viewer.user.id),
+    endedConnections: yield* connections.ended(viewer.user.id),
+    now: yield* Clock.currentTimeMillis
+  };
+});
+type View = Effect.Success<ReturnType<typeof gather>>;
+
+/** "2 apps and 1 computer": what Disconnect everything ends, without a kind there are none of. */
+const ending = ({ connections, machines }: Pick<View, "connections" | "machines">) =>
+  [[connections.length, "app"] as const, [machines.length, "computer"] as const]
+    .flatMap(([count, noun]) => (count === 0 ? [] : [`${count} ${noun}${count === 1 ? "" : "s"}`]))
+    .join(" and ");
+
+/** Who can turn agent access on, in place of a way to connect an app while it is off. */
+const accessOff = (viewer: Viewer, admins: ReadonlyArray<string>) =>
+  notice({
+    tone: "warning",
+    title: `Agent access is off at ${viewer.company.name}`,
+    body: `<p>${admins.length === 0 ? "An admin" : sentenceList(admins)} can turn it on.</p>`,
+    action:
+      viewer.role === "admin"
+        ? linkButton("Turn it on", "/settings/agent-access", { size: "sm" })
+        : undefined
+  });
+
+/** The header's status line: whether agent access is on, and who can change it. */
+const accessLine = ({ viewer, admins }: View) => {
+  const company = viewer.company.name;
+  const admin = viewer.role === "admin";
+  return admins === null
+    ? [
+        dot(`Agent access is on at ${company}`, "success"),
+        ...(admin ? ['<a href="/settings/agent-access">Change</a>'] : [])
+      ]
+    : [
+        dot(`Agent access is off at ${company}`, "warning"),
+        admin
+          ? '<a href="/settings/agent-access">Turn it on</a>'
+          : `${admins.length === 0 ? "An admin" : sentenceList(admins)} can turn it on`
+      ];
+};
+
+const disconnectComputer = (id: string) => `/agents/computers/${encodeURIComponent(id)}/disconnect`;
+const disconnectApp = (id: string) => `/agents/apps/${encodeURIComponent(id)}/disconnect`;
+
+/** A computer's key ends at its 90 days or 30 days after its last use, whichever is first. */
+const computerRow = (machine: View["machines"][number], now: number) => {
+  const idle = Date.parse(machine.lastUsedAt) + 30 * DAY_MS;
+  const idleFirst = idle <= Date.parse(machine.expiresAt);
+  const end = idleFirst ? DateTime.formatIso(DateTime.makeUnsafe(idle)) : machine.expiresAt;
+  return row({
+    lead: computerMark,
+    name: machine.name,
+    description: `Used ${ago(machine.lastUsedAt, now)} · expires ${dateLabel(end)}${idleFirst ? " unless used" : ""}`,
+    end: `${Date.parse(end) - now < WEEK_MS ? badge("Expires soon", "warning") : ""}${menu({
+      id: idFor("computer", machine.id),
+      label: machine.name,
+      items: [
+        { kind: "link", label: "Disconnect…", href: disconnectComputer(machine.id), danger: true }
+      ]
+    })}`
+  });
+};
+
+/**
+ * A connection ends 30 days after its last call. One unused for a week says when, and its menu
+ * names the day it connected, since a reconnect lists two of the same name.
+ */
+const appRow = (connection: AgentConnections.Listed, now: number) => {
+  const used = connection.lastUsedAt ?? connection.connectedAt;
+  const connected = `connected ${dateLabel(connection.connectedAt)}`;
+  return row({
+    lead: appMark(connection.clientName),
+    name: connection.clientName,
+    description: [
+      connection.clientSite,
+      connected,
+      connection.lastUsedAt === null
+        ? "no calls yet"
+        : `last call ${ago(connection.lastUsedAt, now)}`,
+      ...(now - Date.parse(used) >= WEEK_MS
+        ? [`expires ${dateLabel(connection.endsAt)} unless used`]
+        : [])
+    ].join(" · "),
+    end: `${Date.parse(connection.endsAt) - now < WEEK_MS ? badge("Expires soon", "warning") : ""}${menu(
+      {
+        id: idFor("app", connection.id),
+        label: `${connection.clientName}, ${connected}`,
+        items: [
+          { kind: "link", label: "Disconnect…", href: disconnectApp(connection.id), danger: true }
+        ]
+      }
+    )}`
+  });
+};
+
+/**
+ * A row whose access ended on its own: when, and in its menu Reconnect, which sets it up again.
+ * `id` is its record's, for the menu's.
+ */
+const endedRow = (spec: {
+  readonly id: string;
+  readonly lead: string;
+  readonly name: string;
+  readonly description: ReadonlyArray<string>;
+  readonly reconnect: string;
+}) =>
+  row({
+    lead: spec.lead,
+    name: spec.name,
+    description: spec.description.join(" · "),
+    end: `${badge("Access ended", "danger")}${menu({
+      id: idFor("ended", spec.id),
+      label: spec.name,
+      items: [{ kind: "link", label: "Reconnect", href: spec.reconnect }]
+    })}`
+  });
+
+const useSection = (view: View) => {
+  const on = view.admins === null;
+  const connect = linkButton("Connect an app", "/agents/connect", { icon: "plus", size: "sm" });
+  const listed = [
+    ...view.connections.map((connection) => appRow(connection, view.now)),
+    ...view.endedConnections.map((connection) =>
+      endedRow({
+        id: connection.id,
+        lead: appMark(connection.clientName),
+        name: connection.clientName,
+        description: [
+          connection.clientSite,
+          connection.lastUsedAt === null
+            ? `connected ${dateLabel(connection.connectedAt)}`
+            : `last call ${ago(connection.lastUsedAt, view.now)}`,
+          `ended ${dateLabel(connection.endedAt)}`
+        ],
+        reconnect: `/agents/connect?app=${appNamed(connection.clientName)}`
+      })
+    )
+  ];
+  return section({
+    title: "Use patches",
+    description: "Apps that use the agent tools in patches, as you",
+    // With agent access off there's no way to connect one; the section keeps the old link's id.
+    ...(on
+      ? {
+          action: linkButton("Connect an app", "/agents/connect", {
+            icon: "plus",
+            size: "sm",
+            id: "connect-an-agent"
+          })
+        }
+      : { id: "connect-an-agent" }),
+    body: rows(
+      listed.length > 0
+        ? listed
+        : [
+            on
+              ? emptyState({
+                  title: "No app uses patches as you yet",
+                  body: "Connect Claude, ChatGPT or another agent to use patches’ agent tools.",
+                  action: connect
+                })
+              : emptyState({ title: "No app uses patches as you yet" })
+          ],
+      true
+    )
+  });
+};
+
+const buildSection = (view: View) => {
+  const add = linkButton("Add a computer", "/agents/computer", { icon: "plus", size: "sm" });
+  const listed = [
+    ...view.machines.map((machine) => computerRow(machine, view.now)),
+    ...view.endedMachines.map((machine) =>
+      endedRow({
+        id: machine.id,
+        lead: computerMark,
+        name: machine.name,
+        description: [
+          `Used ${ago(machine.lastUsedAt, view.now)}`,
+          `ended ${dateLabel(machine.endedAt)}`
+        ],
+        reconnect: "/agents/computer"
+      })
+    )
+  ];
+  return section({
+    title: "Build patches",
+    description: "Computers whose agent publishes as you",
+    action: linkButton("Add a computer", "/agents/computer", {
+      icon: "plus",
+      size: "sm",
+      id: "add-a-computer"
+    }),
+    body: rows(
+      listed.length > 0
+        ? listed
+        : [
+            emptyState({
+              title: "No computer builds as you yet",
+              body: "Give your agent one line and it can build and publish patches.",
+              action: add
+            })
+          ],
+      true
+    )
+  });
+};
+
+/**
+ * Your agents, with `refusal` above its sections when a form was refused. Disconnect everything
+ * stays with nothing listed: it also cancels an approval not yet collected.
+ */
+const index = (view: View, refusal = "") =>
+  settingsPage({
+    title: "Your agents",
+    meta: accessLine(view),
+    cards: [refusal, useSection(view), buildSection(view)],
+    danger: card({
+      danger: true,
+      rows: [
+        settingRow({
+          title: "Disconnect everything",
+          description:
+            "Ends every app and computer acting as you, and any approval not yet collected. Use it if a laptop goes missing.",
+          control: linkButton("Disconnect everything…", "/agents/disconnect-all", {
+            kind: "danger",
+            size: "sm"
+          })
+        })
+      ]
+    })
+  });
+
+/** What Your agents shows over or above its sections, drawn from what it lists. */
+interface Shown {
+  /** The page's `<title>` heading, for a dialog. */
+  readonly title?: string;
+  readonly overlay?: string;
+  readonly refusal?: string;
+  readonly status?: number;
+}
+
+/** Your agents for the viewer, with what `show` puts over or above it. */
+const agents = Effect.fn("MachinesPage.agents")(function* (
+  show: (view: View) => Shown = () => ({})
+) {
   const viewer = yield* RequireSession.Viewer;
   const session = yield* Session.Session;
+  const view = yield* gather(viewer);
+  const shown = show(view);
   return pageResponse(
-    render({
-      viewer,
-      admins: yield* accessAdmins(viewer),
-      ...(yield* holdings(viewer.user.id)),
-      now: yield* Clock.currentTimeMillis
-    }),
+    {
+      title: shown.title ?? "Your agents",
+      status: shown.status,
+      app: { viewer, section: "agents", overlay: shown.overlay },
+      ...index(view, shown.refusal)
+    },
     session
   );
 });
 
+/** A refusal to disconnect: a missing computer or app answers as another person's does. */
+const gone = (noun: "computer" | "app") =>
+  notice({ tone: "warning", title: `That ${noun} isn’t on Your agents` });
+
+/** A Disconnect dialog over Your agents: what stops, Cancel first, then the act it names. */
+const disconnectDialog = (spec: {
+  readonly id: string;
+  readonly title: string;
+  readonly action: string;
+  /** Trusted HTML. */
+  readonly consequence: string;
+  readonly confirm: string;
+  readonly fields?: string;
+  /** A notice above the consequence, when an answer was refused and the dialog is drawn again. */
+  readonly refusal?: string;
+}) =>
+  dialog({
+    id: spec.id,
+    title: spec.title,
+    closeHref: "/agents",
+    form: { action: spec.action, fields: spec.fields },
+    body: `${spec.refusal ?? ""}<p class="prose">${spec.consequence}</p>`,
+    foot: `${linkButton("Cancel", "/agents", { kind: "quiet", autofocus: true })}${button(spec.confirm, { kind: "danger-solid" })}`
+  });
+
+const confirmComputer = Effect.gen(function* () {
+  const id = (yield* HttpRouter.params).id ?? "";
+  return yield* agents((view): Shown => {
+    const machine = view.machines.find((candidate) => candidate.id === id);
+    return machine === undefined
+      ? { refusal: gone("computer"), status: 404 }
+      : {
+          title: `Disconnect ${machine.name}`,
+          overlay: disconnectDialog({
+            id: "disconnect",
+            title: `Disconnect ${machine.name}?`,
+            action: disconnectComputer(machine.id),
+            consequence: `The agents on ${escapeHtml(machine.name)} stop building and publishing patches as you now. Add it again to use it.`,
+            confirm: "Disconnect"
+          })
+        };
+  });
+});
+
+const confirmApp = Effect.gen(function* () {
+  const id = (yield* HttpRouter.params).id ?? "";
+  return yield* agents((view): Shown => {
+    const connection = view.connections.find((candidate) => candidate.id === id);
+    return connection === undefined
+      ? { refusal: gone("app"), status: 404 }
+      : {
+          title: `Disconnect ${connection.clientName}`,
+          overlay: disconnectDialog({
+            id: "disconnect",
+            title: `Disconnect ${connection.clientName}?`,
+            action: disconnectApp(connection.id),
+            consequence: `${escapeHtml(connection.clientName)}, connected ${escapeHtml(dateLabel(connection.connectedAt))}, stops using patches as you now. Connect it again to use it.`,
+            confirm: "Disconnect"
+          })
+        };
+  });
+});
+
 /**
- * Connect an app: each app's steps behind its tab, Claude's unless `?app=` names another, and
- * Claude's for one it doesn't know. With agent access off, who can turn it on instead.
+ * Disconnect everything's dialog: what it ends, counted now. Its form carries the account it was
+ * shown to, so an answer from a page left open across an account switch ends nothing; that answer
+ * draws the dialog again for the account signed in now, with `refusal` saying so.
+ */
+const disconnectAllDialog = (view: View, refusal?: string) => {
+  const ends = ending(view);
+  return disconnectDialog({
+    id: "disconnect-all",
+    title: "Disconnect everything?",
+    action: "/agents/disconnect-all",
+    fields: `<input type="hidden" name="user" value="${escapeAttribute(view.viewer.user.id)}">`,
+    consequence:
+      ends === ""
+        ? "No app or computer is connected, so this ends only approvals not yet collected. You stay signed in here."
+        : `This ends ${ends}, and any approval not yet collected. You stay signed in here. Set each one up again when you need it.`,
+    confirm: "Disconnect everything",
+    refusal
+  });
+};
+
+const confirmAll = agents((view): Shown => ({
+  title: "Disconnect everything",
+  overlay: disconnectAllDialog(view)
+}));
+
+const parent = { label: "Your agents", href: "/agents" };
+const done = linkButton("Done", "/agents");
+
+const addressLine = (address: string) =>
+  copyLine(address, "Patchy’s address, select to copy", "Patchy’s address");
+const commandLine = (command: string, target: string) =>
+  copyLine(command, "Command to run, select to copy", target);
+
+/** The last step for every app that connects: Patchy's consent page, in the browser. */
+const sayYes = (opens: string, name: string): FlowSection => ({
+  title: "Say yes in your browser",
+  body: `<p>${opens} Patchy to ask whether ${name} may act as you. Choose <strong>Allow</strong>, and it shows up on Your agents.</p>`
+});
+
+/**
+ * One app's steps after choosing it, the first keeping the id an old
+ * `/machines?agent=…#connect-an-agent` link names. `connects` is false for one that can't yet.
+ */
+const steps = (
+  app: App,
+  address: string
+): { readonly sections: ReadonlyArray<FlowSection>; readonly connects: boolean } => {
+  const id = "connect-an-agent";
+  const connector = `<p>Add a custom connector named <strong>Patchy</strong> with this address.</p>${addressLine(address)}`;
+  switch (app) {
+    case "claude":
+      return {
+        connects: true,
+        sections: [
+          {
+            id,
+            title: "In Claude",
+            body: `${connector}<p class="meta">One connector works in Claude on the web, the desktop app and your phone.</p>`
+          },
+          sayYes("Claude opens", "it")
+        ]
+      };
+    case "chatgpt":
+      return {
+        connects: true,
+        sections: [
+          {
+            id,
+            title: "In ChatGPT",
+            body: `${connector}<p class="meta">Only some ChatGPT plans can add custom connectors.</p>`
+          },
+          sayYes("ChatGPT opens", "it")
+        ]
+      };
+    case "claude-code":
+      return {
+        connects: true,
+        sections: [
+          {
+            id,
+            title: "In a terminal",
+            body: `<p>Run:</p>${commandLine(`claude mcp add --transport http patchy ${address}`, "the command")}<p>Then, in Claude Code, run <code>/mcp</code> and choose patchy to sign in.</p>`
+          },
+          sayYes("Your browser opens", "Claude Code")
+        ]
+      };
+    case "codex":
+      return {
+        connects: true,
+        sections: [
+          {
+            id,
+            title: "In a terminal",
+            body: `<p>Run:</p>${commandLine(`codex mcp add patchy --url ${address}`, "the add command")}<p>Then sign in:</p>${commandLine("codex mcp login patchy", "the sign-in command")}`
+          },
+          sayYes("Your browser opens", "Codex")
+        ]
+      };
+    case "cursor":
+      // Cursor still signs in to MCP servers by registering itself, which Patchy doesn't offer.
+      return {
+        connects: false,
+        sections: [
+          {
+            id,
+            title: "In Cursor",
+            body: notice({
+              tone: "info",
+              title: "Cursor can’t connect yet",
+              body: "<p>It signs in to MCP servers in a way Patchy doesn’t offer yet.</p>"
+            })
+          }
+        ]
+      };
+    case "another":
+      return {
+        connects: true,
+        sections: [
+          {
+            id,
+            title: "In your agent",
+            body: `<p>Add Patchy as an MCP server with this address.</p>${addressLine(address)}<p class="meta">Some agents, such as Cursor and Gemini CLI, can’t connect yet.</p>`
+          },
+          sayYes("Your agent opens", "it")
+        ]
+      };
+  }
+};
+
+/** What an app can and can't do once connected, the block that closes every connect flow. */
+const onceConnected = (app: App) => {
+  const name = app === "another" ? "Your agent" : apps[app].label;
+  const via = app === "another" ? "your agent" : apps[app].label;
+  return flowOutcome({
+    title: "Once connected",
+    body: canList([
+      { can: true, text: `${name} uses the agent tools in patches you can open, as you` },
+      { can: true, text: `Every change it makes is logged under your name, via ${via}` },
+      { can: false, text: "It can’t open patches you can’t" },
+      { can: false, text: "It can’t publish or change a patch’s code" }
+    ])
+  });
+};
+
+/**
+ * Connect an app: choose the app, then only its steps, Claude's unless `?app=` names another
+ * and for one it doesn't know. With agent access off, who can turn it on instead.
  */
 const connectApp = Effect.gen(function* () {
   const viewer = yield* RequireSession.Viewer;
   const session = yield* Session.Session;
   const request = yield* HttpServerRequest.HttpServerRequest;
   const asked = new URL(request.url, session.publicBaseUrl).searchParams.get("app");
-  const shown: Agent = asked !== null && isAgent(asked) ? asked : "claude";
+  const shown: App = asked !== null && isApp(asked) ? asked : "claude";
   const admins = yield* accessAdmins(viewer);
-  if (admins !== null)
-    return pageResponse(subpage(viewer, "Connect an app", accessOff(viewer, admins)), session);
-  const tabs = Object.entries(agents)
-    .map(
-      ([key, label]) =>
-        `<a href="/agents/connect?app=${key}"${key === shown ? ' aria-current="page"' : ""}>${label}</a>`
-    )
-    .join("");
-  const list = steps(
-    shown,
-    new URL("/mcp", session.publicBaseUrl).href,
-    escapeHtml(viewer.company.name)
-  )
-    .map((step) => `<li><p><strong>${step.title}</strong></p>${step.body}</li>`)
-    .join("");
-  return pageResponse(
-    subpage(
-      viewer,
-      "Connect an app",
-      `<div class="agents-add-body" id="connect-an-agent"><nav class="tabs" aria-label="Agent">${tabs}</nav><ol class="agents-steps">${list}</ol></div>`
-    ),
-    session
-  );
-});
-
-/** Add a computer: the setup line the person's agent runs there. */
-const addComputer = Effect.gen(function* () {
-  const viewer = yield* RequireSession.Viewer;
-  const session = yield* Session.Session;
-  const setupLine = `Set up Patchy using ${new URL("/llms.txt", session.publicBaseUrl).href}`;
-  return pageResponse(
-    subpage(
-      viewer,
-      "Add a computer",
-      `<div class="agents-add-body" id="add-a-computer">${copyLine(setupLine, "Setup line, select to copy", "the setup line")}<p>Your agent installs Patchy, then asks you to confirm in this browser.</p></div>`
-    ),
-    session
-  );
-});
-
-/**
- * Disconnect everything's confirmation: what it ends, counted now. Its form carries the account
- * it was shown to, so an answer from a page left open across an account switch ends nothing.
- */
-const confirmAll = Effect.gen(function* () {
-  const viewer = yield* RequireSession.Viewer;
-  const session = yield* Session.Session;
-  const held = yield* holdings(viewer.user.id);
-  const ends = ending(held);
-  const consequence =
-    ends === ""
-      ? "No computer or agent is connected, so this ends only approvals not yet collected."
-      : `This ends ${ends}, and any approval not yet collected. Each one has to be connected again afterwards.`;
+  const flow =
+    admins === null
+      ? (() => {
+          const chosen = steps(shown, new URL("/mcp", session.publicBaseUrl).href);
+          return flowPage({
+            parent,
+            title: "Connect an app",
+            sections: [
+              {
+                title: "Choose your app",
+                body: choiceLinks({
+                  label: "App",
+                  current: apps[shown].label,
+                  items: Object.keys(apps)
+                    .filter(isApp)
+                    .map((key) => ({
+                      label: apps[key].label,
+                      href: `/agents/connect?app=${key}`,
+                      mark: productMark(apps[key].letters, { dashed: key === "another" }),
+                      dashed: key === "another"
+                    }))
+                })
+              },
+              ...chosen.sections
+            ],
+            outcome: chosen.connects ? onceConnected(shown) : undefined,
+            submit: done
+          });
+        })()
+      : flowPage({
+          parent,
+          title: "Connect an app",
+          sections: [],
+          outcome: section({ id: "connect-an-agent", body: accessOff(viewer, admins) }),
+          submit: done
+        });
   return pageResponse(
     {
-      title: "Disconnect everything?",
+      title: "Connect an app",
       app: { viewer, section: "agents" },
-      styles,
-      heading: "",
-      body: `<article class="agents"><p><a href="/agents">Back to Your agents</a></p><h1 class="page-heading">Disconnect everything?</h1><form class="confirmation-form" method="post" action="/agents/disconnect-all"><input type="hidden" name="user" value="${escapeAttribute(viewer.user.id)}"><p class="confirmation-consequence">${consequence}</p><div class="confirmation-actions"><button class="btn btn-danger" type="submit">Disconnect everything</button><a class="btn btn-quiet" href="/agents">Cancel</a></div></form></article>`
+      heading: flow.heading,
+      body: `${flow.body}<script defer src="${copyScriptPath}"></script>`
     },
     session
   );
 });
 
-const backToMachines = HttpServerResponse.redirect("/agents", {
+/** The common agents that build patches, for someone who has none yet. */
+const common = [
+  {
+    name: "Claude Code",
+    letters: "CC",
+    description: "Anthropic’s agent, in your terminal or desktop app",
+    href: "https://claude.com/product/claude-code"
+  },
+  {
+    name: "Codex",
+    letters: "Cx",
+    description: "OpenAI’s agent, in your terminal or its app",
+    href: "https://openai.com/codex/"
+  },
+  {
+    name: "Cursor",
+    letters: "Cu",
+    description: "A code editor with an agent built in",
+    href: "https://cursor.com/"
+  }
+] as const;
+
+/** Get an agent, over Add a computer: the common agents and where to get them. */
+const getAnAgent = dialog({
+  id: "get-an-agent",
+  title: "Get an agent",
+  closeHref: "/agents/computer",
+  size: "lg",
+  body: `<p class="prose">Patchy works with any agent that can run commands on your computer. If you don’t have one, these are the common ones.</p>${rows(
+    common.map((agent) =>
+      row({
+        lead: productMark(agent.letters),
+        name: agent.name,
+        description: agent.description,
+        end: linkButton("Get it", agent.href, {
+          size: "sm",
+          icon: "external",
+          newTab: true,
+          ariaLabel: `Get ${agent.name}`
+        })
+      })
+    ),
+    true
+  )}<p class="meta">Install one, then give it the setup line. It does the rest.</p>`,
+  foot: linkButton("Back to setup", "/agents/computer")
+});
+
+/**
+ * Add a computer: the setup line the person's agent runs there, then the code it asks them to
+ * confirm here. Nothing here follows the agent, so no step is marked done. `noAgent` draws Get an
+ * agent over it.
+ */
+const addComputer = (noAgent: boolean) =>
+  Effect.gen(function* () {
+    const viewer = yield* RequireSession.Viewer;
+    const session = yield* Session.Session;
+    const setupLine = `Set up Patchy using ${new URL("/llms.txt", session.publicBaseUrl).href}`;
+    const flow = flowPage({
+      parent,
+      title: "Add a computer",
+      sections: [
+        {
+          id: "add-a-computer",
+          title: "Give your agent this line",
+          body: `${copyLine(setupLine, "Setup line, select to copy", "the setup line")}<p class="meta">Works in Claude Code, Codex, Cursor or any agent that runs commands on your computer. <a href="/agents/computer/no-agent">No agent yet?</a></p>`
+        },
+        {
+          title: "Confirm it’s you",
+          body: "<p>Your agent opens a page here with a code. Check it matches, then Confirm.</p>"
+        }
+      ],
+      outcome: flowOutcome({
+        title: "Once connected",
+        body: canList([
+          { can: true, text: "Your agent builds and publishes patches as you" },
+          { can: true, text: "It reads your company’s integrations while it builds, as you" },
+          { can: false, text: "It can’t do what you can’t" },
+          {
+            can: false,
+            text: "It stops after 30 days unused, 90 days at most, or when you disconnect it"
+          }
+        ])
+      }),
+      submit: done
+    });
+    return pageResponse(
+      {
+        title: noAgent ? "Get an agent" : "Add a computer",
+        app: { viewer, section: "agents", overlay: noAgent ? getAnAgent : undefined },
+        heading: flow.heading,
+        body: `${flow.body}<script defer src="${copyScriptPath}"></script>`
+      },
+      session
+    );
+  });
+
+const backToAgents = HttpServerResponse.redirect("/agents", {
   status: 303,
   headers: { "cache-control": "private, no-store" }
 });
 
 /** Back to Your agents, with a receipt naming what changed when there is a name to give. */
-const done = Effect.fn("MachinesPage.done")(function* (text: string | undefined) {
-  if (text === undefined) return backToMachines;
+const finished = Effect.fn("MachinesPage.finished")(function* (text: string | undefined) {
+  if (text === undefined) return backToAgents;
   const viewer = yield* RequireSession.Viewer;
   const session = yield* Session.Session;
-  return Receipt.set(backToMachines, {
+  return Receipt.set(backToAgents, {
     userId: viewer.user.id,
     text,
     publicBaseUrl: session.publicBaseUrl
@@ -328,15 +765,14 @@ const revoke = Effect.gen(function* () {
   const viewer = yield* RequireSession.Viewer;
   const tokens = yield* MachineTokens.MachineTokens;
   const id = (yield* HttpRouter.params).id ?? "";
-  // Its name before it goes; one no longer listed, such as one already revoked, gets no receipt.
+  // Its name before it goes; one no longer listed, such as one already disconnected, gets no receipt.
   const machine = (yield* tokens.list(viewer.user.id)).find((machine) => machine.id === id);
   yield* tokens.revokeOwned({ id, userId: viewer.user.id });
-  return yield* done(machine && `Revoked ${machine.name}`);
+  return yield* finished(machine && `Disconnected ${machine.name}`);
 });
 
 const disconnectAll = Effect.gen(function* () {
   const viewer = yield* RequireSession.Viewer;
-  const session = yield* Session.Session;
   const request = yield* HttpServerRequest.HttpServerRequest;
   const user = yield* request.urlParamsBody.pipe(
     Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(MAX_FORM_BYTES)),
@@ -344,19 +780,27 @@ const disconnectAll = Effect.gen(function* () {
     Effect.map(Option.flatMap(UrlParams.getFirst("user")))
   );
   if (Option.getOrUndefined(user) !== viewer.user.id)
-    return pageResponse(
-      {
-        title: "Nothing was disconnected",
-        app: { viewer, section: "agents" },
-        status: 409,
-        body: '<p class="note note-refused" role="alert">You’re signed in as someone else now. Open <a href="/agents">Your agents</a> and try again.</p>'
-      },
-      session
-    );
-  const ends = ending(yield* holdings(viewer.user.id));
+    return yield* agents((view): Shown => ({
+      title: "Disconnect everything",
+      overlay: disconnectAllDialog(
+        view,
+        notice({
+          tone: "danger",
+          title: "Nothing was disconnected",
+          body: "<p>You’re signed in as someone else now. This is what the account signed in now would end.</p>"
+        })
+      ),
+      status: 409
+    }));
+  const ends = ending({
+    machines: yield* (yield* MachineTokens.MachineTokens).list(viewer.user.id),
+    connections: yield* (yield* AgentConnections.AgentConnections).list(viewer.user.id)
+  });
   // The stamp it records also ends every agent connection and approval not yet collected.
   yield* (yield* MachineTokens.MachineTokens).revokeAll(viewer.user.id);
-  return yield* done(ends === "" ? "Disconnected everything" : `Disconnected everything: ${ends}`);
+  return yield* finished(
+    ends === "" ? "Disconnected everything" : `Disconnected everything: ${ends}`
+  );
 });
 
 const disconnect = Effect.gen(function* () {
@@ -366,52 +810,94 @@ const disconnect = Effect.gen(function* () {
     id,
     userId: viewer.user.id
   });
-  return yield* done(`Disconnected ${clientName}`);
+  return yield* finished(`Disconnected ${clientName}`);
 });
 
-type PageError =
-  | Effect.Error<
-      | typeof machines
-      | typeof connectApp
-      | typeof addComputer
-      | typeof confirmAll
-      | typeof revoke
-      | typeof disconnectAll
-      | typeof disconnect
-    >
-  | Session.SessionError;
+/**
+ * Failures once the viewer is known, inside the app: a computer or app that isn't theirs, or
+ * isn't there, answers the same refusal over their own list; a store that can't answer says so.
+ */
+const inApp = <R>(
+  app: Effect.Effect<
+    HttpServerResponse.HttpServerResponse,
+    MachineTokens.MachineTokenNotFound | AgentConnections.AgentConnectionNotFound | SqlError,
+    R
+  >
+) =>
+  app.pipe(
+    Effect.catchTags({
+      MachineTokenNotFound: () => agents((): Shown => ({ refusal: gone("computer"), status: 404 })),
+      AgentConnectionNotFound: () => agents((): Shown => ({ refusal: gone("app"), status: 404 }))
+    }),
+    Effect.catchTags({
+      SqlError: () =>
+        Effect.gen(function* () {
+          const viewer = yield* RequireSession.Viewer;
+          const session = yield* Session.Session;
+          return pageResponse(
+            {
+              title: "Your agents",
+              status: 503,
+              app: { viewer, section: "agents" },
+              ...settingsPage({
+                title: "Your agents",
+                cards: [
+                  notice({
+                    tone: "danger",
+                    title: "Your agents is unavailable",
+                    body: "<p>Try again in a moment.</p>"
+                  })
+                ]
+              })
+            },
+            session
+          );
+        })
+    })
+  );
 
-const message = (title: string, body: string, status: number): Page => ({ title, body, status });
-
-const errors = <R>(app: Effect.Effect<HttpServerResponse.HttpServerResponse, PageError, R>) =>
+/** Failures before there is a viewer to show the app to: the door says so. */
+const errors = <R>(
+  app: Effect.Effect<HttpServerResponse.HttpServerResponse, SqlError | Session.SessionError, R>
+) =>
   Effect.gen(function* () {
     const session = yield* Session.Session;
-    const reply = (page: Page) => Effect.succeed(pageResponse(page, session));
     return yield* app.pipe(
       Effect.catchTags({
-        MachineTokenNotFound: () =>
-          reply(
-            message(
-              "Machine not found",
-              '<p>This machine is not on <a href="/agents">Your agents</a>.</p>',
-              404
-            )
-          ),
-        AgentConnectionNotFound: () =>
-          reply(
-            message(
-              "Agent not found",
-              '<p>This agent is not on <a href="/agents">Your agents</a>.</p>',
-              404
-            )
-          ),
         SqlError: () =>
-          reply(message("Machine service unavailable", "<p>Please try again.</p>", 503)),
+          Effect.succeed(
+            pageResponse(
+              {
+                title: "Your agents is unavailable",
+                body: "<p>Try again in a moment.</p>",
+                status: 503
+              },
+              session
+            )
+          ),
         SessionError: () =>
-          reply(message("Sign-in service unavailable", "<p>Please try again.</p>", 502))
+          Effect.succeed(
+            pageResponse(
+              {
+                title: "Sign-in service unavailable",
+                body: "<p>Please try again.</p>",
+                status: 502
+              },
+              session
+            )
+          )
       })
     );
   });
+
+/** A page of Your agents: signed in, failures in the app once the viewer is known. */
+const page = <R>(
+  app: Effect.Effect<
+    HttpServerResponse.HttpServerResponse,
+    MachineTokens.MachineTokenNotFound | AgentConnections.AgentConnectionNotFound | SqlError,
+    R
+  >
+) => errors(RequireSession.withViewer(inApp(app)));
 
 export const layer: Layer.Layer<
   never,
@@ -428,28 +914,27 @@ export const layer: Layer.Layer<
     >
 > = HttpRouter.use((router) =>
   Effect.gen(function* () {
-    yield* router.add("GET", "/agents", errors(RequireSession.withViewer(machines)));
-    yield* router.add("GET", "/agents/connect", errors(RequireSession.withViewer(connectApp)));
-    yield* router.add("GET", "/agents/computer", errors(RequireSession.withViewer(addComputer)));
-    yield* router.add(
-      "GET",
-      "/agents/disconnect-all",
-      errors(RequireSession.withViewer(confirmAll))
-    );
+    yield* router.add("GET", "/agents", page(agents()));
+    yield* router.add("GET", "/agents/connect", page(connectApp));
+    yield* router.add("GET", "/agents/computer", page(addComputer(false)));
+    yield* router.add("GET", "/agents/computer/no-agent", page(addComputer(true)));
+    yield* router.add("GET", "/agents/disconnect-all", page(confirmAll));
+    yield* router.add("GET", "/agents/computers/:id/disconnect", page(confirmComputer));
+    yield* router.add("GET", "/agents/apps/:id/disconnect", page(confirmApp));
     yield* router.add(
       "POST",
       "/agents/computers/:id/disconnect",
-      errors(RequireSession.sameOrigin(RequireSession.withViewer(revoke)))
+      errors(RequireSession.sameOrigin(RequireSession.withViewer(inApp(revoke))))
     );
     yield* router.add(
       "POST",
       "/agents/disconnect-all",
-      errors(RequireSession.sameOrigin(RequireSession.withViewer(disconnectAll)))
+      errors(RequireSession.sameOrigin(RequireSession.withViewer(inApp(disconnectAll))))
     );
     yield* router.add(
       "POST",
       "/agents/apps/:id/disconnect",
-      errors(RequireSession.sameOrigin(RequireSession.withViewer(disconnect)))
+      errors(RequireSession.sameOrigin(RequireSession.withViewer(inApp(disconnect))))
     );
   })
 );

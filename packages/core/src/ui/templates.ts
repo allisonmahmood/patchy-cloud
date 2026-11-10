@@ -88,6 +88,8 @@ export interface FlowSection {
   readonly body: string;
   /** Still to come, until an earlier part is done: its controls are disabled, so they neither take focus nor submit. */
   readonly locked?: boolean;
+  /** Makes it a fragment's target, such as one a released skill's link names. */
+  readonly id?: string;
 }
 
 /**
@@ -110,7 +112,7 @@ export const flowPage = (
   const sections = spec.sections
     .map(
       (part, index) =>
-        `<fieldset class="flow-section"${part.locked === true ? " disabled" : ""}><legend class="flow-title"><span class="flow-number">${index + 1}</span>${escapeHtml(part.title)}</legend>${part.body}</fieldset>`
+        `<fieldset class="flow-section"${part.id === undefined ? "" : ` id="${escapeAttribute(part.id)}"`}${part.locked === true ? " disabled" : ""}><legend class="flow-title"><span class="flow-number">${index + 1}</span>${escapeHtml(part.title)}</legend>${part.body}</fieldset>`
     )
     .join("");
   const content = `<div class="flow">${sections}${spec.outcome ?? ""}<div class="btn-group">${spec.submit}</div></div>`;

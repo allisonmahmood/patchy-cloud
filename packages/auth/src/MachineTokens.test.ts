@@ -207,6 +207,71 @@ it.layer(
     })
   );
 
+  it.effect("lists the user's computers that ended on their own in the last 30 days", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      const tokens = yield* MachineTokens.MachineTokens;
+      const sql = yield* SqlClient.SqlClient;
+      const userId = "usr_machine_ended";
+      yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
+        VALUES (${userId}, 'user_machine_ended', ${DEV_SEED.companyId}, 'ended@auth.test', 'Ended', 'member')`;
+      /** A key of `name` made `made` ago and last used `used` ago. */
+      const minted = Effect.fn(function* (name: string, made: number, used = made) {
+        const key = yield* tokens.mint({ userId, name });
+        yield* sql`UPDATE machine_tokens SET created_at = to_timestamp(${(NOW - made) / 1_000}),
+          last_used_at = to_timestamp(${(NOW - used) / 1_000}) WHERE id = ${key.id}`;
+        return key;
+      });
+      yield* minted("Live laptop", 0);
+      // Used exactly 30 days ago, it is still live, and so not ended.
+      yield* minted("Edge laptop", 31 * DAY, 30 * DAY);
+      const idle = yield* minted("Idle laptop", 50 * DAY, 40 * DAY);
+      const expired = yield* minted("Expired laptop", 91 * DAY, 2 * DAY);
+      yield* sql`UPDATE machine_tokens SET expires_at = to_timestamp(${(NOW - DAY) / 1_000})
+        WHERE id = ${expired.id}`;
+      yield* minted("Long gone laptop", 70 * DAY, 61 * DAY);
+      yield* tokens.revoke((yield* minted("Revoked laptop", 50 * DAY, 40 * DAY)).id);
+      // A newer key of the same name stands for the computer, whatever became of it.
+      yield* minted("Old laptop", 50 * DAY, 40 * DAY);
+      yield* minted("Old laptop", 5 * DAY, 0);
+      yield* minted("Swapped laptop", 50 * DAY, 40 * DAY);
+      yield* tokens.revoke((yield* minted("Swapped laptop", 5 * DAY, DAY)).id);
+      // An older key of the same name still working doesn't hide a newer one that ended.
+      yield* minted("Desk laptop", 60 * DAY, 0);
+      const desk = yield* minted("Desk laptop", 50 * DAY, 35 * DAY);
+      const other = yield* tokens.mint({ userId: DEV_SEED.userId, name: "Someone else's laptop" });
+      yield* sql`UPDATE machine_tokens SET last_used_at = to_timestamp(${(NOW - 40 * DAY) / 1_000})
+        WHERE id = ${other.id}`;
+
+      assert.deepStrictEqual(yield* tokens.ended(userId), [
+        {
+          id: expired.id,
+          name: "Expired laptop",
+          lastUsedAt: new Date(NOW - 2 * DAY).toISOString(),
+          endedAt: new Date(NOW - DAY).toISOString()
+        },
+        {
+          id: desk.id,
+          name: "Desk laptop",
+          lastUsedAt: new Date(NOW - 35 * DAY).toISOString(),
+          endedAt: new Date(NOW - 5 * DAY).toISOString()
+        },
+        {
+          id: idle.id,
+          name: "Idle laptop",
+          lastUsedAt: new Date(NOW - 40 * DAY).toISOString(),
+          endedAt: new Date(NOW - 10 * DAY).toISOString()
+        }
+      ]);
+      assert.include(
+        (yield* tokens.list(userId)).map((machine) => machine.name),
+        "Edge laptop"
+      );
+      yield* sql`UPDATE users SET deactivated_at = to_timestamp(${NOW / 1_000}) WHERE id = ${userId}`;
+      assert.deepStrictEqual(yield* tokens.ended(userId), []);
+    })
+  );
+
   it.effect("owned revocation hides foreign ids and only the owner can revoke", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(NOW);
