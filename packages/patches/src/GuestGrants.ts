@@ -292,7 +292,7 @@ export class GuestGrants extends Context.Service<
       readonly actor: Patches.Actor;
       readonly email: string;
     }) => Effect.Effect<
-      { readonly patch: Patches.Patch; readonly guest: Guest },
+      { readonly patch: Patches.SharingMetadata; readonly guest: Guest },
       Refusal | Patches.WrongState | GuestsUnavailable | NotOnPatchy | AlreadyMember | Failure
     >;
     /**
@@ -304,7 +304,7 @@ export class GuestGrants extends Context.Service<
       readonly actor: Patches.Actor;
       readonly guest: string;
     }) => Effect.Effect<
-      { readonly patch: Patches.Patch; readonly removed: boolean },
+      { readonly patch: Patches.SharingMetadata; readonly removed: boolean },
       Refusal | SqlError
     >;
     /** The patch's guests, as `guests` lists them, for its owner or an admin. */
@@ -312,7 +312,7 @@ export class GuestGrants extends Context.Service<
       readonly patchId: string;
       readonly actor: Patches.Actor;
     }) => Effect.Effect<
-      { readonly patch: Patches.Patch; readonly guests: ReadonlyArray<Guest> },
+      { readonly patch: Patches.SharingMetadata; readonly guests: ReadonlyArray<Guest> },
       Refusal | SqlError
     >;
     /**

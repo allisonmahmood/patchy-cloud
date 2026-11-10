@@ -144,6 +144,9 @@ export const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: strin
         );
   const run = Effect.gen(function* () {
     const ref = { companyId: viewer.company.id, userId: id, actorId: viewer.user.id };
+    // Acquire the final administration lock before any selected patch locks.
+    if (choice === "keep" || choice === "confirm")
+      yield* Users.lockAdministrator(ref).pipe(Effect.catchTags({ RoleForbidden: Effect.die }));
     const user =
       action === "deactivate"
         ? yield* users.checkDeactivation(ref)
