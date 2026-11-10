@@ -266,6 +266,9 @@ export const renderNewPatch = (
         foot: `<span class="meta dialog-foot-start hide-sm" data-guide-unsettled>This updates by itself</span>${linkButton("Done", "/")}`
       });
 
+/** What the guide's script offers once it stops following, drawn by the helper every button is. */
+const checkAgainButton = button("Check again", { type: "button" });
+
 /**
  * Follows the agent: while the tab is visible it asks `/guide/steps` every 3 s and swaps the steps
  * in when their state changes, then stops at the last state, after 30 minutes (offering Check
@@ -334,12 +337,8 @@ export const guideScript = `(() => {
   let timer;
   let inFlight = false;
   const checkAgain = () => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "btn";
-    button.textContent = "Check again";
-    button.addEventListener("click", () => location.reload());
-    region.append(button);
+    region.insertAdjacentHTML("beforeend", ${JSON.stringify(checkAgainButton)});
+    region.lastElementChild.addEventListener("click", () => location.reload());
   };
   // One loop: a tick never overlaps another, so replies arrive in order and none goes stale.
   const tick = async () => {

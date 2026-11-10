@@ -124,6 +124,86 @@ test("with script, Show reveals a secret, Copy appears and a fragment opens its 
   await expect(page.getByRole("button", { name: "Copy the command" })).toBeVisible();
 });
 
+test("a name's hint follows what is typed, and a pressed submit says Testing… and takes no second", async ({
+  page,
+  instance
+}) => {
+  await page.goto(`${instance.origin}/~ui/flow`);
+  const hint = page.locator("#g-f-name-hint");
+  const name = page.getByRole("textbox", { name: "Name" });
+  await expect(hint).toHaveText("Patches use it as attio/crm.");
+  await name.fill("sales");
+  await expect(hint).toHaveText("Patches use it as attio/sales.");
+  await name.fill("  ");
+  await expect(hint).toHaveText("Patches use it as attio/crm.");
+
+  // Hold the submission, as Patchy would while it tests. The presses happen in the page, where
+  // a submit and the enhancer's answer to it run at once, before the navigation can start.
+  const posts: Array<string> = [];
+  let release = () => {};
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route(`${instance.origin}/~ui/flow`, async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    posts.push(route.request().postData() ?? "");
+    await held;
+    await route.fulfill({ status: 303, headers: { location: "/~ui/flow" } });
+  });
+  const pressed = await page.evaluate(() => {
+    const button = document.querySelector<HTMLButtonElement>("button[data-pending]")!;
+    const sent: Array<boolean> = [];
+    document.addEventListener("submit", (event) => sent.push(!event.defaultPrevented));
+    const width = button.getBoundingClientRect().width;
+    button.click();
+    const look = {
+      label: button.textContent,
+      disabled: button.getAttribute("aria-disabled"),
+      sameWidth: button.getBoundingClientRect().width === width
+    };
+    // Pressing again, or submitting the form another way, is turned away.
+    button.click();
+    button.form!.requestSubmit();
+    return { ...look, sent };
+  });
+  expect(pressed).toEqual({
+    label: "Testing…",
+    disabled: "true",
+    sameWidth: true,
+    sent: [true, false, false]
+  });
+  await expect.poll(() => posts.length).toBe(1);
+
+  // Once the page answers, the next page's button is at rest.
+  release();
+  await expect(page.getByRole("button", { name: "Test and connect" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Test and connect" })).not.toHaveAttribute(
+    "aria-disabled"
+  );
+  expect(posts).toHaveLength(1);
+});
+
+test("a short label holds room for its pending one, so pressing it moves nothing", async ({
+  page,
+  instance
+}) => {
+  // No content: the page stays as it is, its button still pending.
+  await page.route(`${instance.origin}/~ui/flow`, (route) =>
+    route.request().method() === "POST" ? route.fulfill({ status: 204 }) : route.fallback()
+  );
+  await page.goto(`${instance.origin}/~ui`);
+  const test = page.locator("form button[data-pending]");
+  await expect(test).toHaveAccessibleName("Test");
+  const pressed = await test.evaluate((button: HTMLButtonElement) => {
+    const before = button.getBoundingClientRect();
+    button.click();
+    const after = button.getBoundingClientRect();
+    return {
+      label: button.textContent,
+      same: before.width === after.width && before.height === after.height
+    };
+  });
+  expect(pressed).toEqual({ label: "Testing…", same: true });
+});
+
 test("without script, a dialog is the page, its close is a link, and secrets stay masked", async ({
   browser,
   instance
@@ -140,6 +220,9 @@ test("without script, a dialog is the page, its close is a link, and secrets sta
     await expect(page).toHaveURL(/\/~ui$/);
     await page.goto(`${instance.origin}/~ui/flow`);
     await expect(page.getByRole("button", { name: "Show" })).toBeHidden();
+    // The name's hint shows the example, as it was drawn.
+    await page.getByRole("textbox", { name: "Name" }).fill("sales");
+    await expect(page.locator("#g-f-name-hint")).toHaveText("Patches use it as attio/crm.");
   } finally {
     await context.close();
   }

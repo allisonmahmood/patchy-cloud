@@ -37,7 +37,13 @@ export const buttons = `
     .btn-quiet:has(+ .menu:popover-open), .btn-icon:has(+ .menu:popover-open) { background: var(--hover); }
     .btn:disabled { opacity: .55; cursor: not-allowed; }
     .btn[aria-disabled="true"] { cursor: progress; }
-    .btn-group, .actions, .confirmation-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
-    .actions, .confirmation-actions { margin-top: var(--space-5); }
+    .btn-group, .actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+    .actions { margin-top: var(--space-5); }
     .btn-group-end { justify-content: flex-end; }
+    /* A submit with a pending label holds room for it at rest, so pressing it moves nothing: its
+       face and the label it will say share one cell, that label unseen until the enhancer swaps
+       it into the face. */
+    .btn[data-pending] { display: inline-grid; place-items: center; }
+    .btn[data-pending] > span, .btn[data-pending]::after { display: inline-flex; grid-area: 1 / 1; align-items: center; gap: 6px; }
+    .btn[data-pending]::after { content: attr(data-pending); visibility: hidden; }
 `;

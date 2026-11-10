@@ -19,7 +19,7 @@ Patchy Cloud is one deployment: the hosting server on one side, the `patchy` CLI
 
 ## Shared kernel
 
-- `packages/core`: a page's bounded title read, the company look's publish checks, first-party card shell and sidebar app shell, the UI system (tokens and style chunks, typed helpers, five page templates, the enhancer and the development-only `/~ui` gallery), the app's fonts, the served shell's own styles and escape helpers, the switcher's chord, the relay script every page carries and the switcher's menu script with its command list, and the `Cryptography` service (Patchy's ids, tokens and digests, and keyed crypto) with its Node implementation. No `GLOSSARY.md`: a term it defines belongs to the context that introduced it, and a decision touching it goes in the root `docs/adr/`.
+- `packages/core`: a page's bounded title read, the company look's publish checks, first-party card shell and sidebar app shell, the UI system (tokens and style chunks with the rule that holds them to the tokens, typed helpers, five page templates, the enhancer and the development-only `/~ui` gallery), the app's fonts, the served shell's own styles and escape helpers, the switcher's chord, the relay script every page carries and the switcher's menu script with its command list, and the `Cryptography` service (Patchy's ids, tokens and digests, and keyed crypto) with its Node implementation. No `GLOSSARY.md`: a term it defines belongs to the context that introduced it, and a decision touching it goes in the root `docs/adr/`.
 
 ## Infrastructure
 

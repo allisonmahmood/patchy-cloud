@@ -19,6 +19,7 @@ import {
   linkButton,
   menuLink,
   menuPost,
+  menuRule,
   patchMark,
   patchTitle,
   rowMenu,
@@ -161,7 +162,7 @@ const actions = (
       ? [menuLink(cardPath(patch, "delete"), "Delete…", true, title)]
       : [])
   ];
-  return rowMenu(patch.id, title, [...items, '<hr class="menu-rule">', ...manage]);
+  return rowMenu(patch.id, title, [...items, menuRule, ...manage]);
 };
 
 /** What All patches lists: a filter, the sidebar's search, and one person's patches. */

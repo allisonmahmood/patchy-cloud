@@ -41,7 +41,7 @@ it.layer(services(PidgeonTest.canned().layer, attio.layer))("Attio connection pa
         "Builders' agents read it while they build, as themselves",
         "Nothing is written to Attio",
         "Attio's own member permissions don't carry over.",
-        '<button class="btn btn-primary" type="submit">Test and connect</button>'
+        '<button class="btn btn-primary" type="submit" data-pending="Testing…"><span>Test and connect</span></button>'
       ])
         assert.include(page.html, part);
       assert.notMatch(page.html.replace(switcherRelay, ""), /<script(?![^>]*\bsrc=)/);

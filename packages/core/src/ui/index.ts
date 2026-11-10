@@ -13,7 +13,7 @@ export {
   switchForm,
   textarea
 } from "./controls.js";
-export type { ButtonLook, ChoiceAria, FieldControl, InputOptions } from "./controls.js";
+export type { ButtonLook, ChoiceAria, FieldControl, HintEcho, InputOptions } from "./controls.js";
 export { behindTheScenes, changeEntry } from "./changelog.js";
 export { checklist } from "./checklist.js";
 export { disclosure } from "./disclosure.js";

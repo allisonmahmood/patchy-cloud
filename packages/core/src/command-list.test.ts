@@ -82,7 +82,6 @@ describe("the command list", () => {
       ".mono {",
       ".page-mark {",
       ".shelf-label {",
-      ".tag {",
       "mark {",
       ".whats-new-dot {",
       ".field {",

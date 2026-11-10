@@ -6,7 +6,7 @@ import { uiScriptTag } from "./ui/enhancer.js";
 import { icon, type IconName } from "./ui/icons.js";
 import { escapeAttribute, escapeHtml } from "./escape.js";
 import { pagePlaces, type Place, places } from "./places.js";
-import { type ChangeKind, latestRelease } from "./whatsNew.js";
+import { latestRelease } from "./whatsNew.js";
 import { entriesSince, monthHref, permalink } from "./whatsNewLinks.js";
 import { relayScript, relayScriptHash } from "./generated/relay-script.js";
 import { switcherDigest } from "./generated/switcher-script.js";
@@ -76,10 +76,6 @@ export const appTitle = (heading: string, app: AppShell): string => {
     .filter((part) => part !== undefined && part !== "")
     .join(" – ");
 };
-
-/** A change's kind as a pill: New green, Improved blue, Fixed plain. */
-export const whatsNewKind = (kind: ChangeKind): string =>
-  `<span class="pill${kind === "New" ? " pill-done" : kind === "Improved" ? " pill-progress" : ""}">${kind}</span>`;
 
 const plural = (count: number) => `${count} ${count === 1 ? "change" : "changes"}`;
 
@@ -198,7 +194,8 @@ export const framedDocument = (html: string): string =>
   `<base href="about:srcdoc">${html.replace(/^\uFEFF/, "")}`;
 
 /**
- * A first-party page: the app's fonts, styles and, with `app`, the signed-in frame. A running
+ * A first-party page: the app's fonts, styles and, with `app`, the signed-in frame. It takes no
+ * styles of its own: a page fills a template's slots and the app's stylesheet draws it. A running
  * patch's shell is Serving's own document, on `servedStyles`. Every one carries the switcher
  * relay, so its response's CSP admits `SWITCHER_RELAY_SOURCE`; an app page also loads the
  * switcher, from its own origin.
@@ -207,7 +204,6 @@ export function htmlPage(options: {
   title: string;
   body: string;
   head?: string;
-  styles?: string;
   app?: AppShell;
 }): string {
   return `<!doctype html>
@@ -223,7 +219,6 @@ export function htmlPage(options: {
   ${options.head ?? ""}
   <style>
     ${appStyles}
-    ${options.styles ?? ""}
   </style>
 </head>
 <body>${options.app ? appBody(options.app, options.body) : options.body}</body>

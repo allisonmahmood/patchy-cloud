@@ -15,9 +15,9 @@ export const notices = `
     .note > p, .notice > p { margin: 0; }
     .note > p + p, .notice > p + p { margin-top: 6px; }
     .note .actions, .notice .actions { margin-top: var(--space-3); }
-    .note-info, .notice-info { border-color: var(--info-line); background: var(--info-bg); }
+    .notice-info { border-color: var(--info-line); background: var(--info-bg); }
     .note-warn, .notice-warning { border-color: var(--warning-line); background: var(--warning-bg); }
-    .note-refused, .notice-danger { border-color: var(--danger-line); background: var(--danger-bg); }
+    .notice-danger { border-color: var(--danger-line); background: var(--danger-bg); }
     .note-ok { border-color: var(--success-line); background: var(--success-bg); }
     .notice-info .notice-title { color: var(--info); }
     .notice-warning .notice-title { color: var(--warning); }
@@ -35,12 +35,6 @@ export const notices = `
        drawn as a control; from the keyboard the ring goes round the notice it holds. */
     .refusal:focus { outline: none; }
     .refusal:focus-visible > .notice { outline: 2px solid var(--ink); outline-offset: 2px; }
-
-    /* note-inline: a note laid out as one row, its text then its actions. */
-    .note-inline { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-2) var(--space-4); }
-    .note-inline .note-title { margin: 0; }
-    .note-inline .actions { margin: 0; }
-    @media (max-width: 479px) { .note-inline { grid-template-columns: minmax(0, 1fr); } }
 
     .receipt, .app-receipt {
       display: flex; align-items: center; gap: 10px;

@@ -93,7 +93,7 @@ The shared frame for the portal, People, Integrations, Agent access and Your age
 _Avoid_: layout, template, theme
 
 **Component set**:
-The built vocabulary of controls every first-party page composes: buttons, fields, fact lists, compact selectable lists and trees, placeholder rows, version tables and expandable table rows, copyable addresses and copy lines, notices, headings, pills, confirmation forms and the guide's steps, flow and agent previews, styled once in the shell so they look and scale the same everywhere. Page styles carry layout only; patches are exempt.
+The one set of parts every first-party page composes, in core: the tokens, typed helpers (buttons, fields, notices, badges, rows, tables, menus, dialogs, steps, marks and the rest) and five page templates, Index, Detail, Settings, Flow and Door. A page fills a template's slots and carries no styles of its own; `pnpm check` holds the stylesheet to its tokens and pages to the helpers, and the development-only gallery at `/~ui` draws every part in its states. Patches are exempt.
 _Avoid_: design system (there is one theme and no library), component library, utility classes
 
 **What's new**:

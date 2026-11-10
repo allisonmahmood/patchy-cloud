@@ -88,6 +88,9 @@ export interface ConnectSpec {
   };
 }
 
+/** The frame's one submit, which says "Testing…" while Patchy tests the credential. */
+const testAndConnect = button("Test and connect", { kind: "primary", pendingLabel: "Testing…" });
+
 /** The form fields a refusal can sit at on a connect page, by its spec. */
 export const shows = (spec: ConnectSpec): ReadonlyArray<View.Field> => [
   ...Fields.flat(spec.paste.fields).map((item) => item.field),
@@ -129,7 +132,11 @@ const nameIt = (
   return `${field({
     id: "connection-handle",
     label: "Name",
-    hint: `Patches use it as ${integration.key}/${submitted.handle?.trim() || spec.example}. Lowercase letters, digits and hyphens; it can't change later.`,
+    hint: [
+      `Patches use it as ${integration.key}/`,
+      { value: submitted.handle ?? "", fallback: spec.example },
+      ". Lowercase letters, digits and hyphens; it can't change later."
+    ],
     ...(handleError === undefined ? {} : { error: handleError }),
     control: (aria) =>
       prefixInput(aria, {
@@ -239,8 +246,8 @@ export const render = (input: {
     // script opens it once the form is ready, and without script it stays shut.
     submit: `${
       choose.length === 0
-        ? button("Test and connect", { kind: "primary" })
-        : `<fieldset class="fieldset" disabled data-ready-gate>${button("Test and connect", { kind: "primary" })}</fieldset>`
+        ? testAndConnect
+        : `<fieldset class="fieldset" disabled data-ready-gate>${testAndConnect}</fieldset>`
     }${linkButton("Cancel", input.back, { kind: "quiet" })}`
   });
 };

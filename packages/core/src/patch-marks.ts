@@ -37,10 +37,10 @@ export const pick = <T>(key: string, choices: readonly [T, ...T[]]): T =>
   choices[Array.from(key).reduce((sum, char) => sum + char.charCodeAt(0), 0) % choices.length]!;
 
 /**
- * The tint class a patch's monogram wears, picked from its name; `""` is the plain one. Anything
- * that draws a patch's mark in the browser uses this, so it matches the pages Patchy renders.
+ * The tint class a patch's monogram wears, picked from its name; `""` is the plain one. The
+ * switcher draws marks in the browser with `patchMark` too, so they match the pages Patchy renders.
  */
-export const monogramTint = (name: string) =>
+const monogramTint = (name: string) =>
   pick(name, ["", "mono-blue", "mono-green", "mono-amber", "mono-pink"] as const);
 
 /** Two letters from `name` on a tint picked from it. `large` is the size beside a page heading. */

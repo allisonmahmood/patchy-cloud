@@ -91,7 +91,7 @@ it.layer(services(PidgeonTest.canned().layer, AttioSource.layer, imap))(
           "Guests of those patches too, unless you block guests",
           "Nothing in the mailbox changes: Patchy only reads",
           "Use a shared or dedicated mailbox, not a person's own.",
-          '<button class="btn btn-primary" type="submit">Test and connect</button>'
+          '<button class="btn btn-primary" type="submit" data-pending="Testing…"><span>Test and connect</span></button>'
         ].map(at);
         assert.deepStrictEqual(
           order,

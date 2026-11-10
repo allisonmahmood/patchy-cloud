@@ -51,7 +51,7 @@ it.layer(services(pidgeon.layer))("Pidgeon connection pages", (it) => {
           "Once connected",
           "What builders' agents send while they build goes nowhere",
           "Revoking your admin key in Pidgeon later disconnects addresses connected with it.",
-          '<button class="btn btn-primary" type="submit">Test and connect</button>',
+          '<button class="btn btn-primary" type="submit" data-pending="Testing…"><span>Test and connect</span></button>',
           '<script defer src="/assets/pidgeon-connect.js"></script>',
           "<noscript>"
         ])
@@ -64,7 +64,7 @@ it.layer(services(pidgeon.layer))("Pidgeon connection pages", (it) => {
         // Test and connect waits with them, shut without script.
         assert.include(
           html,
-          '<fieldset class="fieldset" disabled data-ready-gate><button class="btn btn-primary" type="submit">Test and connect</button></fieldset>'
+          '<fieldset class="fieldset" disabled data-ready-gate><button class="btn btn-primary" type="submit" data-pending="Testing…"><span>Test and connect</span></button></fieldset>'
         );
         assert.notMatch(html.replace(switcherRelay, ""), /<script(?![^>]*\bsrc=)/);
         assert.include(page.response.headers.get("content-security-policy")!, "script-src 'self'");

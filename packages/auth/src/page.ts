@@ -16,7 +16,6 @@ export interface Page {
   readonly title: string;
   readonly body: string;
   readonly status?: number;
-  readonly styles?: string;
   readonly heading?: string;
   readonly app?: AppShell;
   /**
@@ -53,7 +52,7 @@ export function returnPath(value: string | null, publicBaseUrl: string): string 
  * end with `accountFoot` instead; this is for pages not yet on the templates.
  */
 export const signOutForm = (notYou = false, returnTo?: string) =>
-  `<form class="auth-signout" method="post" action="/logout">${returnTo === undefined ? "" : `<input type="hidden" name="return" value="${escapeAttribute(returnTo)}">`}${notYou ? "Not you? " : ""}<button class="btn btn-quiet" type="submit">${returnTo === undefined ? "Sign out" : "Use another account"}</button></form>`;
+  `<form class="auth-signout" method="post" action="/logout">${returnTo === undefined ? "" : `<input type="hidden" name="return" value="${escapeAttribute(returnTo)}">`}${notYou ? "Not you? " : ""}${button(returnTo === undefined ? "Sign out" : "Use another account", { kind: "quiet" })}</form>`;
 
 /**
  * A door's foot for a signed-in person: who is signed in, then the way out. `label` names it:
@@ -136,7 +135,6 @@ export function pageResponse(
     htmlPage({
       title: page.title,
       head,
-      styles: page.styles,
       app: page.app,
       body: page.app ? `${heading}${page.body}` : doorCard({ heading, body: page.body })
     }),

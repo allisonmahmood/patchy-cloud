@@ -25,11 +25,11 @@ export const switcher = `
       display: inline-flex; align-items: center; justify-content: center; gap: 2px; flex: none;
       min-width: 26px; height: 24px; padding: 0 6px;
       border: 1px solid var(--ink); border-radius: var(--r-control);
-      background: var(--surface); box-shadow: 0 2px 0 var(--ink);
+      background: var(--surface); box-shadow: var(--key);
       color: var(--ink); font: var(--text-badge);
     }
     .kbd svg { display: block; }
-    .kbd-sm { min-width: 22px; height: 20px; padding: 0 4px; border-radius: 5px; box-shadow: 0 1px 0 var(--ink); }
+    .kbd-sm { min-width: 22px; height: 20px; padding: 0 4px; border-radius: 5px; box-shadow: var(--key-sm); }
 
     .command, .command * { box-sizing: border-box; }
     .command {
@@ -41,7 +41,7 @@ export const switcher = `
     .command :is(p, a) { max-width: none; margin: 0; }
     .command-field.field {
       display: flex; align-items: center; gap: var(--space-3); flex: none;
-      min-height: 52px; padding: 0 var(--space-4);
+      min-height: var(--h-command); padding: 0 var(--space-4);
       border: 0; border-bottom: 1px solid var(--border); border-radius: 0;
       background: transparent; box-shadow: none; font: var(--text-section);
     }
@@ -69,7 +69,7 @@ export const switcher = `
     .command-row > .kbd { margin-left: -2px; }
     .command-head.shelf-label { display: flex; align-items: center; gap: var(--space-2); flex: none; height: 30px; margin: 0; padding: 10px 10px 0; }
     .command-head-patchy.shelf-label { color: var(--ink); }
-    .command-head .glyph-sm { width: 14px; height: 14px; border-width: 1.5px; border-radius: 4px; box-shadow: 1.5px 1.5px 0 var(--ink); }
+    .command-head .glyph-sm { width: 14px; height: 14px; border-width: 1.5px; border-radius: 4px; box-shadow: var(--lift-sm); }
     .command-head .glyph-sm::after { top: 2px; right: 2px; width: 4px; height: 4px; border-width: 1.5px; }
     .command-empty { flex: none; padding: 20px var(--space-4) var(--space-1); color: var(--text); font-weight: var(--weight-medium); }
     /* A live region, so it stays in place, empty and without height, until it has something to say. */

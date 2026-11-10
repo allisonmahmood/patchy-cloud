@@ -286,9 +286,12 @@ First-party pages compose core's UI system: tokens, helpers and five page
 templates (`.agents/skills/ui-consistency/SKILL.md`). The local instance serves
 its gallery at `/~ui`, every helper in its states and one page per template at
 `/~ui/<template>`, only while personas sign people in; production has none.
-`pnpm dev shot <person> /~ui` captures it, and `pnpm ui:report` lists what is
-still off the system: raw visual values in the app's CSS, page styles and
-hand-drawn components. It reports and never fails.
+`pnpm dev shot <person> /~ui` captures it. `pnpm check` holds pages to the
+system: its tests fail a colour, type role, corner, shadow or control height
+the app's stylesheet writes outside its token block, and a helper core exports
+that the gallery doesn't draw, and `pnpm lint` fails a page module that styles
+itself or draws a button, badge, notice or field by hand. `pnpm ui:report`
+lists the stylesheet's values off the tokens, by chunk, while you fix them.
 
 ### Environments: `pnpm dev up`
 
@@ -748,6 +751,11 @@ can quote it.
   `delete --yes` and `restore` through the CLI
   and the notices at the patch's address. A source with a published consumer
   refuses retirement with `has_dependants` until `--force`.
+- **First-party pages.** Look at a change to core's helpers or styles in
+  `/~ui` first, then on the pages it reaches with `pnpm dev shot`, at desktop
+  and 390px and with a coarse pointer (44px controls), and without script: a
+  dialog is a page, Show stays hidden, a live hint shows what was drawn and a
+  pending submit just submits.
 - **Company management.** Invite, revoke, change roles, deactivate and
   reactivate from `/settings/people`; deactivation revokes the user's machine
   tokens and the last active admin cannot be demoted.
