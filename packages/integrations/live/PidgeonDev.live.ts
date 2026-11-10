@@ -77,7 +77,12 @@ const runtime = Layer.effect(
   )
 ).pipe(
   Layer.provide(
-    Layer.succeed(LoadedVersions.LoadedVersions, { find: () => Effect.succeed(Option.none()) })
+    Layer.succeed(LoadedVersions.LoadedVersions, {
+      findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+        return this.find(patchId);
+      },
+      find: () => Effect.succeed(Option.none())
+    })
   )
 );
 const routes = HttpApiBuilder.layer(HttpApi.make("patchy").add(DevReadsGroup)).pipe(

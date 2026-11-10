@@ -60,22 +60,26 @@ const refusalLines = (refused: ShareRefusal, viewer: Viewer): readonly [string, 
  * `back` with the dialog open. While the patch is public its guests stay, but adding waits. The
  * page behind loads the copy script.
  */
-export const renderShareDialog = <
-  P extends Pick<
-    Patches.Patch,
-    | "companyHandle"
-    | "id"
-    | "name"
-    | "title"
-    | "ownerUserId"
-    | "scope"
-    | "audience"
-    | "audienceRevision"
-  >
->(input: {
-  readonly managementOwnerId?: string;
-  readonly dependants?: readonly { readonly patchId: string; readonly name: string }[];
-  readonly row: { readonly tier: number; readonly patch: P };
+export const renderShareDialog = (input: {
+  readonly dependants?: {
+    readonly dependants: readonly { readonly name: string; readonly patchId: string }[];
+    readonly hiddenCount: number;
+  };
+  readonly access?: "content" | "management";
+  readonly row: {
+    readonly tier: number;
+    readonly patch: Pick<
+      Patches.Patch,
+      | "companyHandle"
+      | "id"
+      | "name"
+      | "title"
+      | "ownerUserId"
+      | "scope"
+      | "audience"
+      | "lifecycleRevision"
+    >;
+  };
   readonly viewer: Viewer;
   readonly publicBaseUrl: string;
   /** The page behind, as a path and query: where the forms return and Done goes. */
@@ -97,7 +101,7 @@ export const renderShareDialog = <
   const title = patchTitle(patch);
   const path = (act: string) => `/patches/${encodeURIComponent(patch.name)}/${act}`;
   const form = (act: string, className: string, body: string) =>
-    `<form class="${className}" method="post" action="${escapeAttribute(path(act))}" novalidate>${hidden("expectedPatchId", patch.id)}${input.managementOwnerId === undefined ? "" : hidden("expectedOwnerUserId", input.managementOwnerId)}${hidden("back", input.back)}${body}</form>`;
+    `<form class="${className}" method="post" action="${escapeAttribute(path(act))}" novalidate>${hidden("expectedPatchId", patch.id)}${input.access === "management" ? hidden("expectedOwnerUserId", patch.ownerUserId) : ""}${hidden("back", input.back)}${body}</form>`;
   const isPublic = patch.scope === "public";
 
   const refused = input.refused;
@@ -136,7 +140,7 @@ export const renderShareDialog = <
     `<label class="field-choice"><input class="field-radio" type="radio" name="scope" value="${scope}"${scope === picked ? " checked" : ""}${scope === patch.audience.members.kind ? " data-current" : ""}${disabled ? " disabled" : ""}>${escapeHtml(label)}</label>`;
   // Tier 2 can't be public, so for a tool that choice is never one to make.
   const next = isPublic
-    ? '<div class="actions share-change"><button class="btn" type="submit">Save</button></div>'
+    ? ""
     : row.tier >= 2
       ? ""
       : `<div class="note note-warn share-change share-public-confirmation" role="group" aria-labelledby="share-public-title"><strong class="note-title" id="share-public-title">Make ${escapeHtml(title)} public?</strong><p>Anyone with the link can open it without signing in.</p><div class="actions"><button class="btn btn-primary" type="submit" name="confirm" value="public">Make public</button><button class="btn btn-quiet" type="reset">Cancel</button></div></div>`;
@@ -149,35 +153,15 @@ export const renderShareDialog = <
         `<label class="field-choice"><input class="field-checkbox" type="checkbox" name="teamIds" value="${escapeAttribute(team.id)}"${selectedTeams.has(team.id) ? " checked" : ""}>${escapeHtml(team.name)}</label>`
     )
     .join("");
-  const selectedGuests = new Set(
-    patch.audience.guests.kind === "specific" ? patch.audience.guests.userIds : []
-  );
-  const excludedGuests = new Set(
-    patch.audience.guests.kind === "all" ? patch.audience.guests.excludedUserIds : []
-  );
-  const people = [
-    ...new Map(
-      [...input.suggestions, ...input.guests].map((guest) => [guest.userId, guest])
-    ).values()
-  ];
-  const guestChoices = (excluded: boolean) =>
-    people
-      .map(
-        (guest) =>
-          `<label class="field-choice"><input class="field-checkbox" type="checkbox" name="${excluded ? "excludedGuestIds" : "guestIds"}" value="${escapeAttribute(guest.userId)}"${(excluded ? excludedGuests : selectedGuests).has(guest.userId) ? " checked" : ""}>${escapeHtml(guest.name)} · ${escapeHtml(guest.companyName)}</label>`
-      )
-      .join("") +
-    [...(excluded ? excludedGuests : selectedGuests)]
-      .filter((id) => !people.some((person) => person.userId === id))
-      .map((id) => hidden(excluded ? "excludedGuestIds" : "guestIds", id))
-      .join("");
-  const dependencyWarning = input.dependants?.length
-    ? `<aside class="note note-warn"><strong>Some people may lose shared reads</strong><ul>${input.dependants.map((dependant) => `<li>${escapeHtml(dependant.name)}</li>`).join("")}</ul><p>People outside the selected audience lose shared reads. Previously copied data stays with its destination.</p></aside>`
-    : "";
+  const summary = input.dependants;
+  const dependencyWarning =
+    summary && summary.dependants.length + summary.hiddenCount > 0
+      ? `<aside class="note note-warn" data-source-warning data-teams="${escapeAttribute(JSON.stringify([...selectedTeams]))}" hidden><strong>Some people may lose shared reads</strong><ul>${summary.dependants.map((d) => `<li>${escapeHtml(d.name)}</li>`).join("")}${summary.hiddenCount ? `<li>${summary.hiddenCount} others</li>` : ""}</ul><p>Previously copied data stays with its destination.</p><label><input type="checkbox" name="force" value="true" disabled> Acknowledge shared-read failures</label></aside>`
+      : "";
   const audience = form(
     "scope",
     "share-audience",
-    `${hidden("expectedScope", patch.scope)}${hidden("expectedAudienceRevision", patch.audienceRevision)}<fieldset><legend class="field-label">Company people</legend>${choice("company", `People at ${viewer.company.name}`)}${choice("teams", "Selected teams", !input.teams?.length)}${choice("public", "Anyone on the internet", row.tier >= 2)}</fieldset><fieldset class="share-team-choices"><legend class="field-label">Teams</legend>${teamChoices || '<p class="supporting-text">No teams yet.</p>'}</fieldset><fieldset><legend class="field-label">Guests</legend><label class="field-choice"><input class="field-radio" type="radio" name="guestMode" value="specific"${patch.audience.guests.kind === "specific" ? " checked" : ""}>Specific guests</label><label class="field-choice"><input class="field-radio" type="radio" name="guestMode" value="all"${patch.audience.guests.kind === "all" ? " checked" : ""}>All current and future company guests</label></fieldset><fieldset class="share-specific"><legend class="field-label">Include</legend>${guestChoices(false)}</fieldset><fieldset class="share-exclusions"><legend class="field-label">Except</legend>${guestChoices(true)}</fieldset>${dependencyWarning}${input.dependants?.length ? hidden("force", "true") : ""}${next}<div class="actions share-save"><button class="btn btn-primary" type="submit">Save sharing</button></div>`
+    `${hidden("expectedScope", patch.scope)}${hidden("expectedLifecycleRevision", patch.lifecycleRevision)}<fieldset><legend class="field-label">Company people</legend>${choice("company", `People at ${viewer.company.name}`)}${choice("teams", "Selected teams", !input.teams?.length)}${choice("public", "Anyone on the internet", row.tier >= 2)}</fieldset><fieldset class="share-team-choices"><legend class="field-label">Teams</legend>${teamChoices || '<p class="supporting-text">No teams yet.</p>'}</fieldset>${dependencyWarning}${summary && summary.dependants.length + summary.hiddenCount > 0 ? hidden("expectedDependants", summary.dependants.map((d) => d.patchId).join(",") + ":" + summary.hiddenCount) : ""}${next}<div class="actions share-save"><button class="btn btn-primary" type="submit">Save sharing</button></div>`
   );
 
   const url = `${input.publicBaseUrl.replace(/\/+$/u, "")}${patchAddress(patch)}`;

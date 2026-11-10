@@ -383,29 +383,6 @@ it.layer(layer())("People's guests", (it) => {
     })
   );
 
-  it.effect("keeps company membership visible and removable after the last patch grant ends", () =>
-    Effect.gen(function* () {
-      const { grants, guest, notes, board } = yield* peopleWithGuests("pool-only");
-      for (const patch of [notes, board])
-        yield* grants.remove({
-          patchId: patch.patchId,
-          actor: { userId: DEV_SEED.userId, admin: true },
-          guest: guest.user.id
-        });
-      const listed = yield* page(admin, "/company?show=guests");
-      assert.include(listed, guest.user.email);
-      const removal = `/company/guests/${guest.user.id}/remove`;
-      assert.include(listed, removal);
-      assert.include(yield* page(admin, removal), "Remove from 0 patches");
-      const removed = yield* people(admin, removal, "POST");
-      assert.strictEqual(removed.status, 200);
-      assert.notInclude(yield* removed.text, guest.user.email);
-      assert.isFalse(
-        (yield* grants.sharedBefore(DEV_SEED.companyId)).some((p) => p.userId === guest.user.id)
-      );
-    })
-  );
-
   it.effect("keeps a guest removable while every patch shared with them is disabled", () =>
     Effect.gen(function* () {
       const { grants, guest, notes, board } = yield* peopleWithGuests("loch");

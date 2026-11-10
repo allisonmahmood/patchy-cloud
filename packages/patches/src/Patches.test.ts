@@ -924,7 +924,7 @@ it.layer(
         yield* service.retire(source.patchId, owner, true);
         assert.instanceOf(
           yield* service
-            .sharedTable(source.patchId, "notes", uploader.company.id)
+            .sharedTable(source.patchId, "notes", uploader.company.id, uploader.user.id)
             .pipe(Effect.flip),
           Patches.PatchNotOpenable
         );
@@ -950,7 +950,9 @@ it.layer(
         revision: source.schemaRevision
       };
       assert.instanceOf(
-        yield* service.sharedStore(source.patchId, "photos", "another-company").pipe(Effect.flip),
+        yield* service
+          .sharedStore(source.patchId, "photos", "another-company", uploader.user.id)
+          .pipe(Effect.flip),
         Patches.PatchNotOpenable
       );
       for (const invalid of [
@@ -981,8 +983,12 @@ it.layer(
       });
       yield* service.rollback(consumer.patchId, { userId: reader.user.id, admin: false }, 1);
       assert.isTrue(
-        (yield* service.sharedStore(source.patchId, "photos", uploader.company.id)).definition
-          .shared
+        (yield* service.sharedStore(
+          source.patchId,
+          "photos",
+          uploader.company.id,
+          uploader.user.id
+        )).definition.shared
       );
       const before = yield* stored(source.patchId);
       const unshared = {
@@ -1009,20 +1015,26 @@ it.layer(
         (BigInt(String(before.lifecycle_revision)) + 1n).toString()
       );
       const denied = yield* service
-        .sharedStore(source.patchId, "photos", uploader.company.id)
+        .sharedStore(source.patchId, "photos", uploader.company.id, uploader.user.id)
         .pipe(Effect.flip);
       assert.instanceOf(denied, Patches.PatchNotOpenable);
       assert.strictEqual(denied.store, "photos");
       assert.isUndefined(denied.table);
       yield* service.rollback(source.patchId, owner, 1);
       assert.instanceOf(
-        yield* service.sharedStore(source.patchId, "photos", uploader.company.id).pipe(Effect.flip),
+        yield* service
+          .sharedStore(source.patchId, "photos", uploader.company.id, uploader.user.id)
+          .pipe(Effect.flip),
         Patches.PatchNotOpenable
       );
       yield* update(source.patchId, { manifest });
       assert.isTrue(
-        (yield* service.sharedStore(source.patchId, "photos", uploader.company.id)).definition
-          .shared
+        (yield* service.sharedStore(
+          source.patchId,
+          "photos",
+          uploader.company.id,
+          uploader.user.id
+        )).definition.shared
       );
       const stale = yield* update(consumer.patchId, {
         manifest: { ...Fixtures.manifest, tier: 2, uses: { photos: use } },
@@ -1071,18 +1083,28 @@ it.layer(
       yield* service.restore(source.patchId, owner);
       yield* service.restore(consumer.patchId, administrator);
       assert.isTrue(
-        (yield* service.sharedStore(source.patchId, "photos", uploader.company.id)).definition
-          .shared
+        (yield* service.sharedStore(
+          source.patchId,
+          "photos",
+          uploader.company.id,
+          uploader.user.id
+        )).definition.shared
       );
       yield* service.delete(source.patchId, owner, true);
       assert.instanceOf(
-        yield* service.sharedStore(source.patchId, "photos", uploader.company.id).pipe(Effect.flip),
+        yield* service
+          .sharedStore(source.patchId, "photos", uploader.company.id, uploader.user.id)
+          .pipe(Effect.flip),
         Patches.PatchNotOpenable
       );
       yield* service.restore(source.patchId, owner);
       assert.isTrue(
-        (yield* service.sharedStore(source.patchId, "photos", uploader.company.id)).definition
-          .shared
+        (yield* service.sharedStore(
+          source.patchId,
+          "photos",
+          uploader.company.id,
+          uploader.user.id
+        )).definition.shared
       );
       yield* service.delete(source.patchId, owner, true);
       yield* TestClock.adjust(30 * DAY);
@@ -1090,7 +1112,9 @@ it.layer(
       const replacement = yield* create({ manifest });
       assert.notStrictEqual(replacement.patchId, source.patchId);
       assert.instanceOf(
-        yield* service.sharedStore(source.patchId, "photos", uploader.company.id).pipe(Effect.flip),
+        yield* service
+          .sharedStore(source.patchId, "photos", uploader.company.id, uploader.user.id)
+          .pipe(Effect.flip),
         Patches.PatchNotOpenable
       );
     })
@@ -1137,7 +1161,12 @@ it.layer(
       );
       yield* service.restore(retired!.patchId, owner);
       assert.strictEqual(
-        (yield* service.sharedTable(retired!.patchId, "notes", uploader.company.id)).patchId,
+        (yield* service.sharedTable(
+          retired!.patchId,
+          "notes",
+          uploader.company.id,
+          uploader.user.id
+        )).patchId,
         retired!.patchId
       );
     })
@@ -1588,7 +1617,7 @@ it.layer(
     })
   );
 
-  it.effect("keeps retained source states while redacting inaccessible source names", () =>
+  it.effect("redacts both names and lifecycle states of inaccessible sources", () =>
     Effect.gen(function* () {
       const service = yield* Patches.Patches;
       const sources: Record<string, Patches.Recorded> = {};
@@ -1625,11 +1654,7 @@ it.layer(
           table: "notes",
           ...(alias === "live" || alias === "retired" || alias === "deleted"
             ? { name: source.name, state: alias }
-            : alias === "disabled"
-              ? { state: "live" }
-              : alias === "hidden"
-                ? { state: "retired" }
-                : { state: "gone" })
+            : { state: "gone" })
         })
       );
       assert.deepStrictEqual(

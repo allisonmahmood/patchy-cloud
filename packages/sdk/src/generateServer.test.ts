@@ -58,7 +58,8 @@ it.effect(
           },
           skills: [],
           serverModules: ["leads"]
-        })
+        }),
+        identity.user.id
       );
       yield* Effect.promise(async () => {
         await mkdir(path.join(root, ".local"), { recursive: true });

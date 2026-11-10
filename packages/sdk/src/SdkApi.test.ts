@@ -1207,14 +1207,18 @@ it.layer(layer)("SDK company generation", (it) => {
         );
         assert.strictEqual(refused.status, 422);
         assert.include(yield* refused.json, { code: "patch_not_openable" });
-        const error = yield* Generation.generate(identity.company.id, {
-          ...generateRequest(),
-          manifest: {
-            ...Fixtures.manifest,
-            tier: 2,
-            uses: { assets: { kind: "sharedStore", patchId, store: "logos" } }
-          }
-        }).pipe(Effect.flip);
+        const error = yield* Generation.generate(
+          identity.company.id,
+          {
+            ...generateRequest(),
+            manifest: {
+              ...Fixtures.manifest,
+              tier: 2,
+              uses: { assets: { kind: "sharedStore", patchId, store: "logos" } }
+            }
+          },
+          identity.user.id
+        ).pipe(Effect.flip);
         assert.instanceOf(error, Generation.PatchNotOpenable);
         if (error._tag === "SdkPatchNotOpenable") {
           assert.instanceOf(error.cause, Patches.PatchNotOpenable);
@@ -1275,7 +1279,8 @@ it.layer(layer)("SDK company generation", (it) => {
         }),
         { ...generateRequest(), patchId }
       ];
-      for (const payload of requests) yield* Generation.generate(foreign.company.id, payload);
+      for (const payload of requests)
+        yield* Generation.generate(foreign.company.id, payload, foreign.user.id);
       // Generation must ask with the caller's company, never the source's.
       const api = yield* sdkOver(Layer.empty);
       for (const payload of requests) {
@@ -1440,10 +1445,11 @@ it.layer(layer)("SDK company generation", (it) => {
           Layer.succeed(Patches.Patches, replaced.patches ?? patches),
           Layer.succeed(ConnectionStore.ConnectionStore, replaced.connections ?? connections)
         );
-        const error = yield* Generation.generate(identity.company.id, payload).pipe(
-          Effect.provide(dependencies),
-          Effect.flip
-        );
+        const error = yield* Generation.generate(
+          identity.company.id,
+          payload,
+          identity.user.id
+        ).pipe(Effect.provide(dependencies), Effect.flip);
         const response = yield* (yield* sdkOver(dependencies)).generate({
           payload,
           responseMode: "response-only"
@@ -1484,10 +1490,14 @@ it.layer(layer)("SDK company generation", (it) => {
           sharedTable: () => Effect.fail(sqlError)
         });
         for (const operation of [
-          Generation.generate(identity.company.id, {
-            ...generateRequest(),
-            patchId: "sdksqlfail01"
-          }),
+          Generation.generate(
+            identity.company.id,
+            {
+              ...generateRequest(),
+              patchId: "sdksqlfail01"
+            },
+            identity.user.id
+          ),
           Generation.generate(
             identity.company.id,
             generateRequest({
@@ -1496,7 +1506,8 @@ it.layer(layer)("SDK company generation", (it) => {
               uses: {
                 contacts: { kind: "sharedTable", patchId: "sdksqlfail01", table: "contacts" }
               }
-            })
+            }),
+            identity.user.id
           )
         ]) {
           const exit = yield* operation.pipe(Effect.provide(dependencies), Effect.exit);
@@ -1521,10 +1532,11 @@ it.layer(layer)("SDK company generation", (it) => {
           ),
           Layer.fresh
         );
-        const exit = yield* Generation.generate(identity.company.id, payload).pipe(
-          Effect.provide(isolated),
-          Effect.exit
-        );
+        const exit = yield* Generation.generate(
+          identity.company.id,
+          payload,
+          identity.user.id
+        ).pipe(Effect.provide(isolated), Effect.exit);
         assert.isTrue(Exit.isFailure(exit));
         if (Exit.isFailure(exit)) {
           assert.isTrue(Cause.hasDies(exit.cause));

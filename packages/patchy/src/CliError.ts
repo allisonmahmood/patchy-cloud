@@ -45,6 +45,7 @@ export class LocalError extends Schema.TaggedError<LocalError>()("LocalError", f
 export const refusalFields = {
   owner: Schema.optionalKey(NotOwner.fields.owner),
   dependants: Schema.optionalKey(HasDependants.fields.dependants),
+  hiddenCount: Schema.optionalKey(Schema.Number),
   sources: Schema.optionalKey(SourcesOff.fields.sources),
   state: Schema.optionalKey(PatchState),
   purgeAt: Schema.optionalKey(PatchDeleted.fields.purgeAt),
@@ -107,7 +108,7 @@ const refusalMessage = (value: typeof refusal.Type): string => {
       break;
     case "has_dependants":
       if ("dependants" in value)
-        return `Other live patches read these resources.\n${value.dependants.map((patch) => `- ${patch.patchId} ${patch.name} (${patch.owner.name})`).join("\n")}\nAsk the person you are working for before forcing.`;
+        return `Other live patches read these resources.\n${value.dependants.map((patch) => `- ${patch.patchId} ${patch.name} (${patch.owner.name})`).join("\n")}${"hiddenCount" in value && value.hiddenCount ? `\n- ${value.hiddenCount} others` : ""}\nAsk the person you are working for before forcing.`;
       break;
     case "sources_off":
       if ("sources" in value)

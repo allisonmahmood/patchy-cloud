@@ -396,7 +396,7 @@ it.layer(
         assert.isFalse(inventory.tables.contacts?.shared);
         assert.instanceOf(
           yield* service
-            .sharedTable(source.patchId, "contacts", uploader.company.id)
+            .sharedTable(source.patchId, "contacts", uploader.company.id, uploader.user.id)
             .pipe(Effect.flip),
           Patches.PatchNotOpenable
         );
@@ -422,7 +422,7 @@ it.layer(
         );
         assert.instanceOf(
           yield* service
-            .sharedTable(source.patchId, "contacts", uploader.company.id)
+            .sharedTable(source.patchId, "contacts", uploader.company.id, uploader.user.id)
             .pipe(Effect.flip),
           Patches.PatchNotOpenable
         );

@@ -112,6 +112,9 @@ const harness = Effect.fnUntraced(function* (code = ready) {
     Effect.provideService(ConnectedVersions.ConnectedVersions, connected),
     Effect.provideService(StreamLimits.StreamLimits, local),
     Effect.provideService(LoadedVersions.LoadedVersions, {
+      findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+        return this.find(patchId);
+      },
       find: (_patchId, versionId) => Effect.succeed(Option.some(version(versionId!)))
     })
   );

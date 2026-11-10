@@ -106,6 +106,9 @@ const binding = {
   }
 };
 const versions = Layer.succeed(LoadedVersions.LoadedVersions, {
+  findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+    return this.find(patchId);
+  },
   find: (patch, version) =>
     Effect.succeed(
       patch === patchId && (version === undefined || version === versionId)

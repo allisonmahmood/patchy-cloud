@@ -526,6 +526,9 @@ export const revisionsContract = Effect.fn("test.revisionsContract")(function* (
     handlers[op].run(args).pipe(Effect.provideService(Binding.Binding, binding));
   const reader = yield* SubscriptionReads.makeDev.pipe(
     Effect.provideService(LoadedVersions.LoadedVersions, {
+      findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+        return this.find(patchId);
+      },
       find: () => Effect.succeed(Option.some({ ...binding, patchTier: binding.manifest.tier }))
     })
   );
@@ -630,14 +633,14 @@ export const sharedOperationsContract = Effect.fn("test.sharedOperationsContract
     new Map<string, LoadedVersions.LoadedVersion>([[source.binding.patchId, source.binding]])
   );
   const versions = LoadedVersions.LoadedVersions.of({
-    find: (patchId, versionId, viewer) =>
+    find: () => Effect.succeed(Option.none()),
+    findForViewer: (patchId, viewer) =>
       Ref.get(live).pipe(
         Effect.map((current) => {
           const found = current.get(patchId);
           return viewer?.companyId !== companyId ||
             viewer.userId !== "usr_viewer" ||
-            found === undefined ||
-            (versionId !== undefined && found.versionId !== versionId)
+            found === undefined
             ? Option.none()
             : Option.some({ ...found, patchTier: found.manifest.tier });
         })

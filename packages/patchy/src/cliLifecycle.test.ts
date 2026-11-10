@@ -192,8 +192,8 @@ describe("patch lifecycle commands", () => {
       args: ["company"],
       status: 409,
       code: "has_dependants",
-      fields: { dependants },
-      text: "office-map"
+      fields: { dependants, hiddenCount: 2 },
+      text: "2 others"
     },
     {
       verb: "retire",

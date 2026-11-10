@@ -477,6 +477,9 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
   const loaded = Layer.succeed(
     LoadedVersions.LoadedVersions,
     LoadedVersions.LoadedVersions.of({
+      findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+        return this.find(patchId);
+      },
       find: (patchId, requestedVersion) => {
         if (requestedVersion !== undefined)
           return Effect.succeed(

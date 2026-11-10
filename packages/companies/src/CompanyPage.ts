@@ -101,10 +101,14 @@ export interface Guest {
  */
 export const Guests = Context.Reference<
   | {
-      readonly list: (companyId: string) => Effect.Effect<ReadonlyArray<Guest>, SqlError>;
+      readonly list: (
+        companyId: string,
+        viewer?: { readonly userId: string; readonly admin: boolean }
+      ) => Effect.Effect<ReadonlyArray<Guest>, SqlError>;
       readonly removeAll: (input: {
         readonly companyId: string;
         readonly userId: string;
+        readonly actorId?: string;
       }) => Effect.Effect<void, SqlError>;
     }
   | undefined
@@ -305,7 +309,13 @@ const render = Effect.fn("CompanyPage.render")(function* (
   const users = yield* (yield* Users.Users).list(viewer.company.id);
   const invites = yield* companies.listInvites(viewer.company.id);
   const companyGuests = yield* Guests;
-  const guests = companyGuests === undefined ? [] : yield* companyGuests.list(viewer.company.id);
+  const guests =
+    companyGuests === undefined
+      ? []
+      : yield* companyGuests.list(viewer.company.id, {
+          userId: viewer.user.id,
+          admin: viewer.role !== "member"
+        });
   const ownedPatches = yield* OwnedPatches;
   const owned =
     ownedPatches === undefined
@@ -745,7 +755,9 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
       const guest =
         guests === undefined
           ? undefined
-          : (yield* guests.list(viewer.company.id)).find(({ userId }) => userId === act.id);
+          : (yield* guests.list(viewer.company.id, { userId: viewer.user.id, admin: true })).find(
+              ({ userId }) => userId === act.id
+            );
       if (guests === undefined || guest === undefined)
         return yield* render(viewer, {
           filter: { show: "guests", query: "" },
@@ -756,7 +768,11 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
         });
       if (act.kind === "view-guest-removal") return renderGuestRemoval(viewer, guest);
       // Ends whatever they hold now, so a patch shared since the confirmation goes too.
-      yield* guests.removeAll({ companyId: viewer.company.id, userId: guest.userId });
+      yield* guests.removeAll({
+        companyId: viewer.company.id,
+        userId: guest.userId,
+        actorId: viewer.user.id
+      });
       return done(`Removed ${guest.name} from all patches`, filterHref("guests", ""));
     }
     const { role } = yield* decodeRole(Object.fromEntries(yield* request.urlParamsBody));

@@ -367,7 +367,7 @@ it.layer(
           ok: true,
           patchId,
           scope: "public",
-          audience: { members: { kind: "public" }, guests: { kind: "specific", userIds: [] } },
+          audience: { members: { kind: "public" } },
           publicUrl: address
         }
       });

@@ -85,6 +85,9 @@ const failure = <Fields extends Schema.Struct.Fields>(status: number, fields: Fi
   );
 
 export const BadRequest = failure(400, {});
+export const AudienceRefused = failure(400, {
+  code: Schema.Literals(["invalid_audience_teams", "audience_excludes_owner", "owner_access_lost"])
+});
 /** A missing credential and a bad one answer the same sentence, so the wire never says which. */
 export const Unauthorized = Schema.Struct({
   ok: Schema.Literal(false),
@@ -118,6 +121,7 @@ export const PatchDeleted = failure(409, {
 });
 export const HasDependants = failure(409, {
   code: Schema.Literal("has_dependants"),
+  hiddenCount: Schema.optionalKey(Schema.Number),
   dependants: Schema.Array(
     Schema.Struct({ patchId: PatchId, name: Schema.String, owner: PatchOwner })
   )
@@ -258,7 +262,7 @@ export const DeviceLoginGone = failure(410, {
 // --- patches --------------------------------------------------------------
 
 /** Who may open a patch: signed-in company members, or anyone with the link. */
-export const SharingScope = Schema.Literals(["company", "public"]);
+export const SharingScope = Schema.Literals(["company", "public", "teams"]);
 
 /** The company-handle grammar, in a company's patch namespace. */
 export const PatchName = Schema.String.check(
@@ -1015,7 +1019,7 @@ export class PublishMetadata extends Schema.Class<PublishMetadata>("PublishMetad
   look: Schema.optionalKey(Schema.NullOr(LookStamp))
 }) {}
 
-/** Internal members and outside company-space guests are independent grants. */
+/** Member audience. Named guest grants are managed separately per patch. */
 export const PatchAudience = Schema.Struct({
   members: Schema.Union([
     Schema.Struct({ kind: Schema.Literal("company") }),
@@ -1023,16 +1027,6 @@ export const PatchAudience = Schema.Struct({
     Schema.Struct({
       kind: Schema.Literal("teams"),
       teamIds: Schema.Array(NonEmptyText).check(Schema.isMinLength(1), Schema.isMaxLength(100))
-    })
-  ]),
-  guests: Schema.Union([
-    Schema.Struct({
-      kind: Schema.Literal("specific"),
-      userIds: Schema.Array(NonEmptyText)
-    }),
-    Schema.Struct({
-      kind: Schema.Literal("all"),
-      excludedUserIds: Schema.Array(NonEmptyText)
     })
   ])
 });

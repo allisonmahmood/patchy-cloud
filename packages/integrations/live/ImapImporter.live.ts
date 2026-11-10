@@ -105,7 +105,12 @@ const services = Layer.mergeAll(
   AttioSource.layer,
   Sessions.layer.pipe(Layer.provideMerge(Source.layer.pipe(Layer.provide(network)))),
   // The patch reads only its own tables and store: no other version to find.
-  Layer.succeed(LoadedVersions.LoadedVersions, { find: () => Effect.succeed(Option.none()) })
+  Layer.succeed(LoadedVersions.LoadedVersions, {
+    findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+      return this.find(patchId);
+    },
+    find: () => Effect.succeed(Option.none())
+  })
 ).pipe(
   Layer.provideMerge(InvocationCapabilities.layer),
   Layer.provideMerge(CompanyTesting.layer()),

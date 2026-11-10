@@ -321,7 +321,7 @@ export const makeAccess = Effect.gen(function* () {
       return yield* new Runtime.AccessDenied({});
     // Resolve liveness before acquiring a company lease or inventory lock.
     const source = yield* versions
-      .find(declaration.patchId, undefined, {
+      .findForViewer(declaration.patchId, {
         companyId: binding.identity.company.id,
         userId: binding.identity.user.id
       })
