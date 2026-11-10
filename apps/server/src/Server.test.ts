@@ -288,7 +288,7 @@ it.layer(
         assert.strictEqual(company.status, 200);
         const owned = (yield* company.text).match(
           new RegExp(
-            `${DEV_SEED.email}[\\s\\S]*?</td><td>(?:<strong>)?(?:Admin|Member)(?:</strong>)?</td><td>(\\d+)</td>`
+            `${DEV_SEED.email}[\\s\\S]*?</td><td class="hide-sm">(?:Admin|Member)</td><td class="r hide-sm">(\\d+)</td>`
           )
         )?.[1];
         assert.strictEqual(Number(owned), live?.count);

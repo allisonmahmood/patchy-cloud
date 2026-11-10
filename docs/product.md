@@ -633,20 +633,25 @@ A **user** is one individual with one account, in exactly one company. They sign
 
 An **admin** runs the company's invitations, roles, deactivation, reactivation and connections, and its **agent access** switch ([Patchy MCP](#patchy-mcp)). Admins manage descriptions, sharing, served versions, retire, delete, restore and reassignment from the portal. Publish stays owner-only. Groups and group permissions remain future work.
 
-Today **People**, at `/settings/people`, lists users, roles, active/deactivated state and pending invites
-in one table, with how many live patches each person owns among those the reader
-can open. Tabs narrow it to admins, invites or deactivated users, and a search
-matches names and emails. Invites that need an admin, because their email did
-not go out or they expired, come first with Resend beside them. Admins invite
-from Invite people in the page's toolbar, pasting up to `invites.batch` addresses at once, and
-manage roles, deactivation and reactivation from each row's menu; members read
-the same page without actions. A **Guests** tab, there once the company has
-any, lists everyone at another company holding a grant to one of its patches
-now, with their company; each row opens to those patches, who shared each and
-when, marking one the operator has disabled as unavailable. For admins it ends
-in **Remove from all patches…**, a confirmation listing every one of those
-patches, which ends every grant the person holds in the company and leaves their
-grants elsewhere alone; a public patch stays open to anyone with the link.
+Today **People**, at `/settings/people`, lists users, their roles, when they
+joined and how many live patches each owns among those the reader can open,
+then pending invites, then deactivated users. A segmented filter narrows it to
+All, Admins, Invited, Guests and, while anyone is deactivated, Deactivated,
+each counting what the filter field leaves in it; both are in the URL. Invites
+that need an admin, because their email did not go out or they expired, lead
+the invites, marked so. Admins invite from **Invite people…** in the header, a
+dialog over the list at `?invite=1`, pasting up to `invites.batch` addresses at
+once with a role; a refusal draws it again with what was typed. Each row's menu
+holds Make admin or Make member (never for the last active admin), See their
+patches, and Deactivate… or Reactivate…; an invite's holds Resend and Revoke,
+and pressing one Resend twice emails once. Members read the same page without
+menus, with the admins named in its header. **Guests** lists everyone at
+another company holding a grant to one of its patches now, with their company
+and each of those patches, who shared it and when, marking one the operator has
+disabled as unavailable. For admins each row's menu holds **Remove from all
+patches…**, a confirmation over Guests listing every one of those patches,
+which ends every grant the person holds in the company and leaves their grants
+elsewhere alone; a public patch stays open to anyone with the link.
 Ended grants keep their records, so member columns still name the person,
 inactive, but someone whose grants have all ended is no longer listed. The last active admin cannot be demoted or
 deactivated. Reactivation restores sign-in to the same company and data, but
@@ -662,9 +667,9 @@ Deactivation also ends every agent connection in the same transaction, and react
 
 Every patch is company-wide or public today, so a deactivated user's patches keep serving unless the admin retires them, marked **owner deactivated** in the portal and agent discovery. Nobody can publish to them until the owner is reactivated or an admin reassigns them.
 
-The Deactivate and Reactivate links on `/settings/people` lead to the portal's pick pages. Deactivation lists the user's live patches with static badges naming their live dependants, including their own. Retired and deleted patches are visible but cannot be selected. **Keep their patches live** deactivates at once; **Retire selected** and **Retire all** show a confirmation recomputed for the selection. A user with no live patches goes straight to confirmation. The confirmation lists every live dependant outside the selection, regardless of owner, and requires acknowledgement when anything breaks. Deactivation, token revocation and the selected ordinary retirements commit in one transaction or all roll back. The last-active-admin rule applies before both the pick and the submitted act.
+Deactivate… and Reactivate… on `/settings/people` lead to the portal's pick pages, Flow pages that choose what happens to the person's patches. Deactivation offers **Keep them live**, already chosen, **Retire some** and **Retire all**, over a list of the user's patches naming each live one's live dependants, including their own; retired and deleted patches are listed but cannot be chosen. **Deactivate <name>** with Keep chosen deactivates at once; the other two go to a confirmation recomputed for the selection, at its own address (`?choice=selected&patch=…` or `?choice=all`), so a reload, Back or another tab shows the same decision and only its button acts. A user with no live patches goes straight to confirmation. The confirmation lists every live dependant outside the selection, regardless of owner, and requires acknowledgement when anything breaks. Deactivation, token revocation and the selected ordinary retirements commit in one transaction or all roll back. The last-active-admin rule applies before both the pick and the submitted act.
 
-Reactivation offers **Keep them retired**, **Restore selected** and **Restore all** for the user's retired patches, however they were retired. Its confirmation warns per patch when its current version reads sources that stay off; a source restored in the same selection counts as intact. Reactivation and the selected restores commit together. Fresh tokens are required, reassigned patches stay with their new owners, and deleted patches stay deleted. Bulk retire and restore exist only in these user flows; later cleanup is per patch from its card.
+Reactivation offers **Keep them retired**, **Restore some** and **Restore all** for the user's retired patches, however they were retired. Its confirmation warns per patch when its current version reads sources that stay off; a source restored in the same selection counts as intact. Reactivation and the selected restores commit together. Fresh tokens are required, reassigned patches stay with their new owners, and deleted patches stay deleted. Bulk retire and restore exist only in these user flows; later cleanup is per patch from its card.
 
 Personal-connection credentials and the takedown of owner-only patches wait for personal connections and narrower sharing. Deleting a user is a separate, later act: its flow will prompt the admin to reassign the user's patches, and what is not reassigned will go with the user.
 
@@ -2020,7 +2025,7 @@ The build composes the shell's components and follows the `ui-consistency` spec;
 
 - **Connecting an agent** is Connect an app at `/agents/connect`, linked from Use patches on Your agents: a tab per agent (Claude, Claude Code, Codex, ChatGPT, Another agent), each a link such as `?app=claude`, so the page needs no script. The open tab shows only that agent's steps, with the address in a copy line where a step needs it. Claude: Settings › Connectors › Add custom connector, named Patchy, with `<instance>/mcp`, then yes in the browser; its web, desktop and phone apps share connectors. Claude Code: `claude mcp add --transport http patchy <instance>/mcp`, then `/mcp`. Codex: `codex mcp add patchy --url <instance>/mcp`, then `codex mcp login patchy`. ChatGPT: a custom connector, where the plan allows one. Another agent: the address, and that some agents, such as Cursor and Gemini CLI, can't connect yet. With agent access off the page, and Use patches in place of its link, names the admins, and an admin also gets Turn it on, to Agent access.
 - **Consent** is a door: the kicker "Agent access"; "Let Claude use Brightline Studio's patches as you?"; who meets whom, the agent's mark, name and site, an arrow, and the person's avatar, name and email; what Claude can and can't do, each line saying which, with "Every change it makes is logged as Jordan Lee via Claude"; for an answer that returns to the person's own computer, a warning naming the address and "Allow only if you just started connecting it"; Deny and Allow at equal width; "Your answer goes back to claude.ai. Disconnect it any time on Your agents."; and in its foot who is signed in, with Use another account. An account change while the page was open puts a warning above who meets whom and asks again. With agent access off the heading says so, a member is told the admins' names, an admin is told to turn it on and gets **Turn it on**, and Back to Claude tells the client no. A request that ran out says nothing was connected and to start again from the agent.
-- **Agent access** is its own page, `/settings/agent-access`: On or Off, the latest change ("Turned off by Priya Shah on 12 Oct"), one sentence on what the state means, and for admins one button, Turn on or Turn off agent access, without confirmation, with no list or count of connections. The starting Off has no latest change. On, the button is preceded by what turning it off does: every agent refused until it's back on, no connection ended. Members see the state and the latest change without a button, with the admins' names and, when it's on, Connect your agent. Agents and publishes told it's off point there.
+- **Agent access** is its own page, `/settings/agent-access`: one setting, Agents use patches, saying what it lets people's own agents do and that turning it off refuses every agent until it's back on and ends no connection, with the latest change under it ("Turned off by Priya Shah on 12 Oct"). For admins it is a switch, a one-button form that changes it at once, without confirmation, with no list or count of connections. The starting Off has no latest change. Members read On or Off in its place, with the admins named in the header and, when it's on, Connect your app. Agents and publishes told it's off point there.
 - **Your agents** shows what's connected before any steps, in two sections. Build patches: each computer's name, last use and expiry, with Revoke, then Add a computer, a link to its own page at `/agents/computer` with the setup line. Use patches: each connection's client name and site, Connected and Last used, and Disconnect; a connection unused for a week or more says when it ends on its own and that reconnecting leaves the old one behind ("If you reconnected Claude Code since, this is the old one; it ends on its own on 1 Nov."). then Connect an app. Disconnect everything, at the foot, leads to its own page at `/agents/disconnect-all` saying how many computers and agents end, with any approval not yet collected, and asks once for the person who opened it. Dates are written as dates, last-used times as relative ones.
 - **The card** of a live patch with an agent area gets a side panel to the right of its Overview, for everyone who can open the card: "What agents can do", "As the person who connected them.", then each tool in `open_patch`'s order with its name in code and a Reads or Changes tag, its description opening in place, and "Connect your agent" to Your agents' Connect an app (`/agents/connect?app=claude`). On a narrow page the panel drops below the Overview, which is otherwise unchanged. With agent access off a note naming the admins takes the connect link's place, and admins also get "Turn it on in Settings". A patch without an agent area has no panel and no hint to add one.
 - **The log** names agent work "Jordan Lee via Claude" in words, with the client name shown at consent: in the Log tab's person column and the steps that acted as the person, the card's Recent activity, a connection's recent calls, and `patchy logs`, whose `--json` entries carry `agent: { name }`, null for a page's call. There is no new column, tag or filter.

@@ -331,6 +331,12 @@ const page = (person: Person, path: string) =>
     assert.strictEqual(response.status, 200);
     return response.text;
   });
+/** The removal's confirmation: a dialog over Guests, which lists the same patches behind it. */
+const dialog = (html: string) => {
+  const start = html.indexOf('id="remove-guest" role="dialog"');
+  assert.isAtLeast(start, 0);
+  return html.slice(start);
+};
 
 it.layer(layer())("People's guests", (it) => {
   it.effect("lists each guest's patches here to every member, with Remove for admins only", () =>
@@ -339,8 +345,7 @@ it.layer(layer())("People's guests", (it) => {
       const removal = `/settings/people/guests/${guest.user.id}/remove`;
       const listed = yield* page(member, "/settings/people?show=guests");
       const start = listed.indexOf(guest.user.email);
-      const row = listed.slice(start, listed.indexOf("</details>", start));
-      assert.include(row, "2 patches");
+      const row = listed.slice(start, listed.indexOf("</tr>", start));
       for (const title of ["fjord notes", "fjord board"]) assert.include(row, title);
       assert.include(row, `Shared by ${DEV_SEED.userName}`);
       assert.notInclude(row, "fjord rota");
@@ -358,7 +363,7 @@ it.layer(layer())("People's guests", (it) => {
     Effect.gen(function* () {
       const { grants, guest, notes, board, theirs } = yield* peopleWithGuests("tarn");
       const removal = `/settings/people/guests/${guest.user.id}/remove`;
-      const confirmation = yield* page(admin, removal);
+      const confirmation = dialog(yield* page(admin, removal));
       for (const title of ["tarn notes", "tarn board"]) assert.include(confirmation, title);
       assert.notInclude(confirmation, "tarn rota");
       assert.include(confirmation, "Remove from 2 patches");
@@ -391,9 +396,8 @@ it.layer(layer())("People's guests", (it) => {
       const listed = yield* page(admin, "/settings/people?show=guests");
       const start = listed.indexOf(guest.user.email);
       assert.isAtLeast(start, 0);
-      const row = listed.slice(start, listed.indexOf("</details>", start));
-      assert.include(row, "2 patches");
-      assert.include(row, "Unavailable");
+      const row = listed.slice(start, listed.indexOf("</tr>", start));
+      assert.lengthOf(row.match(/Unavailable/g) ?? [], 2);
 
       yield* people(admin, `/settings/people/guests/${guest.user.id}/remove`, "POST");
       // Re-enabling them would let the guest back in had their grants survived.
@@ -407,7 +411,9 @@ it.layer(layer())("People's guests", (it) => {
       const { guest, board } = yield* peopleWithGuests("fell");
       yield* (yield* SqlClient.SqlClient)`UPDATE patches SET disabled_at = now()
         WHERE id = ${board.patchId}`;
-      const confirmation = yield* page(admin, `/settings/people/guests/${guest.user.id}/remove`);
+      const confirmation = dialog(
+        yield* page(admin, `/settings/people/guests/${guest.user.id}/remove`)
+      );
       for (const title of ["fell notes", "fell board"]) assert.include(confirmation, title);
       assert.include(confirmation, "Unavailable");
       assert.include(confirmation, "Remove from 2 patches");

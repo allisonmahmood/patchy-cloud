@@ -14,6 +14,8 @@ export {
   textarea
 } from "./controls.js";
 export type { ButtonLook, ChoiceAria, FieldControl, InputOptions } from "./controls.js";
+export { checklist } from "./checklist.js";
+export type { CheckItem } from "./checklist.js";
 export {
   chipMenu,
   codeRow,

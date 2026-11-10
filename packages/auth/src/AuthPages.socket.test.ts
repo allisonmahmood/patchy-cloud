@@ -190,7 +190,7 @@ it.layer(layer)("auth pages on a socket", (it) => {
         const membership = yield* request(created.headers.get("location")!);
         assert.strictEqual(membership.status, 200);
         const membershipHtml = yield* Effect.promise(() => membership.text());
-        assert.include(membershipHtml, 'action="/settings/people/invites"');
+        assert.include(membershipHtml, 'href="/settings/people?invite=1"');
         const logoutAction = membershipHtml.match(
           /<form\b[^>]*method="post"[^>]*action="(\/logout)"/
         )?.[1];

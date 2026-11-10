@@ -20,6 +20,20 @@ export interface DeliveryResult {
   readonly mailFailed: boolean;
 }
 
+/** A resend, and the expiry its form showed when it came from one. */
+export interface ResendInput extends InviteReference {
+  /**
+   * The expiry the admin's form showed, in epoch milliseconds. A resend that emails moves it, so
+   * a repeat of the same form, such as a second press, finds it moved and sends nothing more.
+   */
+  readonly shownExpiry?: number;
+}
+
+export interface ResendResult extends DeliveryResult {
+  /** Another resend emailed it since the form was shown, so this one sent nothing. */
+  readonly repeated: boolean;
+}
+
 const lockPendingRow = SqlSchema.findOneOption({
   Request: Schema.Struct({ companyId: Schema.String, inviteId: Schema.String }),
   Result: Companies.Invite,
@@ -110,9 +124,9 @@ export const revoke = Effect.fn("Invitations.revoke")(function* (
 }, Effect.uninterruptible);
 
 export const resend = Effect.fn("Invitations.resend")(function* (
-  input: InviteReference
+  input: ResendInput
 ): Effect.fn.Return<
-  DeliveryResult,
+  ResendResult,
   Companies.InviteUnavailable | SqlError,
   SqlClient.SqlClient | InviteMail.InviteMail
 > {
@@ -121,6 +135,9 @@ export const resend = Effect.fn("Invitations.resend")(function* (
   return yield* sql.withTransaction(
     Effect.gen(function* () {
       let invite = yield* lockPending(input);
+      // Checked under the row lock, so of two presses of one form only the first emails.
+      if (input.shownExpiry !== undefined && invite.expiresAt.getTime() !== input.shownExpiry)
+        return { invite, mailFailed: false, repeated: true };
       if (invite.clerkInvitationId !== null) {
         const revokeFailed = yield* mail.revoke(invite.clerkInvitationId).pipe(
           Effect.as(false),
@@ -130,15 +147,16 @@ export const resend = Effect.fn("Invitations.resend")(function* (
             InviteMailError: () => Effect.succeed(true)
           })
         );
-        if (revokeFailed) return { invite, mailFailed: true };
+        if (revokeFailed) return { invite, mailFailed: true, repeated: false };
         yield* sql`UPDATE invites SET clerk_invitation_id = NULL WHERE id = ${invite.id}`;
         invite = new Companies.Invite({ ...invite, clerkInvitationId: null });
       }
       const now = yield* Clock.currentTimeMillis;
-      return yield* deliver(
+      const delivered = yield* deliver(
         invite,
         DateTime.toDateUtc(DateTime.makeUnsafe(now + Companies.INVITATION_LIFETIME_MS))
       );
+      return { ...delivered, repeated: false };
     })
   );
 }, Effect.uninterruptible);
