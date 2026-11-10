@@ -377,7 +377,7 @@ it.layer(layer)("AgentConnections", (it) => {
         assert.deepStrictEqual(yield* current(connection.id), identity);
         assert.deepStrictEqual(yield* lastUsedAt(connection.id), stamped, "a recheck is no call");
         // A role change shows on the next recheck, and an expired access token ends nothing.
-        yield* sql`UPDATE users SET role = 'admin' WHERE id = ${userId}`;
+        yield* sql`UPDATE users SET role = 'super_admin' WHERE id = ${userId}`;
         yield* sql`UPDATE agent_connection_access_tokens SET expires_at = clock_timestamp()
           WHERE connection_id = ${connection.id}`;
         assert.strictEqual((yield* current(connection.id))?.role, "super_admin");

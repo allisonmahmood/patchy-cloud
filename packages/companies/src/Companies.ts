@@ -12,8 +12,7 @@ import {
   AlreadyInCompany,
   displayName,
   lockAdministrator,
-  roleFromStorage,
-  roleToStorage,
+  lockInvitationAdministrator,
   Role,
   RoleForbidden,
   User,
@@ -179,7 +178,8 @@ export class Companies extends Context.Service<
     readonly revokeInvite: (input: {
       readonly companyId: string;
       readonly inviteId: string;
-    }) => Effect.Effect<Invite, InviteUnavailable | SqlError>;
+      readonly actorId: string;
+    }) => Effect.Effect<Invite, InviteUnavailable | RoleForbidden | SqlError>;
     readonly consumeInvite: (
       input: Claims & { readonly inviteId: string }
     ) => Effect.Effect<User, AlreadyInCompany | InviteUnavailable | SqlError>;
@@ -213,9 +213,9 @@ export const make = Effect.gen(function* () {
   const dieOnSchemaError = { SchemaError: Effect.die } as const;
   const companyColumns = sql`id, handle, name, created_at AS "createdAt"`;
   const userColumns = sql`id, clerk_user_id AS "clerkUserId", company_id AS "companyId",
-    email, name, ${sql.unsafe(roleFromStorage)} AS role, created_at AS "createdAt", deactivated_at AS "deactivatedAt",
+    email, name, role, created_at AS "createdAt", deactivated_at AS "deactivatedAt",
     whats_new_seen AS "whatsNewSeen"`;
-  const inviteColumns = sql`id, company_id AS "companyId", email, ${sql.unsafe(roleFromStorage)} AS role, invited_by AS "invitedBy",
+  const inviteColumns = sql`id, company_id AS "companyId", email, role, invited_by AS "invitedBy",
     clerk_invitation_id AS "clerkInvitationId", created_at AS "createdAt", expires_at AS "expiresAt",
     revoked_at AS "revokedAt", consumed_at AS "consumedAt"`;
   const companyById = SqlSchema.findOneOption({
@@ -255,8 +255,8 @@ export const make = Effect.gen(function* () {
     // Creation and invitation acceptance both land here, so the name rule applies once.
     // A new member starts caught up on What's new; the history is still one click away.
     execute: ({ id, companyId, clerkUserId, email, name, role, now }) => sql`
-      INSERT INTO users (id, company_id, clerk_user_id, email, name, role, is_regular_admin, created_at, whats_new_seen)
-      VALUES (${id}, ${companyId}, ${clerkUserId}, ${email}, ${displayName({ name, email })}, ${roleToStorage(role)}, ${role === "admin"},
+      INSERT INTO users (id, company_id, clerk_user_id, email, name, role, created_at, whats_new_seen)
+      VALUES (${id}, ${companyId}, ${clerkUserId}, ${email}, ${displayName({ name, email })}, ${role},
         to_timestamp(${now / 1_000}), ${WhatsNew.latestRelease})
       ON CONFLICT DO NOTHING RETURNING ${userColumns}`
   });
@@ -278,8 +278,8 @@ export const make = Effect.gen(function* () {
     }),
     Result: Invite,
     execute: ({ id, companyId, email, role, invitedBy, now }) => sql`
-      INSERT INTO invites (id, company_id, email, role, is_regular_admin, invited_by, created_at, expires_at)
-      VALUES (${id}, ${companyId}, ${email}, ${roleToStorage(role)}, ${role === "admin"}, ${invitedBy}, to_timestamp(${now / 1_000}),
+      INSERT INTO invites (id, company_id, email, role, invited_by, created_at, expires_at)
+      VALUES (${id}, ${companyId}, ${email}, ${role}, ${invitedBy}, to_timestamp(${now / 1_000}),
         to_timestamp(${(now + INVITATION_LIFETIME_MS) / 1_000}))
       ON CONFLICT (company_id, email) WHERE revoked_at IS NULL AND consumed_at IS NULL
       DO NOTHING RETURNING ${inviteColumns}`
@@ -396,7 +396,7 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const company = yield* findById(input.companyId);
         if (company === null) return yield* new CompanyNotFound({ companyId: input.companyId });
-        const actor = yield* lockAdministrator({
+        const actor = yield* lockInvitationAdministrator({
           companyId: input.companyId,
           actorId: input.invitedBy
         }).pipe(Effect.provideService(SqlClient.SqlClient, sql));
@@ -429,15 +429,28 @@ export const make = Effect.gen(function* () {
       Effect.catchTags(dieOnSchemaError)
     );
   });
-  const revokeInvite = Effect.fn("Companies.revokeInvite")(function* (input: {
-    readonly companyId: string;
-    readonly inviteId: string;
-  }) {
-    const now = yield* Clock.currentTimeMillis;
-    const invite = yield* revokeRow({ ...input, now }).pipe(Effect.catchTags(dieOnSchemaError));
-    if (Option.isNone(invite)) return yield* new InviteUnavailable({ inviteId: input.inviteId });
-    return invite.value;
-  });
+  const revokeInvite = Effect.fn("Companies.revokeInvite")(
+    (input: { readonly companyId: string; readonly inviteId: string; readonly actorId: string }) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          const actor = yield* lockInvitationAdministrator(input).pipe(
+            Effect.provideService(SqlClient.SqlClient, sql)
+          );
+          const rows =
+            yield* sql`SELECT role FROM invites WHERE id = ${input.inviteId} AND company_id = ${input.companyId} FOR UPDATE`;
+          if (rows.length === 0) return yield* new InviteUnavailable({ inviteId: input.inviteId });
+          if (actor !== "super_admin" && rows[0]!.role !== "member")
+            return yield* new RoleForbidden(input);
+          const now = yield* Clock.currentTimeMillis;
+          const invite = yield* revokeRow({ ...input, now }).pipe(
+            Effect.catchTags(dieOnSchemaError)
+          );
+          if (Option.isNone(invite))
+            return yield* new InviteUnavailable({ inviteId: input.inviteId });
+          return invite.value;
+        })
+      )
+  );
   const consumeInvite = Effect.fn("Companies.consumeInvite")(
     (input: Claims & { readonly inviteId: string }) =>
       sql.withTransaction(
