@@ -37,6 +37,7 @@ import {
   ForceRequest,
   DescriptionRequest,
   RollbackRequest,
+  AudienceRefused,
   PublishCreated,
   PublishRequest,
   PublishUpdated,
@@ -47,7 +48,7 @@ import {
   sharedStoreId,
   repoLimits
 } from "@patchy/api";
-import { Companies, Looks, Users } from "@patchy/companies";
+import { Companies, Looks, Teams, Users } from "@patchy/companies";
 import { ContentStore } from "@patchy/content-store";
 import { Limits } from "@patchy/limits";
 import { InvocationLog, RuntimeLog } from "@patchy/runtime";
@@ -71,6 +72,7 @@ const looks = Looks.layer.pipe(Layer.provide([NodeFileSystem.layer, NodePath.lay
 
 const client = Fixtures.ownRouter(HttpApiTest.groups(PatchyApi, ["patches"]));
 const decodeNotAdditive = Schema.decodeUnknownEffect(NotAdditive);
+const decodeAudienceRefused = Schema.decodeUnknownSync(AudienceRefused);
 const decodeCreated = Schema.decodeUnknownSync(PublishCreated);
 
 const html = (title: string) =>
@@ -197,8 +199,7 @@ it.layer(layer)("patches group", (it) => {
       assert.strictEqual(created.title, "First");
       assert.strictEqual(created.scope, "company");
       assert.deepStrictEqual(created.audience, {
-        members: { kind: "company" },
-        guests: { kind: "specific", userIds: [] }
+        members: { kind: "company" }
       });
       assert.strictEqual(created.name, "launch-plan");
       assert.strictEqual(
@@ -291,6 +292,59 @@ it.layer(layer)("patches group", (it) => {
         { patchId: created.patchId, name: restricted.name, current: false }
       );
       assert.include(yield* (yield* Content.Content).read(served.version), "Fourth");
+      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const outsider = yield* client.pipe(Effect.provide(Fixtures.as(reader)));
+      const viewer = { companyId: uploader.company.id, actorId: admin.user.id };
+      const t = yield* Teams.create({ ...viewer, name: "API audience recovery" });
+      yield* Teams.setMemberships({
+        ...viewer,
+        teamId: t.id,
+        userIds: [uploader.user.id],
+        added: true
+      });
+      const restrictedAudience = yield* owner.share({
+        params: { patchId: created.patchId },
+        payload: new ShareRequest({
+          scope: "company",
+          audience: { members: { kind: "teams", teamIds: [t.id] } }
+        })
+      });
+      assert.equal(restrictedAudience.scope, "teams");
+      yield* Teams.setMemberships({
+        ...viewer,
+        teamId: t.id,
+        userIds: [uploader.user.id],
+        added: false
+      });
+      const lost = yield* owner.share({
+        params: { patchId: created.patchId },
+        payload: new ShareRequest({ scope: "company" }),
+        responseMode: "response-only"
+      });
+      assert.equal(lost.status, 400);
+      assert.equal(decodeAudienceRefused(yield* lost.json).code, "owner_access_lost");
+      const hidden = yield* outsider.share({
+        params: { patchId: created.patchId },
+        payload: new ShareRequest({ scope: "company" }),
+        responseMode: "response-only"
+      });
+      assert.equal(hidden.status, 404);
+      yield* Teams.setMemberships({
+        ...viewer,
+        teamId: t.id,
+        userIds: [uploader.user.id],
+        added: true
+      });
+      const invalid = yield* owner.share({
+        params: { patchId: created.patchId },
+        payload: new ShareRequest({
+          scope: "company",
+          audience: { members: { kind: "teams", teamIds: ["unknown-team"] } }
+        }),
+        responseMode: "response-only"
+      });
+      assert.equal(invalid.status, 400);
+      assert.equal(decodeAudienceRefused(yield* invalid.json).code, "invalid_audience_teams");
     })
   );
 
@@ -310,20 +364,6 @@ it.layer(layer)("patches group", (it) => {
           "public"
         );
 
-        const mismatched = yield* owner.share({
-          params: { patchId: created.patchId },
-          payload: new ShareRequest({
-            scope: "company",
-            audience: { members: { kind: "public" }, guests: { kind: "specific", userIds: [] } }
-          }),
-          responseMode: "response-only"
-        });
-        assert.equal(mismatched.status, 400);
-        expect(yield* mismatched.json).toEqual({
-          ok: false,
-          error: "The sharing scope must match the audience."
-        });
-        assert.equal(Option.getOrThrow(yield* patches.find(created.patchId)).patch.scope, "public");
         const params = { patchId: created.patchId };
         // Sharing to the scope it already has changes nothing and reports nothing.
         for (const scope of ["company", "public", "public"] as const) {
@@ -334,7 +374,7 @@ it.layer(layer)("patches group", (it) => {
               ok: true,
               patchId: created.patchId,
               scope,
-              audience: { members: { kind: scope }, guests: { kind: "specific", userIds: [] } },
+              audience: { members: { kind: scope } },
               publicUrl: created.publicUrl
             }
           );

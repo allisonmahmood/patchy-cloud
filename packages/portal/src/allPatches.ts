@@ -346,7 +346,7 @@ export const renderAllPatches = (input: {
           : "Recovery ended";
       return `<tr>${patchCell(entry)}${ownerCell(entry)}<td><span class="pill${retired ? "" : " pill-failed"}">${escapeHtml(state)}</span>${at === null ? "" : `<br><span class="supporting-text">${escapeHtml(dateLabel(at))}</span>`}</td>${menuCell(entry)}</tr>`;
     }
-    return `<tr>${patchCell(entry)}${ownerCell(entry)}<td>v${escapeHtml(entry.currentVersion)} · ${time(entry.publishedAt)}</td><td>${escapeHtml(entry.visits)}</td><td>${patch.scope === "public" ? "<strong>Public</strong>" : "Company"}</td>${healthy ? health(entry) : ""}${menuCell(entry)}</tr>`;
+    return `<tr>${patchCell(entry)}${ownerCell(entry)}<td>v${escapeHtml(entry.currentVersion)} · ${time(entry.publishedAt)}</td><td>${escapeHtml(entry.visits)}</td><td>${patch.scope === "public" ? "<strong>Public</strong>" : patch.scope === "teams" ? "Selected teams" : "Company"}</td>${healthy ? health(entry) : ""}${menuCell(entry)}</tr>`;
   };
   const empty: Record<Show, string> = {
     all: "No live patches.",

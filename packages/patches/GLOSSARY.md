@@ -25,7 +25,7 @@ An admin changing a patch's owner to an active member of the same company, inclu
 _Avoid_: transfer (a patch never moves companies), republish, claim
 
 **Sharing scope**:
-The serving boundary: `company` is private and subject to the patch audience; `public` admits anyone with the link to the current version without signing in. Historical versions retain audience protection. An omitted first-publish audience defaults to Company; agents offer a choice, and updates retain it. An entitled owner or administrator changes sharing without publishing.
+The serving boundary: `company` admits company members; `teams` admits members of selected teams; `public` admits anyone with the link to the current version without signing in. Historical versions retain audience protection. An omitted first-publish audience defaults to Company; updates retain it. An entitled owner or administrator changes sharing without publishing.
 _Avoid_: visibility, token scope (a publishing key does not grant reading access)
 
 **Guest grant**:
@@ -137,14 +137,4 @@ A committed publish, update or owner deletion, attributed to the user who acted;
 _Avoid_: audit log, activity feed
 
 **Patch audience**:
-The patch's persisted internal audience (Company, selected teams by union, or eligible
-Public) and independent guest audience (specific company-space guests, or all current
-and future guests minus exclusions). Owner and company role confer no content grant.
-An audience authority revision commits with every effective change; team-reference rows
-let Hosting compose later team deletion without Companies importing Patches.
-
-**Company-space guest**:
-An existing Patchy account at another company invited into this company's guest pool.
-Membership survives removal from an individual patch; removal from the company ends
-it. Existing named grants migrate into the pool. All guests includes future pool members.
-The pool itself grants no patch access and never bypasses guest resource restrictions.
+Company, selected teams by union, or eligible Public, stored as scope and team-grant rows. Named per-patch guest grants are independent. Audience edits advance lifecycle authority; versions never replace sharing. Ownership and administrative roles do not bypass this content decision.

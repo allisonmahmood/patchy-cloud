@@ -1325,7 +1325,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
           expectedPatchId: patch.patchId,
           back: "/patches",
           expectedScope: "company",
-          expectedAudienceRevision: before.patch.audienceRevision,
+          expectedLifecycleRevision: before.patch.lifecycleRevision,
           scope: "public"
         });
         // Make public is the confirmation, in the dialog, and only its answer applies.
@@ -1384,7 +1384,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
           ...fields,
           scope: "company",
           expectedScope: "public",
-          expectedAudienceRevision: saved.patch.audienceRevision
+          expectedLifecycleRevision: saved.patch.lifecycleRevision
         });
         assert.strictEqual(back.status, 303);
         assert.strictEqual(

@@ -181,46 +181,14 @@ export const migrations: Migrations = {
       FOR EACH ROW EXECUTE FUNCTION patch_guest_grants_directory_changed()`
   ),
   "0038_patch_audiences": ddl(
-    `ALTER TABLE patches ADD COLUMN audience JSONB NOT NULL DEFAULT '{"members":{"kind":"company"},"guests":{"kind":"specific","userIds":[]}}', ADD COLUMN audience_revision BIGINT NOT NULL DEFAULT 0`,
-    `UPDATE patches SET audience = jsonb_set(audience, '{members,kind}', to_jsonb(scope::text))`,
-    `CREATE TABLE company_patch_guests (
-      company_id TEXT NOT NULL REFERENCES companies(id), user_id TEXT NOT NULL REFERENCES users(id),
-      added_by TEXT NOT NULL REFERENCES users(id), added_at TIMESTAMPTZ NOT NULL DEFAULT now(), removed_at TIMESTAMPTZ,
-      PRIMARY KEY(company_id, user_id)
-    )`,
-    `INSERT INTO company_patch_guests(company_id, user_id, added_by, added_at)
-      SELECT DISTINCT ON (company_id, user_id) company_id, user_id, granted_by, granted_at
-      FROM patch_guest_grants WHERE revoked_at IS NULL ORDER BY company_id, user_id, granted_at`,
-    `UPDATE patches p SET audience = jsonb_set(audience, '{guests,userIds}',
-      (SELECT jsonb_agg(g.user_id ORDER BY g.user_id) FROM patch_guest_grants g WHERE g.patch_id = p.id AND g.revoked_at IS NULL))
-      WHERE EXISTS (SELECT 1 FROM patch_guest_grants g WHERE g.patch_id = p.id AND g.revoked_at IS NULL)`,
+    `ALTER TABLE patches DROP CONSTRAINT patches_scope_check,
+      ADD CONSTRAINT patches_scope_check CHECK (scope IN ('company', 'public', 'teams'))`,
     `CREATE TABLE patch_audience_teams (
       patch_id TEXT NOT NULL REFERENCES patches(id) ON DELETE CASCADE,
       company_id TEXT NOT NULL REFERENCES companies(id), team_id TEXT NOT NULL,
       PRIMARY KEY(patch_id, team_id),
       FOREIGN KEY(company_id, team_id) REFERENCES company_teams(company_id, id)
     )`,
-    `CREATE FUNCTION company_patch_guests_changed() RETURNS trigger LANGUAGE plpgsql AS $$
-      BEGIN
-        IF TG_OP = 'UPDATE' AND OLD.removed_at IS NOT DISTINCT FROM NEW.removed_at THEN RETURN NULL; END IF;
-        INSERT INTO companies_directory(company_id, revision) VALUES (NEW.company_id, 1)
-          ON CONFLICT(company_id) DO UPDATE SET revision = companies_directory.revision + 1;
-        PERFORM pg_notify('patchy_runtime_wakes', json_build_object('keys', ARRAY['members:' || NEW.company_id])::text);
-        RETURN NULL;
-      END;
-    $$`,
-    `CREATE TRIGGER company_patch_guests_changed AFTER INSERT OR UPDATE ON company_patch_guests FOR EACH ROW EXECUTE FUNCTION company_patch_guests_changed()`,
-    `CREATE INDEX patch_audience_teams_team ON patch_audience_teams(company_id, team_id)`,
-    `CREATE FUNCTION patch_guest_allowed(p patches, person TEXT, include_inactive BOOLEAN DEFAULT false) RETURNS BOOLEAN LANGUAGE sql STABLE AS $$
-      SELECT EXISTS (SELECT 1 FROM company_patch_guests g JOIN users u ON u.id = g.user_id
-        WHERE g.company_id = p.company_id AND g.user_id = person AND g.removed_at IS NULL
-          AND (include_inactive OR u.deactivated_at IS NULL) AND u.company_id <> p.company_id)
-      AND (p.audience->'members'->>'kind' IN ('company', 'public') OR
-        p.audience->'members'->>'kind' = 'teams')
-      AND CASE p.audience->'guests'->>'kind'
-        WHEN 'specific' THEN p.audience->'guests'->'userIds' ? person
-        WHEN 'all' THEN NOT (p.audience->'guests'->'excludedUserIds' ? person)
-        ELSE false END
-    $$`
+    `CREATE INDEX patch_audience_teams_team ON patch_audience_teams(company_id, team_id)`
   )
 };

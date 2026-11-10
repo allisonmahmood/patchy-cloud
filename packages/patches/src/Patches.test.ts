@@ -1588,7 +1588,7 @@ it.layer(
     })
   );
 
-  it.effect("keeps retained source states while redacting inaccessible source names", () =>
+  it.effect("redacts both names and lifecycle states of inaccessible sources", () =>
     Effect.gen(function* () {
       const service = yield* Patches.Patches;
       const sources: Record<string, Patches.Recorded> = {};
@@ -1625,11 +1625,7 @@ it.layer(
           table: "notes",
           ...(alias === "live" || alias === "retired" || alias === "deleted"
             ? { name: source.name, state: alias }
-            : alias === "disabled"
-              ? { state: "live" }
-              : alias === "hidden"
-                ? { state: "retired" }
-                : { state: "gone" })
+            : { state: "gone" })
         })
       );
       assert.deepStrictEqual(

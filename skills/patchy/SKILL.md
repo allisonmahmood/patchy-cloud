@@ -322,12 +322,11 @@ Named guests receive access to individual patches with `patchy share --add`.
 Later publishes retain the committed audience. Report the committed audience after every publish.
 
 Audience JSON has `members: { kind: "company" | "public" }` or
-`members: { kind: "teams", teamIds: ["<id>"] }`, plus
-`guests: { kind: "specific", userIds: [] }` (no guests or named company guests), or
-`guests: { kind: "all", excludedUserIds: [] }` (current and future guests invited into
-this company space, except named exclusions). Guests need existing active Patchy accounts.
-Team and all-guests activation is refused while the access-enforcement stack is incomplete;
-report the refusal and never substitute Company.
+`members: { kind: "teams", teamIds: ["<id>"] }`. Named guest grants are managed
+separately per patch; changing teams retains them. Guests need active outside-company
+Patchy accounts. Legacy Company flags preserve team restrictions; use an explicit
+Company audience to widen. If `owner_access_lost` is returned, seek administrator
+recovery or reassignment of this patch instead of creating a replacement.
 
 Requires Node.js 22.22.0 or newer, with npm, and the `patchy` CLI on `PATH`.
 If the CLI is missing or its release differs from the intended instance,

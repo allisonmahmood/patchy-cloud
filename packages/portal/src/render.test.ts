@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import type { RequireSession } from "@patchy/auth";
-import { renderShareDialog } from "./share.js";
 import { firstClause, renderAgentPanel } from "./render.js";
 
 describe("firstClause", () => {
@@ -67,111 +66,5 @@ describe("renderAgentPanel", () => {
     expect(html).toContain("that’s Allison &lt;A&gt; and Priya Shah.");
     expect(html).not.toContain("Turn it on at Company");
     expect(html).not.toContain("Connect your agent");
-  });
-});
-
-describe("renderShareDialog audiences", () => {
-  const person = {
-    userId: "guest-old",
-    name: "Old guest",
-    email: "old@example.test",
-    companyName: "Outside"
-  };
-  const input = (
-    audience: import("@patchy/api").PatchAudience
-  ): Parameters<typeof renderShareDialog>[0] => ({
-    row: {
-      patch: {
-        id: "abcdefghijkl",
-        name: "board",
-        companyId: "company",
-        companyHandle: "acme",
-        ownerUserId: "owner",
-        scope: audience.members.kind === "public" ? "public" : "company",
-        audience,
-        audienceRevision: "7",
-        title: "Board",
-        currentVersionId: "version",
-        repoOrg: null,
-        repoName: null,
-        createdAt: "2026-01-01",
-        updatedAt: "2026-01-01",
-        lifecycleRevision: "1",
-        state: "live",
-        retiredAt: null,
-        retiredBy: null,
-        deletedAt: null,
-        deletedBy: null,
-        purgeAt: null,
-        reassignedAt: null,
-        reassignedBy: null,
-        description: "",
-        descriptionUpdatedAt: null,
-        descriptionUpdatedBy: null,
-        lastChangedAt: null,
-        lastChangedBy: null,
-        disabledAt: null,
-        disabledReason: null
-      },
-      owner: { id: "owner", name: "Owner", deactivated: false },
-      currentVersion: 1,
-      tier: 1,
-      publishedAt: "2026-01-01",
-      visits: 0,
-      reads: [],
-      dependants: []
-    },
-    viewer: {
-      user: { id: "owner", name: "Owner", email: "owner@example.test" },
-      company: { id: "company", name: "Acme", handle: "acme" },
-      role: "member",
-      whatsNewSeen: 0
-    },
-    publicBaseUrl: "https://example.test",
-    back: "/patches",
-    guests: [],
-    suggestions: [],
-    teams: [
-      { id: "design", companyId: "company", name: "Design", createdAt: new Date(0) },
-      { id: "sales", companyId: "company", name: "Sales", createdAt: new Date(0) }
-    ]
-  });
-  it("restores saved teams and specific guests absent from suggestions", () => {
-    const state = input({
-      members: { kind: "teams", teamIds: ["design"] },
-      guests: { kind: "specific", userIds: [person.userId] }
-    });
-    const html = renderShareDialog({ ...state, guests: [{ ...person, grantedAt: new Date(0) }] });
-    expect(html).toContain('name="scope" value="teams" checked data-current');
-    expect(html).toContain('name="teamIds" value="design" checked');
-    expect(html).toContain('name="teamIds" value="sales">');
-    expect(html).toContain('name="guestIds" value="guest-old" checked');
-    expect(html).toContain('name="expectedAudienceRevision" value="7"');
-  });
-  it("restores all-guests exclusions, including ones no longer in suggestions", () => {
-    const html = renderShareDialog({
-      ...input({
-        members: { kind: "company" },
-        guests: { kind: "all", excludedUserIds: [person.userId, "removed-guest"] }
-      }),
-      suggestions: [person]
-    });
-    expect(html).toContain('name="guestMode" value="all" checked');
-    expect(html).toContain('name="excludedGuestIds" value="guest-old" checked');
-    expect(html).toContain('type="hidden" name="excludedGuestIds" value="removed-guest"');
-    expect(html).not.toContain('name="guestIds" value="guest-old" checked');
-  });
-  it("requires public confirmation and disables public for tier 2", () => {
-    const state = input({
-      members: { kind: "company" },
-      guests: { kind: "specific", userIds: [] }
-    });
-    const html = renderShareDialog({ ...state, confirmPublic: true });
-    expect(html).toContain('name="scope" value="public" checked');
-    expect(html).toContain('name="confirm" value="public">Make public');
-    expect(html).toContain("share-change share-public-confirmation");
-    const tool = renderShareDialog({ ...state, row: { ...state.row, tier: 2 } });
-    expect(tool).toContain('name="scope" value="public" disabled');
-    expect(tool).not.toContain('name="confirm"');
   });
 });

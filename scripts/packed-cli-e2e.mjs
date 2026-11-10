@@ -487,14 +487,10 @@ try {
   assertViewerDoor(await fetchViewer(`${first.address}/~v/1`));
 
   await checkedCall(() => writeFile(fixturePath, newHtml, "utf8"));
-  const freshUpload = await runCli(
-    cliPath,
-    ["publish", fixtureArgument, "--new", "--share", "company", "--json"],
-    {
-      cwd: consumerDir,
-      env: cliEnv
-    }
-  );
+  const freshUpload = await runCli(cliPath, ["publish", fixtureArgument, "--new", "--json"], {
+    cwd: consumerDir,
+    env: cliEnv
+  });
   assert.equal(freshUpload.stderr, "", "--json success must leave stderr empty");
   const fresh = JSON.parse(freshUpload.stdout);
   assert.equal(fresh.ok, true);
@@ -565,7 +561,7 @@ try {
   await checkedCall(() => writeFile(fixturePath, envPrecedenceHtml, "utf8"));
   const nameRefusal = await runCli(
     cliPath,
-    ["publish", fixtureArgument, "--name", "review-artifact", "--share", "company", "--json"],
+    ["publish", fixtureArgument, "--name", "review-artifact", "--json"],
     {
       cwd: consumerDir,
       env: { ...invalidStoredEnv, PATCHY_API_TOKEN: DEV_SEED.token },
@@ -577,14 +573,10 @@ try {
   assert.equal(JSON.parse(nameRefusal.stderr).kind, "rejected");
   assert.equal(JSON.parse(nameRefusal.stderr).code, "name_taken");
   const envPrecedence = parsePublish(
-    await runCli(
-      cliPath,
-      ["publish", fixtureArgument, "--name", "environment-precedence", "--share", "company"],
-      {
-        cwd: consumerDir,
-        env: { ...invalidStoredEnv, PATCHY_API_TOKEN: DEV_SEED.token }
-      }
-    )
+    await runCli(cliPath, ["publish", fixtureArgument, "--name", "environment-precedence"], {
+      cwd: consumerDir,
+      env: { ...invalidStoredEnv, PATCHY_API_TOKEN: DEV_SEED.token }
+    })
   );
   assert.equal(
     envPrecedence.address,
@@ -620,14 +612,10 @@ try {
   const doomedHtml = validHtml("Packed contract doomed", "packed-contract-doomed");
   await checkedCall(() => writeFile(fixturePath, doomedHtml, "utf8"));
   const doomed = parsePublish(
-    await runCli(
-      cliPath,
-      ["publish", fixtureArgument, "--new", "--name", "packed-doomed", "--share", "company"],
-      {
-        cwd: consumerDir,
-        env: cliEnv
-      }
-    )
+    await runCli(cliPath, ["publish", fixtureArgument, "--new", "--name", "packed-doomed"], {
+      cwd: consumerDir,
+      env: cliEnv
+    })
   );
   const doomedViewer = await fetchViewer(doomed.address);
   assertViewerDoor(doomedViewer);
@@ -1718,7 +1706,7 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
   ];
   console.log("[packed-cli-e2e] tier 1: publishing the repo and opening the session-gated bundle");
   const published = parseJsonSuccess(
-    await runCli(repoCliPath, ["publish", "--share", "company", "--json"], options),
+    await runCli(repoCliPath, ["publish", "--json"], options),
     publishKeys
   );
   assert.match(published.patchId, /^[a-z0-9]{12}$/);
@@ -1821,7 +1809,7 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
     )
   );
   const updated = parseJsonSuccess(
-    await runCli(repoCliPath, ["publish", "--share", "company", "--json"], options),
+    await runCli(repoCliPath, ["publish", "--json"], options),
     publishKeys
   );
   assert.notEqual(updated.versionId, published.versionId);

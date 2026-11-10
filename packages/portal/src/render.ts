@@ -291,9 +291,11 @@ export const renderOverview = (input: {
   const current = card.versions.find((version) => version.id === patch.currentVersionId);
   const versionFact = `v${card.currentVersion}, published ${ago(card.publishedAt, now)}${current === undefined ? "" : ` by ${current.publisherName}`}`;
   const audience =
-    patch.scope === "company"
-      ? `Anyone at ${viewer.company.name} who signs in. Not the public.`
-      : "Anyone on the internet. No sign-in.";
+    patch.scope === "teams"
+      ? "Members of selected teams and named guests."
+      : patch.scope === "company"
+        ? `Anyone at ${viewer.company.name} who signs in. Not the public.`
+        : "Anyone on the internet. No sign-in.";
   const stateFact = off?.stateFact ?? "";
   const facts =
     !live && !manage

@@ -987,6 +987,8 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
   return yield* run.pipe(
     Effect.catchTags({
       StaleAction: () => stale(),
+      OwnerAccessLost: (error) =>
+        render(name, { status: 403, notice: `${error.message} Nothing was done.` }),
       NotOwner: () => render(name, { status: 403, notice: forbidden }),
       AdminRequired: () => render(name, { status: 403, notice: adminRequired }),
       WrongState: (error) => stale(error.state),
@@ -1121,24 +1123,20 @@ const shareAct = Effect.fn("PortalPages.shareAct")(function* (name: string, act:
       case "scope": {
         const fields = yield* decodeScope({
           ...form,
-          scope: form.scope === "teams" ? "company" : form.scope
+          scope: form.scope
         });
         if (
-          form.expectedAudienceRevision !== undefined &&
-          form.expectedAudienceRevision !== selected.patch.audienceRevision
+          form.expectedLifecycleRevision !== undefined &&
+          form.expectedLifecycleRevision !== selected.patch.lifecycleRevision
         )
           return yield* new Patches.StaleAction({ patchId: selected.patch.id });
         const audience = {
           members:
             form.scope === "teams"
               ? { kind: "teams" as const, teamIds: values.getAll("teamIds") }
-              : { kind: fields.scope },
-          guests:
-            form.guestMode === undefined
-              ? selected.patch.audience.guests
-              : form.guestMode === "all"
-                ? { kind: "all" as const, excludedUserIds: values.getAll("excludedGuestIds") }
-                : { kind: "specific" as const, userIds: values.getAll("guestIds") }
+              : fields.scope === "public"
+                ? { kind: "public" as const }
+                : { kind: "company" as const }
         };
         if (audience.members.kind === "teams" && !audience.members.teamIds.length)
           return yield* new Audiences.InvalidAudienceTeams();
@@ -1152,7 +1150,7 @@ const shareAct = Effect.fn("PortalPages.shareAct")(function* (name: string, act:
           actor: actor,
           audience: audience,
           expectedScope: fields.expectedScope,
-          expectedAudienceRevision: form.expectedAudienceRevision
+          expectedLifecycleRevision: form.expectedLifecycleRevision
         });
         return reopened(
           audience.members.kind === "teams"
@@ -1179,6 +1177,7 @@ const shareAct = Effect.fn("PortalPages.shareAct")(function* (name: string, act:
       NotOnPatchy: (refusal) => again({ status: 422, refused: { email, refusal } }),
       AlreadyMember: (refusal) => again({ status: 409, refused: { email, refusal } }),
       GuestsUnavailable: (refusal) => again({ status: 422, refused: { email, refusal } }),
+      OwnerAccessLost: (error) => render(name, { status: 403, notice: nothing(error.message) }),
       NotOwner: () => render(name, { status: 403, notice: forbidden }),
       WrongState: (error) =>
         Effect.flatMap(staleNotice(selected.patch.id, error.state), (notice) =>
@@ -1187,9 +1186,7 @@ const shareAct = Effect.fn("PortalPages.shareAct")(function* (name: string, act:
       StaleAction: () =>
         Effect.flatMap(staleNotice(selected.patch.id), (notice) => again({ status: 409, notice })),
       InvalidAudienceTeams: (error) => again({ status: 422, notice: nothing(error.message) }),
-      InvalidAudienceGuests: (error) => again({ status: 422, notice: nothing(error.message) }),
       AudienceExcludesOwner: (error) => again({ status: 422, notice: nothing(error.message) }),
-      AudienceScopeMismatch: (error) => again({ status: 422, notice: nothing(error.message) }),
       Tier2NotPublic: (error) => again({ status: 422, notice: nothing(error.message) }),
       SchemaError: () =>
         again({ status: 422, notice: nothing("Check the submitted fields and try again.") }),
@@ -1263,6 +1260,12 @@ export const errors = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServerRes
 const pageErrors = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) =>
   app.pipe(
     Effect.catchTags({
+      OwnerAccessLost: () =>
+        errorPage(
+          403,
+          "Access lost",
+          "You still own this patch. Ask an admin who can open it to restore your team access or reassign it."
+        ),
       PatchUnavailable: () =>
         errorPage(404, "Patch not found", "The requested patch is unavailable."),
       WrongState: () =>

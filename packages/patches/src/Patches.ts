@@ -108,6 +108,14 @@ export class PatchUnavailable extends Schema.TaggedError<PatchUnavailable>()("Pa
   }
 }
 
+export class OwnerAccessLost extends Schema.TaggedError<OwnerAccessLost>()("OwnerAccessLost", {
+  patchId: Schema.String
+}) {
+  override get message() {
+    return "You still own this patch but no longer have access. Ask an admin who can open it to restore your team access or reassign it. Do not create a replacement patch.";
+  }
+}
+
 /** A create landed on an id that already exists. */
 export class PatchConflict extends Schema.TaggedError<PatchConflict>()("PatchConflict", {
   patchId: Schema.String
@@ -256,6 +264,7 @@ export class Tier2NotPublic extends Schema.TaggedError<Tier2NotPublic>()("Tier2N
   }
 }
 export type LifecycleError =
+  | OwnerAccessLost
   | PatchUnavailable
   | NotOwner
   | WrongState
@@ -284,7 +293,6 @@ export interface Patch {
   readonly ownerUserId: string;
   readonly scope: typeof SharingScope.Type;
   readonly audience: PatchAudience;
-  readonly audienceRevision: string;
   readonly title: string;
   readonly currentVersionId: string | null;
   readonly repoOrg: string | null;
@@ -314,7 +322,7 @@ export type SharingChange = {
   readonly patchId: string;
   readonly actor: Actor;
   readonly expectedScope?: Patch["scope"] | undefined;
-  readonly expectedAudienceRevision?: string | undefined;
+  readonly expectedLifecycleRevision?: string | undefined;
 } & (
   | { readonly scope: Patch["scope"]; readonly audience?: never }
   | { readonly audience: PatchAudience; readonly scope?: never }
@@ -644,7 +652,6 @@ class PatchRow extends Schema.Class<PatchRow>("PatchRow")({
   ownerUserId: Schema.String,
   scope: SharingScope,
   audience: PatchAudience,
-  audienceRevision: Schema.String,
   title: Schema.String,
   currentVersionId: Schema.NullOr(Schema.String),
   repoOrg: Schema.NullOr(Schema.String),
@@ -796,7 +803,13 @@ export class Patches extends Context.Service<
       target: PublishTarget
     ) => Effect.Effect<
       void,
-      PatchUnavailable | PatchConflict | NotOwner | PatchRetired | PatchDeleted | SqlError
+      | OwnerAccessLost
+      | PatchUnavailable
+      | PatchConflict
+      | NotOwner
+      | PatchRetired
+      | PatchDeleted
+      | SqlError
     >;
     readonly replay: (
       ownerUserId: string,
@@ -914,7 +927,7 @@ export class Patches extends Context.Service<
     readonly manage: (
       patchId: string,
       actor: Actor
-    ) => Effect.Effect<Patch, PatchUnavailable | NotOwner | SqlError>;
+    ) => Effect.Effect<Patch, OwnerAccessLost | PatchUnavailable | NotOwner | SqlError>;
     /** Changes a live patch's audience without creating a version. */
     readonly setSharing: (
       input: SharingChange
@@ -1051,7 +1064,6 @@ const toPatch = (row: PatchRow): Patch => ({
   ownerUserId: row.ownerUserId,
   scope: row.scope,
   audience: row.audience,
-  audienceRevision: row.audienceRevision,
   title: row.title,
   currentVersionId: row.currentVersionId,
   repoOrg: row.repoOrg,
@@ -1130,11 +1142,13 @@ const decodeLockedAudience = Schema.decodeUnknownEffect(
   )
 );
 
+const AUDIENCE_COLUMN = `jsonb_build_object('members', CASE WHEN patches.scope = 'teams' THEN jsonb_build_object('kind', 'teams', 'teamIds', COALESCE((SELECT jsonb_agg(t.team_id ORDER BY t.team_id) FROM patch_audience_teams t WHERE t.patch_id = patches.id), '[]'::jsonb)) ELSE jsonb_build_object('kind', patches.scope) END)`;
+
 /** The columns of `patches`, aliased to the record's names. */
 const PATCH_COLUMNS = `
   patches.id, patches.company_id AS "companyId",
   companies.handle AS "companyHandle", patches.name,
-  patches.owner_user_id AS "ownerUserId", patches.scope, patches.audience, patches.audience_revision::text AS "audienceRevision", patches.title,
+  patches.owner_user_id AS "ownerUserId", patches.scope, ${AUDIENCE_COLUMN} AS audience, patches.title,
   patches.current_version_id AS "currentVersionId",
   patches.repo_org AS "repoOrg", patches.repo_name AS "repoName",
   patches.created_at AS "createdAt", patches.updated_at AS "updatedAt",
@@ -1494,7 +1508,8 @@ export const make = Effect.gen(function* () {
       // wait can lose the row when PostgreSQL rechecks a concurrent reassignment.
       // Callers keep both statements in one transaction; its patch lock preserves
       // the company and disabled-state checks through the owner lookup.
-      const locked = yield* sql`SELECT company_id AS "companyId", audience FROM patches
+      const locked =
+        yield* sql`SELECT company_id AS "companyId", ${sql.unsafe(AUDIENCE_COLUMN)} AS audience FROM patches
         WHERE id = ${patchId} AND disabled_at IS NULL
           AND company_id = (SELECT company_id FROM users WHERE id = ${userId})
         FOR UPDATE`;
@@ -1526,7 +1541,13 @@ export const make = Effect.gen(function* () {
     );
   const manageable = Effect.fn("Patches.manageable")(function* (patchId: string, actor: Actor) {
     const row = yield* lockOpenable({ patchId, userId: actor.userId });
-    if (Option.isNone(row)) return yield* new PatchUnavailable({ patchId });
+    if (Option.isNone(row)) {
+      const owned =
+        yield* sql`SELECT p.id FROM patches p JOIN users u ON u.id = p.owner_user_id AND u.company_id = p.company_id
+        WHERE p.id = ${patchId} AND p.owner_user_id = ${actor.userId} AND p.disabled_at IS NULL AND u.deactivated_at IS NULL`;
+      if (owned.length) return yield* new OwnerAccessLost({ patchId });
+      return yield* new PatchUnavailable({ patchId });
+    }
     if (row.value.ownerUserId !== actor.userId && !actor.admin)
       return yield* new NotOwner({
         owner: { id: row.value.ownerUserId, name: row.value.ownerName }
@@ -1693,11 +1714,7 @@ export const make = Effect.gen(function* () {
       userId: options.userId,
       sharing
     });
-    const admitted = yield* memberAudience(
-      options.companyId,
-      options.userId,
-      rows.map((row) => row.audience)
-    );
+    const admitted = yield* memberAudience(options.companyId, options.userId);
     const sourceStates = new Map<string, PatchState>();
     const openable = new Map<string, { row: ReadPatchRow; patch: Patch }>();
     for (const row of rows) {
@@ -2033,7 +2050,6 @@ export const make = Effect.gen(function* () {
           : Option.none();
       yield* validateAudience({
         audience: input.audience,
-        scope: input.scope,
         companyId: input.companyId,
         actorId: input.ownerUserId,
         ownerId: input.ownerUserId,
@@ -2220,11 +2236,10 @@ export const make = Effect.gen(function* () {
             (input.scope === "company" && existing.audience.members.kind === "teams"))
             ? existing.audience
             : existing !== null
-              ? { ...existing.audience, members: { kind: input.scope! } }
+              ? Audiences.company(input.scope)
               : Audiences.company(input.scope));
         yield* validateAudience({
           audience,
-          scope: input.scope,
           companyId: input.companyId,
           actorId: input.ownerUserId,
           ownerId: input.ownerUserId,
@@ -2325,7 +2340,7 @@ export const make = Effect.gen(function* () {
           yield* sql`UPDATE patch_names SET current = false
               WHERE patch_id = ${input.patchId} AND current AND name <> ${name}`;
         }
-        yield* saveAudience(input.patchId, companyId, audience, input.ownerUserId);
+        yield* saveAudience(input.patchId, companyId, audience);
         const declarationWarnings = yield* resolveDeclarations(input.manifest, companyId);
         const resources = yield* provision({ ...input, companyId });
         const declaringPatches = resources.sharing.some(
@@ -2486,12 +2501,15 @@ export const make = Effect.gen(function* () {
     manageable(patchId, actor).pipe(Effect.map(toPatch))
   );
   const setSharing = Effect.fn("Patches.setSharing")(function* (input: SharingChange) {
-    const { patchId, actor, expectedScope, expectedAudienceRevision } = input;
+    const { patchId, actor, expectedScope, expectedLifecycleRevision } = input;
     yield* lockDependencies(actor.userId);
     yield* sql`SELECT id FROM companies WHERE id = (SELECT company_id FROM users WHERE id = ${actor.userId}) FOR NO KEY UPDATE`;
     const row = yield* manageable(patchId, actor);
     if (stateOf(row) !== "live") return yield* new WrongState({ state: stateOf(row) });
-    if (expectedAudienceRevision !== undefined && row.audienceRevision !== expectedAudienceRevision)
+    if (
+      expectedLifecycleRevision !== undefined &&
+      row.lifecycleRevision !== expectedLifecycleRevision
+    )
       return yield* new StaleAction({ patchId });
     if (expectedScope !== undefined && row.scope !== expectedScope)
       return yield* new StaleAction({ patchId });
@@ -2499,7 +2517,7 @@ export const make = Effect.gen(function* () {
       input.audience ??
       (input.scope === "company" && row.audience.members.kind === "teams"
         ? row.audience
-        : { ...row.audience, members: { kind: input.scope } });
+        : Audiences.company(input.scope));
     if (!actor.admin && chosen.members.kind === "teams" && row.audience.members.kind === "teams") {
       const visible = new Set(
         yield* Teams.memberships(row.companyId, actor.userId).pipe(
@@ -2528,13 +2546,12 @@ export const make = Effect.gen(function* () {
     }
     yield* validateAudience({
       audience: chosen,
-      scope,
       companyId: row.companyId,
       actorId: actor.userId,
       ownerId: row.ownerUserId,
       previous: row.audience
     });
-    yield* saveAudience(patchId, row.companyId, chosen, actor.userId);
+    yield* saveAudience(patchId, row.companyId, chosen);
     const at = yield* now;
     yield* sql`UPDATE patches SET scope = ${scope}, updated_at = ${at},
         lifecycle_revision = lifecycle_revision + 1,

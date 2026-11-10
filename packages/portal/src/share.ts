@@ -135,32 +135,10 @@ export const renderShareDialog = (input: {
         `<label class="field-choice"><input class="field-checkbox" type="checkbox" name="teamIds" value="${escapeAttribute(team.id)}"${selectedTeams.has(team.id) ? " checked" : ""}>${escapeHtml(team.name)}</label>`
     )
     .join("");
-  const selectedGuests = new Set(
-    patch.audience.guests.kind === "specific" ? patch.audience.guests.userIds : []
-  );
-  const excludedGuests = new Set(
-    patch.audience.guests.kind === "all" ? patch.audience.guests.excludedUserIds : []
-  );
-  const people = [
-    ...new Map(
-      [...input.suggestions, ...input.guests].map((guest) => [guest.userId, guest])
-    ).values()
-  ];
-  const guestChoices = (excluded: boolean) =>
-    people
-      .map(
-        (guest) =>
-          `<label class="field-choice"><input class="field-checkbox" type="checkbox" name="${excluded ? "excludedGuestIds" : "guestIds"}" value="${escapeAttribute(guest.userId)}"${(excluded ? excludedGuests : selectedGuests).has(guest.userId) ? " checked" : ""}>${escapeHtml(guest.name)} · ${escapeHtml(guest.companyName)}</label>`
-      )
-      .join("") +
-    [...(excluded ? excludedGuests : selectedGuests)]
-      .filter((id) => !people.some((person) => person.userId === id))
-      .map((id) => hidden(excluded ? "excludedGuestIds" : "guestIds", id))
-      .join("");
   const audience = form(
     "scope",
     "share-audience",
-    `${hidden("expectedScope", patch.scope)}${hidden("expectedAudienceRevision", patch.audienceRevision)}<fieldset><legend class="field-label">Company people</legend>${choice("company", `People at ${viewer.company.name}`)}${choice("teams", "Selected teams", !input.teams?.length)}${choice("public", "Anyone on the internet", row.tier >= 2)}</fieldset><fieldset class="share-team-choices"><legend class="field-label">Teams</legend>${teamChoices || '<p class="supporting-text">No teams yet.</p>'}</fieldset><fieldset><legend class="field-label">Guests</legend><label class="field-choice"><input class="field-radio" type="radio" name="guestMode" value="specific"${patch.audience.guests.kind === "specific" ? " checked" : ""}>Specific guests</label><label class="field-choice"><input class="field-radio" type="radio" name="guestMode" value="all"${patch.audience.guests.kind === "all" ? " checked" : ""}>All current and future company guests</label></fieldset><fieldset class="share-specific"><legend class="field-label">Include</legend>${guestChoices(false)}</fieldset><fieldset class="share-exclusions"><legend class="field-label">Except</legend>${guestChoices(true)}</fieldset>${next}<div class="actions share-save"><button class="btn btn-primary" type="submit">Save sharing</button></div>`
+    `${hidden("expectedScope", patch.scope)}${hidden("expectedLifecycleRevision", patch.lifecycleRevision)}<fieldset><legend class="field-label">Company people</legend>${choice("company", `People at ${viewer.company.name}`)}${choice("teams", "Selected teams", !input.teams?.length)}${choice("public", "Anyone on the internet", row.tier >= 2)}</fieldset><fieldset class="share-team-choices"><legend class="field-label">Teams</legend>${teamChoices || '<p class="supporting-text">No teams yet.</p>'}</fieldset>${next}<div class="actions share-save"><button class="btn btn-primary" type="submit">Save sharing</button></div>`
   );
 
   const url = `${input.publicBaseUrl.replace(/\/+$/u, "")}${patchAddress(patch)}`;

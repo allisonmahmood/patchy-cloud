@@ -233,3 +233,27 @@ export const memberships = Effect.fn("Teams.memberships")(function* (
 export const changes = Effect.fn("Teams.changes")((companyId: string, after: string) =>
   changeRows({ companyId, after }).pipe(Effect.catchTags(schemaError))
 );
+
+const decodePeople = Schema.decodeUnknownEffect(
+  Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      active: Schema.Boolean,
+      role: Schema.Literals(["member", "admin", "super_admin"]),
+      teamIds: Schema.Array(Schema.String)
+    })
+  )
+);
+/** Batched company-owned authority facts. Inactive owners retain their team selections for repairs. */
+export const people = Effect.fn("Teams.people")(function* (
+  companyId: string,
+  userIds: readonly string[]
+) {
+  const sql = yield* SqlClient.SqlClient;
+  if (!userIds.length) return [];
+  return yield* sql`SELECT u.id, u.deactivated_at IS NULL AS active, u.role,
+    COALESCE(array_agg(m.team_id ORDER BY m.team_id) FILTER (WHERE m.team_id IS NOT NULL), ARRAY[]::text[]) AS "teamIds"
+    FROM users u LEFT JOIN company_team_members m ON m.company_id = u.company_id AND m.user_id = u.id
+    WHERE u.company_id = ${companyId} AND u.id = ANY(${[...new Set(userIds)]}::text[])
+    GROUP BY u.id`.pipe(Effect.flatMap(decodePeople), Effect.catchTags(schemaError));
+});

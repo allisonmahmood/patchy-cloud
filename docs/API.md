@@ -70,7 +70,7 @@ Responses:
 
 ### `POST /api/publish`
 
-Publish an HTML artifact, a manifest, and a server artifact on tier 2. Without `patchId` creates a patch (201); with an owned live `patchId` publishes a version (200). Authenticate, then replay by owner and `publishKey` before limits or release validation: identical payloads return the stored response and status, even after an upgrade; changed payloads answer 409 `publish_key_conflict`. New attempts require the exact current release and manifest version from `GET /api/release`. Tiers 1 and 2 may define tables and file stores, provisioned additively; tier 3 answers `tier_mismatch`, and so does tier 0, naming the move to tier 1. Tier 2 is admitted on dev and test instances; production requires the fleet executor. Tier 2 requires `server`, a closed JavaScript module. Stored bytes are inspected in a throwaway process: descriptor disagreement, load failure or timeout answers `invalid_manifest`, and so does a blank handler or value description or one over 2,000 code points, with an error naming the handler and how to fix it. A server artifact below tier 2 is `tier_mismatch`. The agent area check runs on the inspected `agent.*` handlers marked as agent tools: a tool with no description, `t.upload()` or `t.fileHandle()` anywhere in its arguments or result, and tools whose `open_patch` rendering, rows expanded, exceeds 60 KiB of UTF-8 are `invalid_manifest`, naming the tool and the fix. So is an `agent.*` handler without the agent tool mark, which only `server/agent.ts` builds; read from an older version it stays a page handler. A row naming a table the manifest doesn't define is `invalid_manifest` naming the handler (an agent tool by its tool name), as is any manifest-wide check, in its own words. Undescribed top-level agent tool arguments warn, and so does a version with agent tools while the company's agent access is off, naming where a super admin turns it on. `handlers` lists agent tools as `agent.<export>` with their handler `kind`. Zero handlers warns. `artifacts.html` is always returned; tier 2 also returns `artifacts.server` and `handlers: [{name, kind}]` sorted by name. Both artifact records carry `sha256` and UTF-8 `bytes`. Publishing tier 2 to a public patch requires explicit company scope, otherwise `tier2_not_public`. Stored versions retain their wire; tier 2 wire 1 fixes the guest protocol and workerd compatibility date. Every table and file store requires a nonblank description; missing or blank descriptions and table/store name collisions answer `invalid_manifest`. Only tier 2 declares `uses`: below it, any declaration answers `tier_mismatch`, since a page below tier 2 reaches only its own patch, and its handlers reach the rest. The company directory is declared as `uses: { members: { kind: "members" } }`, without a resource id or schema stamp. Member columns require this declaration. Postgres uses carry `{ kind: "postgres", handle, id, revision }`, keyed by alias. The handle and id must name the same connected company connection, otherwise `connection_not_connected`; the revision must equal its current schema snapshot, otherwise `stale_generated` (run `patchy refresh`). Credential rotation and retargeting preserve the connection id. Postgres runtime calls retain the version's recorded snapshot. Shared-table uses carry `{ kind: "sharedTable", patchId, table, id, revision }`, keyed by alias. Shared-store uses carry `{ kind: "sharedStore", patchId, store, id, revision }`. The resolved id is `<patchId>/<table>` or `<patchId>/<store>`, never a patch name; revision stamps the source inventory. `files(description, { shared: true })` publishes read access to every file in the store. Publish requires a live same-company source the publisher can open and an inventory resource marked shared, otherwise `patch_not_openable`. A stamp behind the source revision warns, not refuses. Unsharing a defined table or store refuses with `has_dependants` and the distinct live declaring patches, including declarations in retained versions, unless `force` is true. Ask the person you are working for before forcing. Omission and rollback never change sharing. Ownership and lifecycle are checked before validating HTML and again at commit: another company's patch is 404; a same-company non-owner gets `not_owner` first, with the current owner. The owner gets `patch_retired` or `patch_deleted` with `purgeAt`, and must restore before publishing. Schema changes are checked before storage and rechecked under the patch lock. Preflight conservatively refuses new indexes with existing uncompressed key tuples over 2,000 bytes, and added columns that expand existing rows over the row limit. `not_additive` names every refused object, change and fix. Omitted tables and stores remain in the cumulative inventory with their data and appear as `unused`; a required column cannot be omitted. A new table or store cannot take a name the other kind holds in the inventory, even omitted. A publish replaces descriptions of the primitives it defines; omission and rollback preserve them. Description-only changes do not advance the schema revision. The revision advances for schema or sharing changes, never for a new bundle alone. File mode (empty definitions and no repo name, or file metadata) onto cumulative inventory answers `has_primitives`; an empty named repo manifest may omit all tables. Reports and schema revision are persisted for replay. HTML bundles are stored raw, without validation or transformation. Each artifact uses `PATCHY_MAX_BUNDLE_BYTES` (10 MiB), with oversized artifacts refused as 413. Creates spend the per-token create limit and live-patch quota; updates do not. Omitted create audiences default to Company; updates retain their audience unless explicitly changed. Audience commits atomically with the first version and every publish reports it. Team and all-company-guest audiences remain blocked until downstream enforcement is assembled. `manifest.name` is an exact company-scoped name (3–32 lowercase letters, digits or hyphens, starting and ending with a letter or digit); another patch's current name, or any name of a retired or deleted patch, answers 409 `name_taken` on create or rename. `patches` and `connections` are reserved names and answer 422 `reserved_name` on create. Without a name, creates derive one from `metadata.filename` without its extension (title when absent), normalize it, fall back to `patch` and add `-2`, `-3`, etc. on collision. Updates with no name retain their existing name. Rename leaves a redirect until another patch claims it; retire and delete reserve names until the deletion sweep reclaims the patch after 30 days. `manifest.description` or file mode's `metadata.description` updates the description; omitted, the cloud text remains. Descriptions collapse whitespace, permit at most 500 Unicode code points and no control characters, and are returned with `descriptionUpdatedAt`. `metadata.look` names the look a repo's page builds in, null for the Patchy look or `{ revision, createdAt }` for a company revision; when it isn't the company's current look, `warnings` names the current revision and how to catch up. The check is advisory: a failed read warns and the publish goes ahead. Absent `metadata.look` skips the check. `address` and `publicUrl` both name the absolute `/<company>/<name>` address. `repo` is the repo snapshot the bundle was built from, kept with the version for `GET /api/patches/:patchRef/repo`: `[{ path, contents, executable? }]` with relative POSIX paths (no empty, `.` or `..` segments, backslashes or control characters, at most 1,024 UTF-8 bytes), padded standard base64 contents and `executable: true` for a file its owner could run. The CLI sends it on every repo publish and never on a file publish. Paths that repeat, differ only by case or Unicode form, or make a file a folder answer 400. More than `publish.repo.files` (2,000) files or `publish.repo.bytes` (10 MiB) of decoded bytes answers 413. A published snapshot returns `artifacts.repo: { files, bytes }`, counting decoded bytes. `baseVersion` names the version the publishing copy was pulled from or last published as. When the patch has a newer version, the update answers 409 `behind` with `baseVersion`, `latestVersion` and who published it and when (`publishedBy`, `publishedAt`). It is checked before anything is stored and again under the patch row lock, so two machines publishing from one copy cannot both pass. `force` does not override it; leave `baseVersion` out to publish over newer work, after asking the person you are working for. The JSON body cap is three times the sum of the page and server bundle caps, plus twice `publish.repo.bytes`.
+Publish an HTML artifact, a manifest, and a server artifact on tier 2. Without `patchId` creates a patch (201); with an owned live `patchId` publishes a version (200). Authenticate, then replay by owner and `publishKey` before limits or release validation: identical payloads return the stored response and status, even after an upgrade; changed payloads answer 409 `publish_key_conflict`. New attempts require the exact current release and manifest version from `GET /api/release`. Tiers 1 and 2 may define tables and file stores, provisioned additively; tier 3 answers `tier_mismatch`, and so does tier 0, naming the move to tier 1. Tier 2 is admitted on dev and test instances; production requires the fleet executor. Tier 2 requires `server`, a closed JavaScript module. Stored bytes are inspected in a throwaway process: descriptor disagreement, load failure or timeout answers `invalid_manifest`, and so does a blank handler or value description or one over 2,000 code points, with an error naming the handler and how to fix it. A server artifact below tier 2 is `tier_mismatch`. The agent area check runs on the inspected `agent.*` handlers marked as agent tools: a tool with no description, `t.upload()` or `t.fileHandle()` anywhere in its arguments or result, and tools whose `open_patch` rendering, rows expanded, exceeds 60 KiB of UTF-8 are `invalid_manifest`, naming the tool and the fix. So is an `agent.*` handler without the agent tool mark, which only `server/agent.ts` builds; read from an older version it stays a page handler. A row naming a table the manifest doesn't define is `invalid_manifest` naming the handler (an agent tool by its tool name), as is any manifest-wide check, in its own words. Undescribed top-level agent tool arguments warn, and so does a version with agent tools while the company's agent access is off, naming where a super admin turns it on. `handlers` lists agent tools as `agent.<export>` with their handler `kind`. Zero handlers warns. `artifacts.html` is always returned; tier 2 also returns `artifacts.server` and `handlers: [{name, kind}]` sorted by name. Both artifact records carry `sha256` and UTF-8 `bytes`. Publishing tier 2 to a public patch requires explicit company scope, otherwise `tier2_not_public`. Stored versions retain their wire; tier 2 wire 1 fixes the guest protocol and workerd compatibility date. Every table and file store requires a nonblank description; missing or blank descriptions and table/store name collisions answer `invalid_manifest`. Only tier 2 declares `uses`: below it, any declaration answers `tier_mismatch`, since a page below tier 2 reaches only its own patch, and its handlers reach the rest. The company directory is declared as `uses: { members: { kind: "members" } }`, without a resource id or schema stamp. Member columns require this declaration. Postgres uses carry `{ kind: "postgres", handle, id, revision }`, keyed by alias. The handle and id must name the same connected company connection, otherwise `connection_not_connected`; the revision must equal its current schema snapshot, otherwise `stale_generated` (run `patchy refresh`). Credential rotation and retargeting preserve the connection id. Postgres runtime calls retain the version's recorded snapshot. Shared-table uses carry `{ kind: "sharedTable", patchId, table, id, revision }`, keyed by alias. Shared-store uses carry `{ kind: "sharedStore", patchId, store, id, revision }`. The resolved id is `<patchId>/<table>` or `<patchId>/<store>`, never a patch name; revision stamps the source inventory. `files(description, { shared: true })` publishes read access to every file in the store. Publish requires a live same-company source the publisher can open and an inventory resource marked shared, otherwise `patch_not_openable`. A stamp behind the source revision warns, not refuses. Unsharing a defined table or store refuses with `has_dependants` and the distinct live declaring patches, including declarations in retained versions, unless `force` is true. Ask the person you are working for before forcing. Omission and rollback never change sharing. Ownership and lifecycle are checked before validating HTML and again at commit: another company's patch is 404; a same-company non-owner gets `not_owner` first, with the current owner. The owner gets `patch_retired` or `patch_deleted` with `purgeAt`, and must restore before publishing. Schema changes are checked before storage and rechecked under the patch lock. Preflight conservatively refuses new indexes with existing uncompressed key tuples over 2,000 bytes, and added columns that expand existing rows over the row limit. `not_additive` names every refused object, change and fix. Omitted tables and stores remain in the cumulative inventory with their data and appear as `unused`; a required column cannot be omitted. A new table or store cannot take a name the other kind holds in the inventory, even omitted. A publish replaces descriptions of the primitives it defines; omission and rollback preserve them. Description-only changes do not advance the schema revision. The revision advances for schema or sharing changes, never for a new bundle alone. File mode (empty definitions and no repo name, or file metadata) onto cumulative inventory answers `has_primitives`; an empty named repo manifest may omit all tables. Reports and schema revision are persisted for replay. HTML bundles are stored raw, without validation or transformation. Each artifact uses `PATCHY_MAX_BUNDLE_BYTES` (10 MiB), with oversized artifacts refused as 413. Creates spend the per-token create limit and live-patch quota; updates do not. Omitted create audiences default to Company; updates retain their audience unless explicitly changed. Audience commits atomically with the first version and every publish reports it. Named guest grants are independent of the member audience. `manifest.name` is an exact company-scoped name (3–32 lowercase letters, digits or hyphens, starting and ending with a letter or digit); another patch's current name, or any name of a retired or deleted patch, answers 409 `name_taken` on create or rename. `patches` and `connections` are reserved names and answer 422 `reserved_name` on create. Without a name, creates derive one from `metadata.filename` without its extension (title when absent), normalize it, fall back to `patch` and add `-2`, `-3`, etc. on collision. Updates with no name retain their existing name. Rename leaves a redirect until another patch claims it; retire and delete reserve names until the deletion sweep reclaims the patch after 30 days. `manifest.description` or file mode's `metadata.description` updates the description; omitted, the cloud text remains. Descriptions collapse whitespace, permit at most 500 Unicode code points and no control characters, and are returned with `descriptionUpdatedAt`. `metadata.look` names the look a repo's page builds in, null for the Patchy look or `{ revision, createdAt }` for a company revision; when it isn't the company's current look, `warnings` names the current revision and how to catch up. The check is advisory: a failed read warns and the publish goes ahead. Absent `metadata.look` skips the check. `address` and `publicUrl` both name the absolute `/<company>/<name>` address. `repo` is the repo snapshot the bundle was built from, kept with the version for `GET /api/patches/:patchRef/repo`: `[{ path, contents, executable? }]` with relative POSIX paths (no empty, `.` or `..` segments, backslashes or control characters, at most 1,024 UTF-8 bytes), padded standard base64 contents and `executable: true` for a file its owner could run. The CLI sends it on every repo publish and never on a file publish. Paths that repeat, differ only by case or Unicode form, or make a file a folder answer 400. More than `publish.repo.files` (2,000) files or `publish.repo.bytes` (10 MiB) of decoded bytes answers 413. A published snapshot returns `artifacts.repo: { files, bytes }`, counting decoded bytes. `baseVersion` names the version the publishing copy was pulled from or last published as. When the patch has a newer version, the update answers 409 `behind` with `baseVersion`, `latestVersion` and who published it and when (`publishedBy`, `publishedAt`). It is checked before anything is stored and again under the patch row lock, so two machines publishing from one copy cannot both pass. `force` does not override it; leave `baseVersion` out to publish over newer work, after asking the person you are working for. The JSON body cap is three times the sum of the page and server bundle caps, plus twice `publish.repo.bytes`.
 
 Request body: [PublishRequest](#publishrequest)
 
@@ -78,7 +78,7 @@ Responses:
 
 - `200` [PublishUpdated](#publishupdated)
 - `201` [PublishCreated](#publishcreated)
-- `400` { ok: false, error: string }
+- `400` { ok: false, error: string } | { ok: false, error: string, code: "invalid_audience_teams" | "audience_excludes_owner" | "owner_access_lost" }
 - `401` { ok: false, error: "Missing or invalid API token." }
 - `403` { ok: false, error: string, code: "live_patch_quota_exceeded", quota: integer } | { ok: false, error: string, code: "not_owner", owner: { id: string, name: string } }
 - `404` { ok: false, error: string }
@@ -173,14 +173,14 @@ Responses:
 
 ### `POST /api/patches/:patchId/share`
 
-Change the sharing scope of a patch owned by the bearer token's user, without publishing a version. `company` requires a company member's browser session; `public` lets anyone with the link open the current version. Only the current version of a public patch is public; older versions stay behind the company door. Public sharing while the served version is tier 2 answers `tier2_not_public`. A same-company non-owner answers 403 `not_owner`, including an admin's machine token; another company answers 404. Only live patches permit scope changes, otherwise `wrong_state`. The current public version may be cached for 60 seconds at both `/<company>/<name>` and `/<company>/<name>/~v/<current n>`; older versions and company patches are `private, no-store` and answer 401 without a session. The JSON body is bounded at 1.5 MiB; the larger bundle cap applies only to publishing. An oversized declared body answers 413; streaming bodies are cut off at the cap. Rejected requests leave the scope unchanged.
+Change a patch member audience without publishing a version. `audience` selects Company, Public or named teams; named guest grants are retained. Legacy `scope: company` preserves existing teams. `company` requires a company member's browser session; `public` lets anyone with the link open the current version. Only the current version of a public patch is public; older versions stay behind the company door. Public sharing while the served version is tier 2 answers `tier2_not_public`. A non-owner within the audience answers 403 `not_owner`, including an admin's machine token; people outside the audience or company answers 404. Only live patches permit scope changes, otherwise `wrong_state`. The current public version may be cached for 60 seconds at both `/<company>/<name>` and `/<company>/<name>/~v/<current n>`; older versions and company patches are `private, no-store` and answer 401 without a session. The JSON body is bounded at 1.5 MiB; the larger bundle cap applies only to publishing. An oversized declared body answers 413; streaming bodies are cut off at the cap. Rejected requests leave the scope unchanged.
 
 Request body: [ShareRequest](#sharerequest)
 
 Responses:
 
 - `200` [Shared](#shared)
-- `400` { ok: false, error: string }
+- `400` { ok: false, error: string } | { ok: false, error: string, code: "invalid_audience_teams" | "audience_excludes_owner" | "owner_access_lost" }
 - `401` { ok: false, error: "Missing or invalid API token." }
 - `403` { ok: false, error: string, code: "not_owner", owner: { id: string, name: string } }
 - `404` { ok: false, error: string }
@@ -197,7 +197,7 @@ List the guests of a patch owned by the bearer token's user: people at other com
 Responses:
 
 - `200` [PatchGuests](#patchguests)
-- `400` { ok: false, error: string }
+- `400` { ok: false, error: string } | { ok: false, error: string, code: "invalid_audience_teams" | "audience_excludes_owner" | "owner_access_lost" }
 - `401` { ok: false, error: "Missing or invalid API token." }
 - `403` { ok: false, error: string, code: "not_owner", owner: { id: string, name: string } }
 - `404` { ok: false, error: string }
@@ -214,7 +214,7 @@ Request body: [GuestRequest](#guestrequest)
 Responses:
 
 - `200` [GuestShared](#guestshared)
-- `400` { ok: false, error: string }
+- `400` { ok: false, error: string } | { ok: false, error: string, code: "invalid_audience_teams" | "audience_excludes_owner" | "owner_access_lost" }
 - `401` { ok: false, error: "Missing or invalid API token." }
 - `403` { ok: false, error: string, code: "not_owner", owner: { id: string, name: string } }
 - `404` { ok: false, error: string }
@@ -231,7 +231,7 @@ Stop sharing an owned patch with one guest, named by email or user id. `removed`
 Responses:
 
 - `200` [GuestRemoved](#guestremoved)
-- `400` { ok: false, error: string }
+- `400` { ok: false, error: string } | { ok: false, error: string, code: "invalid_audience_teams" | "audience_excludes_owner" | "owner_access_lost" }
 - `401` { ok: false, error: "Missing or invalid API token." }
 - `403` { ok: false, error: string, code: "not_owner", owner: { id: string, name: string } }
 - `404` { ok: false, error: string }
@@ -248,7 +248,7 @@ Request body: [ForceRequest](#forcerequest)
 Responses:
 
 - `200` [Retired](#retired)
-- `400` { ok: false, error: string }
+- `400` { ok: false, error: string } | { ok: false, error: string, code: "invalid_audience_teams" | "audience_excludes_owner" | "owner_access_lost" }
 - `401` { ok: false, error: "Missing or invalid API token." }
 - `403` { ok: false, error: string, code: "not_owner", owner: { id: string, name: string } }
 - `404` { ok: false, error: string }
@@ -264,7 +264,7 @@ Delete an owned live or retired patch. It stops serving but retains its names, v
 Responses:
 
 - `200` [Deleted](#deleted)
-- `400` { ok: false, error: string }
+- `400` { ok: false, error: string } | { ok: false, error: string, code: "invalid_audience_teams" | "audience_excludes_owner" | "owner_access_lost" }
 - `401` { ok: false, error: "Missing or invalid API token." }
 - `403` { ok: false, error: string, code: "not_owner", owner: { id: string, name: string } }
 - `404` { ok: false, error: string }
@@ -281,7 +281,7 @@ Request body: [ForceRequest](#forcerequest)
 Responses:
 
 - `200` [Restored](#restored)
-- `400` { ok: false, error: string }
+- `400` { ok: false, error: string } | { ok: false, error: string, code: "invalid_audience_teams" | "audience_excludes_owner" | "owner_access_lost" }
 - `401` { ok: false, error: "Missing or invalid API token." }
 - `403` { ok: false, error: string, code: "not_owner", owner: { id: string, name: string } }
 - `404` { ok: false, error: string }
@@ -299,7 +299,7 @@ Request body: [RollbackRequest](#rollbackrequest)
 Responses:
 
 - `200` [RolledBack](#rolledback)
-- `400` { ok: false, error: string }
+- `400` { ok: false, error: string } | { ok: false, error: string, code: "invalid_audience_teams" | "audience_excludes_owner" | "owner_access_lost" }
 - `401` { ok: false, error: "Missing or invalid API token." }
 - `403` { ok: false, error: string, code: "not_owner", owner: { id: string, name: string } }
 - `404` { ok: false, error: string }
@@ -318,7 +318,7 @@ Request body: [DescriptionRequest](#descriptionrequest)
 Responses:
 
 - `200` [Described](#described)
-- `400` { ok: false, error: string }
+- `400` { ok: false, error: string } | { ok: false, error: string, code: "invalid_audience_teams" | "audience_excludes_owner" | "owner_access_lost" }
 - `401` { ok: false, error: "Missing or invalid API token." }
 - `403` { ok: false, error: string, code: "not_owner", owner: { id: string, name: string } }
 - `404` { ok: false, error: string }
@@ -1182,10 +1182,9 @@ RuntimeSuccess | HandlerFailure
 {
   ok: true,
   patchId: string,
-  scope: "company" | "public",
+  scope: "company" | "public" | "teams",
   audience?: {
-    members: { kind: "company" } | { kind: "public" } | { kind: "teams", teamIds: string[] },
-    guests: { kind: "specific", userIds: string[] } | { kind: "all", excludedUserIds: string[] }
+    members: { kind: "company" } | { kind: "public" } | { kind: "teams", teamIds: string[] }
   },
   publicUrl: string
 }
@@ -1195,10 +1194,9 @@ RuntimeSuccess | HandlerFailure
 
 ```
 {
-  scope: "company" | "public",
+  scope: "company" | "public" | "teams",
   audience?: {
-    members: { kind: "company" } | { kind: "public" } | { kind: "teams", teamIds: string[] },
-    guests: { kind: "specific", userIds: string[] } | { kind: "all", excludedUserIds: string[] }
+    members: { kind: "company" } | { kind: "public" } | { kind: "teams", teamIds: string[] }
   }
 }
 ```
@@ -1277,7 +1275,7 @@ RuntimeSuccess | HandlerFailure
   },
   mine: boolean,
   tier: integer,
-  scope: "company" | "public",
+  scope: "company" | "public" | "teams",
   description: string,
   state: "live" | "retired" | "deleted",
   retiredAt: string | null,
@@ -1307,7 +1305,7 @@ RuntimeSuccess | HandlerFailure
   },
   mine: boolean,
   tier: integer,
-  scope: "company" | "public",
+  scope: "company" | "public" | "teams",
   description: string,
   state: "live" | "retired" | "deleted",
   retiredAt: string | null,
@@ -1330,10 +1328,9 @@ RuntimeSuccess | HandlerFailure
   name: string,
   address: string,
   publicUrl: string,
-  scope: "company" | "public",
+  scope: "company" | "public" | "teams",
   audience?: {
-    members: { kind: "company" } | { kind: "public" } | { kind: "teams", teamIds: string[] },
-    guests: { kind: "specific", userIds: string[] } | { kind: "all", excludedUserIds: string[] }
+    members: { kind: "company" } | { kind: "public" } | { kind: "teams", teamIds: string[] }
   },
   tier: 1 | 2 | 3,
   schemaRevision: integer,
@@ -1382,10 +1379,9 @@ RuntimeSuccess | HandlerFailure
   name: string,
   address: string,
   publicUrl: string,
-  scope: "company" | "public",
+  scope: "company" | "public" | "teams",
   audience?: {
-    members: { kind: "company" } | { kind: "public" } | { kind: "teams", teamIds: string[] },
-    guests: { kind: "specific", userIds: string[] } | { kind: "all", excludedUserIds: string[] }
+    members: { kind: "company" } | { kind: "public" } | { kind: "teams", teamIds: string[] }
   },
   tier: 1 | 2 | 3,
   schemaRevision: integer,
@@ -1443,10 +1439,9 @@ RuntimeSuccess | HandlerFailure
   repo?: { path: string, contents: string, executable?: true }[],
   baseVersion?: integer,
   patchId?: string,
-  scope?: "company" | "public",
+  scope?: "company" | "public" | "teams",
   audience?: {
-    members: { kind: "company" } | { kind: "public" } | { kind: "teams", teamIds: string[] },
-    guests: { kind: "specific", userIds: string[] } | { kind: "all", excludedUserIds: string[] }
+    members: { kind: "company" } | { kind: "public" } | { kind: "teams", teamIds: string[] }
   },
   force?: boolean,
   publishKey: string,

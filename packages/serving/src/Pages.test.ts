@@ -261,8 +261,7 @@ it.layer(layer)("pages", (it) => {
           patchId: initial.patchId,
           actor: { userId: DEV_SEED.userId, admin: true },
           audience: {
-            members: { kind: "teams", teamIds: [team.id] },
-            guests: { kind: "specific", userIds: [] }
+            members: { kind: "teams", teamIds: [team.id] }
           }
         });
         const latest = yield* publish(
