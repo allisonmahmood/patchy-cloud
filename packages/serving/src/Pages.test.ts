@@ -247,7 +247,7 @@ it.layer(layer)("pages", (it) => {
           ["usr_audience_inside", "member"],
           ["usr_audience_outside", "admin"]
         ] as const) {
-          yield* sql`INSERT INTO users(id, clerk_user_id, company_id, email, name, role, is_regular_admin) VALUES (${id}, ${id}, ${DEV_SEED.companyId}, ${`${id}@example.test`}, ${id}, ${Users.roleToStorage(role)}, ${role === "admin"})`;
+          yield* sql`INSERT INTO users(id, clerk_user_id, company_id, email, name, role) VALUES (${id}, ${id}, ${DEV_SEED.companyId}, ${`${id}@example.test`}, ${id}, ${role})`;
         }
         const manager = { companyId: DEV_SEED.companyId, actorId: DEV_SEED.userId };
         const team = yield* Teams.create({ ...manager, name: "Serving audience" });

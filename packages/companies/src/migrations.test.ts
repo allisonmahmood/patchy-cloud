@@ -71,53 +71,14 @@ it.layer(Testing.emptyLayer(before("0036_company_roles")))("the company roles up
         yield* sql`INSERT INTO invites (id, company_id, email, role, invited_by, expires_at) VALUES
         ('i', 'cmp_roles', 'invited@example.com', 'admin', 'a', now() + interval '1 day')`;
         yield* migrate(migrations);
-        // The old server's two-role decoder and write shape remain usable after upgrading.
         assert.deepStrictEqual(yield* sql`SELECT id, role FROM users ORDER BY id`, [
-          { id: "a", role: "admin" },
-          { id: "b", role: "admin" },
+          { id: "a", role: "super_admin" },
+          { id: "b", role: "super_admin" },
           { id: "m", role: "member" }
         ]);
-        yield* sql`UPDATE users SET role = 'member' WHERE id = 'b'`;
-        yield* sql`UPDATE users SET role = 'admin' WHERE id = 'b'`;
         assert.deepStrictEqual(yield* sql`SELECT role FROM invites WHERE id = 'i'`, [
-          { role: "admin" }
+          { role: "super_admin" }
         ]);
-        assert.deepStrictEqual(
-          yield* sql`SELECT id, CASE WHEN role = 'admin' THEN 'super_admin' WHEN is_regular_admin THEN 'admin' ELSE 'member' END AS role FROM users ORDER BY id`,
-          [
-            { id: "a", role: "super_admin" },
-            { id: "b", role: "super_admin" },
-            { id: "m", role: "member" }
-          ]
-        );
-        assert.deepStrictEqual(
-          yield* sql`SELECT CASE WHEN role = 'admin' THEN 'super_admin' WHEN is_regular_admin THEN 'admin' ELSE 'member' END AS role FROM invites WHERE id = 'i'`,
-          [{ role: "super_admin" }]
-        );
-        // Emulate a rollback accepting a regular-admin invitation with its old INSERT shape.
-        yield* sql`UPDATE invites SET role = 'member', is_regular_admin = true WHERE id = 'i'`;
-        yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
-          VALUES ('r', 'clerk_r', 'cmp_roles', 'invited@example.com', 'Regular', 'member')`;
-        assert.deepStrictEqual(
-          yield* sql`SELECT role, is_regular_admin FROM users WHERE id = 'r'`,
-          [{ role: "member", is_regular_admin: true }]
-        );
-        // The old last-admin safeguard counts only the actual super admin.
-        assert.deepStrictEqual(
-          yield* sql`SELECT count(*)::int AS count FROM users
-          WHERE company_id = 'cmp_roles' AND role = 'admin' AND deactivated_at IS NULL`,
-          [{ count: 1 }]
-        );
-        // Legacy promotions/demotions carry no flag: never resurrect an earlier grant.
-        yield* sql`UPDATE users SET role = 'admin' WHERE id = 'r'`;
-        assert.deepStrictEqual(yield* sql`SELECT is_regular_admin FROM users WHERE id = 'r'`, [
-          { is_regular_admin: false }
-        ]);
-        yield* sql`UPDATE users SET role = 'member' WHERE id = 'r'`;
-        assert.deepStrictEqual(
-          yield* sql`SELECT role, is_regular_admin FROM users WHERE id = 'r'`,
-          [{ role: "member", is_regular_admin: false }]
-        );
       })
   );
 });

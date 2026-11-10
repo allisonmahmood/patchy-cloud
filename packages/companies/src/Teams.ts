@@ -4,7 +4,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Cryptography } from "@patchy/core";
-import { lockAdministrator, Role, roleFromStorage, RoleForbidden, UserNotFound } from "./Users.js";
+import { lockAdministrator, Role, RoleForbidden, UserNotFound } from "./Users.js";
 
 export class Team extends Schema.Class<Team>("Team")({
   id: Schema.String,
@@ -75,7 +75,7 @@ const effectiveMemberships = (
   UNION
   SELECT t.company_id, t.id AS team_id, u.id AS user_id FROM company_teams t
   JOIN users u ON u.company_id = t.company_id
-  WHERE t.company_id = ${companyId} AND u.role = 'admin' AND u.deactivated_at IS NULL
+  WHERE t.company_id = ${companyId} AND u.role = 'super_admin' AND u.deactivated_at IS NULL
     ${selection.userIds ? sql`AND u.id = ANY(${selection.userIds}::text[])` : sql``}
     ${selection.teamId ? sql`AND t.id = ${selection.teamId}` : sql``}`;
 
@@ -84,7 +84,7 @@ const visibleTeams = (sql: SqlClient.SqlClient, viewer: Viewer) => sql`
   SELECT t.id, t.company_id, t.name, t.created_at FROM company_teams t
   JOIN users u ON u.company_id = t.company_id AND u.id = ${viewer.actorId}
   WHERE t.company_id = ${viewer.companyId} AND u.deactivated_at IS NULL
-  AND (u.role = 'admin' OR u.is_regular_admin OR EXISTS (
+  AND (u.role IN ('admin', 'super_admin') OR EXISTS (
     SELECT 1 FROM (${effectiveMemberships(sql, viewer.companyId, { userIds: [viewer.actorId] })}) m WHERE m.team_id = t.id
   ))`;
 const listRows = SqlSchema.findAll({
@@ -104,7 +104,7 @@ const active = SqlSchema.findAll({
     Effect.flatMap(
       SqlClient.SqlClient,
       (sql) =>
-        sql`SELECT id, ${sql.unsafe(roleFromStorage)} AS role FROM users WHERE company_id = ${companyId} AND id = ${userId} AND deactivated_at IS NULL`
+        sql`SELECT id, role FROM users WHERE company_id = ${companyId} AND id = ${userId} AND deactivated_at IS NULL`
     )
 });
 const memberRows = SqlSchema.findOneOption({
