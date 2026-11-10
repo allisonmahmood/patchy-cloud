@@ -10,6 +10,7 @@ import { dialogs } from "./dialogs.js";
 import { doorParts } from "./door-parts.js";
 import { doors } from "./doors.js";
 import { fields } from "./fields.js";
+import { flowParts } from "./flow-parts.js";
 import { marks } from "./marks.js";
 import { menus } from "./menus.js";
 import { navigation } from "./navigation.js";
@@ -54,6 +55,7 @@ export const chunks = {
   dialogs,
   steps,
   tiles,
+  flowParts,
   appShell,
   doors,
   doorParts,

@@ -66,13 +66,16 @@ export const button = (
 ) =>
   `<button class="${buttonClass(options)}" type="${options.type ?? "submit"}"${attribute("name", options.name)}${attribute("value", options.value)}${attribute("form", options.form)}${options.pending === true ? ' aria-disabled="true"' : ""}${lookAttributes(options)}>${buttonInner(label, options)}</button>`;
 
-/** A link drawn as a button, for an action that is a place: Open, Connect, Cancel. */
+/**
+ * A link drawn as a button, for an action that is a place: Open, Connect, Cancel. `id` makes it
+ * a fragment's target, such as one a released skill's link names.
+ */
 export const linkButton = (
   label: string,
   href: string,
-  options: ButtonLook & { readonly newTab?: boolean } = {}
+  options: ButtonLook & { readonly newTab?: boolean; readonly id?: string } = {}
 ) =>
-  `<a class="${buttonClass(options)}" href="${escapeAttribute(href)}"${options.newTab === true ? ' target="_blank" rel="noopener"' : ""}${lookAttributes(options)}>${buttonInner(label, options)}</a>`;
+  `<a class="${buttonClass(options)}"${attribute("id", options.id)} href="${escapeAttribute(href)}"${options.newTab === true ? ' target="_blank" rel="noopener"' : ""}${lookAttributes(options)}>${buttonInner(label, options)}</a>`;
 
 /** A square button holding one icon, named by `label`; a link when given `href`. */
 export const iconButton = (

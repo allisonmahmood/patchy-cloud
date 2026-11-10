@@ -77,9 +77,37 @@ test("patchy-login: browser confirmation logs the packed CLI in; browser revoke 
     machine: loggedIn.machine
   });
   expect((await page.goto(`${live.origin}/agents`))?.status()).toBe(200);
-  await page.getByRole("button", { name: `Revoke ${machineName}`, exact: true }).click();
-  await expect(page.getByRole("status")).toHaveText(`Revoked ${machineName}`);
-  await expect(page.getByRole("heading", { name: machineName, exact: true })).toHaveCount(0);
+  // Disconnect is in the computer's menu, and asks first in a dialog naming what stops.
+  await page.getByRole("button", { name: `Actions for ${machineName}`, exact: true }).click();
+  await page.getByRole("link", { name: `Disconnect…, ${machineName}`, exact: true }).click();
+  const confirm = page.getByRole("dialog", { name: `Disconnect ${machineName}?`, exact: true });
+  await expect(confirm).toBeVisible();
+  // The dialog is its own page: answer it once Clerk's session script has settled there, as the
+  // page the old Revoke sat on had by the time the test pressed it.
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          "Clerk" in window &&
+          typeof window.Clerk === "object" &&
+          window.Clerk !== null &&
+          "loaded" in window.Clerk &&
+          window.Clerk.loaded === true
+      )
+    )
+    .toBe(true);
+  const [answer] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname.endsWith("/disconnect")
+    ),
+    confirm.getByRole("button", { name: "Disconnect", exact: true }).click()
+  ]);
+  expect(answer.status(), "Disconnect answers itself, not through a Clerk handshake").toBe(303);
+  expect(answer.headers()["location"]).toBe("/agents");
+  await expect(page.getByRole("status")).toHaveText(`Disconnected ${machineName}`);
+  await expect(page.getByText(machineName, { exact: true })).toHaveCount(0);
   const revoked = await live.cli(["whoami", "--json"]);
   expect(revoked.status).toBe(2);
   expect(revoked.stdout).toBe("");

@@ -80,6 +80,21 @@ export class MachineTokens extends Context.Service<
       }>,
       SqlError
     >;
+    /**
+     * The user's computers whose key ended on its own in the last 30 days, by its 90 days or its
+     * 30 idle days, newest ending first: Your agents' Access ended rows. One revoked isn't listed,
+     * nor one with a newer key of the same name, whatever became of that one: the newest stands
+     * for the computer.
+     */
+    readonly ended: (userId: string) => Effect.Effect<
+      ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly lastUsedAt: string;
+        readonly endedAt: string;
+      }>,
+      SqlError
+    >;
     readonly revokeOwned: (input: {
       readonly id: string;
       readonly userId: string;
@@ -156,6 +171,32 @@ export const make = Effect.gen(function* () {
       ORDER BY t.created_at DESC, t.id`
   });
 
+  // A key ends at its expiry or 30 days after its last use, whichever is first: exactly when
+  // `liveMachines` stops listing it. Only the newest key of a name can be listed.
+  const endedMachines = SqlSchema.findAll({
+    Request: Schema.Struct({ userId: Schema.String, now: Schema.Number }),
+    Result: Schema.Struct({
+      id: Schema.String,
+      name: Schema.String,
+      lastUsedAt: Schema.Date,
+      endedAt: Schema.Date
+    }),
+    execute: ({ userId, now }) => sql`
+      SELECT id, name, last_used_at AS "lastUsedAt", ended_at AS "endedAt" FROM (
+        SELECT t.id, t.name, t.user_id, t.created_at, t.last_used_at,
+          LEAST(t.expires_at, t.last_used_at + interval '720 hours') AS ended_at
+        FROM machine_tokens t JOIN users u ON u.id = t.user_id
+        WHERE t.user_id = ${userId} AND t.revoked_at IS NULL AND u.deactivated_at IS NULL
+      ) t
+      WHERE t.ended_at < to_timestamp(${now / 1_000})
+        AND t.ended_at >= to_timestamp(${(now - 30 * DAY_MS) / 1_000})
+        AND NOT EXISTS (
+          SELECT 1 FROM machine_tokens l
+          WHERE l.user_id = t.user_id AND l.name = t.name
+            AND (l.created_at, l.id) > (t.created_at, t.id))
+      ORDER BY t.ended_at DESC, t.id`
+  });
+
   const authenticate = Effect.fn("MachineTokens.authenticate")(function* (token: string) {
     const now = yield* Clock.currentTimeMillis;
     const found = yield* findIdentity({ tokenHash: yield* cryptography.sha256(token), now }).pipe(
@@ -224,6 +265,18 @@ export const make = Effect.gen(function* () {
     }));
   });
 
+  const ended = Effect.fn("MachineTokens.ended")(function* (userId: string) {
+    const rows = yield* endedMachines({ userId, now: yield* Clock.currentTimeMillis }).pipe(
+      Effect.catchTags({ SchemaError: Effect.die })
+    );
+    return rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      lastUsedAt: DateTime.formatIso(DateTime.makeUnsafe(row.lastUsedAt)),
+      endedAt: DateTime.formatIso(DateTime.makeUnsafe(row.endedAt))
+    }));
+  });
+
   const revokeOwned = Effect.fn("MachineTokens.revokeOwned")(function* (input: {
     readonly id: string;
     readonly userId: string;
@@ -255,7 +308,7 @@ export const make = Effect.gen(function* () {
     )
   );
 
-  return MachineTokens.of({ authenticate, mint, revoke, list, revokeOwned, revokeAll });
+  return MachineTokens.of({ authenticate, mint, revoke, list, ended, revokeOwned, revokeAll });
 });
 
 export const layer = Layer.effect(MachineTokens, make);
