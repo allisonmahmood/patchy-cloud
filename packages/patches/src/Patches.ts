@@ -2660,7 +2660,8 @@ export const make = Effect.gen(function* () {
         role === "super_admin" || (canOpen && (role === "admin" || record.ownerId === userId));
       if (!canManage && record.ownerId !== userId) continue;
       const ownerCanOpen = ownerAdmission(record.ownerId, record.audience);
-      const detail = patchRef !== undefined && canManage;
+      // Readable patches get their details from portalCard; only oversight needs them here.
+      const detail = patchRef !== undefined && canManage && !canOpen;
       const sources = detail ? yield* offSources({ patchId: record.id, companyId }) : [];
       const card: ManagementCard = {
         patch: {
@@ -2704,11 +2705,11 @@ export const make = Effect.gen(function* () {
     const person = yield* actorRole(userId);
     if (Option.isNone(person)) return yield* new PatchUnavailable({ patchId });
     const companyId = person.value.companyId;
-    const view = (yield* management(companyId, userId, { id: patchId })).find(
-      (v) => v.record.id === patchId
-    );
-    if (!view || view.record.ownerId !== userId) return yield* new PatchUnavailable({ patchId });
-    const audience = view.record.audience.members;
+    const record = (yield* managementRows({ companyId, patchId, patchName: null }).pipe(
+      Effect.catchTags(dieOnSchemaError)
+    ))[0];
+    if (!record || record.ownerId !== userId) return yield* new PatchUnavailable({ patchId });
+    const audience = record.audience.members;
     if (audience.kind !== "teams") return [];
     const teams = yield* Teams.list({ companyId, actorId: userId }).pipe(
       Effect.provideService(SqlClient.SqlClient, sql),
