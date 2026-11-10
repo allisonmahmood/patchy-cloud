@@ -248,6 +248,39 @@ it.layer(services)("Teams", (it) => {
         );
       })
   );
+  it.effect("preserves admin removal rules for inactive targets", () =>
+    Effect.gen(function* () {
+      const { ref, admin, member } = yield* setup("teams-inactive-admin");
+      const teams = yield* Teams.Teams;
+      const users = yield* Users.Users;
+      const team = yield* teams.create({ ...ref, name: "Finance" });
+      const input = { ...ref, teamId: team.id, userIds: [admin.id, member.id], added: true };
+      yield* teams.setMemberships(input);
+      yield* users.deactivate({ ...ref, userId: member.id });
+      assert.deepStrictEqual(
+        (yield* teams.memberships(ref.companyId, [admin.id, member.id])).get(member.id),
+        []
+      );
+      yield* teams.setMemberships({
+        ...input,
+        actorId: admin.id,
+        userIds: [member.id],
+        added: false
+      });
+      yield* users.deactivate({ ...ref, userId: admin.id });
+      const second = yield* setup("teams-admin-outsider");
+      assert.strictEqual(
+        (yield* teams
+          .setMemberships({ ...input, actorId: second.admin.id, added: false })
+          .pipe(Effect.flip))._tag,
+        "RoleForbidden"
+      );
+      yield* teams.setMemberships({ ...input, userIds: [admin.id], added: false });
+      yield* users.reactivate({ ...ref, userId: member.id });
+      yield* users.reactivate({ ...ref, userId: admin.id });
+      assert.deepStrictEqual(yield* teams.members({ ...ref, teamId: team.id }), []);
+    })
+  );
   it.effect(
     "normalizes names, refuses duplicates within a company and preserves identity on no-op rename",
     () =>
