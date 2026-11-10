@@ -43,7 +43,7 @@ import {
   sharedTableId,
   sharedStoreId
 } from "@patchy/api";
-import { Teams, Users } from "@patchy/companies";
+import { Teams } from "@patchy/companies";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import * as Audiences from "./Audiences.js";
 import { Tables } from "@patchy/primitives";
