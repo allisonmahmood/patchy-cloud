@@ -558,7 +558,7 @@ const refusal = (error: Api.ClientFailure, fallback: string) =>
       return yield* new RejectedError({
         refusal: {
           ok: false,
-          error: `${Api.refusalMessage(error, fallback)}\nAsk an admin at ${instance.apiUrl}/company${error.code === "connection_not_connected" ? "/connections" : ""}.`,
+          error: `${Api.refusalMessage(error, fallback)}\nAsk an admin at ${instance.apiUrl}${error.code === "connection_not_connected" ? "/settings/integrations" : "/settings/people"}.`,
           code: error.code
         },
         cause: error
@@ -991,7 +991,7 @@ export const add = Effect.fn("Project.add")(function* (
         refusal: {
           ok: false,
           code: "connection_not_connected",
-          error: `No connected ${label} connection${handle ? ` named ${handle}` : ""}. Ask an admin at ${instance.apiUrl}/company/connections.`
+          error: `No connected ${label} connection${handle ? ` named ${handle}` : ""}. Ask an admin at ${instance.apiUrl}/settings/integrations.`
         }
       });
     if (connections.length > 1)
@@ -1012,7 +1012,7 @@ export const add = Effect.fn("Project.add")(function* (
       refusal: {
         ok: false as const,
         code: "patch_not_openable",
-        error: `That shared ${resource} is not available to you. Ask an admin at ${instance.apiUrl}/company.`
+        error: `That shared ${resource} is not available to you. Ask an admin at ${instance.apiUrl}/settings/people.`
       }
     };
     const observed: { status?: number } = {};

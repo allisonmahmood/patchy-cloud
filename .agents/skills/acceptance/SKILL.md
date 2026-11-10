@@ -198,7 +198,7 @@ way back. A PR that adds a journey people rely on adds its entry here.
   Allison's open board. Spend refuses anyone approving their own request.
   Back: move the deal back.
 - **Invite and join.** `team`, Ada and a new address. Ada invites it from
-  `/company`; the person signs in, chooses Join on Acme Co and lands on Home.
+  `/settings/people`; the person signs in, chooses Join on Acme Co and lands on Home.
   Back: revoke a pending invite; deactivate a member, then reactivate.
 
 ## Asking for a verdict

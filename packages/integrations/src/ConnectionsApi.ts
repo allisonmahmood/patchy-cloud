@@ -84,11 +84,11 @@ export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =
                   ...(row.status !== "connected"
                     ? {
                         reason: "not_connected" as const,
-                        hint: "Ask an administrator to reconnect it at /company/connections."
+                        hint: "Ask an administrator to reconnect it at /settings/integrations."
                       }
                     : paused
                       ? {
-                          hint: "Paused: its mail server refused the password, so every call fails auth_failed. Ask an administrator to Test it or replace the password at /company/connections."
+                          hint: "Paused: its mail server refused the password, so every call fails auth_failed. Ask an administrator to Test it or replace the password at /settings/integrations."
                         }
                       : { hint: `patchy add ${row.integration}/${row.handle}` })
                 };

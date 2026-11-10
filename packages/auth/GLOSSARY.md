@@ -61,5 +61,5 @@ The authorization of a machine through a short-lived URL and code that the perso
 _Avoid_: device flow (the protocol), OAuth (how agent connections are made), paste your token
 
 **Your agents**:
-The user's page of what acts as them, at `/machines`. Build patches lists their machine tokens, the computers that publish as them, each with Revoke; Use patches lists their agent connections, each with Disconnect. Each section ends with how to add one: the setup line for a computer, each app's steps for an agent connection. Disconnect everything, confirmed on its own page, ends both kinds and cancels approvals not yet collected.
+The user's page of what acts as them, at `/agents` (once `/machines`, which redirects there). Build patches lists their machine tokens, the computers that publish as them, each with Revoke; Use patches lists their agent connections, each with Disconnect. Each section ends with a link to how to add one: Add a computer at `/agents/computer` gives the setup line, and Connect an app at `/agents/connect` each app's steps for an agent connection. Disconnect everything, confirmed at `/agents/disconnect-all`, ends both kinds and cancels approvals not yet collected.
 _Avoid_: Your machines (its old name), sessions (a browser's), API keys

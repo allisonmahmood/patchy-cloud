@@ -711,7 +711,7 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
       );
       const logins = yield* DeviceLogins.DeviceLogins;
       const login = yield* logins.start({ machineNameHint: "Still pending" });
-      for (const route of ["/machines", pathFor(login.userCode)]) {
+      for (const route of ["/agents", pathFor(login.userCode)]) {
         const response = yield* send(route, { headers: { cookie } });
         assert.strictEqual(response.status, 403);
         assert.strictEqual(response.headers.get("cache-control"), "private, no-store");
@@ -748,7 +748,7 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
           clientId: "https://claude.ai/oauth/claude-code-client-metadata",
           clientName: "Protected"
         });
-        for (const route of ["/machines", pathFor(login.userCode)]) {
+        for (const route of ["/agents", pathFor(login.userCode)]) {
           const signedOut = yield* send(route, {
             headers: { authorization: `Bearer ${token.token}` }
           });
@@ -756,9 +756,9 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
         }
         for (const route of [
           "/login/device",
-          `/machines/${token.id}/revoke`,
-          `/machines/agents/${agent.connection.id}/disconnect`,
-          "/machines/revoke-all"
+          `/agents/computers/${token.id}/disconnect`,
+          `/agents/apps/${agent.connection.id}/disconnect`,
+          "/agents/disconnect-all"
         ]) {
           for (const origin of [undefined, "https://foreign.invalid"]) {
             const headers: Record<string, string> = { cookie: owner.cookie };
@@ -785,7 +785,7 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
         assert.strictEqual((yield* tokens.authenticate(token.token))?.machine.id, token.id);
         assert.isNotNull(yield* connections.authenticate(agent.tokens.accessToken));
         const unenrolled = signedInCookies(signSession({ sub: "user_device_no_company" }));
-        for (const route of ["/machines", pathFor(login.userCode)]) {
+        for (const route of ["/agents", pathFor(login.userCode)]) {
           const enrollment = yield* send(route, { headers: { cookie: unenrolled } });
           assert.strictEqual(enrollment.status, 303);
           assert.strictEqual(

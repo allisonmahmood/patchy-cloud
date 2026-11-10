@@ -124,7 +124,7 @@ describe("patch-repo commands", () => {
       const failure = JSON.parse(result.stderr);
       expect(failure).toMatchObject({ ok: false, kind });
       expect(failure.code).toBe(code);
-      if (status === 404) expect(failure.error).toContain(`${instance.url}/company`);
+      if (status === 404) expect(failure.error).toContain(`${instance.url}/settings/people`);
       expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toBe(projectConfig);
     }
   );

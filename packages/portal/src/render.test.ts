@@ -41,9 +41,7 @@ describe("renderAgentPanel", () => {
       '<summary><code>findDeals</code><span class="tag">Reads</span></summary><p class="supporting-text">Search &lt;b&gt;open&lt;/b&gt; deals.</p>'
     );
     expect(html).toContain('<code>moveDeal</code><span class="tag">Changes</span>');
-    expect(html).toContain(
-      '<a href="/machines?agent=claude#connect-an-agent">Connect your agent</a>'
-    );
+    expect(html).toContain('<a href="/agents/connect?app=claude">Connect your agent</a>');
     expect(html).not.toContain("note-warn");
   });
 
@@ -53,7 +51,9 @@ describe("renderAgentPanel", () => {
     expect(html).toContain(
       "At Bright &amp; &lt;Co&gt; that’s you, Allison &lt;A&gt; and Priya Shah."
     );
-    expect(html).toContain('<a class="btn" href="/company/agent-access">Turn it on at Company</a>');
+    expect(html).toContain(
+      '<a class="btn" href="/settings/agent-access">Turn it on at Company</a>'
+    );
     expect(html).not.toContain("Connect your agent");
   });
 

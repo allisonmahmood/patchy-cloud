@@ -323,7 +323,7 @@ Responses:
 
 ### `GET /api/connections`
 
-List the caller's company connections, including disconnected ones, for any active member. Connected entries carry a copy-ready add hint; disconnected entries carry reason `not_connected` and a /company/connections hint. A bare all or all=true also includes every offered integration's connected state. integrations names, comma-separated, the integrations the caller decodes, such as postgres,posthog; only those connections and offers are listed, and unknown names are ignored. Omitted, or the integrations=all that CLIs from release 10 send, lists Postgres only, the shape those CLIs decode. No snapshots, credentials or business rows. Responses are private, no-store.
+List the caller's company connections, including disconnected ones, for any active member. Connected entries carry a copy-ready add hint; disconnected entries carry reason `not_connected` and a /settings/integrations hint. A bare all or all=true also includes every offered integration's connected state. integrations names, comma-separated, the integrations the caller decodes, such as postgres,posthog; only those connections and offers are listed, and unknown names are ignored. Omitted, or the integrations=all that CLIs from release 10 send, lists Postgres only, the shape those CLIs decode. No snapshots, credentials or business rows. Responses are private, no-store.
 
 Responses:
 

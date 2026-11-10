@@ -1017,6 +1017,7 @@ const exercisePages = async (
   const { apiUrl, scenario } = environment;
   const publisher = scenario.people.find((person) => person.key === scenario.publisher)!;
   const none: PageExpectation = { sampleData: false };
+  // People keeps its old address, `/company`, which releases before Settings serve and later ones redirect.
   const targets: Array<readonly [string, PageExpectation]> = [
     ...["/", "/patches", "/company"].map((page) => [`${apiUrl}${page}`, none] as const),
     ...scenario.patches.map((patch) => {
@@ -1222,8 +1223,10 @@ const endCredentials = async (
         `Collecting an approved device login answered ${collected.status ?? collected.code}.`
       );
     const deviceCode = await approveDeviceLogin(page, apiUrl, "Rehearsal server");
-    // Releases before Your agents hold the form on /machines; later ones on its confirm page.
-    const everything = 'form[action="/machines/revoke-all"]';
+    // Releases before Your agents hold the form on /machines; later ones on its confirm page,
+    // which moved to /agents/disconnect-all. The old addresses redirect on releases after the move.
+    const everything =
+      ':is(form[action="/machines/revoke-all"], form[action="/agents/disconnect-all"])';
     await page.goto(`${apiUrl}/machines`);
     if ((await page.locator(everything).count()) === 0)
       await page.goto(`${apiUrl}/machines/revoke-all`);
@@ -1241,15 +1244,19 @@ const endCredentials = async (
   const admin = await signedIn(browser, apiUrl, publisher);
   try {
     const { page } = admin;
-    const user = `/company/users/${encodeURIComponent(ids(scenario, connections.deactivated.person).userId)}`;
+    const id = encodeURIComponent(ids(scenario, connections.deactivated.person).userId);
+    // The live release may predate Settings: the old address serves both, and People links
+    // whichever its release has.
+    const users = [`/company/users/${id}`, `/settings/people/users/${id}`];
     // A member with no live patches goes straight to the confirmation, as one with none retired.
     for (const [act, after] of [
       ["deactivate", "reactivate"],
       ["reactivate", "deactivate"]
     ] as const) {
-      await page.goto(`${apiUrl}${user}/${act}`);
+      await page.goto(`${apiUrl}${users[0]}/${act}`);
       await press(page, 'form.confirmation-form button[type="submit"]', `Confirming ${act}`);
-      if (!(await page.content()).includes(`${user}/${after}`))
+      const people = await page.content();
+      if (!users.some((user) => people.includes(`${user}/${after}`)))
         throw new Error(`After confirming ${act}, Company offers no ${after} for that member.`);
     }
   } finally {
@@ -1305,11 +1312,11 @@ const checkEndings = async (environment: Environment, connections: Connections, 
 const CHANGE_KEY = "rehearsal-note";
 const CHANGE_TITLE = "Added by a worker agent";
 
-/** Turns the company's agent access on as `admin`, through Company's own form. */
+/** Turns the company's agent access on as `admin`, through Agent access's own form, at HEAD. */
 const turnOnAgentAccess = async (browser: Browser, apiUrl: string, admin: Person) => {
   const { context } = await signedIn(browser, apiUrl, admin);
   try {
-    const response = await context.request.post(`${apiUrl}/company/agent-access`, {
+    const response = await context.request.post(`${apiUrl}/settings/agent-access`, {
       form: { state: "on" },
       headers: { origin: apiUrl }
     });

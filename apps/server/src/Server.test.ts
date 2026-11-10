@@ -274,7 +274,7 @@ it.layer(
         assert.isUndefined(portal.headers["x-patchy-sign-in-url"]);
         const body = yield* portal.text;
         assert.include(body, `href="/patches/${name}"`);
-        assert.include(body, 'href="/company"');
+        assert.include(body, 'href="/settings/people"');
         assert.include(body, 'action="/logout"');
         assert.notInclude(body, "<iframe");
 
@@ -284,7 +284,7 @@ it.layer(
           SELECT count(*)::int AS count FROM patches WHERE owner_user_id = ${DEV_SEED.userId}
             AND retired_at IS NULL AND deleted_at IS NULL AND disabled_at IS NULL`;
         assert.isAbove(live?.count ?? 0, 0);
-        const company = yield* send(signedRequest("/company"));
+        const company = yield* send(signedRequest("/settings/people"));
         assert.strictEqual(company.status, 200);
         const owned = (yield* company.text).match(
           new RegExp(

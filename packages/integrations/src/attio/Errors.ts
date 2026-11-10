@@ -192,7 +192,7 @@ export class Denied extends Schema.TaggedError<Denied>()("AttioDenied", {
   readonly code = "access_denied" as const;
   readonly status = 403;
   override get message() {
-    return `Attio refused: this connection's key needs Read on ${scopeName(this.requires)}. Ask a company administrator to fix the key's scopes in Attio, or replace it, at /company/connections.`;
+    return `Attio refused: this connection's key needs Read on ${scopeName(this.requires)}. Ask a company administrator to fix the key's scopes in Attio, or replace it, at /settings/integrations.`;
   }
   get details() {
     return { scope: this.requires };

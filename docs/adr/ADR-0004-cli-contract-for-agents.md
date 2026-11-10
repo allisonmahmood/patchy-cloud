@@ -312,7 +312,7 @@ Declarable shared tables get `patchy add shared-table <patchId>/<table>` hints;
 shared stores get `patchy add shared-store <patchId>/<store>` hints. Resource
 detail includes `shared`, `declarable`, `reason` and the add hint. Unshared
 resources name the owner; off sources need restoration. Connected entries get
-`patchy add <integration>/<handle>`; disconnected ones point to `/company/connections`.
+`patchy add <integration>/<handle>`; disconnected ones point to `/settings/integrations`.
 A paused IMAP connection, whose server refused its password, is marked `paused: true`
 (and `paused.at` on its detail) and its hint asks an admin to Test it or replace the
 password instead. JSON agents branch on `declarable`, `reason` and `paused`, never parse `hint`. Shared reads
@@ -424,7 +424,7 @@ nameless notice, never a failure.
 
 `patchy add postgres`, `patchy add posthog`, `patchy add pidgeon`, `patchy add attio` or `patchy add imap` chooses that integration's sole
 connected connection; with several it lists copy-ready choices from
-`list connections` and stops, and with none it names `/company/connections`.
+`list connections` and stops, and with none it names `/settings/integrations`.
 Default aliases camel-case connection handle hyphens or use
 the shared table or store name; `--as` overrides the default. An uneditable `uses`
 expression fails with the exact source line and declaration line to add before
@@ -733,7 +733,7 @@ publish from its repo. Repo manifests may provision at tier 1 or 2; tier is abou
 code. Additive refusals name each object, change and fix. A `patch_not_openable`
 refusal means a declared shared source is unavailable; correct the declaration
 or restore access. Postgres declarations must be connected at the current
-generated metadata revision; reconnect on `/company/connections` or refresh
+generated metadata revision; reconnect on `/settings/integrations` or refresh
 before a fresh attempt. The [definitive-refusal list](#definitive-publish-refusals)
 specifies which wire responses clear the matching attempt.
 

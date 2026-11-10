@@ -117,44 +117,50 @@ const connect = (userId: string, clientName: string) =>
 
 it.layer(services)("Your agents", (it) => {
   it.effect(
-    "lists what's connected first and opens a section's setup only when empty or asked",
+    "lists what's connected first, with each section's way to add one as its own page",
     () =>
       Effect.gen(function* () {
         const { member } = yield* company("first", true);
         const origin = new URL(base).origin;
-        const bare = yield* page("/machines", member.cookie);
+        const bare = yield* page("/agents", member.cookie);
         assert.include(bare, '<h1 class="page-heading">Your agents</h1>');
         assert.isBelow(bare.indexOf('id="build-heading"'), bare.indexOf('id="use-heading"'));
         assert.include(bare, "<p>No computer publishes as you yet.</p>");
-        assert.include(bare, '<details class="agents-add" id="add-a-computer" open>');
-        assert.include(bare, `data-copy="Set up Patchy using ${origin}/llms.txt"`);
-        assert.include(bare, 'aria-label="Copy the setup line"');
         assert.include(bare, "<p>No app uses patches as you yet.</p>");
-        assert.include(bare, '<details class="agents-add" open>');
+        // The links keep the ids that old `/machines#add-a-computer` and `#connect-an-agent` name.
+        assert.include(
+          bare,
+          '<a class="btn" id="add-a-computer" href="/agents/computer">Add a computer</a>'
+        );
+        assert.include(
+          bare,
+          '<a class="btn" id="connect-an-agent" href="/agents/connect">Connect an app</a>'
+        );
+        assert.notInclude(bare, "<details");
         for (const cut of ["Lost a laptop?", "Machines publishing and agents", "?s="])
           assert.notInclude(bare, cut);
+
+        const computer = yield* page("/agents/computer", member.cookie);
+        assert.include(computer, '<h1 class="page-heading">Add a computer</h1>');
+        assert.include(computer, '<a href="/agents">Back to Your agents</a>');
+        assert.include(computer, '<div class="agents-add-body" id="add-a-computer">');
+        assert.include(computer, `data-copy="Set up Patchy using ${origin}/llms.txt"`);
+        assert.include(computer, 'aria-label="Copy the setup line"');
+        assert.include(computer, '<a class="app-place" href="/agents" aria-current="page">');
 
         const machine = yield* (yield* MachineTokens.MachineTokens).mint({
           userId: member.id,
           name: "Studio Mac mini"
         });
         yield* connect(member.id, "Claude Code");
-        const listed = yield* page("/machines", member.cookie);
-        assert.include(listed, '<details class="agents-add" id="add-a-computer">');
-        assert.include(listed, '<details class="agents-add">');
-        // A link to the fragment opens the closed disclosure: it names the body inside it.
-        assert.include(listed, '<div class="agents-add-body" id="connect-an-agent">');
+        const listed = yield* page("/agents", member.cookie);
         assert.isBelow(
-          listed.indexOf(`/machines/${machine.id}/revoke`),
+          listed.indexOf(`/agents/computers/${machine.id}/disconnect`),
           listed.indexOf('id="add-a-computer"')
         );
+        assert.include(listed, 'id="connect-an-agent" href="/agents/connect"');
         assert.notInclude(listed, "No computer publishes as you yet.");
-        // A link from a released CLI or skill opens the steps, whatever it names.
-        for (const agent of ["codex", "another", "%3Cscript%3E"])
-          assert.include(
-            yield* page(`/machines?agent=${agent}`, member.cookie),
-            '<details class="agents-add" open>'
-          );
+        assert.notInclude(listed, "Set up Patchy using");
       })
   );
 
@@ -162,11 +168,12 @@ it.layer(services)("Your agents", (it) => {
     Effect.gen(function* () {
       const { member } = yield* company("tabs", true);
       const address = `${new URL(base).origin}/mcp`;
-      const claude = yield* page("/machines", member.cookie);
-      assert.include(
-        claude,
-        '<a href="/machines?agent=claude#connect-an-agent" aria-current="page">Claude</a>'
-      );
+      const claude = yield* page("/agents/connect", member.cookie);
+      assert.include(claude, '<h1 class="page-heading">Connect an app</h1>');
+      assert.include(claude, '<a href="/agents">Back to Your agents</a>');
+      // The steps keep the id an old `/machines?agent=…#connect-an-agent` link names.
+      assert.include(claude, '<div class="agents-add-body" id="connect-an-agent">');
+      assert.include(claude, '<a href="/agents/connect?app=claude" aria-current="page">Claude</a>');
       assert.include(claude, "Settings › Connectors");
       assert.include(claude, `data-copy="${address}"`);
       assert.include(claude, 'aria-label="Copy Patchy’s address"');
@@ -178,24 +185,26 @@ it.layer(services)("Your agents", (it) => {
       // carries, only the shell's copy buttons.
       assert.include(claude, '<script defer src="/assets/copy.js"></script>');
       assert.notMatch(claude.replace(switcherRelay, ""), /<script(?![^>]*\bsrc=)/);
+      assert.include(claude, '<a class="app-place" href="/agents" aria-current="page">');
 
-      const codex = yield* page("/machines?agent=codex", member.cookie);
-      assert.include(
-        codex,
-        '<a href="/machines?agent=codex#connect-an-agent" aria-current="page">Codex</a>'
-      );
+      const codex = yield* page("/agents/connect?app=codex", member.cookie);
+      assert.include(codex, '<a href="/agents/connect?app=codex" aria-current="page">Codex</a>');
       assert.include(codex, `data-copy="codex mcp add patchy --url ${address}"`);
       assert.include(codex, 'data-copy="codex mcp login patchy"');
       assert.include(codex, 'aria-label="Copy the sign-in command"');
       assert.notInclude(codex, "Settings › Connectors");
 
-      const claudeCode = yield* page("/machines?agent=claude-code", member.cookie);
+      const claudeCode = yield* page("/agents/connect?app=claude-code", member.cookie);
       assert.include(claudeCode, `data-copy="claude mcp add --transport http patchy ${address}"`);
       assert.include(claudeCode, "<code>/mcp</code>");
-      const another = yield* page("/machines?agent=another", member.cookie);
+      const another = yield* page("/agents/connect?app=another", member.cookie);
       assert.include(another, "such as Cursor and Gemini CLI, can’t connect yet");
-      const unknown = yield* page("/machines?agent=%3Cscript%3E", member.cookie);
-      assert.include(unknown, 'agent=claude#connect-an-agent" aria-current="page"');
+      // An app it doesn't know, as a released CLI or skill may name, gets Claude's steps.
+      const unknown = yield* page("/agents/connect?app=%3Cscript%3E", member.cookie);
+      assert.include(
+        unknown,
+        '<a href="/agents/connect?app=claude" aria-current="page">Claude</a>'
+      );
       assert.notInclude(unknown, "%3Cscript");
     })
   );
@@ -205,13 +214,16 @@ it.layer(services)("Your agents", (it) => {
       const { admin, member } = yield* company("off", false);
       const off =
         '<p class="note note-warn" id="connect-an-agent">Agent access is off at Studio &lt;off&gt;. Alex &lt;Admin&gt; can turn it on.';
-      const asMember = yield* page("/machines?agent=codex", member.cookie);
-      assert.include(asMember, `${off}</p>`);
-      assert.notInclude(asMember, 'class="tabs"');
-      assert.notInclude(mainOf(asMember), "/company/agent-access");
-      const asAdmin = yield* page("/machines", admin.cookie);
-      assert.include(asAdmin, `${off} <a href="/company/agent-access">Turn it on</a></p>`);
-      assert.notInclude(asAdmin, 'class="tabs"');
+      for (const path of ["/agents", "/agents/connect?app=codex"]) {
+        const asMember = yield* page(path, member.cookie);
+        assert.include(asMember, `${off}</p>`);
+        assert.notInclude(asMember, 'class="tabs"');
+        assert.notInclude(asMember, 'href="/agents/connect"');
+        assert.notInclude(mainOf(asMember), "/settings/agent-access");
+        const asAdmin = yield* page(path, admin.cookie);
+        assert.include(asAdmin, `${off} <a href="/settings/agent-access">Turn it on</a></p>`);
+        assert.notInclude(asAdmin, 'class="tabs"');
+      }
     })
   );
 
@@ -229,7 +241,7 @@ it.layer(services)("Your agents", (it) => {
             last_used_at = clock_timestamp() - interval '8 days'
           WHERE id = ${old.connection.id}`;
         const foreign = yield* connect(admin.id, "Someone else's agent");
-        const html = yield* page("/machines", member.cookie);
+        const html = yield* page("/agents", member.cookie);
         assert.include(html, '<h3 class="section-heading">Claude &lt;Code&gt;</h3>');
         assert.match(html, /claude\.ai · connected <time[^>]+>[^<]+<\/time> · no calls yet/);
         assert.match(html, /· last call <time[^>]+>8 days ago<\/time>/);
@@ -242,27 +254,27 @@ it.layer(services)("Your agents", (it) => {
         );
         assert.lengthOf([...html.matchAll(/If you reconnected/g)], 1, "only the week-unused one");
         assert.notInclude(html, "Someone else");
-        assert.include(html, `action="/machines/agents/${fresh.connection.id}/disconnect"`);
+        assert.include(html, `action="/agents/apps/${fresh.connection.id}/disconnect"`);
         assert.include(html, 'aria-label="Disconnect Claude &lt;Code&gt;, connected ');
 
         const refused = yield* send(
-          `/machines/agents/${foreign.connection.id}/disconnect`,
+          `/agents/apps/${foreign.connection.id}/disconnect`,
           post(member.cookie)
         );
         assert.strictEqual(refused.status, 404);
         assert.isUndefined(receiptFor(refused, member.id));
         const disconnected = yield* send(
-          `/machines/agents/${old.connection.id}/disconnect`,
+          `/agents/apps/${old.connection.id}/disconnect`,
           post(member.cookie)
         );
         assert.strictEqual(disconnected.status, 303);
-        assert.strictEqual(disconnected.headers.get("location"), "/machines");
+        assert.strictEqual(disconnected.headers.get("location"), "/agents");
         assert.strictEqual(receiptFor(disconnected, member.id), "Disconnected Claude <Code>");
         const connections = yield* AgentConnections.AgentConnections;
         assert.isNull(yield* connections.authenticate(old.tokens.accessToken));
         assert.isNotNull(yield* connections.authenticate(fresh.tokens.accessToken));
         assert.isNotNull(yield* connections.authenticate(foreign.tokens.accessToken));
-        const after = yield* page("/machines", member.cookie);
+        const after = yield* page("/agents", member.cookie);
         assert.notInclude(after, old.connection.id);
         assert.include(after, fresh.connection.id);
       })
@@ -283,12 +295,12 @@ it.layer(services)("Your agents", (it) => {
       const idle = yield* tokens.mint({ userId: member.id, name: "Idle machine" });
       yield* sql`UPDATE machine_tokens SET expires_at = '1960-01-01' WHERE id = ${expired.id}`;
       yield* sql`UPDATE machine_tokens SET last_used_at = '1960-01-01' WHERE id = ${idle.id}`;
-      const html = yield* page("/machines", member.cookie);
+      const html = yield* page("/agents", member.cookie);
       assert.include(html, '<h3 class="section-heading">Live &quot;&lt;laptop&gt;&quot;</h3>');
       assert.match(html, /Used <time[^>]+>just now<\/time> · expires <time datetime="[^"]+">/);
       assert.include(html, `datetime="${first.expiresAt}"`);
       assert.include(html, "or after 30 days unused");
-      assert.include(html, `action="/machines/${first.id}/revoke"`);
+      assert.include(html, `action="/agents/computers/${first.id}/disconnect"`);
       assert.include(html, 'aria-label="Revoke Live &quot;&lt;laptop&gt;&quot;"');
       for (const absent of [
         first.token,
@@ -300,21 +312,24 @@ it.layer(services)("Your agents", (it) => {
         "Idle machine"
       ])
         assert.notInclude(html, absent);
-      const refused = yield* send(`/machines/${foreign.id}/revoke`, post(member.cookie));
-      const missing = yield* send("/machines/tok_missing/revoke", post(member.cookie));
+      const refused = yield* send(
+        `/agents/computers/${foreign.id}/disconnect`,
+        post(member.cookie)
+      );
+      const missing = yield* send("/agents/computers/tok_missing/disconnect", post(member.cookie));
       assert.strictEqual(refused.status, 404);
       assert.strictEqual(missing.status, 404);
       assert.strictEqual(
         yield* Effect.promise(() => refused.text()),
         yield* Effect.promise(() => missing.text())
       );
-      const one = yield* send(`/machines/${first.id}/revoke`, post(member.cookie));
+      const one = yield* send(`/agents/computers/${first.id}/disconnect`, post(member.cookie));
       assert.strictEqual(one.status, 303);
-      assert.strictEqual(one.headers.get("location"), "/machines");
+      assert.strictEqual(one.headers.get("location"), "/agents");
       assert.strictEqual(receiptFor(one, member.id), 'Revoked Live "<laptop>"');
       assert.strictEqual(yield* tokens.authenticate(first.token), null);
       assert.strictEqual((yield* tokens.authenticate(second.token))?.machine.id, second.id);
-      const repeated = yield* send(`/machines/${first.id}/revoke`, post(member.cookie));
+      const repeated = yield* send(`/agents/computers/${first.id}/disconnect`, post(member.cookie));
       assert.strictEqual(repeated.status, 303);
       assert.isUndefined(receiptFor(repeated, member.id), "nothing was listed to name");
     })
@@ -329,25 +344,25 @@ it.layer(services)("Your agents", (it) => {
         const tokens = yield* MachineTokens.MachineTokens;
         const connections = yield* AgentConnections.AgentConnections;
         const link =
-          '<a class="btn btn-quiet btn-danger" href="/machines/revoke-all">Disconnect everything…</a>';
+          '<a class="btn btn-quiet btn-danger" href="/agents/disconnect-all">Disconnect everything…</a>';
         // Nothing listed yet, and still reachable: an approval not yet collected can be cancelled.
-        assert.include(yield* page("/machines", member.cookie), link);
+        assert.include(yield* page("/agents", member.cookie), link);
         assert.include(
-          yield* page("/machines/revoke-all", member.cookie),
+          yield* page("/agents/disconnect-all", member.cookie),
           "No computer or agent is connected, so this ends only approvals not yet collected."
         );
         const machine = yield* tokens.mint({ userId: member.id, name: "Laptop" });
         assert.include(
-          yield* page("/machines/revoke-all", member.cookie),
+          yield* page("/agents/disconnect-all", member.cookie),
           "This ends 1 computer, and any approval not yet collected."
         );
         const agent = yield* connect(member.id, "Claude Code");
         const foreign = yield* connect(admin.id, "Claude Code");
-        const listed = yield* page("/machines", member.cookie);
+        const listed = yield* page("/agents", member.cookie);
         assert.include(listed, link);
-        assert.notInclude(listed, 'action="/machines/revoke-all"');
+        assert.notInclude(listed, 'action="/agents/disconnect-all"');
 
-        const shown = yield* send("/machines/revoke-all", { headers: { cookie: member.cookie } });
+        const shown = yield* send("/agents/disconnect-all", { headers: { cookie: member.cookie } });
         assert.strictEqual(shown.status, 200);
         assert.strictEqual(shown.headers.get("cache-control"), "private, no-store");
         const confirm = yield* Effect.promise(() => shown.text());
@@ -357,7 +372,7 @@ it.layer(services)("Your agents", (it) => {
           "This ends 1 computer and 1 agent, and any approval not yet collected. Each one has to be connected again afterwards."
         );
         assert.include(confirm, `<input type="hidden" name="user" value="${member.id}">`);
-        assert.include(confirm, 'action="/machines/revoke-all"');
+        assert.include(confirm, 'action="/agents/disconnect-all"');
         // Showing it ends nothing.
         assert.isNotNull(yield* tokens.authenticate(machine.token));
         assert.isNotNull(yield* connections.authenticate(agent.tokens.accessToken));
@@ -369,20 +384,23 @@ it.layer(services)("Your agents", (it) => {
           { user: admin.id }
         ];
         for (const form of refusals) {
-          const refused = yield* send("/machines/revoke-all", post(member.cookie, form));
+          const refused = yield* send("/agents/disconnect-all", post(member.cookie, form));
           assert.strictEqual(refused.status, 409);
           assert.include(
             yield* Effect.promise(() => refused.text()),
-            'You’re signed in as someone else now. Open <a href="/machines">Your agents</a> and try again.'
+            'You’re signed in as someone else now. Open <a href="/agents">Your agents</a> and try again.'
           );
           assert.isUndefined(receiptFor(refused, member.id));
           assert.isNotNull(yield* tokens.authenticate(machine.token));
           assert.isNotNull(yield* connections.authenticate(agent.tokens.accessToken));
         }
 
-        const ended = yield* send("/machines/revoke-all", post(member.cookie, { user: member.id }));
+        const ended = yield* send(
+          "/agents/disconnect-all",
+          post(member.cookie, { user: member.id })
+        );
         assert.strictEqual(ended.status, 303);
-        assert.strictEqual(ended.headers.get("location"), "/machines");
+        assert.strictEqual(ended.headers.get("location"), "/agents");
         assert.strictEqual(
           receiptFor(ended, member.id),
           "Disconnected everything: 1 computer and 1 agent"
@@ -390,7 +408,7 @@ it.layer(services)("Your agents", (it) => {
         assert.isNull(yield* tokens.authenticate(machine.token));
         assert.isNull(yield* connections.authenticate(agent.tokens.accessToken));
         assert.isNotNull(yield* connections.authenticate(foreign.tokens.accessToken));
-        const empty = yield* page("/machines", member.cookie);
+        const empty = yield* page("/agents", member.cookie);
         assert.include(empty, "No computer publishes as you yet.");
         assert.include(empty, "No app uses patches as you yet.");
         assert.include(empty, link);

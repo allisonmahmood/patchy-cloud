@@ -119,7 +119,7 @@ describe("the connections index", () => {
     ]);
     expect(posthog).toContain('<option value="posthog" selected>');
     expect(posthog).toContain("Showing 3 of 30.");
-    expect(posthog).toContain('<a href="/company/connections">Clear filters</a>');
+    expect(posthog).toContain('<a href="/settings/integrations">Clear filters</a>');
   });
 
   it("combines search over names and descriptions with the source and view", () => {
@@ -151,7 +151,7 @@ describe("the connections index", () => {
     expect(none).toContain('<input type="hidden" name="view" value="unused">');
     // The view links keep the search and source.
     expect(index(thirty, { filters: { q: "pay", source: "stripe" } })).toContain(
-      'href="/company/connections?q=pay&amp;source=stripe&amp;view=attention"'
+      'href="/settings/integrations?q=pay&amp;source=stripe&amp;view=attention"'
     );
   });
 
@@ -200,7 +200,7 @@ describe("the connections index", () => {
   it("starts an empty company from the catalogue for admins and tells members whom to ask", () => {
     const admin = index([]);
     expect(admin).toContain('<h2 class="section-heading">Connect an integration</h2>');
-    expect(admin).toContain('href="/company/connections/connect/postgres">Connect Postgres</a>');
+    expect(admin).toContain('href="/settings/integrations/connect/postgres">Connect Postgres</a>');
     const member = index([], { admin: false });
     expect(member).toContain("At Northwind that's Dana and Jordan.");
     expect(member).toContain("What Patchy can connect");

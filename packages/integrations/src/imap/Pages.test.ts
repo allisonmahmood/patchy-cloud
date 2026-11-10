@@ -46,7 +46,7 @@ const imap = Layer.unwrap(
     );
   })
 );
-const connectPath = "/company/connections/connect/imap";
+const connectPath = "/settings/integrations/connect/imap";
 const fields = (handle: string, over: Record<string, string> = {}) => ({
   handle,
   description: "Supplier invoices",
@@ -106,7 +106,7 @@ it.layer(services(PidgeonTest.canned().layer, AttioSource.layer, imap))(
           "<script>"
         ])
           assert.notInclude(page.html.replace(switcherRelay, ""), gone);
-        const catalogue = yield* read("/company/connections/connect", owner.user);
+        const catalogue = yield* read("/settings/integrations/connect", owner.user);
         assert.include(catalogue.html, `href="${connectPath}"`);
       })
     );
@@ -221,13 +221,13 @@ it.layer(services(PidgeonTest.canned().layer, AttioSource.layer, imap))(
             html,
             `<form method="post" action="${path}/test"><button class="btn" type="submit">Test again</button></form>`
           );
-          const index = yield* read("/company/connections", owner.user);
+          const index = yield* read("/settings/integrations", owner.user);
           assert.include(index.html, "1 connection needs attention");
           assert.include(
             index.html,
             "imap/invoices</a> is paused because its mail server refused the password"
           );
-          const attention = yield* read("/company/connections?view=attention", owner.user);
+          const attention = yield* read("/settings/integrations?view=attention", owner.user);
           assert.include(attention.html, `href="${path}"`);
           // Replace password is the shared page, and a new password that works resumes it.
           const replace = yield* read(`${path}/rotate`, owner.user);

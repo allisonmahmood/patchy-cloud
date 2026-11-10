@@ -372,8 +372,8 @@ it.layer(server({ PATCHY_PUBLIC_BASE_URL: publicBaseUrl }).pipe(Layer.provideMer
             { route: "/login/device", ...attributed }
           ],
           [
-            signedIn(HttpClientRequest.get("/company/connections")),
-            { route: "/company/connections", status: 200, ...attributed }
+            signedIn(HttpClientRequest.get("/settings/integrations")),
+            { route: "/settings/integrations", status: 200, ...attributed }
           ],
           [
             signedIn(HttpClientRequest.get(new URL(created.address).pathname)),

@@ -66,7 +66,7 @@ merged from two routes; the other levels print the wire body with no `ok`
 wrapper. Branch on `declarable`, `reason` and `paused` (an IMAP connection whose password its server refused, which fails every call until an admin fixes it), never parse the human `hint`.
 Unshared tables and stores name their owner; off sources need restoration
 before use. Disconnected connections point to the admin's
-browser at `/company/connections`. Listing grants no access and reads no rows
+browser at `/settings/integrations`. Listing grants no access and reads no rows
 or file contents.
 
 ## Where patch files live
@@ -414,7 +414,7 @@ machine token, not the browser's sign-in. Say **sign in** for the person in thei
 browser and **log this machine in** for publishing. Signing in uses Google,
 Microsoft or an emailed code. The poll mints the key after browser confirmation;
 it works for 90 days or 30 idle days, whichever comes first, and can be revoked
-on **Your agents** at `/machines`. Re-login replaces the saved login key only
+on **Your agents** at `/agents`. Re-login replaces the saved login key only
 when it belongs to the same user, without changing ownership of their pages.
 
 To log this machine out, run `patchy logout`. It forgets the stored publishing key
@@ -484,7 +484,7 @@ browser sign-out is a separate control, **Sign out** in the account menu.
   `patch_not_openable` is definitive (exit 2): correct the shared-table/store declaration
   or restore source access before publishing a fresh attempt.
   `connection_not_connected` and `stale_generated` are also definitive (exit 2).
-  An admin reconnects at `/company/connections`; a stale declaration needs a
+  An admin reconnects at `/settings/integrations`; a stale declaration needs a
   regenerated snapshot stamp. Connection strings belong only in the person's
   browser connect/rotate form, never in CLI arguments or an agent transcript.
 - Republishing the same local file updates the patch it already created on that instance

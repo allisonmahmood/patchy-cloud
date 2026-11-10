@@ -111,7 +111,7 @@ const connectionDetailLines = (connection: typeof ConnectionDetail.Type) => {
     // A paused mailbox fails every call; say so before anything is declared against it.
     ...(connection.integration === "imap" && connection.paused !== undefined
       ? [
-          `Paused since ${connection.paused.at}: its mail server refused the password, so every call fails auth_failed. Ask an administrator to Test it or replace the password at /company/connections.`
+          `Paused since ${connection.paused.at}: its mail server refused the password, so every call fails auth_failed. Ask an administrator to Test it or replace the password at /settings/integrations.`
         ]
       : [])
   ];

@@ -11,7 +11,7 @@ Connections are tier 2's: actions read the workspace through `ctx.connections` a
 
 ## Declare a workspace
 
-1. Run `pnpm patchy list connections` and choose a connected `attio/<handle>` by description. `pnpm patchy list connections attio/<handle>` shows the workspace and its objects and lists. An admin connects workspaces at `/company/connections`; ask them there rather than for a token. An admin may also set a connection to block guests, which closes patches that declare it to their guests.
+1. Run `pnpm patchy list connections` and choose a connected `attio/<handle>` by description. `pnpm patchy list connections attio/<handle>` shows the workspace and its objects and lists. An admin connects workspaces at `/settings/integrations`; ask them there rather than for a token. An admin may also set a connection to block guests, which closes patches that declare it to their guests.
 2. Run `pnpm patchy add attio/<handle> --as crm`. It inserts `crm: { kind: "attio", handle }` into `uses` and generates the client, the context and this skill.
 3. Read `patchy/_generated/index.json`, then the context for `crm`: the workspace's objects and lists, each attribute's slug, title and type, record references' target objects, the options of each select and status, and what discovery left out.
 
@@ -74,7 +74,7 @@ const pipeline = await crm.lists.sales_pipeline.list({ parent: rows[0]!.id });
 
 Objects, lists and attributes are named by slug; options by title. The connection's snapshot is what the client was generated from, and every call checks the workspace's current attributes against it before decoding:
 
-- An attribute renamed, archived, deleted, retyped or changed between one value and many fails the call `shape_mismatch`, with `details.attribute` and `details.reason`; `"renamed"` carries `details.renamedTo`. An object or list gone fails `not_found`. Either lasts until an admin refreshes the connection at `/company/connections` and the patch runs `pnpm patchy refresh` and republishes.
+- An attribute renamed, archived, deleted, retyped or changed between one value and many fails the call `shape_mismatch`, with `details.attribute` and `details.reason`; `"renamed"` carries `details.renamedTo`. An object or list gone fails `not_found`. Either lasts until an admin refreshes the connection at `/settings/integrations` and the patch runs `pnpm patchy refresh` and republishes.
 - A different attribute later given an old slug is read under that name if its type and cardinality match.
 - A new object, list or attribute arrives after an admin's Refresh and `pnpm patchy refresh`.
 
@@ -95,7 +95,7 @@ Queries and mutations can't use connections, and Attio reads are not live-query 
 
 - A 15-second service deadline, bounded by an action's remaining time. Patchy never retries a call.
 - `source_rate_limited` with `retryAfter` is Attio's own limit, shared by every key on the workspace. `busy` means Patchy's calls for the workspace stayed full and nothing was sent.
-- `source_unavailable` covers an unreachable Attio, a key that stopped working (an admin replaces it at `/company/connections`), a record Attio is merging, and an attribute asked for `null` that changed while Patchy read it: the same call again reads it right.
+- `source_unavailable` covers an unreachable Attio, a key that stopped working (an admin replaces it at `/settings/integrations`), a record Attio is merging, and an attribute asked for `null` that changed while Patchy read it: the same call again reads it right.
 - `access_denied` with `details.scope` names the read scope the key lacks; an admin fixes the key.
 - `invalid_request` names `details.attribute`, `details.operator` and `details.reason`: `unknown`, `unsupported`, `value`, `timestamp`, `bounds`, `option`, `target`, `parent` or `attio`. `invalid_cursor` is a cursor from another call. `invalid_query` is Patchy's own defect; report it.
 - Narrow a caught error with `isPatchyError(error, code, "attio")`, imported from the relative generated `client.js`, to type Attio's `details`. No refusal carries a value the patch supplied or anything Attio said.

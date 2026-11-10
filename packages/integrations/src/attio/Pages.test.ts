@@ -15,7 +15,7 @@ import * as Page from "./Page.js";
 const { readKey } = AttioDouble;
 const keys = new Map<string, AttioDouble.Key>([[readKey.token, readKey]]);
 const attio = AttioDouble.make((request) => AttioDouble.workspace(...keys.values())(request));
-const connectPath = "/company/connections/connect/attio";
+const connectPath = "/settings/integrations/connect/attio";
 const fields = (key: string, handle = "crm") => ({
   handle,
   description: "Our sales CRM",
@@ -45,7 +45,7 @@ it.layer(services(PidgeonTest.canned().layer, attio.layer))("Attio connection pa
         assert.include(page.html, part);
       assert.notMatch(page.html.replace(switcherRelay, ""), /<script(?![^>]*\bsrc=)/);
       assert.notInclude(page.html, "attio-connect");
-      const catalogue = yield* read("/company/connections/connect", owner.user);
+      const catalogue = yield* read("/settings/integrations/connect", owner.user);
       assert.include(catalogue.html, "A workspace's objects, lists and members, read-only.");
       assert.include(catalogue.html, `href="${connectPath}"`);
     })

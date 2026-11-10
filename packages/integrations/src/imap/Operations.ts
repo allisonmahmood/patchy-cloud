@@ -91,7 +91,7 @@ export class MailboxUnreachable extends Schema.TaggedError<MailboxUnreachable>()
   readonly code = "source_unavailable" as const;
   readonly status = 503;
   override get message() {
-    return "The mail server no longer meets what Patchy needs to log in to it. An admin can Test the connection at /company/connections, which names what changed.";
+    return "The mail server no longer meets what Patchy needs to log in to it. An admin can Test the connection at /settings/integrations, which names what changed.";
   }
   get details() {
     return { reason: this.reason };

@@ -444,7 +444,7 @@ const inputValues = (html: string, name: string, type: string) =>
     .filter((input) => !/\bdisabled\b/.test(input))
     .map((input) => input.match(/\bvalue="([^"]*)"/)?.[1]);
 const userPath = (person: Person, action: "deactivate" | "reactivate") =>
-  `/company/users/${person.id}/${action}`;
+  `/settings/people/users/${person.id}/${action}`;
 const readUser = Effect.fn("PortalPagesTest.readUser")(function* (person: Person) {
   const user = yield* (yield* Users.Users).findByClerkId(person.clerkUserId);
   assert.isNotNull(user);
@@ -2274,7 +2274,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
       const html = yield* response.text;
       assert.include(
         links(html).map((link) => link.href),
-        "/company"
+        "/settings/people"
       );
       assert.strictEqual(heading(html), patch.name);
       assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
@@ -2646,7 +2646,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
             const html = yield* response.text;
             assert.include(
               links(html).map((link) => link.href),
-              "/company"
+              "/settings/people"
             );
             assert.notInclude(html, "Foreign confidential text");
             assert.notInclude(html, "A useful office tool");
@@ -2716,7 +2716,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
           assert.strictEqual(response.headers["cache-control"], "private, no-store");
           assert.include(
             links(yield* response.text).map((link) => link.href),
-            "/company"
+            "/settings/people"
           );
         }
         assert.strictEqual((yield* request(cardPath(long), null)).status, 401);
@@ -3250,7 +3250,7 @@ it.layer(layer)("what agents can do on a socket", (it) => {
         );
         assert.include(panel, "Search the pipeline for &lt;b&gt;open&lt;/b&gt; deals.");
         assert.deepStrictEqual(links(panel), [
-          { href: "/machines?agent=claude#connect-an-agent", text: "Connect your agent" }
+          { href: "/agents/connect?app=claude", text: "Connect your agent" }
         ]);
         assert.notInclude(panel, "note-warn");
       }
@@ -3278,7 +3278,7 @@ it.layer(layer)("what agents can do on a socket", (it) => {
       const admin = agentPanel(yield* (yield* request(cardPath(patch.name), workspace.admin)).text);
       assert.include(text(admin ?? ""), "At Northwind that’s you.");
       assert.deepStrictEqual(links(admin ?? ""), [
-        { href: "/company/agent-access", text: "Turn it on at Company" }
+        { href: "/settings/agent-access", text: "Turn it on at Company" }
       ]);
     })
   );
@@ -3831,7 +3831,7 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
           patch: [source.patchId]
         });
         assert.strictEqual(response.status, 303);
-        assert.strictEqual(response.headers.location, "/company");
+        assert.strictEqual(response.headers.location, "/settings/people");
         assert.isNotNull((yield* readUser(workspace.owner)).deactivatedAt);
         assert.strictEqual((yield* readPatch(workspace.admin, source.patchId)).patch.state, "live");
         assert.strictEqual((yield* readPatch(workspace.admin, reader.patchId)).patch.state, "live");
@@ -3914,7 +3914,7 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
           patch: selection
         });
         assert.strictEqual(committed.status, 303);
-        assert.strictEqual(committed.headers.location, "/company");
+        assert.strictEqual(committed.headers.location, "/settings/people");
         assert.isNotNull((yield* readUser(workspace.owner)).deactivatedAt);
         assert.deepStrictEqual(committedKeys, [selection.map((id) => `patch:${id}`).sort()]);
         assert.sameDeepMembers(
@@ -4018,7 +4018,7 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
         assert.deepStrictEqual(inputs(html, "patch", "checkbox"), []);
         assert.deepStrictEqual(
           links(html).filter((link) => link.text.startsWith("Back to")),
-          [{ href: "/company", text: "Back to Company" }]
+          [{ href: "/settings/people", text: "Back to Company" }]
         );
         assert.include(text(html), "Nothing breaks");
         assert.isNull((yield* readUser(workspace.owner)).deactivatedAt);
@@ -4151,7 +4151,7 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
           patch: [own.patchId, admin.patchId]
         });
         assert.strictEqual(committed.status, 303);
-        assert.strictEqual(committed.headers.location, "/company");
+        assert.strictEqual(committed.headers.location, "/settings/people");
         assert.isNull((yield* readUser(workspace.owner)).deactivatedAt);
         assert.deepStrictEqual(committedKeys, [
           [own.patchId, admin.patchId].sort().map((id) => `patch:${id}`)

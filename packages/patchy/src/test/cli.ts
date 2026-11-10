@@ -346,7 +346,7 @@ export const projectConnections = {
       description: "Historical sales database",
       status: "disconnected",
       reason: "not_connected",
-      hint: "Ask an admin to reconnect archive-db at /company/connections."
+      hint: "Ask an admin to reconnect archive-db at /settings/integrations."
     },
     {
       id: "conn-product",

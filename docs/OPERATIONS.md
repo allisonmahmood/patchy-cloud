@@ -443,7 +443,7 @@ to the app's host and keeps the Clerk domain and keys.
   at `accounts.patchyhq.com/waitlist`, and approving someone sends them an
   invitation. Only an invitation's link gets a new person past the waitlist,
   because the Account Portal page it opens consumes the invitation's ticket.
-  Invitations a company sends from `/company` work the same way, so they
+  Invitations a company sends from `/settings/people` work the same way, so they
   carry no redirect to a Patchy page, which could not consume the ticket.
 - **Legal consent** is on
   ([#493](https://github.com/allisonmahmood/patchy-cloud/issues/493)). The
@@ -488,9 +488,9 @@ to the app's host and keeps the Clerk domain and keys.
   `PATCHY_PUBLIC_BASE_URL`, for the address; resend and revoke read
   `CLERK_SECRET_KEY`. The script never migrates: the release that adds the
   table must be deployed first. The email a person enters keeps the link, and
-  Clerk invites it as `/company` invitations are invited, with no redirect, so
-  the Account Portal's sign-up takes the terms; create-or-join then marks the
-  link used. If Clerk fails, the page offers Try again for that address only,
+  Clerk invites it as `/settings/people` invitations are invited, with no
+  redirect, so the Account Portal's sign-up takes the terms; create-or-join then
+  marks the link used. If Clerk fails, the page offers Try again for that address only,
   five attempts in all, then tells the person to ask whoever sent the link. A
   reply Clerk sent but Patchy never received can leave an invitation Patchy
   doesn't know: revoking such a link reports `unconfirmed`, and only the Clerk

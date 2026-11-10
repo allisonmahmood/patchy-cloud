@@ -106,6 +106,7 @@ import * as ApiGuard from "./ApiGuard.js";
 import * as DevelopmentInvocation from "./DevelopmentInvocation.js";
 import * as FleetInvocation from "./FleetInvocation.js";
 import * as MemberDirectory from "./MemberDirectory.js";
+import * as Moved from "./Moved.js";
 import { migrations } from "./migrations.js";
 import * as RequestEvents from "./RequestEvents.js";
 import * as SetupPickup from "./SetupPickup.js";
@@ -384,7 +385,8 @@ const api = Layer.mergeAll(HttpApiBuilder.layer(PatchyApi), ApiGuard.notFound).p
  * edge, so an event names the method the client sent; the trusted-proxy walk,
  * so everything after it keys on the client's address rather than the proxy's;
  * the serving headers, so a refusal is covered as well as a page; the API
- * guard, ahead of the router. One global middleware rather than four, so
+ * guard; then the moved pages' rewrite, which hands an old POST to the
+ * router under its new URL. One global middleware rather than five, so
  * the order is written down instead of left to how layers build.
  */
 const middleware = HttpRouter.middleware(
@@ -392,7 +394,7 @@ const middleware = HttpRouter.middleware(
     const events = yield* RequestEvents.edge;
     const trustedProxies = yield* TrustedProxies.make;
     const guard = yield* ApiGuard.make;
-    return (app) => events(trustedProxies(servingHeaders(guard(app))));
+    return (app) => events(trustedProxies(servingHeaders(guard(Moved.rewrite(app)))));
   }),
   { global: true }
 );
@@ -420,6 +422,7 @@ const app = Layer.mergeAll(
     Fonts.layer,
     WhatsNewPages.layer,
     landing,
+    Moved.routes,
     AuthPages.layer,
     DemoLink.routes(Pages.notFound),
     BetaLinkPages.routes(Pages.notFound),

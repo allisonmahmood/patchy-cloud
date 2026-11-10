@@ -370,7 +370,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon, live in test mode", () =
           const owner = yield* createCompany(`pidgeon-${Live.RUN}`);
           const key = Redacted.value(Live.admin());
           const found = yield* send(
-            "/company/connections/connect/pidgeon/addresses",
+            "/settings/integrations/connect/pidgeon/addresses",
             post(owner.user, { key })
           );
           assert.strictEqual(found.status, 200);
@@ -405,12 +405,12 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon, live in test mode", () =
             `<dt>Address</dt><dd>${localPart}@${Keys.SHARED_DOMAIN}</dd>`
           );
           assert.isFalse(connected.html.includes(key), "The connection page showed the key.");
-          const index = yield* read("/company/connections", owner.user);
+          const index = yield* read("/settings/integrations", owner.user);
           assert.include(index.html, `<span class="tag">Test · mail stays in Pidgeon</span>`);
-          const id = /\/company\/connections\/(conn_[a-z0-9]+)/.exec(connected.html)?.[1];
+          const id = /\/settings\/integrations\/(conn_[a-z0-9]+)/.exec(connected.html)?.[1];
           assert.isDefined(id);
           const deleted = yield* follow(
-            yield* send(`/company/connections/${id}/delete`, post(owner.user)),
+            yield* send(`/settings/integrations/${id}/delete`, post(owner.user)),
             owner.user
           );
           assert.include(deleted.html, "Connection deleted, and its key revoked in Pidgeon.");
