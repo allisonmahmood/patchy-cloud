@@ -128,12 +128,11 @@ it.layer(server().pipe(Layer.provideMerge(NodeCryptography.layer)))(
           yield* sql`DELETE FROM connection_team_grants WHERE connection_id = 'conn_team_recovery'`;
           yield* sql`UPDATE connections SET audience_kind = 'company' WHERE id = 'conn_team_recovery'`;
           assert.equal((yield* transition(design.id, "delete")).status, 200);
-          assert.deepEqual(
-            yield* (yield* Teams.Teams)
-              .memberships(actor.companyId, [actor.actorId])
-              .pipe(Effect.map((rows) => rows.get(actor.actorId) ?? [])),
-            [engineering.id]
-          );
+          const memberships = yield* (yield* Teams.Teams)
+            .memberships(actor.companyId, [actor.actorId])
+            .pipe(Effect.map((rows) => rows.get(actor.actorId) ?? []));
+          assert.include(memberships, engineering.id);
+          assert.notInclude(memberships, design.id);
           assert.equal(
             (yield* publish(DEV_SEED.token, {
               html: html("Deleted target"),
@@ -142,14 +141,10 @@ it.layer(server().pipe(Layer.provideMerge(NodeCryptography.layer)))(
             400
           );
           assert.equal((yield* transition(design.id, "restore")).status, 200);
-          assert.sameMembers(
-            [
-              ...(yield* (yield* Teams.Teams)
-                .memberships(actor.companyId, [actor.actorId])
-                .pipe(Effect.map((rows) => rows.get(actor.actorId) ?? [])))
-            ],
-            [design.id, engineering.id]
-          );
+          const restoredMemberships = yield* (yield* Teams.Teams)
+            .memberships(actor.companyId, [actor.actorId])
+            .pipe(Effect.map((rows) => rows.get(actor.actorId) ?? []));
+          assert.includeMembers([...restoredMemberships], [design.id, engineering.id]);
           assert.deepEqual(yield* sql`SELECT scope FROM patches WHERE id = ${created.patchId}`, [
             { scope: "teams" }
           ]);

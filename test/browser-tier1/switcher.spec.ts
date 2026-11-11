@@ -27,6 +27,8 @@ const places = [
   "Home",
   "All patches",
   "Your agents",
+  "Company",
+  "Teams",
   "People",
   "Integrations",
   "Agent access",

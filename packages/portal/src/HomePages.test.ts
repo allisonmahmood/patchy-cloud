@@ -865,9 +865,11 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
     })
   );
 
-  it.effect("asks an admin to fix a connection that stopped, and leaves members out of it", () =>
+  it.effect("asks a super admin to fix a stopped connection, excluding admins and members", () =>
     Effect.gen(function* () {
       const workspace = yield* company("cmp_portal_home");
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE users SET role = 'super_admin' WHERE id = ${workspace.admin.id}`;
       const admin = yield* (yield* request("/", workspace.admin)).text;
       // It leads with its integration's mark, as Integrations draws it: a mailbox's envelope.
       assert.match(
@@ -885,10 +887,9 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
             link.text === "Replace password…"
         )
       );
-      assert.strictEqual(
-        sectionOf(yield* (yield* request("/", workspace.member)).text, "attention"),
-        ""
-      );
+      yield* sql`UPDATE users SET role = 'admin' WHERE id = ${workspace.admin.id}`;
+      for (const person of [workspace.admin, workspace.member])
+        assert.strictEqual(sectionOf(yield* (yield* request("/", person)).text, "attention"), "");
     })
   );
 
