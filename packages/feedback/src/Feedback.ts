@@ -211,6 +211,15 @@ export class Feedback extends Context.Service<
       readonly id: string;
     }) => Effect.Effect<SentRequest | SentFeedback, SubmissionNotFound | SqlError>;
     /**
+     * Up to three requests similar to the person's own request `id`, matched as filing it was,
+     * but ranked now, so a request filed since can join them. Feedback has none: its id answers
+     * as missing, as another person's does.
+     */
+    readonly similarTo: (input: {
+      readonly person: Person;
+      readonly id: string;
+    }) => Effect.Effect<ReadonlyArray<RequestBrief>, SubmissionNotFound | SqlError>;
+    /**
      * Deletes one of the person's submissions, and clears the links other requests had to it,
      * their reasons included, in the same transaction. No other submission is deleted.
      */
@@ -631,6 +640,25 @@ export const make = Effect.gen(function* () {
     return sentOf(row);
   });
 
+  const similarTo = Effect.fn("Feedback.similarTo")(function* ({
+    person,
+    id
+  }: {
+    readonly person: Person;
+    readonly id: string;
+  }) {
+    if (unstorable(id)) return yield* new SubmissionNotFound({ id });
+    const [own] = yield* sql<{ readonly text: string }>`
+      SELECT text FROM feedback.submissions
+      WHERE id = ${id} AND user_id = ${person.userId} AND company_id = ${person.companyId}
+        AND kind = 'request'`;
+    if (own === undefined) return yield* new SubmissionNotFound({ id });
+    const matches = yield* similar({ companyId: person.companyId, id, text: own.text }).pipe(
+      Effect.catchTags(dieOnSchemaError)
+    );
+    return matches.map(brief);
+  });
+
   const withdraw = Effect.fn("Feedback.withdraw")(function* ({
     person,
     id
@@ -656,7 +684,16 @@ export const make = Effect.gen(function* () {
     return { id };
   });
 
-  return Feedback.of({ sendRequest, sendFeedback, link, unlink, list, get, withdraw });
+  return Feedback.of({
+    sendRequest,
+    sendFeedback,
+    link,
+    unlink,
+    list,
+    get,
+    similarTo,
+    withdraw
+  });
 });
 
 export const layer = Layer.effect(Feedback, make);

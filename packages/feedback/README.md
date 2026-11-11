@@ -44,10 +44,11 @@ const filed =
 | `unlink`       | `{ person, id }`             | `{ id, link: null }`              | `SubmissionNotFound`, `SqlError`                                                 |
 | `list`         | `{ person, kind?, cursor? }` | `{ submissions, nextCursor }`     | `InvalidCursor`, `SqlError`                                                      |
 | `get`          | `{ person, id }`             | a `SentRequest` or `SentFeedback` | `SubmissionNotFound`, `SqlError`                                                 |
+| `similarTo`    | `{ person, id }`             | `RequestBrief[]`                  | `SubmissionNotFound`, `SqlError`                                                 |
 | `withdraw`     | `{ person, id }`             | `{ id }`                          | `SubmissionNotFound`, `SqlError`                                                 |
 
 - `similar` and `link` are `RequestBrief`s from `@patchy/api`: `{ id, title, status, note? }`. At most `SIMILAR_MAX` (3) matches, from the company's own requests and general requests; feedback has none.
-- `list` pages hold `PAGE_SIZE` (50), newest first; `get` reads one of them by id. A `SentRequest` is `{ kind: "request", id, createdAt, surface, agent, title, status, link }`, a `SentFeedback` `{ kind: "feedback", id, createdAt, surface, agent }`; `createdAt` is a `Date`. No item carries a feedback note or any why.
+- `list` pages hold `PAGE_SIZE` (50), newest first; `get` reads one of them by id, and `similarTo` matches one of the person's own requests again, ranked now. A `SentRequest` is `{ kind: "request", id, createdAt, surface, agent, title, status, link }`, a `SentFeedback` `{ kind: "feedback", id, createdAt, surface, agent }`; `createdAt` is a `Date`. No item carries a feedback note or any why.
 - Request ids are `req_…`, feedback ids `fbk_…`, both of the shape `SubmissionId` in `@patchy/api` names; general request ids are `gen_…`.
 - Bounds, from `@patchy/api` so the CLI checks them before sending: a title is `SUBMISSION_TITLE_MIN`–`SUBMISSION_TITLE_MAX` (3–200) characters on one line, whitespace collapsed; a why, a link's why and a feedback note at most `SUBMISSION_TEXT_MAX` (4,000). Blank whys are none. Control characters other than tab and line breaks are refused.
 - Every error's `message` is written for the agent or person reading it; each says whether anything was stored or changed.
