@@ -548,7 +548,7 @@ const renderGuestRemoval = (viewer: Viewer, guest: Guest): Page => {
   const patches = guest.patches
     .map(
       (patch) =>
-        `<li class="company-patch">${patchMark(patch.name, patch.tier)}<span><strong>${escapeHtml(patchTitle(patch))}</strong>${statePill(patch)}</span></li>`
+        `<li class="company-patch">${patchMark(patch.name, patch.tier)}<span><strong>${escapeHtml(patch.title === null ? "Restricted patch" : patchTitle(patch))}</strong>${statePill(patch)}</span></li>`
     )
     .join("");
   return {
