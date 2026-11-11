@@ -1261,7 +1261,13 @@ const endCredentials = async (
       ["reactivate", "deactivate"]
     ] as const) {
       await page.goto(`${apiUrl}${users[0]}/${act}`);
-      await press(page, 'form.confirmation-form button[type="submit"]', `Confirming ${act}`);
+      // Every release's confirmation is the one form posting to the act's own address, whatever
+      // classes its release draws it with.
+      await press(
+        page,
+        `form[method="post"][action$="/${act}"] button[type="submit"]`,
+        `Confirming ${act}`
+      );
       const people = await page.content();
       if (!users.some((user) => people.includes(`${user}/${after}`)))
         throw new Error(`After confirming ${act}, Company offers no ${after} for that member.`);
