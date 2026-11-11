@@ -51,6 +51,7 @@ import {
   rows,
   sentenceList,
   table,
+  tellPatchyFields,
   tellPatchyForm,
   tellPatchyPanel,
   tellPatchyScriptPath
@@ -63,8 +64,13 @@ const MAX_FORM_BYTES = 64 * 1024;
 /** The header the panel's script sends, and every answer meant for the panel carries back. */
 const PANEL = "patchy-panel";
 
+/** A send, and `from: "new"` when it came from the composer's own address, which a refusal draws again. */
 const decodeSend = Schema.decodeUnknownEffect(
-  Schema.Struct({ kind: SubmissionKind, text: Schema.String })
+  Schema.Struct({
+    kind: SubmissionKind,
+    text: Schema.String,
+    from: Schema.optionalKey(Schema.String)
+  })
 );
 const decodeLink = Schema.decodeUnknownEffect(Schema.Struct({ to: Schema.String }));
 /** Where an Unlink came from: the sent request's own address returns there; the list's menu, to the list. */
@@ -292,6 +298,28 @@ export const renderSentDialog = (sent: SentRequestView) =>
     foot: linkButton("Done", "/feedback", { kind: "primary" })
   });
 
+/**
+ * The composer at its own address, `/feedback/new?kind=…`, as a dialog over What you sent: the
+ * panel's fields, `kind` picked, posting as the panel's form does. It is how a link such as Ask
+ * for an integration opens the composer with Request picked without script; with it, the panel
+ * opens in place instead. A refused send from it draws it again with the field's error, never the
+ * text.
+ */
+export const renderNewDialog = (spec: { readonly kind: SubmissionKind; readonly error?: string }) =>
+  dialog({
+    id: "tell-patchy-new",
+    title: "Tell Patchy",
+    closeHref: "/feedback",
+    form: { action: "/feedback", fields: '<input type="hidden" name="from" value="new">' },
+    body: tellPatchyFields({
+      id: "tell-patchy-new",
+      kind: spec.kind,
+      autofocus: true,
+      ...(spec.error === undefined ? {} : { error: spec.error })
+    }),
+    foot: `${linkButton("Cancel", "/feedback", { kind: "quiet" })}${button("Send", { kind: "primary" })}`
+  });
+
 /** Who sent it and through what: "You · Dashboard", or the agent and "CLI" or "Patchy MCP". */
 const from = (sent: Sent, viewer: RequireSession.Viewer["Service"]) => {
   const cell = (mark: string, name: string, surface: string) =>
@@ -473,11 +501,24 @@ const tellScript = `(() => {
     const timer = setTimeout(() => document.removeEventListener("click", check, true), 1000);
     document.addEventListener("click", check, true);
   };
+  // A link to the composer's own address, such as Ask for an integration, opens the panel in
+  // place beside it instead, the kind taken from the link; a modified click still opens the address.
+  const pick = (kind) => (compose().elements.namedItem("kind").value = kind === "feedback" ? "feedback" : "request");
   document.addEventListener("click", (event) => {
-    const invoker = event.target instanceof Element && event.target.closest('[popovertarget="${tellPatchyPanel}"]');
+    if (!(event.target instanceof Element)) return;
+    const link = event.target.closest('a[href^="/feedback/new"]');
+    if (link && !panel.contains(link)) {
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      opener = link;
+      pick(new URL(link.href).searchParams.get("kind"));
+      if (panel.matches(":popover-open")) return compose().elements.namedItem("text").focus();
+      return panel.showPopover({ source: link });
+    }
+    const invoker = event.target.closest('[popovertarget="${tellPatchyPanel}"]');
     if (!invoker || panel.contains(invoker)) return;
     opener = invoker;
-    if (invoker.dataset.kind) compose().elements.namedItem("kind").value = invoker.dataset.kind;
+    if (invoker.dataset.kind) pick(invoker.dataset.kind);
   });
   window.addEventListener("patchy:switcher-closed", () => {
     if (!awaiting) return;
@@ -612,6 +653,8 @@ const listPage = Effect.fn("FeedbackPages.listPage")(function* (
     readonly overlay?: string;
     /** The page's `<title>` heading, for a dialog. */
     readonly title?: string;
+    /** The status of a dialog drawn again for a refusal. */
+    readonly status?: number;
   } = {}
 ) {
   const { viewer, session, request, person } = yield* context;
@@ -639,7 +682,7 @@ const listPage = Effect.fn("FeedbackPages.listPage")(function* (
     {
       title: shown.title ?? "What you sent",
       ...renderList({ viewer, now: yield* Clock.currentTimeMillis, ...listed }),
-      status: listed.refused?.status ?? 200,
+      status: shown.status ?? listed.refused?.status ?? 200,
       app: { viewer, section: "feedback", overlay: shown.overlay }
     },
     session
@@ -652,14 +695,19 @@ const listPage = Effect.fn("FeedbackPages.listPage")(function* (
  */
 const refuseSend = Effect.fn("FeedbackPages.refuseSend")(function* (
   refused: Refusal,
-  kind: SubmissionKind
+  kind: SubmissionKind,
+  fromNew = false
 ) {
   const { panel } = yield* context;
-  return panel
-    ? panelAnswer(
-        tellPatchyForm({ kind, error: `${refused.title}. ${refused.body}` }),
-        refused.status
-      )
+  const error = `${refused.title}. ${refused.body}`;
+  if (panel) return panelAnswer(tellPatchyForm({ kind, error }), refused.status);
+  // The composer's own address is drawn again with the field's error, as a refused dialog is.
+  return fromNew
+    ? yield* listPage({
+        title: "Tell Patchy",
+        overlay: renderNewDialog({ kind, error }),
+        status: refused.status
+      })
     : yield* listPage({ refused });
 });
 
@@ -694,7 +742,8 @@ const done = Effect.fn("FeedbackPages.done")(function* (receiptText: string, htm
 const send = Effect.gen(function* () {
   const { person } = yield* context;
   const fields = yield* form;
-  const { kind, text } = yield* decodeSend(fields);
+  const { kind, text, from } = yield* decodeSend(fields);
+  const fromNew = from === "new";
   const feedback = yield* Feedback.Feedback;
   const sender = { ...person, surface: "dashboard" } satisfies Feedback.Sender;
   const request = requestOf(text);
@@ -719,9 +768,9 @@ const send = Effect.gen(function* () {
         );
   return yield* sent.pipe(
     Effect.catchTags({
-      InvalidText: (error) => refuseSend(sendRefusal(error, kind, text), kind),
-      ContainsSecret: (error) => refuseSend(sendRefusal(error, kind, text), kind),
-      SendLimited: (error) => refuseSend(sendRefusal(error, kind, text), kind)
+      InvalidText: (error) => refuseSend(sendRefusal(error, kind, text), kind, fromNew),
+      ContainsSecret: (error) => refuseSend(sendRefusal(error, kind, text), kind, fromNew),
+      SendLimited: (error) => refuseSend(sendRefusal(error, kind, text), kind, fromNew)
     })
   );
 }).pipe(
@@ -769,6 +818,16 @@ const unlink = Effect.fn("FeedbackPages.unlink")(
     HttpServerError: () => refuse(brokenForm(413))
   })
 );
+
+/** The composer at its own address, Request picked unless `kind` names feedback. */
+const newPage = Effect.gen(function* () {
+  const { request, session } = yield* context;
+  const kind = new URL(request.url, session.publicBaseUrl).searchParams.get("kind");
+  return yield* listPage({
+    title: "Tell Patchy",
+    overlay: renderNewDialog({ kind: kind === "feedback" ? "feedback" : "request" })
+  });
+});
 
 /**
  * A sent request at its own address, the dialog over What you sent that a send without the
@@ -829,6 +888,7 @@ export const layer: Layer.Layer<
     yield* router.add("POST", "/feedback", post(send));
     yield* router.add("POST", "/feedback/:id/link", post(byId(link)));
     yield* router.add("POST", "/feedback/:id/unlink", post(byId(unlink)));
+    yield* router.add("GET", "/feedback/new", errors(RequireSession.withViewer(newPage)));
     yield* router.add(
       "GET",
       "/feedback/:id/sent",

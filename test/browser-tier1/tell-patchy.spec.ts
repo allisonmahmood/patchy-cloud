@@ -1,8 +1,9 @@
 import type { Page } from "@playwright/test";
-import { test, expect } from "./fixtures.js";
+import { test, expect, prepare } from "./fixtures.js";
 
-// Tell Patchy's panel, in the sidebar's foot: what its script does with answers that arrive late
-// and with focus when it closes. The routes themselves are the portal's own tests.
+// Tell Patchy's panel, in the sidebar's foot: what its script does with answers that arrive late,
+// with focus when it closes, and with a link to the composer, with and without script. The routes
+// themselves are the portal's own tests.
 
 const panel = (page: Page) => page.getByRole("dialog", { name: "Tell Patchy" });
 const foot = (page: Page) => page.locator(".tell-patchy-button");
@@ -64,6 +65,40 @@ test("closing the panel gives focus back to Tell Patchy, after the switcher took
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog", { name: "Go to" })).toBeHidden();
   await expect(foot(page)).toBeFocused();
+});
+
+test("Ask for an integration picks Request after Feedback was chosen: in place with script, at the composer's address without", async ({
+  browser,
+  page,
+  instance
+}) => {
+  const ask = (on: Page) => on.getByRole("link", { name: "Ask for an integration" });
+  await page.goto(`${instance.origin}/settings/integrations/connect`);
+  await foot(page).click();
+  await panel(page).getByRole("radio", { name: "Feedback" }).check();
+  await page.keyboard.press("Escape");
+  await ask(page).click();
+  await expect(panel(page)).toBeVisible();
+  await expect(page).toHaveURL(/\/settings\/integrations\/connect$/);
+  await expect(panel(page).getByRole("radio", { name: "Request" })).toBeChecked();
+  await expect(field(page)).toBeFocused();
+
+  const context = await browser.newContext({ javaScriptEnabled: false });
+  try {
+    await prepare(context, instance);
+    const quiet = await context.newPage();
+    await quiet.goto(`${instance.origin}/settings/integrations/connect`);
+    await foot(quiet).click();
+    await panel(quiet).getByRole("radio", { name: "Feedback" }).check();
+    await quiet.keyboard.press("Escape");
+    await ask(quiet).click();
+    await expect(quiet).toHaveURL(/\/feedback\/new\?kind=request$/);
+    await expect(
+      quiet.locator("#tell-patchy-new").getByRole("radio", { name: "Request" })
+    ).toBeChecked();
+  } finally {
+    await context.close();
+  }
 });
 
 test.describe("on a phone", () => {

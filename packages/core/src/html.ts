@@ -110,40 +110,65 @@ function whatsNew(seen: number, current: boolean): string {
 export const tellPatchyScriptPath = "/feedback/tell.js";
 /** The id of Tell Patchy's panel, which any page's button may open with `popovertarget`. */
 export const tellPatchyPanel = "tell-patchy";
+/**
+ * The composer's own address, `kind` picked: a dialog over What you sent, which works without
+ * script. A page's link to it, such as Ask for an integration, opens the panel in place instead
+ * once the panel's script runs, the kind taken from the link.
+ */
+export const tellPatchyHref = (kind: "request" | "feedback") => `/feedback/new?kind=${kind}`;
 
 /**
- * Tell Patchy's form: Request or Feedback, one field and Send, posting to `/feedback`. The panel
- * draws it at rest; a refused send draws it again with `error` on the field and `kind` as sent,
- * never the text, which stays in the person's own field. The field has no `maxlength`: it would
- * count UTF-16 units and cut an emoji the store, counting characters, accepts.
+ * Tell Patchy's fields: Request or Feedback, `kind` picked, and the one text field. The panel's
+ * form holds them, and so does the composer at `/feedback/new` that a person without the panel's
+ * script reaches, under its own `id` so both fit on one page. A refused send draws them again with
+ * `error` on the field and the kind as sent, never the text, which stays in the person's own
+ * field. The field has no `maxlength`: it would count UTF-16 units and cut an emoji the store,
+ * counting characters, accepts. `autofocus` puts focus in the field where a dialog opens.
  */
-export const tellPatchyForm = (
-  spec: { readonly kind?: "request" | "feedback"; readonly error?: string } = {}
+export const tellPatchyFields = (
+  spec: {
+    readonly id?: string;
+    readonly kind?: "request" | "feedback";
+    readonly error?: string;
+    readonly autofocus?: boolean;
+  } = {}
 ) => {
+  const id = spec.id ?? tellPatchyPanel;
   const kind = spec.kind ?? "request";
   const kinds = choiceGroup({
-    id: "tell-patchy-kind",
+    id: `${id}-kind`,
     legend: "Request or feedback",
     hideLegend: true,
     choices: (aria) =>
       `${radio({ name: "kind", value: "request", label: "Request", checked: kind === "request", aria })}${radio({ name: "kind", value: "feedback", label: "Feedback", checked: kind === "feedback", aria })}`
   });
   const text = field({
-    id: "tell-patchy-text",
+    id: `${id}-text`,
     label: "What to tell Patchy",
     hideLabel: true,
     error: spec.error,
     control: (aria) =>
-      textarea(aria, { name: "text", rows: 4, autofocus: spec.error !== undefined })
+      textarea(aria, {
+        name: "text",
+        rows: 4,
+        autofocus: spec.autofocus === true || spec.error !== undefined
+      })
   });
-  return `<form class="app-tell-form" method="post" action="/feedback" novalidate data-tell="compose">${kinds}${text}${button("Send", { kind: "primary", block: true })}</form>`;
+  return `${kinds}${text}`;
 };
+
+/** The panel's form: its fields and Send, posting to `/feedback`. */
+export const tellPatchyForm = (
+  spec: { readonly kind?: "request" | "feedback"; readonly error?: string } = {}
+) =>
+  `<form class="app-tell-form" method="post" action="/feedback" novalidate data-tell="compose">${tellPatchyFields(spec)}${button("Send", { kind: "primary", block: true })}</form>`;
 
 /**
  * Tell Patchy, at the foot of the sidebar between What's new and the account, opens a panel in
- * the frame What's new's uses for sending Patchy a request or feedback. Any page's button with
- * `popovertarget="tell-patchy"` opens it too, beside that button, and its `data-kind` picks the
- * kind. The panel sits outside the menu, which a narrow window hides until Menu opens it, and a
+ * the frame What's new's uses for sending Patchy a request or feedback. A page's link to the
+ * composer's own address (`tellPatchyHref`) opens it too, beside that link, with its kind picked,
+ * and opens the composer as a dialog without script; a button with `popovertarget="tell-patchy"`
+ * opens it as the foot's does. The panel sits outside the menu, which a narrow window hides until Menu opens it, and a
  * popover inside a hidden menu can't show. `/feedback/tell.js` sends in place and shows the
  * answer; when it can't tell whether a send was saved it puts the note that points to What you
  * sent, inert in a template until then, into a live slot, so no page carries a second notice.

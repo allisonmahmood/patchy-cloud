@@ -35,7 +35,7 @@ import {
   table,
   type Template,
   tabs,
-  tellPatchyPanel
+  tellPatchyHref
 } from "@patchy/core";
 import type { RuntimeLog } from "@patchy/runtime";
 import type { Usage } from "./ConnectionStore.js";
@@ -171,19 +171,14 @@ const filterPath = (filters: Filters) => {
 };
 
 /**
- * How a company asks Patchy for an integration it would connect: a button opening the shell's
- * Tell Patchy panel beside itself with Request picked, so the ask lands with Patchy's requests.
+ * How a company asks Patchy for an integration it would connect: a link to Tell Patchy's composer
+ * with Request picked, so the ask lands with Patchy's requests. The panel's script opens the panel
+ * beside it instead; without script, the link opens the composer at its own address.
  */
 const ask = (
   label: string,
   look: { readonly kind?: "quiet"; readonly size?: "sm"; readonly ariaLabel?: string } = {}
-) =>
-  button(label, {
-    ...look,
-    type: "button",
-    popovertarget: tellPatchyPanel,
-    data: { kind: "request" }
-  });
+) => linkButton(label, tellPatchyHref("request"), look);
 
 const name = (connection: { readonly integration: Integration; readonly handle: string }) =>
   `${connection.integration.key}/${connection.handle}`;

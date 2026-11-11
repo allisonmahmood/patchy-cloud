@@ -256,9 +256,10 @@ describe("the connections index", () => {
       expect(html).not.toContain(hidden);
     expect(html).toContain("Needs attention<span");
     expect(html).toContain("Only admins connect integrations. Admins: Dana and Jordan.");
-    // Asking opens Tell Patchy beside the button, Request picked, rather than an email.
+    // Asking opens Tell Patchy's composer, Request picked, rather than an email: in place with
+    // script, at its own address without.
     expect(html).toContain(
-      '<button class="btn" type="button" popovertarget="tell-patchy" data-kind="request">Ask for an integration</button>'
+      '<a class="btn" href="/feedback/new?kind=request">Ask for an integration</a>'
     );
     expect(html).not.toContain("mailto:");
   });
@@ -276,7 +277,7 @@ describe("the connections index", () => {
     expect(html).toContain('aria-label="Connect Postgres"');
     expect(html).toContain("Something else");
     expect(html).toContain(
-      'type="button" popovertarget="tell-patchy" aria-label="Ask for an integration" data-kind="request">Ask</button>'
+      'href="/feedback/new?kind=request" aria-label="Ask for an integration">Ask</a>'
     );
     // Each row leads with its integration's mark: its logo where Patchy knows it, else its letters.
     expect(html).toMatch(

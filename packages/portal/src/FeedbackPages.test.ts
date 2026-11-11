@@ -199,6 +199,68 @@ it.layer(layer)("Feedback pages", (it) => {
   );
 
   it.effect(
+    "the composer has its own address, Request picked unless it names feedback, and a refusal there draws it again without the text",
+    () =>
+      Effect.gen(function* () {
+        const ada = yield* person();
+        const checked = (html: string) =>
+          html.match(/name="kind" value="(request|feedback)" checked>/)?.[1];
+        for (const [query, kind] of [
+          ["?kind=request", "request"],
+          ["?kind=feedback", "feedback"],
+          ["?kind=bogus", "request"],
+          ["", "request"]
+        ] as const) {
+          const page = yield* request(ada, HttpClientRequest.get(`/feedback/new${query}`));
+          assert.strictEqual(page.status, 200, query);
+          const html = yield* page.text;
+          // The shell's panel holds its own form; the dialog's is the second, under its own ids.
+          const dialog = html.slice(html.indexOf('id="tell-patchy-new"'));
+          assert.include(
+            dialog,
+            'role="dialog" aria-modal="true" aria-labelledby="tell-patchy-new-title"'
+          );
+          assert.strictEqual(checked(dialog), kind, query);
+          assert.include(dialog, '<input type="hidden" name="from" value="new">');
+          assert.match(
+            dialog,
+            /<textarea class="field" id="tell-patchy-new-text" name="text" rows="4" autofocus><\/textarea>/
+          );
+          assert.include(html, '<h1 class="title">What you sent</h1>');
+        }
+
+        // Sent from it without script: a request lands on its own address, as from the panel.
+        const sent = yield* request(
+          ada,
+          post("/feedback", { kind: "request", text: "Gmail integration", from: "new" }, false)
+        );
+        assert.strictEqual(sent.status, 303);
+        assert.match(sent.headers.location ?? "", /^\/feedback\/req_[a-z0-9]+\/sent$/);
+
+        // A refused send from it draws it again with the field's error and the kind as sent.
+        const key = `AIza${"x".repeat(35)}`;
+        const refused = yield* request(
+          ada,
+          post("/feedback", { kind: "feedback", text: `Our key is ${key}`, from: "new" }, false)
+        );
+        assert.strictEqual(refused.status, 422);
+        const body = yield* refused.text;
+        const dialog = body.slice(body.indexOf('id="tell-patchy-new"'));
+        assert.strictEqual(checked(dialog), "feedback");
+        assert.include(
+          dialog,
+          '<p class="field-error" id="tell-patchy-new-text-error">Your feedback has a Google API key in it.'
+        );
+        assert.match(
+          dialog,
+          /<textarea[^>]*id="tell-patchy-new-text"[^>]*aria-invalid="true"[^>]*><\/textarea>/
+        );
+        assert.notInclude(body, key);
+        assert.lengthOf(yield* submissions(ada), 1);
+      })
+  );
+
+  it.effect(
     "without the panel's script, a sent request has its own address, where Same need and Unlink come back to it; only its sender sees it",
     () =>
       Effect.gen(function* () {
