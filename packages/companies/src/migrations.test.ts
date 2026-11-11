@@ -57,7 +57,7 @@ it.layer(Testing.emptyLayer(before("0015_user_name_never_blank")))(
   }
 );
 
-it.layer(Testing.emptyLayer(before("0036_company_roles")))("the company roles upgrade", (it) => {
+it.layer(Testing.emptyLayer(before("0037_company_roles")))("the company roles upgrade", (it) => {
   it.effect(
     "preserves every existing admin as a super admin, including inactive accounts and pending invitations",
     () =>
@@ -70,7 +70,13 @@ it.layer(Testing.emptyLayer(before("0036_company_roles")))("the company roles up
         ('m', 'clerk_m', 'cmp_roles', 'm@example.com', 'M', 'member', NULL)`;
         yield* sql`INSERT INTO invites (id, company_id, email, role, invited_by, expires_at) VALUES
         ('i', 'cmp_roles', 'invited@example.com', 'admin', 'a', now() + interval '1 day')`;
+        yield* sql`INSERT INTO terms_acceptances
+          (user_id, terms_revision, privacy_revision, via, accepted_at)
+          VALUES ('a', '2026-11-10', '2026-11-10', 'prompt', now())`;
         yield* migrate(migrations);
+        assert.deepStrictEqual(yield* sql`SELECT user_id FROM terms_acceptances`, [
+          { user_id: "a" }
+        ]);
         assert.deepStrictEqual(yield* sql`SELECT id, role FROM users ORDER BY id`, [
           { id: "a", role: "super_admin" },
           { id: "b", role: "super_admin" },

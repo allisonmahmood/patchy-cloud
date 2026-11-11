@@ -138,7 +138,20 @@ export const migrations: Migrations = {
         (agent_access_changed_by IS NULL) = (agent_access_changed_at IS NULL)
       )`
   ),
-  "0036_company_roles": ddl(
+  // Each person's acceptances of the terms and privacy notice, by revision (Terms.Revision):
+  // at sign-up, when their user is created, and at the prompt after a change. Rows are added,
+  // never changed. No foreign key: a record outlives the account it names.
+  "0036_terms_acceptances": ddl(
+    `CREATE TABLE terms_acceptances (
+      user_id TEXT NOT NULL,
+      terms_revision TEXT NOT NULL CHECK (terms_revision ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'),
+      privacy_revision TEXT NOT NULL CHECK (privacy_revision ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'),
+      via TEXT NOT NULL CHECK (via IN ('sign-up', 'prompt')),
+      accepted_at TIMESTAMPTZ NOT NULL,
+      PRIMARY KEY (user_id, terms_revision, privacy_revision)
+    )`
+  ),
+  "0037_company_roles": ddl(
     `ALTER TABLE users DROP CONSTRAINT users_role_check`,
     `ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('member', 'admin', 'super_admin'))`,
     `ALTER TABLE invites DROP CONSTRAINT invites_role_check`,
@@ -146,7 +159,7 @@ export const migrations: Migrations = {
     `UPDATE users SET role = 'super_admin' WHERE role = 'admin'`,
     `UPDATE invites SET role = 'super_admin' WHERE role = 'admin'`
   ),
-  "0037_company_teams": ddl(
+  "0038_company_teams": ddl(
     `CREATE TABLE company_teams (
       id TEXT PRIMARY KEY,
       company_id TEXT NOT NULL REFERENCES companies(id),
