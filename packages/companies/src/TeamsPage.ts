@@ -8,6 +8,7 @@ import {
   button,
   checklist,
   detailPage,
+  directoryCards,
   dialog,
   emptyState,
   escapeAttribute,
@@ -131,9 +132,20 @@ const render = Effect.fn("TeamsPage.render")(function* (
           people.map((person) => person.id)
         )
       : [];
+    const teamsByPerson = new Map(memberships.map((person) => [person.id, person.teamIds]));
+    const previews = new Map<string, string[]>();
     const counts = new Map<string, number>();
-    for (const person of memberships)
-      for (const teamId of person.teamIds) counts.set(teamId, (counts.get(teamId) ?? 0) + 1);
+    for (const user of [...people].sort(
+      (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)
+    ))
+      for (const teamId of teamsByPerson.get(user.id) ?? []) {
+        counts.set(teamId, (counts.get(teamId) ?? 0) + 1);
+        if (user.deactivatedAt === null) {
+          const preview = previews.get(teamId) ?? [];
+          if (preview.length < 3) preview.push(avatar(user.id, user.name));
+          previews.set(teamId, preview);
+        }
+      }
     const filtered = all.filter((team) => matches(team.name));
     const create =
       editable && !view.deleted
@@ -154,25 +166,19 @@ const render = Effect.fn("TeamsPage.render")(function* (
               title: "No teams match your search",
               action: linkButton("Clear search", directoryHref)
             })
-          : rows(
-              filtered.map((team) => {
-                const href = view.deleted
+          : directoryCards(
+              filtered.map((team) => ({
+                name: team.name,
+                href: view.deleted
                   ? `${address(team.id)}&deleted=1&view=restore`
-                  : address(team.id);
-                return row({
-                  lead: teamMark(),
-                  name: team.name,
-                  description: view.deleted
-                    ? "Memberships kept for restoration"
-                    : peopleCount(counts.get(team.id) ?? 0),
-                  href,
-                  end: linkButton(view.deleted ? "Restore…" : editable ? "Manage" : "View", href, {
-                    size: "sm",
-                    ariaLabel: `${view.deleted ? "Restore" : editable ? "Manage" : "View"} ${team.name}`
-                  })
-                });
-              }),
-              true
+                  : address(team.id),
+                mark: teamMark(),
+                meta: view.deleted
+                  ? "Memberships kept for restoration"
+                  : peopleCount(counts.get(team.id) ?? 0),
+                preview: (previews.get(team.id) ?? []).join(""),
+                action: view.deleted ? "Restore team…" : "Open team"
+              }))
             );
     const title = "Teams";
     const page: Page = {
@@ -197,8 +203,8 @@ const render = Effect.fn("TeamsPage.render")(function* (
                 ]
               })
             : ""
-        }${all.length ? searchField({ action: path, id: "teams-search", query: view.query, placeholder: "Find a team", label: "Find a team", keep: view.deleted ? { deleted: "1" } : {}, className: "grow" }) : ""}`,
-        content: problem(refused) + content
+        }`,
+        content: `<div class="stack">${all.length ? searchField({ action: path, id: "teams-search", query: view.query, placeholder: "Find a team", label: "Find a team", keep: view.deleted ? { deleted: "1" } : {} }) : ""}${problem(refused)}${content}</div>`
       })
     };
     if (view.screen === "create")

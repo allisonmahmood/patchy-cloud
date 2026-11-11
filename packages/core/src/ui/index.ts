@@ -73,3 +73,4 @@ export { choiceLinks } from "./choice-links.js";
 export type { ChoiceLink } from "./choice-links.js";
 export { computerMark } from "./computer-mark.js";
 export { flowOutcome } from "./flow-outcome.js";
+export { directoryCards } from "./directory-cards.js";

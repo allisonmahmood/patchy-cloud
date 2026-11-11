@@ -277,7 +277,7 @@ it.layer(services)("company page and actions", (it) => {
         return main(yield* Effect.promise(() => response.text()));
       });
       const directory = yield* read(root);
-      assert.include(directory, 'aria-label="Manage Design"');
+      assert.include(directory, 'class="directory-cards"');
       assert.include(directory, location);
       assert.notInclude(directory, member.name);
       const roster = yield* read(location);

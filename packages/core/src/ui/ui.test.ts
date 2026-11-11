@@ -115,6 +115,7 @@ const shownAt = {
   region: "Region",
   attentionRow: "Attention row",
   usualTiles: "Usual tile",
+  directoryCards: "Directory card",
   choiceLinks: "Choice link",
   canList: "Can list",
   flowOutcome: "Flow outcome",
@@ -225,6 +226,26 @@ describe("the field family", () => {
     );
     expect(html).toContain('type="password"');
     expect(html).toMatch(/<button[^>]*data-show="key"[^>]*hidden>Show<\/button>/);
+  });
+});
+
+describe("directory cards", () => {
+  it("escapes destination text and URLs while keeping decorative previews out of the link name", () => {
+    const html = Ui.directoryCards([
+      {
+        name: "Design <studio>",
+        href: '/teams?name="design"&active=1',
+        meta: "4 people & collaborators",
+        mark: "<span>mark</span>",
+        preview: "<span>AP</span>",
+        action: "Open <team>"
+      }
+    ]);
+    expect(html).toContain("Design &lt;studio&gt;");
+    expect(html).toContain('href="/teams?name=&quot;design&quot;&amp;active=1"');
+    expect(html).toContain("4 people &amp; collaborators");
+    expect(html).toContain('class="directory-card-preview" aria-hidden="true"><span>AP</span>');
+    expect(html).toContain("Open &lt;team&gt;");
   });
 });
 
