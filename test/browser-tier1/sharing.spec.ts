@@ -1,3 +1,4 @@
+import { DEV_SEED } from "@patchy/auth/seed";
 import { test, expect, prepare } from "./fixtures.js";
 
 test("an owner shares a page from its menu, and the guest opens it from Home and removes it", async ({
@@ -123,11 +124,30 @@ for (const javaScriptEnabled of [true, false])
         }
       );
       expect(created.ok()).toBe(true);
+      const teamId = new URL(created.url()).searchParams.get("team")!;
+      const joined = await context.request.post(
+        `${instance.origin}/settings/company/teams/add?team=${teamId}`,
+        {
+          headers: { origin: instance.origin },
+          form: { userId: DEV_SEED.userId }
+        }
+      );
+      expect(joined.ok()).toBe(true);
+      const engineering = await context.request.post(
+        `${instance.origin}/settings/company/teams/create`,
+        {
+          headers: { origin: instance.origin },
+          form: { name: "Engineering" }
+        }
+      );
+      expect(engineering.ok()).toBe(true);
       const patch = await instance.publish();
       const page = await context.newPage();
       await page.goto(`${instance.origin}/patches?share=${patch.name}`);
       const scope = page.getByLabel("General access");
       const team = page.getByRole("checkbox", { name: "Design", exact: true });
+      const access = page.getByRole("group", { name: "Who has access" });
+      await expect(access).toContainText("People at Patchy Dev");
       await expect(team).toBeHidden();
       await scope.selectOption("teams");
       await expect(team).toBeVisible();
@@ -139,6 +159,27 @@ for (const javaScriptEnabled of [true, false])
       await scope.selectOption("teams");
       await expect(team).toBeChecked();
       await expect(team).toBeVisible();
+      // Unsaved controls never claim that access already changed.
+      await expect(access).toContainText("People at Patchy Dev");
+      await page.getByRole("button", { name: "Save", exact: true }).click();
+      await expect(access).toContainText("Design");
+      await expect(access).not.toContainText("People at Patchy Dev");
+      await page.reload();
+      await expect(scope).toHaveValue("teams");
+      await expect(access).toContainText("Design");
+      const engineeringChoice = page.getByRole("checkbox", { name: "Engineering", exact: true });
+      await engineeringChoice.check();
+      await page.getByRole("button", { name: "Save", exact: true }).click();
+      await expect(access).toContainText("Engineering");
+      await engineeringChoice.uncheck();
+      await page.getByRole("button", { name: "Save", exact: true }).click();
+      await expect(access).toContainText("Design");
+      await expect(access).not.toContainText("Engineering");
+      await scope.selectOption("company");
+      await expect(access).toContainText("Design");
+      await page.getByRole("button", { name: "Save", exact: true }).click();
+      await expect(access).toContainText("People at Patchy Dev");
+      await expect(access).not.toContainText("Design");
     } finally {
       await context.close();
     }

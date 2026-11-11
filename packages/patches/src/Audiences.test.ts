@@ -294,6 +294,52 @@ it.layer(services)("Patch audiences", (it) => {
       assert.deepStrictEqual(result.audience.members, teamAudience([own.id, hidden.id]).members);
     })
   );
+  it.effect("only patch managers can inspect all saved team grants", () =>
+    Effect.gen(function* () {
+      const patches = yield* Patches.Patches;
+      const own = yield* team("Access summary Design", [uploader.user.id]);
+      const hidden = yield* team("Access summary Research", [reader.user.id]);
+      const input = Fixtures.recordInput(uploader, { audience: teamAudience([own.id]) });
+      yield* Fixtures.record(input);
+      yield* patches.setSharing({
+        patchId: input.patchId,
+        actor: { userId: admin.user.id, admin: true },
+        audience: teamAudience([own.id, hidden.id])
+      });
+      const owner = { userId: uploader.user.id, admin: false };
+      const access = yield* patches.sharingAccess(input.patchId, owner);
+      assert.isTrue(access.ownerCanOpen);
+      assert.deepStrictEqual(access.teams, [
+        { id: own.id, name: own.name },
+        { id: hidden.id, name: hidden.name }
+      ]);
+      assert.notInclude(
+        (yield* (yield* Teams.Teams).list({
+          companyId: viewer.companyId,
+          actorId: owner.userId
+        })).map((t) => t.id),
+        hidden.id
+      );
+      for (const admin of [false, true])
+        assert.equal(
+          (yield* patches
+            .sharingAccess(input.patchId, { userId: reader.user.id, admin })
+            .pipe(Effect.flip))._tag,
+          "NotOwner"
+        );
+      yield* (yield* Teams.Teams).setMemberships({
+        ...viewer,
+        teamId: own.id,
+        userIds: [owner.userId],
+        added: false
+      });
+      const oversight = yield* patches.sharingAccess(input.patchId, {
+        userId: admin.user.id,
+        admin: true
+      });
+      assert.isFalse(oversight.ownerCanOpen);
+    })
+  );
   it.effect("publishing preserves existing teams the owner cannot see", () =>
     Effect.gen(function* () {
       const patches = yield* Patches.Patches;

@@ -1017,6 +1017,17 @@ export class Patches extends Context.Service<
       actor: Actor,
       readOnly?: boolean
     ) => Effect.Effect<SharingMetadata, OwnerAccessLost | PatchUnavailable | NotOwner | SqlError>;
+    /** Saved sharing metadata; ownership itself never grants content access. */
+    readonly sharingAccess: (
+      patchId: string,
+      actor: Actor
+    ) => Effect.Effect<
+      {
+        readonly teams: readonly { readonly id: string; readonly name: string }[];
+        readonly ownerCanOpen: boolean;
+      },
+      OwnerAccessLost | PatchUnavailable | NotOwner | SqlError
+    >;
     /** Changes a live patch's audience without creating a version. */
     readonly setSharing: (
       input: SharingChange
@@ -2951,6 +2962,27 @@ export const make = Effect.gen(function* () {
       withLifecycleTransaction
     )
   );
+  const sharingTeamRows = SqlSchema.findAll({
+    Request: Schema.Struct({ patchId: Schema.String, companyId: Schema.String }),
+    Result: Schema.Struct({ id: Schema.String, name: Schema.String }),
+    execute: ({ patchId, companyId }) => sql`
+      SELECT t.id, t.name FROM patch_audience_teams g
+      JOIN company_teams t ON t.company_id = g.company_id AND t.id = g.team_id
+      WHERE g.patch_id = ${patchId} AND g.company_id = ${companyId}
+      ORDER BY lower(t.name), t.id`
+  });
+  const sharingAccess = Effect.fn("Patches.sharingAccess")(function* (
+    patchId: string,
+    actor: Actor
+  ) {
+    const patch = yield* manageable(patchId, actor, "management", true);
+    return {
+      teams: yield* sharingTeamRows({ patchId, companyId: patch.companyId }).pipe(
+        Effect.catchTags(dieOnSchemaError)
+      ),
+      ownerCanOpen: yield* audienceOpen(toPatch(patch), patch.companyId, patch.ownerUserId)
+    };
+  }, withLifecycleTransaction);
   const setSharing = Effect.fn("Patches.setSharing")(function* (input: SharingChange) {
     const { patchId, actor, expectedScope, expectedLifecycleRevision } = input;
     yield* lockDependencies(actor.userId);
@@ -3426,6 +3458,7 @@ export const make = Effect.gen(function* () {
     completeObject,
     record,
     manage,
+    sharingAccess,
     setSharing,
     resolveName,
     agentToolSummaries: agentToolSummariesOf,

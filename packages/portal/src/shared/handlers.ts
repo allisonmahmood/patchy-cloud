@@ -279,6 +279,17 @@ export const shareOverlay = Effect.fn("Portal.shareOverlay")(function* (
           .pipe(Effect.catchTags({ ConnectionStorageFailed: Effect.die }))).get(row.patch.id);
   return renderShareDialog({
     row,
+    access: yield* (yield* Patches.Patches)
+      .sharingAccess(row.patch.id, {
+        userId: viewer.user.id,
+        admin: viewer.role !== "member"
+      })
+      .pipe(
+        Effect.catchTags({
+          NotOwner: () => new Patches.PatchUnavailable({ patchId: row.patch.id }),
+          OwnerAccessLost: () => new Patches.PatchUnavailable({ patchId: row.patch.id })
+        })
+      ),
     dependants: yield* (yield* Patches.Patches).sharingDependants(row.patch.id, {
       userId: viewer.user.id,
       admin: viewer.role !== "member"

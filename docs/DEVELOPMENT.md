@@ -326,6 +326,8 @@ it.
 
 ### Environments: `pnpm dev up`
 
+A scenario patch can specify `teams: ["design"]` using existing scenario team keys; its owner must belong to one of them. `up` publishes the first version with that audience. Brightline’s `design-review` demonstrates this: Allison owns it, Priya (Design) can open it, and Marcus (Engineering only) cannot.
+
 An environment is this instance plus what a multi-person check or demo needs:
 
 - **People** from the scenario, signed in with `pnpm dev open <person>`,

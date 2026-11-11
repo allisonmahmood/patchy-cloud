@@ -80,18 +80,24 @@
       "file": "harbor-pine-kickoff.html",
       "name": "harbor-pine-kickoff",
       "description": "Kickoff brief for the Harbor & Pine Coffee rebrand: goals, scope, timeline, team, budget and risks."
+    },
+    {
+      "file": "design-review.html",
+      "name": "design-review",
+      "description": "Design-only review notes owned by Allison. Priya (Design) can open; Marcus (Engineering only) cannot.",
+      "teams": ["design"]
     }
   ],
   "teams": [
     {
       "key": "design",
       "name": "Design",
-      "members": ["allison", "robin"]
+      "members": ["allison", "robin", "priya"]
     },
     {
       "key": "engineering",
       "name": "Engineering",
-      "members": ["robin"]
+      "members": ["robin", "marcus"]
     }
   ]
 }

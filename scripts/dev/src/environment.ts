@@ -303,6 +303,16 @@ const run = Effect.fn("Environment.run")(function* (
   return result.stdout;
 });
 
+const encodeTeamAudience = Schema.encodeSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      members: Schema.Struct({
+        kind: Schema.Literal("teams"),
+        teamIds: Schema.Array(Schema.String)
+      })
+    })
+  )
+);
 const ReleaseJson = Schema.fromJsonString(
   Schema.Struct({ package: Schema.Struct({ tarball: Schema.String }) })
 );
@@ -1159,8 +1169,20 @@ const materialize = Effect.fn("materialize")(function* (
         yield* fs.copyFile(sourceOf(path, scenarioDir, patch), file);
         yield* Console.error(`  ${patch.name}: publish`);
       }
-      const flags =
-        "repo" in patch ? [] : ["--name", patch.name, "--description", patch.description];
+      const flags = [
+        ...("repo" in patch ? [] : ["--name", patch.name, "--description", patch.description]),
+        ...(patch.teams === undefined
+          ? []
+          : [
+              "--audience",
+              encodeTeamAudience({
+                members: {
+                  kind: "teams",
+                  teamIds: patch.teams.map((key) => `team_env_${scenario.company.handle}_${key}`)
+                }
+              })
+            ])
+      ];
       // Each publish is a new version, even of the same files.
       let published = yield* decodePublish(yield* cli(`Publishing ${key}`, "publish", flags));
       for (let version = 2; version <= (patch.versions ?? 1); version++)

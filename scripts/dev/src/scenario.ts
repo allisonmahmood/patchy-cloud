@@ -105,7 +105,9 @@ const history = {
   retired: Schema.optionalKey(Ago),
   deleted: Schema.optionalKey(Ago),
   /** People at other companies than its owner's, by key, whom `up` shares it with as its owner. */
-  guests: Schema.optionalKey(Schema.Array(Slug))
+  guests: Schema.optionalKey(Schema.Array(Slug)),
+  /** Existing scenario teams that receive access atomically with publication. */
+  teams: Schema.optionalKey(Schema.NonEmptyArray(Slug))
 };
 
 /** A patch repo, initialized at `tier` and overlaid with `patches/<repo>/`. */
@@ -367,6 +369,18 @@ export const loadScenario = Effect.fn("loadScenario")(function* (worktree: strin
     const owner = people.get(patch.owner ?? scenario.publisher);
     if (owner === undefined)
       return yield* invalid(`${key} is owned by ${patch.owner}, who isn't one of its people.`);
+    if (patch.teams !== undefined) {
+      const selected = patch.teams.map((key) =>
+        (scenario.teams ?? []).find((team) => team.key === key)
+      );
+      if (selected.some((team) => team === undefined))
+        return yield* invalid(`${key} names a team that isn't in the scenario.`);
+      if (
+        owner.company !== undefined ||
+        !selected.some((team) => team?.members.includes(owner.key))
+      )
+        return yield* invalid(`${key}'s owner must belong to one of its audience teams.`);
+    }
     const insider = (patch.guests ?? []).find((guest) => {
       const person = people.get(guest);
       return person === undefined || home(person) === home(owner);

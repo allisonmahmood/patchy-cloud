@@ -91,6 +91,24 @@ it.layer(Platform)("scenarios", (it) => {
     }).pipe(Effect.scoped)
   );
 
+  for (const team of ["missing", "design"])
+    it.effect(`refuses an invalid team audience: ${team}`, () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped();
+        yield* fs.makeDirectory(path.join(root, "scenarios", "teams"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(root, "scenarios", "teams", "scenario.json"),
+          `{"company":{"name":"Teams","handle":"teams"},"publisher":"a",
+            "people":[{"key":"a","name":"A","email":"a@teams.example","role":"super_admin"}],
+            "teams":[{"key":"design","name":"Design","members":[]}],
+            "patches":[{"file":"note.html","name":"note","description":"Note","teams":["${team}"]}]}`
+        );
+        const error = yield* Effect.flip(loadScenario(root, "teams"));
+        expect(error.message).toContain(team === "missing" ? "names a team" : "owner must belong");
+      }).pipe(Effect.scoped)
+    );
   it.effect("refuses a patch naming a connection the scenario doesn't make", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

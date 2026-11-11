@@ -4,6 +4,7 @@ import type { RequireSession } from "@patchy/auth";
 import {
   checkbox,
   avatar,
+  productMark,
   badge,
   button,
   copyButton,
@@ -59,6 +60,10 @@ export const renderShareDialog = (input: {
   };
   readonly submitted?: { readonly scope: string; readonly teamIds: readonly string[] };
   readonly teams?: readonly Teams.Team[];
+  readonly access: {
+    readonly teams: readonly { readonly id: string; readonly name: string }[];
+    readonly ownerCanOpen: boolean;
+  };
   readonly viewer: Viewer;
   readonly publicBaseUrl: string;
   /** The page behind, as a path and query: where the forms return and Done goes. */
@@ -129,20 +134,43 @@ export const renderShareDialog = (input: {
         })}${suggestions ? `<datalist id="share-suggestions">${suggestions}</datalist>` : ""}`
       );
 
-  const people = `<div class="fieldset"><h3 class="field-label" id="share-people">People with access</h3><div class="rows-flush" role="group" aria-labelledby="share-people">${rows(
+  // Saved access is separate from the unsaved General access controls below.
+  const access = patch.audience.members;
+  const audienceRows =
+    access.kind === "teams"
+      ? input.access.teams.map((team) =>
+          row({
+            lead: productMark({ icon: "people" }),
+            name: team.name,
+            end: '<span class="meta">Team</span>'
+          })
+        )
+      : [
+          row({
+            lead: productMark({ icon: access.kind === "public" ? "external" : "people" }),
+            name: access.kind === "public" ? "Anyone on the internet" : `People at ${company}`,
+            end: `<span class="meta">${access.kind === "public" ? "Public" : "Company"}</span>`
+          })
+        ];
+  const people = `<div class="fieldset"><h3 class="field-label" id="share-people">Who has access</h3><div class="rows-flush" role="group" aria-labelledby="share-people">${rows(
     [
       row({
         lead: avatar(owner.id, owner.name, owner.deactivated ? "off" : undefined),
         name: `${owner.name}${owner.id === viewer.user.id ? " (you)" : ""}`,
-        ...(owner.deactivated ? { description: "Deactivated" } : {}),
+        ...(owner.deactivated
+          ? { description: "Deactivated" }
+          : !input.access.ownerCanOpen
+            ? { description: "No content access" }
+            : {}),
         end: '<span class="meta">Owner</span>'
       }),
+      ...audienceRows,
       ...input.guests.map((guest) =>
         row({
           lead: avatar(guest.userId, guest.name),
           name: guest.name,
           description: `${guest.email} · ${guest.companyName}`,
-          end: `${badge("Guest")}${form("remove-guest", `${hidden("guest", guest.userId)}${button("Remove", { kind: "quiet", size: "sm", ariaLabel: `Remove ${guest.name}` })}`)}`
+          end: `${badge("Guest")}${form("remove-guest", `${hidden("guest", guest.userId)}${button("Remove", { kind: "quiet", danger: true, size: "sm", ariaLabel: `Remove ${guest.name}` })}`)}`
         })
       )
     ]
@@ -237,7 +265,7 @@ export const renderShareDialog = (input: {
           .join("");
         return form(
           "scope",
-          `${hidden("expectedScope", patch.scope)}${hidden("expectedLifecycleRevision", patch.lifecycleRevision)}<div class="share-audience">${refusal}${audienceField}${choices ? `<div class="share-teams">${choices}</div>` : ""}${impact}${tool ? '<p class="meta" id="share-scope-reason">People must sign in to use this tool.</p>' : ""}</div>`
+          `${hidden("expectedScope", patch.scope)}${hidden("expectedLifecycleRevision", patch.lifecycleRevision)}<div class="share-audience">${refusal}${audienceField}${choices ? `<fieldset class="fieldset share-teams"><legend class="field-label">Teams with access</legend>${choices}<p class="meta">Uncheck a team and save to remove its access.</p></fieldset>` : ""}${impact}${tool ? '<p class="meta" id="share-scope-reason">People must sign in to use this tool.</p>' : ""}</div>`
         );
       })();
 

@@ -84,3 +84,5 @@ Sign in as the person with `pnpm dev shot <person> <path>` or `pnpm dev open <pe
 | Tell Patchy: send "Postgres connection encrypted with RSA" and its similar requests come back, a shipped one with its note, and her own earlier one; Ask for an integration opens it with Request picked                        | `allison`                 | any page's foot, `/settings/integrations/connect`                                                                                                  |
 
 Test, Resume and Replace on an offline connection send its invented credentials to the integration, which refuses them; the connect flows' own refusals and Pidgeon's address steps need a real key, in the `attio`, `pidgeon` and `imap` scenarios.
+
+Brightline’s `design-review` page is owned by Allison and shared only with Design. Sign in as Priya (Design) to open it, then Marcus (Engineering only) to verify it is absent from discovery and refused at the direct URL. Allison’s Share dialog shows the saved Design grant; team access can be edited there without transferring ownership.
