@@ -147,6 +147,9 @@ for (const javaScriptEnabled of [true, false])
       const scope = page.getByLabel("General access");
       const team = page.getByRole("checkbox", { name: "Design", exact: true });
       const access = page.getByRole("group", { name: "Who has access" });
+      const patchRow = page
+        .getByRole("row", { includeHidden: true })
+        .filter({ hasText: "Tier one acceptance" });
       await expect(access).toContainText("People at Patchy Dev");
       await expect(team).toBeHidden();
       await scope.selectOption("teams");
@@ -164,6 +167,7 @@ for (const javaScriptEnabled of [true, false])
       await page.getByRole("button", { name: "Save", exact: true }).click();
       await expect(access).toContainText("Design");
       await expect(access).not.toContainText("People at Patchy Dev");
+      await expect(patchRow).toContainText("1 team");
       await page.reload();
       await expect(scope).toHaveValue("teams");
       await expect(access).toContainText("Design");
@@ -171,10 +175,12 @@ for (const javaScriptEnabled of [true, false])
       await engineeringChoice.check();
       await page.getByRole("button", { name: "Save", exact: true }).click();
       await expect(access).toContainText("Engineering");
+      await expect(patchRow).toContainText("2 teams");
       await engineeringChoice.uncheck();
       await page.getByRole("button", { name: "Save", exact: true }).click();
       await expect(access).toContainText("Design");
       await expect(access).not.toContainText("Engineering");
+      await expect(patchRow).toContainText("1 team");
       await scope.selectOption("company");
       await expect(access).toContainText("Design");
       await page.getByRole("button", { name: "Save", exact: true }).click();

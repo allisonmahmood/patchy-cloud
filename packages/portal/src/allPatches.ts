@@ -365,8 +365,11 @@ export const renderAllPatches = (input: {
     );
     const access = ({ patch }: Patches.ReadPatch) => {
       if (patch.scope === "public") return "Public";
+      const members = patch.audience.members;
+      const audience =
+        members.kind === "teams" ? plural(members.teamIds.length, "team", "teams") : "Company";
       const count = input.guests.get(patch.name) ?? 0;
-      return count === 0 ? "Company" : `Company + ${plural(count, "guest", "guests")}`;
+      return count === 0 ? audience : `${audience} + ${plural(count, "guest", "guests")}`;
     };
     const shareCell = (row: Patches.ReadPatch) =>
       row.owner.id === viewer.user.id
