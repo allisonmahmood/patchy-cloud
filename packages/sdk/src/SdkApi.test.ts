@@ -1486,7 +1486,7 @@ it.layer(layer)("SDK company generation", (it) => {
         });
         const dependencies = Layer.succeed(Patches.Patches, {
           ...patches,
-          find: () => Effect.fail(sqlError),
+          findForViewer: () => Effect.fail(sqlError),
           sharedTable: () => Effect.fail(sqlError)
         });
         for (const operation of [
