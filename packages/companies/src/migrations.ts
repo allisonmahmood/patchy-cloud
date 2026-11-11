@@ -4,7 +4,8 @@
  * directory's revision counter. Squashed into one baseline before launch;
  * id 9 adds each person's What's new marker, id 10 the company look, id 15
  * names the people stored without one, id 16 records the look's latest restore, id 20
- * adds the agent access switch and id 36 records who accepted which terms.
+ * adds the agent access switch, id 36 records who accepted which terms and id 38 stores each
+ * person's single-key shortcut setting.
  */
 import { ddl, type Migrations } from "@patchy/sql";
 
@@ -150,5 +151,10 @@ export const migrations: Migrations = {
       accepted_at TIMESTAMPTZ NOT NULL,
       PRIMARY KEY (user_id, terms_revision, privacy_revision)
     )`
+  ),
+  // Whether patches' single-key shortcuts fire for this person. Everyone already here and every
+  // new user starts on; only the person's own choice turns it off, and the same route turns it on.
+  "0038_single_key_shortcuts": ddl(
+    `ALTER TABLE users ADD COLUMN single_key_shortcuts BOOLEAN NOT NULL DEFAULT true`
   )
 };

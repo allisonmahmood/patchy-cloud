@@ -28,6 +28,8 @@ describe("classify", () => {
   it("guards every target under /api, however it is spelled, and nothing else", () => {
     const route = { kind: "route" };
     assert.deepStrictEqual(classify("GET", "/api/me"), route);
+    assert.deepStrictEqual(classify("POST", "/api/me/shortcuts"), { kind: "session" });
+    assert.deepStrictEqual(classify("GET", "/api/me/shortcuts"), route);
     assert.deepStrictEqual(classify("GET", "/api?ignored=true"), route);
     assert.deepStrictEqual(classify("GET", "/api#fragment"), route);
     assert.deepStrictEqual(classify("GET", "/%61pi/does-not-exist"), route);
@@ -114,6 +116,29 @@ it.layer(server({ PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE: "3" }))(
           )).status,
           414,
           "portal refusals do not spend the exhausted API limit"
+        );
+        // The viewer's own settings admit by session, as pages do, on the server's own bound.
+        const shortcuts = (body: string) =>
+          send(
+            HttpClientRequest.post("/api/me/shortcuts").pipe(
+              HttpClientRequest.setHeaders({
+                cookie,
+                origin: "https://patchy.example",
+                accept: "application/json"
+              }),
+              HttpClientRequest.bodyText(body, "application/x-www-form-urlencoded")
+            )
+          );
+        for (const value of ["off", "on"]) {
+          assert.deepStrictEqual(yield* answer(yield* shortcuts(`value=${value}`)), {
+            status: 200,
+            body: { value }
+          });
+        }
+        assert.strictEqual(
+          (yield* shortcuts(`value=off&pad=${"x".repeat(4_096)}`)).status,
+          413,
+          "a declared form past 4096 bytes"
         );
 
         yield* TestClock.adjust("61 seconds");

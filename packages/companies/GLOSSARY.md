@@ -16,6 +16,10 @@ _Avoid_: slug, subdomain, namespace (what the handle opens, not the handle)
 One individual's Patchy account in exactly one company, carrying the member or admin role. Every active user can build; their machines act for them through [machine tokens](../auth/GLOSSARY.md), and their agents through agent connections. A user's name is never blank: someone whose sign-in carries none is named by their email's local part until it does.
 _Avoid_: account, person (a user is the account, not the human), builder (every user is one)
 
+**Single-key shortcuts**:
+A user's own setting for whether patches' page-wide single-character [hotkeys](../patchy/GLOSSARY.md) fire for them, so speech input can't set one off by accident. It is on until they turn it off, follows them to every device, and a guest's is their own. Only the person changes it, from their signed-in browser, and the same switch turns it back on.
+_Avoid_: hotkeys setting, keyboard mode, accessibility mode
+
 **Member**:
 The role every user has who is not an admin. A member builds — publishes patches with no gate — and reads the company's users, roles, states, pending invites, guests, connection metadata and look without management actions.
 _Avoid_: viewer (the [Auth](../auth/GLOSSARY.md) identity, whatever the user's role), builder (a description, not a role), guest
