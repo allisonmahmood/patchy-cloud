@@ -54,7 +54,7 @@ it.layer(harness)("tell_patchy", (it) => {
         yield* sql`
           INSERT INTO feedback.general_requests (title, status, note)
           VALUES ('Calendar sync for patches', 'shipped', 'Connect Google Calendar on Integrations.')`;
-        const acme = yield* company("tell-request", [["Ada Admin", "admin"]]);
+        const acme = yield* company("tell-request", [["Ada Admin", "super_admin"]]);
         const ada = acme.people[0]!;
         const send = yield* door(PRODUCTION, "203.0.113.40");
 
@@ -109,7 +109,7 @@ it.layer(harness)("tell_patchy", (it) => {
     Effect.gen(function* () {
       const acme = yield* company("tell-feedback", [
         ["Ben Member", "member"],
-        ["Bea Admin", "admin"]
+        ["Bea Admin", "super_admin"]
       ]);
       const ben = acme.people[0]!;
       const send = yield* door(PRODUCTION, "203.0.113.41");
@@ -156,7 +156,7 @@ it.layer(harness)("tell_patchy", (it) => {
 
   it.effect("refuses with the service's codes, saying what to rewrite, and stores nothing", () =>
     Effect.gen(function* () {
-      const acme = yield* company("tell-refused", [["Cleo Admin", "admin"]]);
+      const acme = yield* company("tell-refused", [["Cleo Admin", "super_admin"]]);
       const cleo = acme.people[0]!;
       const send = yield* door(PRODUCTION, "203.0.113.42");
       const refusal = (args: unknown) =>
@@ -229,7 +229,7 @@ it.layer(harness)("tell_patchy", (it) => {
 
   it.effect("is listed and called on every revision the door serves", () =>
     Effect.gen(function* () {
-      const acme = yield* company("tell-revisions", [["Dev Admin", "admin"]]);
+      const acme = yield* company("tell-revisions", [["Dev Admin", "super_admin"]]);
       const dev = acme.people[0]!;
       const send = yield* door(PRODUCTION, "203.0.113.43");
       const args = { kind: "feedback", text: "Revision check" };
