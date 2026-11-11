@@ -19,26 +19,17 @@ new modules log a reminder to refresh types. Calls and nested calls in flight
 finish on the old binding. Subscriptions rerun on the new one, discard crossing
 results and end permanently if a handler is removed or its arguments no longer fit.
 Failed builds retain the last good binding. `src/` saves still reload the shell.
-
-`patchy dev` runs the same handler engine and callback path as production.
-It does not reproduce production scheduling, operating capacity or containment. A handler
-that spins forever times out, and a health check restarts the dev engine, which
-can interrupt other calls in flight. Contract limits still apply; production
-operating capacity does not. PGlite cannot prove hosted `busy` or `write_conflict`
-behavior. Production hosting requires the fleet executor.
+`patchy-loop` says what dev does not reproduce of production.
 
 Fill `fixtures/shared-<alias>.sql` and `fixtures/postgres-<handle>.sql` with invented
-rows for `ctx.shared` tables and Postgres `ctx.connections`; PostHog, Pidgeon, Attio
-and IMAP have no fixture, and actions read the real project, address, workspace or mailbox
-through the instance, as the publishing key's person for either viewer. Pidgeon's sends,
-replies and triage are simulated in dev and never sent. Put invented shared files
-in `fixtures/shared-<alias>/`; restart after fixture or config edits.
+rows for `ctx.shared` tables and Postgres `ctx.connections`, and put invented shared
+files in `fixtures/shared-<alias>/`; restart after fixture or config edits. PostHog,
+Pidgeon, Attio and IMAP have no fixture: `patchy-loop` says what dev reads and simulates.
 Read `dev.log` for each call's viewer, handler, outcome and milliseconds, `ctx.log`
 output, each thrown error's message and stack, which browsers never receive, and
 each simulated Pidgeon write with its recipients and subject.
 Starting with `--json` records full wide events, invocation JSON and simulated
-writes; `dev logs --json` returns `{ ok, log, text }`. No local runtime log rows
-are written; the instance logs PostHog, Pidgeon, Attio and IMAP dev reads.
+writes; `dev logs --json` returns `{ ok, log, text }`.
 
 When someone says a published patch is broken, read its log before guessing:
 `pnpm patchy logs --failed --json`, or without `--failed` to see what led up to
@@ -71,22 +62,53 @@ to tier 1 reopens those pages' operations; tier 2 pages always use handlers.
 
 Export handlers from `server/<module>.ts`, one directory level deep. Each export
 must be a `query`, `mutation` or `action`; its name is `<module>.<export>`.
-Keep reusable company code in `helpers/`, outside handler discovery. Import
-builders and bound context types from `patchy/_generated/server.js`, and `t` and
-`HandlerError` from `patchy/server`.
-Each builder takes `{ description?, guest?, args, result, errors?, handler }`,
-and `action` also takes `readOnly: true`. `guest: true` lets the patch's guests
-start the handler; see **Guests**. `args` is a field map; `result` is one
-descriptor. The handler receives `(ctx, args)`.
+Every export is callable from the page, by any colleague who can open the patch
+and with any arguments that fit its schema: there are no private handlers, and
+`ctx.run` reaches only exports. Keep reusable company code in `helpers/`,
+outside handler discovery. Each builder takes
+`{ description?, guest?, args, result, errors?, handler }`, and `action` also
+takes `readOnly: true`. `guest: true` lets the patch's guests start the
+handler; see **Guests**. `args` is a field map; `result` is one descriptor. The
+handler receives `(ctx, args)`. With the `notes` table `patchy-tables` defines:
 
-The generated builders bind the config's table types. A helper can accept
-`QueryContext`, `MutationContext`, `ActionContext` or `ReadOnlyActionContext`
-without repeating generics.
+```ts
+// server/notes.ts
+import type { Id } from "patchy/config";
+import { HandlerError, mutation, query, t } from "../patchy/_generated/server.js";
+
+export const open = query({
+  args: { cursor: t.nullable(t.text()) },
+  result: t.object({ rows: t.array(t.row("notes")), cursor: t.nullable(t.text()) }),
+  handler: (ctx, args) =>
+    ctx.tables.notes.list({
+      index: "byDone",
+      eq: { done: false },
+      order: "desc",
+      limit: 50,
+      ...(args.cursor === null ? {} : { cursor: args.cursor })
+    })
+});
+
+export const finish = mutation({
+  args: { id: t.text() },
+  result: t.row("notes"),
+  errors: ["missing", "already_done"],
+  handler: async (ctx, args) => {
+    const id = args.id as Id<"notes">;
+    const note = await ctx.tables.notes.get(id);
+    if (note === null) throw new HandlerError("missing");
+    if (note.done) throw new HandlerError("already_done", { since: note.updatedAt });
+    return ctx.tables.notes.update(id, { done: true });
+  }
+});
+```
+
+The generated builders bind the config's table types. The same module exports
+`QueryContext`, `MutationContext`, `ActionContext` and `ReadOnlyActionContext`
+for a helper to accept, without repeating generics.
 A type-only import of the server modules gives the page its handler names and
-arguments; renaming a handler breaks callers at compile time. A helper's runtime
-imports join its caller's dependency graph, so a helper that imports server code
-also leaks it into any page that imports the helper. Keep shared helpers
-browser-safe and use `import type` for server contracts.
+arguments; renaming a handler breaks callers at compile time. Helpers a page
+imports stay browser-safe, as `patchy-loop` says.
 
 Scalar descriptors are `t.text()`, `t.integer()`, `t.number()`, `t.boolean()`,
 `t.timestamp()` and `t.json()`. Compose them with `t.object(fields)`,
@@ -137,10 +159,12 @@ change, even one that writes nothing. So Postgres, PostHog, Pidgeon, Attio and I
 count as reads only from a read-only action, and a read-only action can't reply,
 send or triage through Pidgeon.
 
-All three kinds expose `ctx.members` when `uses.members` is declared. Read
-`../patchy-members/SKILL.md` for candidates, resolution, member columns and
-the assignment check. Only queries track directory dependencies. Directory
-reads use the platform database, outside the query's company-database snapshot.
+All three kinds expose `ctx.members`, the company's member directory, once
+`pnpm patchy add members` declares `uses.members`. The command also installs
+`../patchy-members/SKILL.md`, absent until then: candidates, member columns and
+resolving stored user ids to current names. Only queries track directory
+dependencies. Directory reads use the platform database, outside the query's
+company-database snapshot.
 
 `ctx.viewer` is never null. It is the `Me` a page's `me()` returns:
 `{ user: { id, name, email }, company: { id, handle, name }, admin: boolean, guest?: true }`.
@@ -170,9 +194,6 @@ A query with declared owned tables, file stores, shared tables or shared stores
 uses one read-only `REPEATABLE READ` company transaction on one connection.
 All its table and file-metadata callbacks reuse that snapshot, including shared
 source data reads. A concurrent write cannot make two reads within the run disagree.
-Patchy captures the commit watermark before the read. A resource-free query
-uses the same fenced callback lifetime without leasing or provisioning a
-company database; its watermark is empty and database-held time is zero.
 The query's 3 s deadline includes any bounded connection wait; cancellation
 starts at that deadline, and a guest still running at 4 s is killed.
 
@@ -180,7 +201,6 @@ The data snapshot does not freeze authority. `ctx.shared.<alias>` rechecks the
 viewer's current access on every callback. An unshare or source access loss can
 refuse a later callback even if an earlier read succeeded in the same query.
 Handle that refusal rather than serving an earlier value as current data.
-Member-directory reads are outside the company snapshot.
 
 Queries have no `ctx.connections`. Company Postgres, PostHog, Pidgeon, Attio and IMAP calls
 belong in actions, not subscribed queries. The host enforces this kind rule, even
@@ -211,8 +231,10 @@ result without running the handler again. Calling the handler afresh creates
 another mutation and can duplicate a committed write. Retry within 24 hours;
 an expired key is refused even after its stored result has been swept.
 Check `isPatchyError(error, "unknown_outcome") && error.retry` before offering
-that action. An action or tier 1 write can also have an unknown outcome, but
-does not have a safe mutation retry.
+that action. A `retry()` refused before it runs, as with `busy` or
+`rate_limited`, settles nothing and its error has no `retry`: the first error's
+`retry` still sends the same key. An action or tier 1 write can also have an
+unknown outcome, but does not have a safe mutation retry.
 
 ### Actions and nested handlers
 
@@ -231,8 +253,13 @@ budget. The host refuses action targets. A child's key resolves its commit
 uncertainty; it never makes replaying the parent action safe.
 
 Process bulk work in bounded batches. An action is never replayed, and a failure
-does not undo its completed writes. A file put followed by a table write is not
-atomic. Report partial progress rather than rerunning the whole batch blindly.
+does not undo its completed writes. Each table write an action makes commits on
+its own, so a check and the write after it are not one step; a `ctx.run`
+mutation is. A file put followed by a table write is not atomic. A refused
+callback throws inside the handler with Patchy's `code`; `unknown_outcome` from
+a write or a `ctx.run` mutation means it may have committed, so cleanup that
+runs on every error can delete what a saved row points to. Report partial
+progress rather than rerunning the whole batch blindly.
 
 `ctx.log(message, details?)` writes lines on the invocation's row, up to 32 KiB
 per invocation. Exceeding it is `limit_exceeded`, not silent truncation. The log
@@ -246,54 +273,38 @@ including results from nested `ctx.run` queries. The page uses
 `patchy.files.download(handle, filename?)` for a shell download, or
 `useFileUrl(handle)` from `patchy/preact` for an image with `{ url, error }`.
 The hook drops stale images on failure and releases its URL on unmount.
+`url` and the hook fetch the file's whole bytes into the frame, each a call
+against the viewer's 300 a minute and the frame's 32 outstanding. One
+`list({ prefix })` returns a page of entries with their handles in a single
+callback; a `stat` per row is a callback per row, 8 at a time, inside the
+query's 3 s.
 
-What the page sees is what handlers return. A handle freezes that selection
-until the query reruns; filtering by viewer is the patch's code. Redemption
-does not rerun the filter. To cut off a file when a record narrows to private,
-is handed over or is deleted, re-put or delete it; handles already selected keep
-redeeming until then. Already delivered bytes cannot be recalled.
-
-The host mints deterministic 57-character handles bound to viewer, company,
-consuming patch, loaded version, source store and exact object. They contain no
-filename or clock and count against existing page and result limits. Publishing
-preserves an eligible open version's handles. Another viewer, company, patch
-or version cannot redeem them. `t.fileHandle()` belongs only in results, never
-arguments or stored columns.
-
-Every redemption needs the signed-in shell and rechecks live access.
-Replacement or deletion returns `not_found`; an unshared store or lost source
-access returns `access_denied`. If both happen, `not_found` takes precedence.
-Redemptions are reads, not logged operations. See `../patchy-files/SKILL.md`
-for URL lifetime, download offers and file limits.
+`t.fileHandle()` belongs only in results, never arguments or stored columns: a
+row keeps the file's name, and a query mints the handle from it for the viewer.
+`../patchy-files/SKILL.md` has what a handle binds, how a selection is cut off,
+redemption refusals and file limits.
 
 ### Adopt staged uploads
 
-Declare the argument as `t.upload()`, including inside objects or arrays.
-Before the handler runs, Patchy resolves the token under the initiating viewer,
-consuming patch and loaded version. The handler's `upload.size` is the measured
-byte length; `upload.contentType` is the stored claim, not proof of format.
-An altered client size or type cannot override these values.
-
-Validate your file rules before `await ctx.files.<store>.put(name, upload)`.
-Only actions adopt, and only into a store defined by the loaded version.
-Adoption consumes the Upload once and logs the existing file write as the patch.
-Expired, consumed, discarded or differently bound uploads return `not_found`.
-The page can discard unused stages; see `../patchy-files/SKILL.md` for the
-stage/discard workflow and bounds.
-
-Put then mutation is not atomic. A failed `ctx.run` mutation leaves the adopted
-file saved. Return a business error or result that makes this partial outcome
-visible, with a deliberate repair path. Never claim the file write rolled back.
+Declare the argument as `t.upload()`, including inside objects or arrays; only
+actions take one. The handler reads `upload.size`, the measured byte length, and
+`upload.contentType`, a claim rather than proof of format, then adopts it once
+with `await ctx.files.<store>.put(name, upload)`. `../patchy-files/SKILL.md` has
+staging and discard on the page, the bounds, and what a failed write after
+adoption leaves behind.
 
 ## Results and failures
 
 Declare business error codes in `errors`, then throw `new HandlerError(code,
-details)`. The client exposes `isHandlerError(error, code)` for narrowing declared
-codes. An undeclared code or an invalid result becomes `handler_failed`, and
-so does anything else a handler throws, a plain `Error` included, except
-Patchy's own refusals, which keep their codes. The page gets only "The handler
-failed. Use the correlation id to find its log.", an agent the same with the
-correlation id, and the thrown message stays in the patch's log.
+details?)`. Its `message` is the code itself, never a sentence; `details` is
+JSON the page and agents receive. The generated client exports
+`isHandlerError(error, code)`, narrowing declared codes, and `isPatchyError`
+beside `patchy`; `patchy-preact` shows a page telling them apart. An undeclared
+code or an invalid result becomes `handler_failed`, and so does anything else a
+handler throws, a plain `Error` included, except Patchy's own refusals, which
+keep their codes. The page gets only "The handler failed. Use the correlation
+id to find its log.", an agent the same with the correlation id, and the thrown
+message stays in the patch's log.
 Patchy's refusals have `source: "patchy"`; business errors have
 `source: "handler"`. Keep them separate.
 
@@ -346,7 +357,9 @@ watchdog kill is not proof of CPU abuse.
 Call `patchy.server.<module>.<handler>(args)` for a one-shot result. For a live
 screen, pass a generated query to `useQuery(handler, args)` from `patchy/preact`,
 or call `.subscribe(args, onSnapshot)` and keep its returned unsubscribe function.
-Mutations and actions have neither subscription API.
+Mutations and actions have neither subscription API. `useQuery` takes no
+options and has no way to skip: it runs the query whenever its component is
+mounted, and each run that fails or refuses leaves an entry in the patch's log.
 
 Both forms deliver `{ status, data, error, loading }`, with status `"loading"`,
 `"ready"` or `"error"`. Render the whole `data` value and show errors separately.
@@ -370,8 +383,7 @@ callback. Shared aliases refer to their owner's resource. Each successful run
 replaces the dependency set, even if its result is unchanged; failures retain
 previous and attempted dependencies until a successful run replaces them.
 Read only what the screen needs to avoid wakes from unrelated resources.
-Time and randomness are not dependencies. Member-directory reads are outside
-the query's company-database snapshot.
+Time and randomness are not dependencies.
 
 After a mutation commits, Patchy announces its touched resources and returns
 their revisions on the wire. Render from the subscription rather than merging
@@ -391,8 +403,11 @@ that people's own agents, such as Claude or Codex, call through Patchy MCP at
 `<instance>/mcp`. Nothing else in the patch is reachable by agents, and tier 1
 has no agent area. Agent tools are for agents only; the page can't call
 them. Re-exporting a `server/` handler from `agent/`, as
-`export { listDeals } from "../server/deals.js"`, makes it a tool too, with the
-same arguments and rules; a tool of its own can take different ones. Agent
+`export { listDeals } from "../server/deals.js"`, makes it a tool too: one
+handler under both names, with the same arguments and rules. `as` names the
+tool, as in `export { list as listDeals }`, and a `guest: true` handler
+re-exports like any other, its tool dropping the mark. A tool of its own can
+take different arguments. Agent
 access is a company switch an admin turns on at
 `<instance>/settings/agent-access`; a publish with agent tools warns while it
 is off, and says nothing when it is on. Each person connects their own agent
@@ -405,9 +420,11 @@ under the same access rules as their page calls. `ctx.agent` is
 proof of who is calling. It is null for page calls, and the handlers a tool's
 action reaches through `ctx.run` see the same agent. A patch can use it to hold
 agents to stricter rules than people, tag the rows they write, log their calls
-or refuse them. A tool of its own can require what the page leaves optional; its
-schema then tells the agent, and a call missing the field is refused before the
-handler runs.
+or refuse them. Such a check runs only where an agent can arrive: in a
+`server/` handler that no tool re-exports or runs, `ctx.agent` is always null.
+A tool of its own can require what the page leaves optional; its schema then
+tells the agent, and a call missing the field is refused before the handler
+runs.
 
 To agents, a query or read-only action is a read and anything else is a change,
 so Postgres, PostHog, Pidgeon, Attio and IMAP reads count as reads only from a read-only action.

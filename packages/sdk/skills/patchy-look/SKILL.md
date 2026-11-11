@@ -29,9 +29,15 @@ and that changing it is its own request, which only an admin can carry out.
 
 - `patchy/_generated/look.css` sets the tokens below and styles plain elements (body,
   headings, links, tables, buttons and inputs) inside `@layer look`. Read it before styling, so
-  you build on those element styles instead of restyling them. When its `button` rule sets a
-  text colour, as the Patchy look's does, a button your CSS gives a light or transparent
-  background keeps that colour unless your CSS sets `color` as well.
+  you build on those element styles instead of restyling them. Each property an element rule
+  sets holds until your CSS sets that property on the element itself; a value on its parent
+  doesn't reach it. In the Patchy look:
+  - `button` sets a text colour, so a button your CSS gives a light or transparent background
+    keeps that colour unless your CSS sets `color` as well.
+  - `h1` to `h4` set `color: var(--look-fg)`, so a heading inside a header or card your CSS
+    makes dark stays dark on dark.
+  - `p` sets `max-width: 70ch` with no side margins, so in a wider column a paragraph sits at
+    the left, and `text-align: center` centres its text inside those 70ch, not in the column.
 - The look styles an invalid field by `aria-invalid="true"` and a disabled one by `disabled`.
   `reportValidity()` sets no `aria-invalid`, so give a field that fails, by its own constraints
   or an error about its value, `aria-invalid="true"`, and clear it when the value changes. Bare
@@ -47,7 +53,9 @@ and that changing it is its own request, which only an admin can carry out.
 - Use the tokens for every colour, font, radius and gap they cover, so the patch follows when
   the company changes its look. Derive tints from them, for example
   `color-mix(in srgb, var(--look-accent) 12%, var(--look-bg))`, instead of new hex values.
-- Lift the brief's component recipes rather than inventing new ones.
+- Lift the brief's component recipes rather than inventing new ones. Names and copy in its
+  sample markup are placeholders: the company's own name is `company.name` on `patchy.me()`
+  and on a handler's `ctx.viewer`.
 - `patchy/_generated/logo.svg`, when it exists, is the company's mark. Refer to it by path and
   the build embeds it: `import logo from "../patchy/_generated/logo.svg";`. Remove the
   reference if a later look has no logo.
