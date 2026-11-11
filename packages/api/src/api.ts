@@ -1,6 +1,6 @@
 /**
- * The `/api/*` contract: auth, patches, connections, the company look, browser runtime and
- * public release discovery.
+ * The `/api/*` contract: auth, patches, connections, the company look, requests and feedback,
+ * browser runtime and public release discovery.
  * Request, success and error shapes come from the API's schema modules. The server
  * implements it and the CLI's client is derived from it; neither side
  * re-types a wire shape by hand. The route descriptions here are the text of
@@ -91,7 +91,21 @@ import {
   LookPublishRequest,
   LookRestored,
   LookRestoreRequest,
-  LookRevisionUnavailable
+  LookRevisionUnavailable,
+  ContainsSecret,
+  FeedbackSent,
+  FileRequest,
+  InvalidLink,
+  InvalidText,
+  LinkRequest,
+  RequestFiled,
+  RequestLinked,
+  RequestUnlinked,
+  SendFeedback,
+  SubmissionKind,
+  SubmissionNotFound,
+  Submissions,
+  Withdrawn
 } from "./schemas.js";
 import {
   RuntimeBytes,
@@ -726,6 +740,119 @@ export class LookGroup extends HttpApiGroup.make("look", { topLevel: true })
   .middleware(Authorization)
   .prefix("/api") {}
 
+export class FeedbackGroup extends HttpApiGroup.make("feedback", { topLevel: true })
+  .add(
+    HttpApiEndpoint.post("fileRequest", "/requests", {
+      payload: FileRequest,
+      success: RequestFiled,
+      error: [ContainsSecret, InvalidText, PayloadTooLarge, ...protectedErrors]
+    }).annotateMerge(
+      describe(
+        "File a request for something Patchy can't do yet, as the token's person: `text` is its " +
+          "title, 3–200 characters on one line (whitespace runs collapse), and `why` the reason, " +
+          "at most 4,000. `patch` is the patch whose repo the CLI ran in; one outside the " +
+          "person's company is stored as none. The `Patchy-Cli` header names the agent, " +
+          "`unknown` without one, and the CLI release. Every request is stored, the same one " +
+          "sent twice included, and answers 201 with its `id` and `similar`: at most three " +
+          "requests sharing a word with the title, ranked, from the company's own and Patchy's " +
+          "general requests, never another company's. Each is `{ id, title, status, note? }`: a " +
+          "general request's status is its own and its `note` is public, such as how to use " +
+          "what shipped; a company request takes the status of the general request it links " +
+          "straight to, otherwise `open`. When one is the same need, link to it. Every " +
+          "free-text field is checked for credentials, such as Patchy, GitHub, AWS or OpenAI " +
+          "keys, private keys, JWTs and passwords in URLs: a hit answers 422 `contains_secret` " +
+          "with each `{ field, kind }`, never the value, and stores nothing; send it again with " +
+          "the credential removed or replaced by `<token>`. Emails pass. A field out of bounds " +
+          "or holding control characters answers 422 `invalid_text` naming the `field`. A " +
+          "person sends `feedback.sends.perMinute` (10) requests and feedback a minute together, " +
+          "over every surface, per host replica; past it, 429 `rate_limited` with " +
+          "`retryAfterSeconds`. After a lost reply, read the list before sending again. The " +
+          "JSON body is limited to 64 KiB."
+      )
+    ),
+    HttpApiEndpoint.put("linkRequest", "/requests/:id/link", {
+      params: { id: Schema.String },
+      payload: LinkRequest,
+      success: RequestLinked,
+      error: [
+        SubmissionNotFound,
+        InvalidLink,
+        ContainsSecret,
+        InvalidText,
+        PayloadTooLarge,
+        ...protectedErrors
+      ]
+    }).annotateMerge(
+      describe(
+        "Link one of the token's person's own requests to the same need: `to` is the id of " +
+          "another request of their company or of a general request, as a match or the list " +
+          "gave it, and `why` says why it is the same, at most 4,000 characters and checked for " +
+          "credentials as filing is. A link replaces the request's earlier link and reason. " +
+          "`link` is the target as a match shows it. An id that is not the person's own " +
+          "request, missing or another's alike, answers 404 `not_found`; a `to` of the request " +
+          "itself, another company's, feedback or none answers 422 `invalid_link`. Links don't " +
+          "chain: linking to a company request passes on no status. Spends no sends. The JSON " +
+          "body is limited to 64 KiB."
+      )
+    ),
+    HttpApiEndpoint.delete("unlinkRequest", "/requests/:id/link", {
+      params: { id: Schema.String },
+      success: RequestUnlinked,
+      error: [SubmissionNotFound, ...protectedErrors]
+    }).annotateMerge(
+      describe(
+        "Clear the link of one of the token's person's own requests, and its reason. A request " +
+          "with no link answers the same. Not the person's own request answers 404 `not_found`. " +
+          "Spends no sends."
+      )
+    ),
+    HttpApiEndpoint.post("sendFeedback", "/feedback", {
+      payload: SendFeedback,
+      success: FeedbackSent,
+      error: [ContainsSecret, InvalidText, PayloadTooLarge, ...protectedErrors]
+    }).annotateMerge(
+      describe(
+        "Send Patchy feedback about something it did wrong, strangely or made hard, as the " +
+          "token's person: `text` is the note, 1–4,000 characters. `patch` and the `Patchy-Cli` " +
+          "header are recorded as filing a request records them. Answers 201 with its `id`. " +
+          "The credential check, bounds, `feedback.sends.perMinute` and the 64 KiB body limit " +
+          "are filing's."
+      )
+    ),
+    HttpApiEndpoint.get("listSubmissions", "/submissions", {
+      query: {
+        kind: Schema.optionalKey(SubmissionKind),
+        cursor: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(64)))
+      },
+      success: Submissions,
+      error: protectedErrors
+    }).annotateMerge(
+      describe(
+        "List what the token's person sent, through every surface, newest first, 50 a page: " +
+          "`kind` keeps `request` or `feedback`, and `cursor` takes a page's `nextCursor`, null " +
+          "on the last page. A malformed cursor answers 400. Each item carries `id`, `kind`, " +
+          "`createdAt`, `surface` (`cli`, `mcp` or `dashboard`) and `agent`, null from the " +
+          "dashboard; a request adds its `title`, `status` and `link`, the target as a match " +
+          "shows it or null. Never a feedback note or any `why`. Responses are private, " +
+          "no-store."
+      )
+    ),
+    HttpApiEndpoint.delete("withdraw", "/submissions/:id", {
+      params: { id: Schema.String },
+      success: Withdrawn,
+      error: [SubmissionNotFound, ...protectedErrors]
+    }).annotateMerge(
+      describe(
+        "Withdraw one of the token's person's requests or feedback: it is deleted, and links " +
+          "other requests had to it are cleared with their reasons. Nothing else is deleted. " +
+          "The way out when something sensitive slipped through. Not the person's own answers " +
+          "404 `not_found`. Spends no sends."
+      )
+    )
+  )
+  .middleware(Authorization)
+  .prefix("/api") {}
+
 export class SdkGroup extends HttpApiGroup.make("sdk", { topLevel: true })
   .add(
     HttpApiEndpoint.get("release", "/release", { success: Release }).annotateMerge(
@@ -1328,6 +1455,7 @@ export class PatchyApi extends HttpApi.make("patchy")
     ConnectionsGroup,
     DevReadsGroup,
     LookGroup,
+    FeedbackGroup,
     SdkGroup,
     RuntimeGroup,
     RuntimeStreamGroup
