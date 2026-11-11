@@ -536,7 +536,12 @@ export const make = Effect.gen(function* () {
     companyId: string,
     viewer?: Patches.Actor
   ) {
-    const person = viewer === undefined ? undefined : (yield* Teams.people(companyId,[viewer.userId]).pipe(Effect.provideService(SqlClient.SqlClient,sql)))[0];
+    const person =
+      viewer === undefined
+        ? undefined
+        : (yield* Teams.people(companyId, [viewer.userId]).pipe(
+            Effect.provideService(SqlClient.SqlClient, sql)
+          ))[0];
     const oversight = person?.active === true && person.role === "super_admin";
     const visible =
       viewer === undefined
@@ -560,7 +565,8 @@ export const make = Effect.gen(function* () {
       };
       const guest = found.get(row.userId);
       if (guest) {
-        if (oversight || visible === undefined || visible.has(row.patchName)) guest.patches.push(patch);
+        if (oversight || visible === undefined || visible.has(row.patchName))
+          guest.patches.push(patch);
       } else {
         const { userId, name, email, companyName } = row;
         const guestName = Users.displayName({ name, email });
