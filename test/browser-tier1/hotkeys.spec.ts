@@ -810,6 +810,58 @@ test("the sheet opens by ? or its button, lists by group with its own rows last,
   });
 });
 
+// A touch's pointer events all target the element its press went down on, wherever it lifts.
+test.describe("on a touch screen", () => {
+  test.use({ hasTouch: true });
+
+  test("a tap on the sheet's scrim closes it, and a touch from the scrim into its card doesn't", async ({
+    page,
+    context,
+    instance
+  }) => {
+    const patch = await publish(instance, sheet);
+    expect((await page.goto(patch.address))?.status()).toBe(200);
+    const frame = contentFrame(page);
+    const view = page.frameLocator("#patch");
+    const opener = view.getByRole("button", { name: "Tracker shortcuts" });
+    const dialog = view.getByRole("dialog", { name: "Tracker shortcuts" });
+    // What each click in the frame lands on, so a check that the sheet stays open waits for it.
+    await frame.evaluate(() => {
+      const clicks: string[] = [];
+      document.addEventListener("click", (event) =>
+        clicks.push((event.target as Element).localName)
+      );
+      Object.assign(window, { clicks });
+    });
+    const clickedNext = (expected: string[]) =>
+      expect
+        .poll(() =>
+          frame.evaluate(() => (window as unknown as { clicks: string[] }).clicks.splice(0))
+        )
+        .toEqual(expected);
+    const cdp = await context.newCDPSession(page);
+    const touch = async (start: { x: number; y: number }, end: { x: number; y: number }) => {
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [start] });
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [end] });
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    };
+
+    await opener.tap();
+    await expect(dialog).toBeVisible();
+    await clickedNext(["button"]);
+    const card = (await dialog.locator(".hotkey-sheet").boundingBox())!;
+    const scrim = { x: card.x - 2, y: card.y + card.height / 2 };
+    const inCard = { x: card.x + 4, y: scrim.y };
+    await touch(scrim, inCard);
+    await clickedNext(["dialog"]);
+    await expect(dialog).toBeVisible();
+    await page.touchscreen.tap(scrim.x, scrim.y);
+    await clickedNext(["dialog"]);
+    await expect(dialog).toBeHidden();
+    await expect(opener).toBeFocused();
+  });
+});
+
 test("a page's element rules don't reach the sheet, which takes the page's font without a look and its button follows one", async ({
   page,
   instance
@@ -1182,6 +1234,51 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
     await page.keyboard.press("Escape");
     await expect(sheet).toBeHidden();
     await expect(rich).toBeFocused();
+    expect(
+      await frame.evaluate(() => {
+        const selection = document.getSelection()!;
+        return [String(selection), selection.anchorOffset, selection.focusOffset];
+      })
+    ).toEqual(["world", 11, 6]);
+    await firedNext(frame, []);
+  });
+
+  // A drag that starts or ends on the scrim clicks the dialog itself, as a tap on the scrim does.
+  await test.step("a drag selecting a label out onto the scrim, or one from the scrim into the card, leaves the sheet open", async () => {
+    await page.keyboard.press("Control+/");
+    await expect(sheet).toBeVisible();
+    const label = (await sheet.locator("li.hotkey-row > .hotkey-label").last().boundingBox())!;
+    const scrim = (await sheet.boundingBox())!;
+    const card = { x: label.x + 2, y: label.y + label.height / 2 };
+    const corner = { x: scrim.x + 4, y: scrim.y + 4 };
+    // Each drag must click the dialog, as a scrim tap does, or the check proves nothing. A
+    // selection left by the first drag stops Chromium clicking on the second, so clear it.
+    await frame.evaluate(() => {
+      const clicks: string[] = [];
+      document.addEventListener("click", (event) =>
+        clicks.push((event.target as Element).localName)
+      );
+      Object.assign(window, { dragClicks: clicks });
+    });
+    for (const [start, end] of [
+      [card, corner],
+      [corner, card]
+    ] as const) {
+      await frame.evaluate(() => document.getSelection()?.removeAllRanges());
+      await page.mouse.move(start.x, start.y);
+      await page.mouse.down();
+      await page.mouse.move(end.x, end.y, { steps: 4 });
+      await page.mouse.up();
+      await expect
+        .poll(() =>
+          frame.evaluate(() => (window as unknown as { dragClicks: string[] }).dragClicks.splice(0))
+        )
+        .toEqual(["dialog"]);
+      await expect(sheet).toBeVisible();
+    }
+    await page.keyboard.press("Escape");
+    await expect(sheet).toBeHidden();
+    await expect(view.locator("#rich")).toBeFocused();
     expect(
       await frame.evaluate(() => {
         const selection = document.getSelection()!;

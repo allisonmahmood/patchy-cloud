@@ -684,6 +684,8 @@ function Sheet(props: {
   readonly onRun: (command: Command, event?: KeyboardEvent) => void;
 }): JSX.Element {
   const dialog = useRef<HTMLDialogElement>(null);
+  // Whether the last press on the dialog has been on its scrim alone, for a tap outside the card.
+  const tap = useRef(false);
   const title = useId();
   const commands = commandsFor(
     useHotkeyRegistrations(),
@@ -714,8 +716,18 @@ function Sheet(props: {
       "aria-labelledby": title,
       onCancel: props.onClose,
       // The dialog is the scrim around the card, so a click on the dialog itself is outside it.
+      // A drag into or out of the card, such as one selecting a label, clicks the dialog too, so a
+      // tap closes the sheet only when its press went down and came up on the scrim. Where it came
+      // up is hit-tested: a touch's release targets the element its press went down on.
+      onPointerDown: (event: PointerEvent) => {
+        tap.current = event.target === event.currentTarget;
+      },
+      onPointerUp: (event: PointerEvent) => {
+        tap.current &&=
+          document.elementFromPoint(event.clientX, event.clientY) === event.currentTarget;
+      },
       onClick: (event: MouseEvent) => {
-        if (event.target === event.currentTarget) props.onClose();
+        if (tap.current && event.target === event.currentTarget) props.onClose();
       },
       // Tab goes round the sheet's buttons; past the last it would leave the frame for Patchy's bar.
       onKeyDown: (event: KeyboardEvent) => {
