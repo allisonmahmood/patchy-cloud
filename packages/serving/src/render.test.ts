@@ -177,7 +177,8 @@ describe("patch pages", () => {
         user: { id: DEV_SEED.userId, email: "dev@patchy.local", name: "Owner" },
         company: { id: DEV_SEED.companyId, handle: DEV_SEED.companyHandle, name: "Company" },
         role: "member",
-        whatsNewSeen: 0
+        whatsNewSeen: 0,
+        singleKeyShortcuts: true
       },
       now: Date.UTC(2026, 0, 1)
     });
@@ -199,7 +200,8 @@ describe("patch pages", () => {
         user: { id: DEV_SEED.userId, email: "dev@patchy.local", name: "Owner" },
         company: { id: DEV_SEED.companyId, handle: DEV_SEED.companyHandle, name: "Company" },
         role: "member",
-        whatsNewSeen: 0
+        whatsNewSeen: 0,
+        singleKeyShortcuts: true
       },
       now: Date.UTC(2026, 0, 1)
     });
@@ -217,7 +219,8 @@ describe("patch pages", () => {
         user: { id: DEV_SEED.userId, email: "dev@patchy.local", name: "Owner" },
         company: { id: DEV_SEED.companyId, handle: DEV_SEED.companyHandle, name: "Company" },
         role: "member",
-        whatsNewSeen: 0
+        whatsNewSeen: 0,
+        singleKeyShortcuts: true
       },
       now: Date.UTC(2026, 8, 1, 2)
     });
@@ -239,7 +242,8 @@ describe("patch pages", () => {
         user: { id: DEV_SEED.userId, email: "dev@patchy.local", name: "Owner" },
         company: { id: DEV_SEED.companyId, handle: DEV_SEED.companyHandle, name: "Company" },
         role: "member" as const,
-        whatsNewSeen: 0
+        whatsNewSeen: 0,
+        singleKeyShortcuts: true
       }
     };
     const before = renderAddressNotice({ ...input, now: Date.parse(purgeAt) - 1 }).body;

@@ -81,7 +81,7 @@ export const migrations: Migrations = {
   "0032_connections_block_guests": ddl(
     `ALTER TABLE connections ADD COLUMN block_guests BOOLEAN NOT NULL DEFAULT false`
   ),
-  "0041_connection_audiences": ddl(
+  "0042_connection_audiences": ddl(
     `ALTER TABLE connections ADD COLUMN audience_kind TEXT NOT NULL DEFAULT 'company' CHECK (audience_kind IN ('company', 'teams'))`,
     `CREATE TABLE connection_team_grants (
       connection_id TEXT NOT NULL REFERENCES connections(id) ON DELETE CASCADE,

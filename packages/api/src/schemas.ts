@@ -260,6 +260,32 @@ export const DeviceLoginGone = failure(410, {
   code: Schema.Literals(["expired", "denied", "unknown"])
 });
 
+// --- viewer ---------------------------------------------------------------
+
+/** A person's single-key shortcut setting, as the wire spells it. */
+export const ShortcutsValue = Schema.Literals(["on", "off"]);
+
+/**
+ * `POST /api/me/shortcuts`, form-encoded: the value to store, never a flip, and the local page
+ * a form post lands back on.
+ */
+export class ShortcutsRequest extends Schema.Class<ShortcutsRequest>("ShortcutsRequest")({
+  value: ShortcutsValue,
+  return: Schema.optionalKey(Schema.String)
+}) {}
+
+/** The stored setting, for a request that asks for JSON. */
+export class ShortcutsSetting extends Schema.Class<ShortcutsSetting>("ShortcutsSetting")({
+  value: ShortcutsValue
+}) {}
+
+/** A first-party HTML page, such as the sign-in door, whatever the request asked for. */
+export const HtmlPage = (status: number) =>
+  Schema.String.pipe(
+    HttpApiSchema.asText({ contentType: "text/html" }),
+    HttpApiSchema.status(status)
+  );
+
 // --- patches --------------------------------------------------------------
 
 /** Who may open a patch: signed-in company members, or anyone with the link. */

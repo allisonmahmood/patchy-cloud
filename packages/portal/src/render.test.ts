@@ -7,7 +7,8 @@ const viewer = (role: "super_admin" | "admin" | "member") =>
     user: { id: "usr_jordan", email: "jordan@brightline.example", name: "Jordan Lee" },
     company: { id: "cmp_brightline", handle: "brightline", name: "Bright & <Co>" },
     role,
-    whatsNewSeen: 0
+    whatsNewSeen: 0,
+    singleKeyShortcuts: true
   }) satisfies RequireSession.Viewer["Service"];
 
 describe("renderAgentAside", () => {

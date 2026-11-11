@@ -389,8 +389,8 @@ function App() {
 render(<App />, document.getElementById("app")!);
 `;
 
-/** Bundles a page's source against the built patchy package and publishes it. */
-const publish = async (instance: Instance, tsx: string) => {
+/** A page's source bundled against the built patchy package, as a single-file page. */
+const pageHtml = async (tsx: string) => {
   const bundle = await build({
     stdin: { contents: tsx, loader: "tsx", resolveDir: packageRoot, sourcefile: "hotkeys.tsx" },
     bundle: true,
@@ -402,11 +402,12 @@ const publish = async (instance: Instance, tsx: string) => {
     define: { "import.meta.env.DEV": "false" }
   });
   const script = bundle.outputFiles[0]!.text.replaceAll("</script", "<\\/script");
-  return instance.publish(
-    "company",
-    `<!doctype html><html><head><title>Hotkeys</title></head><body><div id="app"></div><script>${script}</script></body></html>`
-  );
+  return `<!doctype html><html><head><title>Hotkeys</title></head><body><div id="app"></div><script>${script}</script></body></html>`;
 };
+
+/** Bundles a page's source against the built patchy package and publishes it. */
+const publish = async (instance: Instance, tsx: string) =>
+  instance.publish("company", await pageHtml(tsx));
 
 const contentFrame = (page: Page): Frame => {
   const frame = page.frames().find((candidate) => candidate.url().includes("/~content/"));
@@ -810,6 +811,58 @@ test("the sheet opens by ? or its button, lists by group with its own rows last,
   });
 });
 
+// A touch's pointer events all target the element its press went down on, wherever it lifts.
+test.describe("on a touch screen", () => {
+  test.use({ hasTouch: true });
+
+  test("a tap on the sheet's scrim closes it, and a touch from the scrim into its card doesn't", async ({
+    page,
+    context,
+    instance
+  }) => {
+    const patch = await publish(instance, sheet);
+    expect((await page.goto(patch.address))?.status()).toBe(200);
+    const frame = contentFrame(page);
+    const view = page.frameLocator("#patch");
+    const opener = view.getByRole("button", { name: "Tracker shortcuts" });
+    const dialog = view.getByRole("dialog", { name: "Tracker shortcuts" });
+    // What each click in the frame lands on, so a check that the sheet stays open waits for it.
+    await frame.evaluate(() => {
+      const clicks: string[] = [];
+      document.addEventListener("click", (event) =>
+        clicks.push((event.target as Element).localName)
+      );
+      Object.assign(window, { clicks });
+    });
+    const clickedNext = (expected: string[]) =>
+      expect
+        .poll(() =>
+          frame.evaluate(() => (window as unknown as { clicks: string[] }).clicks.splice(0))
+        )
+        .toEqual(expected);
+    const cdp = await context.newCDPSession(page);
+    const touch = async (start: { x: number; y: number }, end: { x: number; y: number }) => {
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [start] });
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [end] });
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    };
+
+    await opener.tap();
+    await expect(dialog).toBeVisible();
+    await clickedNext(["button"]);
+    const card = (await dialog.locator(".hotkey-sheet").boundingBox())!;
+    const scrim = { x: card.x - 2, y: card.y + card.height / 2 };
+    const inCard = { x: card.x + 4, y: scrim.y };
+    await touch(scrim, inCard);
+    await clickedNext(["dialog"]);
+    await expect(dialog).toBeVisible();
+    await page.touchscreen.tap(scrim.x, scrim.y);
+    await clickedNext(["dialog"]);
+    await expect(dialog).toBeHidden();
+    await expect(opener).toBeFocused();
+  });
+});
+
 test("a page's element rules don't reach the sheet, which takes the page's font without a look and its button follows one", async ({
   page,
   instance
@@ -1191,6 +1244,51 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
     await firedNext(frame, []);
   });
 
+  // A drag that starts or ends on the scrim clicks the dialog itself, as a tap on the scrim does.
+  await test.step("a drag selecting a label out onto the scrim, or one from the scrim into the card, leaves the sheet open", async () => {
+    await page.keyboard.press("Control+/");
+    await expect(sheet).toBeVisible();
+    const label = (await sheet.locator("li.hotkey-row > .hotkey-label").last().boundingBox())!;
+    const scrim = (await sheet.boundingBox())!;
+    const card = { x: label.x + 2, y: label.y + label.height / 2 };
+    const corner = { x: scrim.x + 4, y: scrim.y + 4 };
+    // Each drag must click the dialog, as a scrim tap does, or the check proves nothing. A
+    // selection left by the first drag stops Chromium clicking on the second, so clear it.
+    await frame.evaluate(() => {
+      const clicks: string[] = [];
+      document.addEventListener("click", (event) =>
+        clicks.push((event.target as Element).localName)
+      );
+      Object.assign(window, { dragClicks: clicks });
+    });
+    for (const [start, end] of [
+      [card, corner],
+      [corner, card]
+    ] as const) {
+      await frame.evaluate(() => document.getSelection()?.removeAllRanges());
+      await page.mouse.move(start.x, start.y);
+      await page.mouse.down();
+      await page.mouse.move(end.x, end.y, { steps: 4 });
+      await page.mouse.up();
+      await expect
+        .poll(() =>
+          frame.evaluate(() => (window as unknown as { dragClicks: string[] }).dragClicks.splice(0))
+        )
+        .toEqual(["dialog"]);
+      await expect(sheet).toBeVisible();
+    }
+    await page.keyboard.press("Escape");
+    await expect(sheet).toBeHidden();
+    await expect(view.locator("#rich")).toBeFocused();
+    expect(
+      await frame.evaluate(() => {
+        const selection = document.getSelection()!;
+        return [String(selection), selection.anchorOffset, selection.focusOffset];
+      })
+    ).toEqual(["world", 11, 6]);
+    await firedNext(frame, []);
+  });
+
   await test.step("from a dialog's field, Mod+/ lists the dialog's commands; P 5 runs by key, and the caret and selection come back", async () => {
     await view.locator("#body").focus();
     await page.keyboard.press("c");
@@ -1340,4 +1438,293 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
     await expect(view.locator("#native")).toHaveCount(0);
     await firedNext(frame, []);
   });
+});
+
+// Page-wide character shortcuts, Mod and named keys, a key within an element, a narrower Mod+/
+// that takes the key, sequences that Mod+/ and Escape would continue, and the sheet.
+const setting = `import { render, useRef } from "patchy/preact";
+import { HotkeySheet, useHotkey } from "patchy/hotkeys";
+
+const fired: string[] = [];
+const log = (name: string) => () => { fired.push(name); };
+Object.assign(window, { fired });
+
+function Panel() {
+  const panel = useRef<HTMLDivElement>(null);
+  useHotkey("J", log("panel J"), { within: panel, label: "Next in panel", group: "Deals" });
+  useHotkey("Mod+/", log("panel Mod+/"), { within: panel });
+  return <div id="panel" ref={panel} tabIndex={0}>panel</div>;
+}
+
+function App() {
+  useHotkey("A", log("A"), { label: "Assign to me", group: "Deals" });
+  useHotkey("G H", log("G H"), { label: "Go home", group: "Deals" });
+  useHotkey("Mod+K", log("Mod+K"), { label: "Find a deal", group: "Deals" });
+  useHotkey("Shift+A", log("Shift+A"));
+  useHotkey("Escape", log("Escape"));
+  useHotkey("G Mod+/", log("G Mod+/"));
+  useHotkey("G Escape", log("G Escape"));
+  return <main><p id="body" tabIndex={-1}>body</p><Panel /><HotkeySheet /></main>;
+}
+render(<App />, document.getElementById("app")!);
+`;
+
+// patchy/hotkeys imported after the shell's bootstrap, beside a client made as the page loads or
+// on its own, with a sheet that L opens.
+const later = (client: boolean) => `import { render } from "patchy/preact";
+${client ? `import { createClient } from "patchy/client";\ncreateClient({ tables: {}, files: {} });` : ""}
+const fired: string[] = [];
+const mount = async () => {
+  const { HotkeySheet, useHotkey } = await import("patchy/hotkeys");
+  function App() {
+    useHotkey("A", () => { fired.push("A"); }, { label: "Assign to me" });
+    useHotkey("Mod+K", () => { fired.push("Mod+K"); }, { label: "Find a deal" });
+    return <main><p id="body" tabIndex={-1}>body</p><HotkeySheet hotkey="L" /></main>;
+  }
+  render(<App />, document.getElementById("app")!);
+};
+Object.assign(window, { fired, mount });
+`;
+
+interface StubWindow {
+  /** Each operation the page sent, in order. */
+  asked: Array<{ op: string; args: unknown }>;
+  /** Whether the page took its port. */
+  ready: boolean;
+  /** What `shortcuts.setting` answers, and how long after it is asked. */
+  answer: { value: boolean; after: number };
+}
+
+/**
+ * Opens a page's source in a stand-in for Patchy's shell, for what today's shell doesn't do yet. It
+ * names the patch's frame before inserting it, as a shell carrying the viewer's setting does,
+ * since a name set on an inserted sandboxed frame doesn't reach its document. It bootstraps the
+ * page with a port and answers `shortcuts.setting` as `window.answer` says.
+ */
+const openInStub = async (page: Page, instance: Instance, tsx: string, name: string) => {
+  const content = `${instance.origin}/~content/stub/hotkeys?n=stub`;
+  const shell = `${instance.origin}/~stub/hotkeys`;
+  const body = await pageHtml(tsx);
+  await page.route(content, (route) => route.fulfill({ contentType: "text/html", body }));
+  await page.route(shell, (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: `<!doctype html><html><body style="margin:0"><script>
+const stub = Object.assign(window, { asked: [], ready: false, answer: { value: true, after: 0 } });
+const frame = document.createElement("iframe");
+frame.id = "patch";
+frame.name = ${JSON.stringify(name)};
+frame.setAttribute("sandbox", "allow-scripts allow-modals");
+frame.style.cssText = "display:block;width:100%;height:100vh;border:0";
+frame.src = ${JSON.stringify(content)};
+frame.addEventListener("load", () => {
+  const channel = new MessageChannel();
+  channel.port1.onmessage = ({ data }) => {
+    if (data.kind === "ready") return void (stub.ready = true);
+    stub.asked.push({ op: data.op, args: data.args });
+    if (data.op !== "shortcuts.setting") return;
+    const { value, after } = stub.answer;
+    setTimeout(() => channel.port1.postMessage({ v: ${instance.wire}, id: data.id, kind: "result", value }), after);
+  };
+  frame.contentWindow.postMessage({ v: ${instance.wire}, kind: "bootstrap", nonce: "stub", route: "/", handlerKinds: {} }, "*", [channel.port2]);
+  frame.focus();
+}, { once: true });
+document.body.append(frame);
+</script></body></html>`
+    })
+  );
+  await page.goto(shell);
+  const view = page.frameLocator("#patch");
+  await expect(view.locator("#app")).toBeAttached();
+  return { frame: contentFrame(page), view };
+};
+
+const stubbed = (page: Page) =>
+  page.evaluate(() => {
+    const { asked, ready } = window as unknown as StubWindow;
+    return { asked: [...asked], ready };
+  });
+
+// The sheet's rows as the viewer reads them: whether each is a button, its label, its keys, and
+// whether those are off.
+const sheetRows = (frame: Frame) =>
+  frame.evaluate(() =>
+    [...document.querySelectorAll(".hotkey-sheet-dialog .hotkey-row")].map((row) => {
+      const keys = [...row.querySelectorAll("kbd")];
+      return [
+        row.querySelector(".hotkey-command") ? "button" : "row",
+        row.querySelector(".hotkey-label")?.textContent,
+        row.querySelector(".hotkey-state")?.textContent ??
+          keys.map((key) => key.textContent).join(" "),
+        keys.length > 0 && keys.every((key) => key.classList.contains("hotkey-key-off"))
+          ? `off${row.querySelector(".hotkey-hidden")?.textContent}`
+          : keys.some((key) => key.classList.contains("hotkey-key-off"))
+            ? "partly off"
+            : "on"
+      ].join(" | ");
+    })
+  );
+
+test("with single-key shortcuts off, character shortcuts stand down while Mod chords, named keys, within keys and Mod+/ work", async ({
+  page,
+  instance
+}) => {
+  const { frame, view } = await openInStub(page, instance, setting, "patchy:shortcuts=off");
+  const sheet = view.getByRole("dialog", { name: "Keyboard shortcuts" });
+  const row = sheet.getByRole("button", { name: "Single-key shortcuts: Off" });
+  await expect.poll(async () => (await stubbed(page)).ready).toBe(true);
+
+  await test.step("A, Shift+A, G H and ? fire nothing and leave the key to the page", async () => {
+    await view.locator("#body").focus();
+    for (const key of ["a", "Shift+A", "g", "h", "?"]) await page.keyboard.press(key);
+    await expect(sheet).toBeHidden();
+    await firedNext(frame, []);
+  });
+
+  await test.step("Mod+K, Escape and a key within an element still fire", async () => {
+    await page.keyboard.press("Control+k");
+    await page.keyboard.press("Escape");
+    await view.locator("#panel").focus();
+    await page.keyboard.press("j");
+    await firedNext(frame, ["Mod+K", "Escape", "panel J"]);
+  });
+
+  await test.step("Mod+/ opens the sheet ahead of a narrower binding that would take it", async () => {
+    await page.keyboard.press("Control+/");
+    await expect(sheet).toBeVisible();
+    await firedNext(frame, []);
+  });
+
+  await test.step("Mod+/ opens it ahead of a sequence under way, which starts over", async () => {
+    await page.keyboard.press("Escape");
+    await expect(sheet).toBeHidden();
+    await view.locator("#body").focus();
+    // G starts both G Mod+/ and G Escape, which mix keys, so the setting doesn't stop them.
+    await page.keyboard.press("g");
+    await page.keyboard.press("Control+/");
+    await expect(sheet).toBeVisible();
+    await page.keyboard.press("Control+/");
+    await expect(sheet).toBeHidden();
+    // G Escape started over as the sheet opened, so Escape is the page's own.
+    await page.keyboard.press("Escape");
+    await firedNext(frame, ["Escape"]);
+    await view.locator("#panel").focus();
+    await page.keyboard.press("Control+/");
+    await expect(sheet).toBeVisible();
+  });
+
+  await test.step("the sheet says Off at the top and keeps the stopped commands as buttons with inactive keys", async () => {
+    await expect(row).toHaveAttribute("aria-haspopup", "dialog");
+    expect(await sheetRows(frame)).toEqual([
+      "button | Single-key shortcuts | Off | on",
+      "button | Next in panel | J | on",
+      "button | Assign to me | A | off, key off",
+      "button | Go home | G H | off, key off",
+      "button | Find a deal | Ctrl K | on",
+      "row | Show shortcuts | ? | off, key off",
+      "row | Show shortcuts | Ctrl / | on"
+    ]);
+    await expect(sheet.getByRole("button", { name: /^Assign to me.*key off$/ })).toBeVisible();
+    // Its copies of page-wide character shortcuts stand down there too; a within key doesn't.
+    await page.keyboard.press("a");
+    await expect(sheet).toBeVisible();
+    await firedNext(frame, []);
+    await sheet.getByRole("button", { name: /^Assign to me/ }).click();
+    await expect(sheet).toBeHidden();
+    await firedNext(frame, ["A"]);
+  });
+});
+
+test("with single-key shortcuts on, the sheet's row says On and every hotkey fires", async ({
+  page,
+  instance
+}) => {
+  const { frame, view } = await openInStub(page, instance, setting, "patchy:shortcuts=on");
+  const sheet = view.getByRole("dialog", { name: "Keyboard shortcuts" });
+  await expect.poll(async () => (await stubbed(page)).ready).toBe(true);
+  await view.locator("#body").focus();
+  for (const key of ["a", "Shift+A", "g", "h"]) await page.keyboard.press(key);
+  await firedNext(frame, ["A", "Shift+A", "G H"]);
+  await page.keyboard.press("?");
+  await expect(sheet.getByRole("button", { name: "Single-key shortcuts: On" })).toBeVisible();
+  expect((await sheetRows(frame)).filter((line) => !line.endsWith("| on"))).toEqual([]);
+});
+
+test("the sheet's row asks Patchy, waits past the reply deadline, then comes back on its row with the answer", async ({
+  page,
+  instance
+}) => {
+  await page.clock.install();
+  const { frame, view } = await openInStub(page, instance, setting, "patchy:shortcuts=off");
+  const sheet = view.getByRole("dialog", { name: "Keyboard shortcuts" });
+  await expect.poll(async () => (await stubbed(page)).ready).toBe(true);
+  await page.evaluate(() => {
+    (window as unknown as StubWindow).answer = { value: true, after: 40_000 };
+  });
+  await view.locator("#body").focus();
+  await page.keyboard.press("Control+/");
+  await sheet.getByRole("button", { name: "Single-key shortcuts: Off" }).click();
+  // The shell's own dialog asks the viewer; the sheet steps aside meanwhile.
+  await expect(sheet).toBeHidden();
+  expect((await stubbed(page)).asked).toEqual([{ op: "shortcuts.setting", args: {} }]);
+  await page.clock.fastForward("00:40");
+  const row = sheet.getByRole("button", { name: "Single-key shortcuts: On" });
+  await expect(row).toBeFocused();
+  expect((await sheetRows(frame)).filter((line) => !line.endsWith("| on"))).toEqual([]);
+  await page.keyboard.press("Escape");
+  await expect(sheet).toBeHidden();
+  await expect(view.locator("#body")).toBeFocused();
+  await page.keyboard.press("a");
+  await firedNext(frame, ["A"]);
+});
+
+for (const client of [true, false])
+  test(`imported after the shell's bootstrap ${client ? "beside a client, patchy/hotkeys shares its port" : "on its own, patchy/hotkeys has no port and hides the row"}, and the setting applies`, async ({
+    page,
+    instance
+  }) => {
+    const { frame, view } = await openInStub(page, instance, later(client), "patchy:shortcuts=off");
+    // The bootstrap has gone out once the frame has loaded.
+    await expect.poll(async () => (await stubbed(page)).ready).toBe(client);
+    await frame.evaluate(() => (window as unknown as { mount(): Promise<void> }).mount());
+    const sheet = view.getByRole("dialog", { name: "Keyboard shortcuts" });
+    await view.locator("#body").focus();
+    await page.keyboard.press("a");
+    await page.keyboard.press("l");
+    await page.keyboard.press("Control+k");
+    await expect(sheet).toBeHidden();
+    await firedNext(frame, ["Mod+K"]);
+    // A custom opener still leaves Mod+/ to open it.
+    await page.keyboard.press("Control+/");
+    await expect(sheet).toBeVisible();
+    expect(await sheetRows(frame)).toEqual([
+      ...(client ? ["button | Single-key shortcuts | Off | on"] : []),
+      "button | Assign to me | A | off, key off",
+      "button | Find a deal | Ctrl K | on",
+      "row | Show shortcuts | L | off, key off",
+      "row | Show shortcuts | Ctrl / | on"
+    ]);
+  });
+
+test("under today's shell, which doesn't name the frame, every hotkey fires and the sheet has no row", async ({
+  page,
+  instance
+}) => {
+  const patch = await publish(instance, setting);
+  expect((await page.goto(patch.address))?.status()).toBe(200);
+  const frame = contentFrame(page);
+  const view = page.frameLocator("#patch");
+  const sheet = view.getByRole("dialog", { name: "Keyboard shortcuts" });
+  await view.locator("#body").focus();
+  for (const key of ["a", "Shift+A", "g", "h"]) await page.keyboard.press(key);
+  await firedNext(frame, ["A", "Shift+A", "G H"]);
+  await page.keyboard.press("?");
+  await expect(sheet).toBeVisible();
+  expect(await sheetRows(frame)).toEqual([
+    "button | Assign to me | A | on",
+    "button | Go home | G H | on",
+    "button | Find a deal | Ctrl K | on",
+    "row | Show shortcuts | ? | on",
+    "row | Show shortcuts | Ctrl / | on"
+  ]);
 });

@@ -458,7 +458,7 @@ it.layer(Testing.emptyLayer(before("0029_tier_zero_is_tier_one")))("the tier 0 f
   );
 });
 
-it.layer(Testing.emptyLayer(before("0040_patch_audiences")))("audience upgrade", (it) => {
+it.layer(Testing.emptyLayer(before("0041_patch_audiences")))("audience upgrade", (it) => {
   it.effect("preserves Company/Public and named guest grants without copying their state", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

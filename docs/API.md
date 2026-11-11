@@ -3,7 +3,7 @@
 Rendered from `PatchyApi` in `packages/api` by `pnpm --filter @patchy/api render-docs`.
 Edit the schemas or renderer, then regenerate this file. There is no automated API-document drift check.
 
-Every route lives under `/api`. Most speak JSON; runtime file routes carry raw bytes. `GET /api/release`, `POST /api/login/device` and `POST /api/login/device/token` are unauthenticated. `/api/runtime/*` admits only the shell's browser requests with the runtime headers and loaded-version admission described below; machine tokens are refused. Other routes need `Authorization: Bearer <token>`; a missing or invalid token is a 401 with `{ ok: false, error }`. Refusals add `code` and operation-specific fields when clients branch on them. A 429 carries `Retry-After` seconds; bearer API rate-limit responses also carry `retryAfterSeconds`. The `patchy` CLI names itself on every request with `Patchy-Cli: <release> <command> <agent>`, such as `Patchy-Cli: 0.0.1 publish claude-code`. The server records the fields that parse in usage records and nothing else; no route requires or answers the header.
+Every route lives under `/api`. Most speak JSON; runtime file routes carry raw bytes. `GET /api/release`, `POST /api/login/device` and `POST /api/login/device/token` are unauthenticated. `/api/runtime/*` admits only the shell's browser requests with the runtime headers and loaded-version admission described below; machine tokens are refused. `/api/me/shortcuts` takes a browser session and answers a form post as Patchy's pages do. Other routes need `Authorization: Bearer <token>`; a missing or invalid token is a 401 with `{ ok: false, error }`. Refusals add `code` and operation-specific fields when clients branch on them. A 429 carries `Retry-After` seconds; bearer API rate-limit responses also carry `retryAfterSeconds`. The `patchy` CLI names itself on every request with `Patchy-Cli: <release> <command> <agent>`, such as `Patchy-Cli: 0.0.1 publish claude-code`. The server records the fields that parse in usage records and nothing else; no route requires or answers the header.
 
 ## auth
 
@@ -55,6 +55,23 @@ Responses:
 - `200` [DeviceLoginWaiting](#deviceloginwaiting) | [DeviceLoginComplete](#devicelogincomplete)
 - `400` { ok: false, error: string }
 - `410` { ok: false, error: string, code: "expired" | "denied" | "unknown" }
+- `413` { ok: false, error: string }
+
+## viewer
+
+### `POST /api/me/shortcuts`
+
+Store the signed-in person's choice whether patches' single-key shortcuts fire for them: `value=on` or `value=off`, form-encoded, never a flip. A guest's choice is their own, as their account is. The browser session is the only credential. A POST from another origin, or one with neither `Origin` nor `Sec-Fetch-Site: same-origin`, is refused 403 before the session is read. Signed out, the answer is the sign-in door (401) or Clerk's redirect to refresh the session; someone without a company is sent to `/join`, and a deactivated account is refused 403. A request whose `Accept` names `application/json` gets the stored `{ value }`. Any other, such as a form post, is sent with a receipt to `return`, a path on this instance, or else to `/`. A missing or unknown value is 400 and changes nothing. The form is limited to 4096 bytes: a declared overflow answers 413; overflow while streaming aborts the connection. Responses are `private, no-store`, and the route spends no per-address API limit.
+
+Request body (`application/x-www-form-urlencoded`): [ShortcutsRequest](#shortcutsrequest)
+
+Responses:
+
+- `200` [ShortcutsSetting](#shortcutssetting)
+- `303` no body
+- `400` { ok: false, error: string }
+- `401` HTML page (`text/html`)
+- `403` HTML page (`text/html`)
 - `413` { ok: false, error: string }
 
 ## patches
@@ -1650,6 +1667,23 @@ RuntimeSuccess | HandlerFailure
   ok: true,
   teams: { id: string, name: string }[],
   guests: { userId: string, name: string, email: string, companyName: string }[]
+}
+```
+
+### ShortcutsSetting
+
+```
+{
+  value: "on" | "off"
+}
+```
+
+### ShortcutsRequest
+
+```
+{
+  value: "on" | "off",
+  return?: string
 }
 ```
 

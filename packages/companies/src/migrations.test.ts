@@ -57,7 +57,7 @@ it.layer(Testing.emptyLayer(before("0015_user_name_never_blank")))(
   }
 );
 
-it.layer(Testing.emptyLayer(before("0038_company_roles")))("the company roles upgrade", (it) => {
+it.layer(Testing.emptyLayer(before("0039_company_roles")))("the company roles upgrade", (it) => {
   it.effect(
     "preserves every existing admin as a super admin, including inactive accounts and pending invitations",
     () =>
@@ -89,7 +89,7 @@ it.layer(Testing.emptyLayer(before("0038_company_roles")))("the company roles up
   );
 });
 
-it.layer(Testing.emptyLayer(before("0042_team_lifecycle")))("team lifecycle upgrade", (it) => {
+it.layer(Testing.emptyLayer(before("0043_team_lifecycle")))("team lifecycle upgrade", (it) => {
   it.effect("preserves team identities, memberships and historical attribution", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -109,3 +109,26 @@ it.layer(Testing.emptyLayer(before("0042_team_lifecycle")))("team lifecycle upgr
     })
   );
 });
+
+it.layer(Testing.emptyLayer(before("0038_single_key_shortcuts")))(
+  "the single-key shortcut setting",
+  (it) => {
+    it.effect("starts on for everyone already here, deactivated people included", () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`INSERT INTO companies (id, handle, name) VALUES ('cmp_keys', 'keys', 'Northwind')`;
+        yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role, deactivated_at) VALUES
+        ('usr_admin', 'clerk_admin', 'cmp_keys', 'sam@example.com', 'Sam', 'admin', NULL),
+        ('usr_left', 'clerk_left', 'cmp_keys', 'alan@example.com', 'Alan', 'member', now())`;
+        yield* migrate(migrations);
+        assert.deepStrictEqual(
+          yield* sql`SELECT id, single_key_shortcuts AS "singleKeyShortcuts" FROM users ORDER BY id`,
+          [
+            { id: "usr_admin", singleKeyShortcuts: true },
+            { id: "usr_left", singleKeyShortcuts: true }
+          ]
+        );
+      })
+    );
+  }
+);

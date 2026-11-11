@@ -26,6 +26,7 @@ it.effect("rechecks current audience for owners and admins on an already loaded 
       user: { id: "owner", name: "Owner", email: "owner@example.com" },
       company: { id: "company", name: "Company", handle: "company" },
       whatsNewSeen: 0,
+      singleKeyShortcuts: true,
       role: "super_admin" as const
     };
     let eligible = true;

@@ -180,7 +180,7 @@ export const migrations: Migrations = {
       AFTER INSERT OR UPDATE OR DELETE ON patch_guest_grants
       FOR EACH ROW EXECUTE FUNCTION patch_guest_grants_directory_changed()`
   ),
-  "0040_patch_audiences": ddl(
+  "0041_patch_audiences": ddl(
     `ALTER TABLE patches DROP CONSTRAINT patches_scope_check,
       ADD CONSTRAINT patches_scope_check CHECK (scope IN ('company', 'public', 'teams'))`,
     `CREATE TABLE patch_audience_teams (

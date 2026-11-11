@@ -274,6 +274,9 @@ way:
 - Register no Escape inside, and close from `onCancel`, as `HotkeySheet` does.
 - Or register Escape inside, and close from its `run`.
 
+The example shows opening and Escape. A dialog in a patch also keeps Tab inside, as the end
+of this section says.
+
 ```tsx
 function Dialog(props: { close: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -294,9 +297,17 @@ function Dialog(props: { close: () => void }) {
 }
 ```
 
-The open state is the parent's: the dialog opens as it mounts and closes as it unmounts,
-which returns focus to where it was. Opening and closing in a layout effect keeps focus
+The open state is the parent's: the dialog opens as it mounts and closes as it unmounts, which
+returns focus to where it was if that element can still take focus; if it has gone or is
+disabled, focus falls to the page's body. Opening and closing in a layout effect keeps focus
 returning; a passive effect's cleanup runs after the dialog has left the page.
+
+`showModal()` makes the patch's page inert, not Patchy's page around its frame. Without more,
+Tab past a modal dialog's last tabbable element, Shift+Tab before its first, or either in a
+dialog with none, can leave the frame for the shell's controls or the browser's. Keys then go
+where focus went, so Escape can stop reaching the dialog, which stays open. So a modal dialog in
+a patch keeps Tab and Shift+Tab among the tabbable elements it has when the key is pressed, and
+on the dialog itself while it has none.
 
 ## The shortcuts sheet
 
@@ -322,7 +333,8 @@ viewer who finds it once learns Mod+/.
 - Other hotkeys wait while it is open. Escape, its close button or a tap outside it closes the
   sheet alone, never a dialog under it, and focus goes back to where it was.
 - `title` sets its heading and accessible name, "Keyboard shortcuts" by default. `hotkey` sets
-  the key that opens it, checked like `useHotkey`'s, in place of `?` and Mod+/.
+  the key that opens it, checked like `useHotkey`'s, in place of `?`. Mod+/ always opens it, ahead
+  of every other hotkey, so a hotkey of the page's that takes Mod+/ never fires while it is mounted.
 - A hotkey's `group` option lists it under that heading. Groups appear in the order they are
   first registered, an element's before the page's, and ungrouped hotkeys come last under
   General. With no groups at all, the
@@ -344,7 +356,12 @@ viewer who finds it once learns Mod+/.
   the page's `<body>`, outside the patch's root element, so restyle it with selectors that don't
   depend on where it's mounted, such as `.hotkey-sheet …`, and set `--look-*` overrides on
   `:root` or `body`.
-- A different sheet is built from `useHotkeyList` and `hotkeyKeys` inside a `HotkeyScope`.
+- A sheet of your own is a modal dialog built from `useHotkeyList` and `hotkeyKeys` inside a
+  `HotkeyScope`. Focus moves into it as it opens, Tab stays inside it as under Native
+  `<dialog>`, and Escape closes it. Closing puts focus back where it was, or, when that element
+  has gone, in the dialog it was in, or on the page. `HotkeySheet` already does all of this and
+  runs each command from its button or its keys; build your own when its listing or look won't
+  do.
 
 ## Showing hotkeys
 

@@ -89,7 +89,8 @@ const summaryFor = Effect.fn("HandlersTest.summaryFor")(function* (person: Perso
       user: { id: person.id, email: person.email, name: person.name },
       company: { id: person.companyId, handle, name: "Northwind" },
       role: person.role,
-      whatsNewSeen: 0
+      whatsNewSeen: 0,
+      singleKeyShortcuts: true
     })
   );
   return summary === undefined

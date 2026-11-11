@@ -64,7 +64,8 @@ it.layer(
             name: created.company.name
           },
           role: "super_admin",
-          whatsNewSeen: created.user.whatsNewSeen
+          whatsNewSeen: created.user.whatsNewSeen,
+          singleKeyShortcuts: true
         });
       const sub = created.user.clerkUserId;
       const unchanged = yield* resolve({ sub, email: "Resolve-One@Example.com", name: "Ada" });
