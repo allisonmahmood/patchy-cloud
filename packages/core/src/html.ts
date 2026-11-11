@@ -1,7 +1,8 @@
 import { avatar, searchField } from "./components.js";
 import { fontFaces, fontPreload } from "./fonts.js";
 import { appStyles } from "./styles/index.js";
-import { linkButton } from "./ui/controls.js";
+import { button, choiceGroup, field, linkButton, radio, textarea } from "./ui/controls.js";
+import { notice } from "./ui/feedback.js";
 import { uiScriptTag } from "./ui/enhancer.js";
 import { icon, type IconName } from "./ui/icons.js";
 import { escapeAttribute, escapeHtml } from "./escape.js";
@@ -54,9 +55,10 @@ export interface AppShell {
   /**
    * The place the page belongs to, which the sidebar lights and the page's `<title>` names; a
    * Settings page opens Settings around it. `whats-new` is reached from its own button at the
-   * sidebar's foot, so no place is lit there.
+   * sidebar's foot, so no place is lit there. `feedback`, What you sent, lights nothing either:
+   * Tell Patchy opens its panel rather than that page.
    */
-  readonly section: Place["section"] | "whats-new";
+  readonly section: Place["section"] | "whats-new" | "feedback";
   /**
    * A modal panel over the page, such as Home’s Final step: the frame behind it goes inert
    * and blurs, and the panel carries its own role, label and ways out.
@@ -104,6 +106,53 @@ function whatsNew(seen: number, current: boolean): string {
   return `<button type="button" class="app-place whats-new-bell" popovertarget="whats-new" aria-label="${label}"${current ? ' aria-current="page"' : ""}>${icon("bell")}What’s new${unseen.length > 0 ? '<span class="whats-new-dot"></span>' : ""}</button><div id="whats-new" class="menu app-foot-menu app-whats-new" popover role="dialog" aria-labelledby="whats-new-heading" data-through="${latestRelease}"><p class="menu-head"><strong id="whats-new-heading">What’s new</strong>${summary}</p>${list}<hr class="menu-rule"><a class="menu-item" href="${escapeAttribute(monthHref(undefined, since))}">See all changes${icon("chevronRight")}</a></div>${unseen.length > 0 ? '<script defer src="/whats-new/bell.js"></script>' : ""}`;
 }
 
+/** Where Tell Patchy's panel script is served; every app page loads it. */
+export const tellPatchyScriptPath = "/feedback/tell.js";
+/** The id of Tell Patchy's panel, which any page's button may open with `popovertarget`. */
+export const tellPatchyPanel = "tell-patchy";
+
+/**
+ * Tell Patchy's form: Request or Feedback, one field and Send, posting to `/feedback`. The panel
+ * draws it at rest; a refused send draws it again with `error` on the field and `kind` as sent,
+ * never the text, which stays in the person's own field. The field has no `maxlength`: it would
+ * count UTF-16 units and cut an emoji the store, counting characters, accepts.
+ */
+export const tellPatchyForm = (
+  spec: { readonly kind?: "request" | "feedback"; readonly error?: string } = {}
+) => {
+  const kind = spec.kind ?? "request";
+  const kinds = choiceGroup({
+    id: "tell-patchy-kind",
+    legend: "Request or feedback",
+    hideLegend: true,
+    choices: (aria) =>
+      `${radio({ name: "kind", value: "request", label: "Request", checked: kind === "request", aria })}${radio({ name: "kind", value: "feedback", label: "Feedback", checked: kind === "feedback", aria })}`
+  });
+  const text = field({
+    id: "tell-patchy-text",
+    label: "What to tell Patchy",
+    hideLabel: true,
+    error: spec.error,
+    control: (aria) =>
+      textarea(aria, { name: "text", rows: 4, autofocus: spec.error !== undefined })
+  });
+  return `<form class="app-tell-form" method="post" action="/feedback" novalidate data-tell="compose">${kinds}${text}${button("Send", { kind: "primary", block: true })}</form>`;
+};
+
+/**
+ * Tell Patchy, at the foot of the sidebar between What's new and the account, opens a panel in
+ * the frame What's new's uses for sending Patchy a request or feedback. Any page's button with
+ * `popovertarget="tell-patchy"` opens it too, beside that button, and its `data-kind` picks the
+ * kind. The panel sits outside the menu, which a narrow window hides until Menu opens it, and a
+ * popover inside a hidden menu can't show. `/feedback/tell.js` sends in place and shows the
+ * answer; when it can't tell whether a send was saved it puts the note that points to What you
+ * sent, inert in a template until then, into a live slot, so no page carries a second notice.
+ * Without the script the form posts and lands on What you sent.
+ */
+const tellPatchyButton = `<button type="button" class="app-place tell-patchy-button" popovertarget="${tellPatchyPanel}">${icon("message")}Tell Patchy</button>`;
+const tellPatchy = () =>
+  `<div id="${tellPatchyPanel}" class="menu app-foot-menu app-tell-patchy" popover role="dialog" aria-labelledby="tell-patchy-heading"><p class="menu-head"><strong id="tell-patchy-heading">Tell Patchy</strong></p><div class="app-tell-body">${tellPatchyForm()}<div class="app-tell-answer" data-tell="answer" tabindex="-1" hidden></div><div data-tell="unsure" aria-live="assertive"></div><template data-tell="unsure-note">${notice({ tone: "warning", title: "Patchy couldn’t confirm that", body: '<p>It may have gone through. Check <a href="/feedback">What you sent</a> before you try again.</p>' })}</template></div><hr class="menu-rule"><a class="menu-item" href="/feedback">What you sent${icon("chevronRight")}</a></div><script defer src="${tellPatchyScriptPath}"></script>`;
+
 /** The signed-in person: their name opens a menu with who they are, Your agents and Sign out. */
 function account(user: AppShell["viewer"]["user"]): string {
   return `<button type="button" class="app-place app-account" popovertarget="account-menu">${avatar(user.email, user.name)}<span class="app-account-name">${escapeHtml(user.name)}</span>${icon("chevronUpDown")}</button><div class="menu app-foot-menu app-account-menu" id="account-menu" popover aria-label="Account"><p class="menu-head"><strong>${escapeHtml(user.name)}</strong>${escapeHtml(user.email)}</p><hr class="menu-rule"><a class="menu-item" href="/agents">${icon("bot")}Your agents</a><hr class="menu-rule"><form method="post" action="/logout"><button class="menu-item" type="submit">${icon("logout")}Sign out</button></form></div>`;
@@ -138,7 +187,7 @@ function nav(section: AppShell["section"]): string {
 
 /**
  * Every signed-in page's frame: a sidebar beside the page, holding the brand, the patch search,
- * New patch, the places and, at its foot, What's new and the account. Below 1024px it folds into
+ * New patch, the places and, at its foot, What's new, Tell Patchy and the account. Below 1024px it folds into
  * a top bar of the brand, the search and Menu, which opens the rest of the same markup as a
  * popover, so there is one nav and no script. A page's `overlay` sits over the whole frame,
  * which goes inert behind it.
@@ -156,13 +205,12 @@ function appBody(app: AppShell, body: string): string {
   // New patch's dialog is Home's, at `/?new`.
   const newPatch = linkButton("New patch", "/?new", { icon: "plus", size: "sm", block: true });
   const menuButton = `<button type="button" class="btn btn-quiet btn-sm app-menu-button" popovertarget="app-menu"><span class="app-menu-closed">${icon("menu")}Menu</span><span class="app-menu-opened">${icon("close")}Close</span></button>`;
-  // Feedback (#1210) takes its place in the foot between What's new and the account.
-  const foot = `<div class="app-foot">${whatsNew(app.viewer.whatsNewSeen, app.section === "whats-new")}${account(app.viewer.user)}</div>`;
+  const foot = `<div class="app-foot">${whatsNew(app.viewer.whatsNewSeen, app.section === "whats-new")}${tellPatchyButton}${account(app.viewer.user)}</div>`;
   const receipt =
     app.viewer.receipt === undefined
       ? ""
       : `<p class="note note-ok app-receipt" role="status">${escapeHtml(app.viewer.receipt)}</p>`;
-  return `<div class="app"${app.overlay === undefined ? "" : " inert"}><aside class="app-side"><div class="app-side-inner"><a class="brand" href="/"><span class="glyph" aria-hidden="true"></span><span class="brand-name">${escapeHtml(app.viewer.company.name)}</span></a>${search}${menuButton}<div class="app-menu" id="app-menu" popover>${newPatch}<nav class="app-nav" aria-label="Primary">${nav(app.section)}</nav>${foot}</div></div></aside><main class="app-page">${receipt}${body}</main></div>${app.overlay === undefined ? "" : `<div class="modal-scrim"></div>${app.overlay}`}`;
+  return `<div class="app"${app.overlay === undefined ? "" : " inert"}><aside class="app-side"><div class="app-side-inner"><a class="brand" href="/"><span class="glyph" aria-hidden="true"></span><span class="brand-name">${escapeHtml(app.viewer.company.name)}</span></a>${search}${menuButton}<div class="app-menu" id="app-menu" popover>${newPatch}<nav class="app-nav" aria-label="Primary">${nav(app.section)}</nav>${foot}</div>${tellPatchy()}</div></aside><main class="app-page">${receipt}${body}</main></div>${app.overlay === undefined ? "" : `<div class="modal-scrim"></div>${app.overlay}`}`;
 }
 
 /**

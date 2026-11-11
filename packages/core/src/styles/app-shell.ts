@@ -61,6 +61,20 @@ export const appShell = `
     @media (hover: hover) { .app-headline:hover { background: var(--hover); } }
     .app-headline-kind { color: var(--muted); font: var(--text-badge); font-weight: var(--weight-regular); }
     .app-whats-new .menu-item > svg { width: 14px; height: 14px; }
+    /* Tell Patchy: the same frame, beside whichever button opened it, its form, then the answer
+       to a send: the receipt and, for a request, its similar requests stacked under it. */
+    .app-side-inner:has(> .app-tell-patchy:popover-open) .tell-patchy-button { border-color: var(--ink); background: var(--selected); color: var(--ink); }
+    @supports (position-area: bottom) {
+      .app-tell-patchy { position-try-fallbacks: flip-block, flip-inline, flip-block flip-inline; }
+    }
+    .app-tell-patchy { width: min(360px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; }
+    .app-tell-patchy .menu-item > svg { width: 14px; height: 14px; }
+    .app-tell-body { display: grid; gap: var(--space-3); padding: var(--space-1) 10px var(--space-3); }
+    .app-tell-form:not([hidden]), .app-tell-answer:not([hidden]) { display: grid; gap: var(--space-3); }
+    .app-tell-answer:focus { outline: none; }
+    .app-tell-body :is(.receipt, .notice, .shelf-label) { margin: 0; }
+    .app-tell-body .row { grid-template-columns: minmax(0, 1fr); gap: var(--space-2); padding-inline: 0; }
+    .app-tell-body .row-end { justify-self: start; }
 
     .app-page { min-width: 0; max-width: calc(var(--w-index) + 80px); padding: 28px 40px 72px; overflow-wrap: anywhere; }
     /* A Menu opened on a narrow window stays open in the top layer if the window widens; it then

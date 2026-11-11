@@ -6,7 +6,8 @@ import {
   htmlPage,
   SWITCHER_RELAY_SOURCE,
   switcherRelay,
-  switcherTag
+  switcherTag,
+  tellPatchyForm
 } from "./html.js";
 import { changesSince, latestRelease } from "./whatsNew.js";
 import { entriesSince, permalink } from "./whatsNewLinks.js";
@@ -145,6 +146,7 @@ describe("htmlPage app body", () => {
       html
         .replace(switcherRelay, "")
         .replace(/<script defer src="\/~shell\/switcher\.js[^>]*><\/script>/, "")
+        .replace('<script defer src="/feedback/tell.js"></script>', "")
     ).not.toMatch(/<(img|script|b)\b/);
     expect(html).toContain('<a class="app-place" href="/settings/people" aria-current="page">');
   });
@@ -201,7 +203,60 @@ describe("htmlPage app body", () => {
     expect(caughtUp).toMatch(/<a class="menu-item" href="\/whats-new">See all changes<svg/);
     expect(
       [...caughtUp.replace(switcherRelay, "").matchAll(/<script\b[^>]*>/g)].map(([tag]) => tag)
-    ).toEqual([expect.stringMatching(/^<script defer src="\/~shell\/switcher\.js\?v=/)]);
+    ).toEqual([
+      expect.stringMatching(/^<script defer src="\/~shell\/switcher\.js\?v=/),
+      '<script defer src="/feedback/tell.js">'
+    ]);
+  });
+
+  it("opens Tell Patchy from the foot, between What's new and the account, in What's new's frame", () => {
+    const html = htmlPage({ title: "Home", app: { viewer, section: "home" }, body: "" });
+    const foot = html.slice(html.indexOf('<div class="app-foot">'));
+    const at = (needle: string) => foot.indexOf(needle);
+    expect(at('popovertarget="whats-new"')).toBeLessThan(at('popovertarget="tell-patchy">'));
+    expect(at('popovertarget="tell-patchy">')).toBeLessThan(at('popovertarget="account-menu"'));
+    // The panel sits outside the menu a narrow window folds away, so a page's own button opens it.
+    const menu = html.slice(html.indexOf('id="app-menu"'), html.indexOf('id="tell-patchy"'));
+    expect(menu).toContain('<div class="app-foot">');
+    expect(html).toContain(
+      '<div id="tell-patchy" class="menu app-foot-menu app-tell-patchy" popover role="dialog" aria-labelledby="tell-patchy-heading">'
+    );
+    expect(html).toContain(
+      '<form class="app-tell-form" method="post" action="/feedback" novalidate'
+    );
+    expect(html).toContain('name="kind" value="request" checked>Request</label>');
+    // Its field has no maxlength: it would count UTF-16 units and cut an emoji the store accepts.
+    expect(html).toContain(
+      '<label class="field-label sr-only" for="tell-patchy-text">What to tell Patchy</label><textarea class="field" id="tell-patchy-text" name="text" rows="4"></textarea>'
+    );
+    expect(html).toContain('<a class="menu-item" href="/feedback">What you sent<svg');
+    // The note for a send it can't confirm waits inert in a template, beside the live slot it goes in.
+    expect(html).toContain(
+      '<div data-tell="unsure" aria-live="assertive"></div><template data-tell="unsure-note"><div class="notice notice-warning" role="status">'
+    );
+    expect(html.slice(html.indexOf("<body>"))).not.toContain('role="alert"');
+    expect(html).toContain('<script defer src="/feedback/tell.js"></script>');
+    // What you sent lights no place: Tell Patchy opens the panel, not the page.
+    const sent = htmlPage({
+      title: "What you sent",
+      app: { viewer, section: "feedback" },
+      body: ""
+    });
+    expect(sent.slice(sent.indexOf("<body>"))).not.toContain('aria-current="page"');
+    expect(sent).toContain("<title>What you sent – Northwind</title>");
+  });
+
+  it("draws a refused Tell Patchy form with the field's error and the kind as sent, never the text", () => {
+    const refused = tellPatchyForm({
+      kind: "feedback",
+      error: "Your feedback has a GitHub token in it."
+    });
+    expect(refused).toContain('name="kind" value="feedback" checked>Feedback</label>');
+    expect(refused).toContain('aria-invalid="true"');
+    expect(refused).toContain(
+      '<p class="field-error" id="tell-patchy-text-error">Your feedback has a GitHub token in it.</p>'
+    );
+    expect(refused).toMatch(/<textarea[^>]* autofocus><\/textarea>/);
   });
 
   it("loads the switcher on app pages, ahead of the session's scripts, and never on doors", () => {

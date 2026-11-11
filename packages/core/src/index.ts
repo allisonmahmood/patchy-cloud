@@ -9,6 +9,9 @@ export {
   SWITCHER_RELAY_SOURCE,
   switcherRelay,
   switcherTag,
+  tellPatchyForm,
+  tellPatchyPanel,
+  tellPatchyScriptPath,
   withoutAppAssets
 } from "./html.js";
 export type { AppShell } from "./html.js";
