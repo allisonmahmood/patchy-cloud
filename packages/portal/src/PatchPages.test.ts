@@ -1752,6 +1752,8 @@ it.layer(socket)("what agents can do on a socket", (it) => {
   it.effect("shows everyone a live card's agent tools, and who can turn agent access on", () =>
     Effect.gen(function* () {
       const workspace = yield* company();
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE users SET role='super_admin' WHERE id=${workspace.admin.id}`;
       const patch = yield* publishAgentArea(workspace.owner, "new-business");
       const companies = yield* Companies.Companies;
       yield* companies.setAgentAccess({
@@ -1798,12 +1800,12 @@ it.layer(socket)("what agents can do on a socket", (it) => {
       );
       assert.include(
         text(member ?? ""),
-        "Agent access is off at Northwind, so no agent can use these yet. Only admins can turn it on: Sam."
+        "Agent access is off at Northwind, so no agent can use these yet. Only super admins can turn it on: Sam."
       );
       assert.deepStrictEqual(links(member ?? ""), []);
       assert.strictEqual(agentTools(member ?? "").length, 4);
       const admin = agentPanel(yield* (yield* request(cardPath(patch.name), workspace.admin)).text);
-      assert.include(text(admin ?? ""), "Only admins can turn it on: you.");
+      assert.include(text(admin ?? ""), "Only super admins can turn it on: you.");
       assert.deepStrictEqual(links(admin ?? ""), [
         { href: "/settings/agent-access", text: "Turn it on" }
       ]);
@@ -1813,6 +1815,8 @@ it.layer(socket)("what agents can do on a socket", (it) => {
   it.effect("leaves a card without live agent tools as it was", () =>
     Effect.gen(function* () {
       const workspace = yield* company();
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE users SET role='super_admin' WHERE id=${workspace.admin.id}`;
       yield* (yield* Companies.Companies).setAgentAccess({
         companyId: workspace.id,
         on: true,

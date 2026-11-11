@@ -183,7 +183,7 @@ it.layer(services)("company page and actions", (it) => {
         assert.include(html, `aria-invalid="true"`);
         assert.include(html, `aria-describedby="${id}-error"`);
         assert.include(html, `class="field-error" id="${id}-error"`);
-        assert.include(html, 'class="stack"');
+        assert.include(html, 'role="dialog"');
         assert.include(
           html,
           `action="${root}/${action}${action === "rename" ? `?team=${teamId}` : ""}"`
@@ -277,22 +277,21 @@ it.layer(services)("company page and actions", (it) => {
         return main(yield* Effect.promise(() => response.text()));
       });
       const directory = yield* read(root);
-      assert.include(directory, 'aria-label="Teams"');
+      assert.include(directory, 'aria-label="Manage Design"');
       assert.include(directory, location);
       assert.notInclude(directory, member.name);
       const roster = yield* read(location);
       assert.include(roster, member.name);
       assert.notInclude(roster, 'type="checkbox"');
       const picker = yield* read(`${location}&view=add`);
-      assert.include(picker, `value="${member.id}" checked disabled`);
-      assert.include(picker, `value="${inactive.id}" disabled`);
-      assert.include(picker, "Already in team");
-      assert.include(picker, "Deactivated");
+      assert.notInclude(picker, `name="userId" value="${member.id}"`);
+      assert.notInclude(picker, `name="userId" value="${inactive.id}"`);
+      assert.include(picker, `formaction="${root}/add?team=${teamId}" formmethod="post"`);
       const searched = yield* read(`${location}&view=add&q=${encodeURIComponent(member.email)}`);
-      assert.include(searched, member.name);
+      assert.notInclude(searched, `name="userId" value="${member.id}"`);
       assert.notInclude(searched, inactive.name);
       const missing = yield* read(`${root}?q=not-a-team`);
-      assert.include(missing, "No teams match your search.");
+      assert.include(missing, "No teams match your search");
       assert.notInclude(missing, location);
     })
   );

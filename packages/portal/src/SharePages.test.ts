@@ -45,6 +45,8 @@ it.layer(socket)("the Share dialog on a socket", (it) => {
         const fields: FormFields = { ...formFields(dialog, scopePath), scope: "public" };
         assert.deepStrictEqual(fields, {
           expectedPatchId: patch.patchId,
+          expectedOwnerUserId: workspace.owner.id,
+          expectedLifecycleRevision: before.patch.lifecycleRevision,
           back: "/patches",
           expectedScope: "company",
           scope: "public"
@@ -127,7 +129,8 @@ it.layer(socket)("the Share dialog on a socket", (it) => {
         const back = yield* post(scopePath, workspace.owner, {
           ...fields,
           scope: "company",
-          expectedScope: "public"
+          expectedScope: "public",
+          expectedLifecycleRevision: saved.patch.lifecycleRevision
         });
         assert.strictEqual(back.status, 303);
         assert.strictEqual(
@@ -156,6 +159,7 @@ it.layer(socket)("the Share dialog on a socket", (it) => {
       const fields = formFields(dialog, addPath);
       assert.deepStrictEqual(fields, {
         expectedPatchId: patch.patchId,
+        expectedOwnerUserId: workspace.owner.id,
         back: "/patches?show=pages"
       });
       assert.isTrue(

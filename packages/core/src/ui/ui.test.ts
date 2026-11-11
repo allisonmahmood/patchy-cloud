@@ -229,6 +229,14 @@ describe("the field family", () => {
 });
 
 describe("buttons", () => {
+  it("escapes native submit overrides for a POST save inside a GET search form", () => {
+    expect(
+      button("Add", { formAction: '/teams/add?name="<studio>"&team=1', formMethod: "post" })
+    ).toContain(
+      'formaction="/teams/add?name=&quot;&lt;studio&gt;&quot;&amp;team=1" formmethod="post"'
+    );
+    expect(button("Search")).not.toContain("formmethod");
+  });
   it("draw each kind and say a pending press can't be repeated", () => {
     expect(button("Save", { kind: "primary", size: "sm" })).toBe(
       '<button class="btn btn-primary btn-sm" type="submit">Save</button>'

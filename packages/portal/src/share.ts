@@ -52,7 +52,12 @@ const refusalText = (refused: ShareRefusal, viewer: Viewer): string => {
  * copy script.
  */
 export const renderShareDialog = (input: {
-  readonly row: Patches.ReadPatch;
+  readonly row: Patches.ReadPatch | Patches.ManagementCard;
+  readonly dependants?: {
+    readonly dependants: readonly { readonly patchId: string; readonly name: string }[];
+    readonly hiddenCount: number;
+  };
+  readonly submitted?: { readonly scope: string; readonly teamIds: readonly string[] };
   readonly teams?: readonly Teams.Team[];
   readonly viewer: Viewer;
   readonly publicBaseUrl: string;
@@ -92,7 +97,7 @@ export const renderShareDialog = (input: {
       ? "scope"
       : "invite";
   const form = (act: "add-guest" | "remove-guest" | "scope", body: string) =>
-    `<form method="post" action="${escapeAttribute(`/patches/${encodeURIComponent(patch.name)}/${act}`)}" novalidate>${hidden("expectedPatchId", patch.id)}${hidden("back", input.back)}${body}</form>`;
+    `<form method="post" action="${escapeAttribute(`/patches/${encodeURIComponent(patch.name)}/${act}`)}" novalidate>${hidden("expectedPatchId", patch.id)}${hidden("expectedOwnerUserId", patch.ownerUserId)}${hidden("back", input.back)}${body}</form>`;
 
   const known = new Set(input.guests.map((guest) => guest.userId));
   const suggestions = input.suggestions
@@ -150,15 +155,29 @@ export const renderShareDialog = (input: {
     input.notice === undefined
       ? ""
       : `<div id="${refusalId}">${notice({ tone: "danger", title: input.notice })}</div>`;
+  const dependants = input.dependants;
+  const impact =
+    dependants && (dependants.dependants.length || dependants.hiddenCount)
+      ? notice({
+          tone: "warning",
+          title: "Other patches use this patch",
+          body: `${rows(
+            dependants.dependants.map((item) => row({ name: item.name })),
+            true
+          )}${dependants.hiddenCount ? `<p>${dependants.hiddenCount} other ${dependants.hiddenCount === 1 ? "patch" : "patches"}</p>` : ""}${hidden("expectedDependants", dependants.dependants.map((item) => item.patchId).join(",") + ":" + dependants.hiddenCount)}${checkbox({ name: "force", value: "true", label: "Allow dependent patches to lose access if narrowing access" })}`
+        })
+      : "";
   const audience = confirming
     ? form(
         "scope",
-        `${hidden("expectedScope", patch.scope)}${hidden("scope", "public")}${notice({
-          tone: "warning",
-          title: `Make ${title} public?`,
-          body: "<p>Anyone with the link can open it without signing in.</p>",
-          action: `<div class="cluster">${button("Make public", { kind: "primary", name: "confirm", value: "public" })}${linkButton("Cancel", shareHref(input.back, patch.name), { kind: "quiet", autofocus: true })}</div>`
-        })}`
+        `${hidden("expectedScope", patch.scope)}${hidden("expectedLifecycleRevision", patch.lifecycleRevision)}${hidden("scope", "public")}${notice(
+          {
+            tone: "warning",
+            title: `Make ${title} public?`,
+            body: "<p>Anyone with the link can open it without signing in.</p>",
+            action: `<div class="cluster">${button("Make public", { kind: "primary", name: "confirm", value: "public" })}${linkButton("Cancel", shareHref(input.back, patch.name), { kind: "quiet", autofocus: true })}</div>`
+          }
+        )}`
       )
     : (() => {
         const audienceField = field({
@@ -187,7 +206,7 @@ export const renderShareDialog = (input: {
               },
               {
                 name: "scope",
-                value: patch.scope,
+                value: input.submitted?.scope ?? patch.scope,
                 width: "md",
                 autofocus: focus === "scope",
                 choices: [
@@ -203,7 +222,8 @@ export const renderShareDialog = (input: {
           }
         });
         const ids = new Set(
-          patch.audience.members.kind === "teams" ? patch.audience.members.teamIds : []
+          input.submitted?.teamIds ??
+            (patch.audience.members.kind === "teams" ? patch.audience.members.teamIds : [])
         );
         const choices = (input.teams ?? [])
           .map((team) =>
@@ -217,7 +237,7 @@ export const renderShareDialog = (input: {
           .join("");
         return form(
           "scope",
-          `${hidden("expectedScope", patch.scope)}${hidden("expectedLifecycleRevision", patch.lifecycleRevision)}${refusal}${audienceField}${choices}`
+          `${hidden("expectedScope", patch.scope)}${hidden("expectedLifecycleRevision", patch.lifecycleRevision)}${refusal}${audienceField}${choices}${impact}`
         );
       })();
 

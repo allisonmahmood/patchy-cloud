@@ -376,7 +376,17 @@ export const layer: Layer.Layer<
                 })
               : response;
           }
-          return pageResponse({ ...page, app: { viewer, section: "teams" } }, session);
+          return pageResponse(
+            {
+              ...page,
+              app: {
+                viewer,
+                section: "teams",
+                ...("overlay" in page && page.overlay ? { overlay: page.overlay } : {})
+              }
+            },
+            session
+          );
         });
         yield* router.add(
           action === "view" ? "GET" : "POST",

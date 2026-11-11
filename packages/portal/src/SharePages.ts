@@ -14,6 +14,7 @@ import { Users } from "@patchy/companies";
 import { GuestGrants, Patches } from "@patchy/patches";
 import { renderLeaveConfirmation } from "./share.js";
 import {
+  actionSelection,
   behind,
   context,
   errorPage,
@@ -93,14 +94,12 @@ export const layer = (pages: PagesBehind): Routes => {
     if (name.length > maxNameLength) return yield* overlongName;
     if (!isName(name))
       return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
-    const { viewer, session, access } = yield* context;
+    const { viewer, session } = yield* context;
     const patches = yield* Patches.Patches;
-    const selected = (yield* patches.read({ ...access, state: "all" })).find(
-      (row) => row.patch.name === name
-    );
+    const selected = yield* actionSelection(name);
     if (!selected)
       return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
-    yield* WideEvents.enrich(Patches.eventFields(selected.patch));
+    yield* WideEvents.enrich({ patchId: selected.patch.id });
     const request = yield* HttpServerRequest.HttpServerRequest;
     const values = new URLSearchParams(
       yield* request.text.pipe(
@@ -143,7 +142,19 @@ export const layer = (pages: PagesBehind): Routes => {
     };
     /** The page behind again, with the dialog open and what it has to say. */
     const again = Effect.fnUntraced(function* (sharing: Omit<Sharing, "name" | "at">) {
-      const shown = { ...sharing, name, at };
+      const shown = {
+        ...sharing,
+        name,
+        at,
+        ...(act === "scope"
+          ? {
+              submitted: {
+                scope: form.scope ?? selected.patch.scope,
+                teamIds: values.getAll("teamIds")
+              }
+            }
+          : {})
+      };
       if (at.pathname === "/") return yield* pages.home(shown);
       if (at.pathname === "/patches") return yield* pages.allPatches(shown);
       const tab = at.pathname.endsWith("/versions")
@@ -198,12 +209,13 @@ export const layer = (pages: PagesBehind): Routes => {
                     : { kind: "company" }
             },
             expectedScope: fields.expectedScope,
+            expectedOwnerUserId: form.expectedOwnerUserId,
             expectedLifecycleRevision: form.expectedLifecycleRevision,
             force: form.force === "true",
             expectedDependants: form.expectedDependants
           });
           return reopened(
-            `${title} is open to ${fields.scope === "public" ? "anyone on the internet" : `people at ${viewer.company.name}`}`
+            `${title} is open to ${fields.scope === "public" ? "anyone on the internet" : fields.scope === "teams" ? "selected teams" : `people at ${viewer.company.name}`}`
           );
         }
       }
@@ -216,7 +228,7 @@ export const layer = (pages: PagesBehind): Routes => {
       Effect.catchTags({
         PatchRetired: onCard,
         PatchDeleted: onCard,
-        HasDependants: onCard,
+        HasDependants: (error) => again({ status: 409, notice: nothing(error.message) }),
         SourcesOff: onCard,
         ReservedName: onCard,
         InvalidDescription: onCard,

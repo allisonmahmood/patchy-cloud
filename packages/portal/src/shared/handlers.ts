@@ -163,8 +163,14 @@ export const staleNotice = Effect.fn("Portal.staleNotice")(function* (
   patchId: string,
   state?: Patches.Patch["state"]
 ) {
-  const { access } = yield* context;
-  const fresh = yield* (yield* Patches.Patches).portalCard(patchId, access);
+  const { access, viewer } = yield* context;
+  const patches = yield* Patches.Patches;
+  const management = (yield* patches.management(viewer.company.id, viewer.user.id, {
+    id: patchId
+  })).find((view) => view.record.id === patchId);
+  if (management && !management.canOpen)
+    return "This patch changed while you had this page open. Nothing was done. Review its current settings and try again.";
+  const fresh = yield* patches.portalCard(patchId, access);
   const when =
     fresh.patch.lastChangedAt === null
       ? ""
@@ -184,6 +190,7 @@ export interface Sharing {
   readonly notice?: string;
   readonly refused?: { readonly email: string; readonly refusal: ShareRefusal };
   readonly confirmPublic?: boolean;
+  readonly submitted?: { readonly scope: string; readonly teamIds: readonly string[] };
 }
 
 /** The Share dialog `url` asks for, if it asks, and whether it asks about going public. */
@@ -254,7 +261,7 @@ export interface PagesBehind {
  * which the page behind then leaves out, and why the patch's guests can't open it, if they can't.
  */
 export const shareOverlay = Effect.fn("Portal.shareOverlay")(function* (
-  rows: readonly Patches.ReadPatch[],
+  rows: readonly (Patches.ReadPatch | Patches.ManagementCard)[],
   sharing: Sharing | undefined
 ) {
   if (sharing === undefined) return undefined;
@@ -272,6 +279,11 @@ export const shareOverlay = Effect.fn("Portal.shareOverlay")(function* (
           .pipe(Effect.catchTags({ ConnectionStorageFailed: Effect.die }))).get(row.patch.id);
   return renderShareDialog({
     row,
+    dependants: yield* (yield* Patches.Patches).sharingDependants(row.patch.id, {
+      userId: viewer.user.id,
+      admin: viewer.role !== "member"
+    }),
+    ...(sharing.submitted ? { submitted: sharing.submitted } : {}),
     teams: yield* (yield* Teams.Teams)
       .list({ companyId: viewer.company.id, actorId: viewer.user.id })
       .pipe(Effect.provide(Teams.layer), Effect.catchTags({ RoleForbidden: Effect.die })),
@@ -369,4 +381,15 @@ export const prewarm = Effect.fn("Portal.prewarm")(function* (
     viewerId: viewer.user.id,
     candidates
   });
+});
+
+/** Resolve a current name through content access or explicitly authorized management metadata. */
+export const actionSelection = Effect.fn("Portal.actionSelection")(function* (name: string) {
+  const { viewer, access } = yield* context;
+  const patches = yield* Patches.Patches;
+  const management = (yield* patches.management(viewer.company.id, viewer.user.id, { name })).find(
+    (view) => view.record.name === name
+  );
+  if (management?.canManage && !management.canOpen) return management.card;
+  return (yield* patches.read({ ...access, state: "all" })).find((row) => row.patch.name === name);
 });

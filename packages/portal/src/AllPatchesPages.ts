@@ -43,6 +43,9 @@ export const page: (refused?: Sharing) => Page = Effect.fn("AllPatchesPages.page
   const query = searchQuery(params.get("q"));
   const patches = yield* Patches.Patches;
   const rows = yield* patches.read({ ...access, state: "all" });
+  const management = (yield* patches.management(viewer.company.id, viewer.user.id)).filter(
+    (view) => !view.canOpen
+  );
   const opens = new Map((yield* patches.opens(viewer.user.id)).map((open) => [open.patchId, open]));
   yield* prewarm(rows, opens);
   const members = yield* (yield* Users.Users).list(viewer.company.id);
@@ -55,12 +58,16 @@ export const page: (refused?: Sharing) => Page = Effect.fn("AllPatchesPages.page
   const connected =
     query === "" || (yield* (yield* MachineTokens.MachineTokens).list(viewer.user.id)).length > 0;
   const sharing = refused ?? asked(at);
-  const overlay = yield* shareOverlay(rows, sharing);
+  const overlay = yield* shareOverlay(
+    [...rows, ...management.filter((view) => view.canManage).map((view) => view.card)],
+    sharing
+  );
   return pageResponse(
     {
       title: "All patches",
       ...renderAllPatches({
         rows,
+        management,
         viewer,
         show,
         query,

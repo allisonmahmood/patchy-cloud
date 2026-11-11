@@ -24,6 +24,9 @@ import {
   patchTitle,
   rowMenu,
   segmented,
+  row,
+  rows,
+  section,
   table,
   unopenedName
 } from "@patchy/core";
@@ -196,6 +199,7 @@ export const listPath = ({ show, query, owner }: Listing, page = 1) => {
  */
 export const renderAllPatches = (input: {
   readonly rows: readonly Patches.ReadPatch[];
+  readonly management?: readonly Patches.ManagementView[];
   readonly viewer: Viewer;
   readonly show: Show;
   readonly query: string;
@@ -434,11 +438,43 @@ export const renderAllPatches = (input: {
           : empty[show]
   );
 
+  const managed = (input.management ?? []).filter(
+    ({ card }) =>
+      (query === "" ||
+        `${card.patch.name} ${card.owner.name}`
+          .toLocaleLowerCase()
+          .includes(query.toLocaleLowerCase())) &&
+      (owner === undefined || card.owner.id === owner.id) &&
+      (show !== "yours" || card.owner.id === viewer.user.id) &&
+      (show !== "tools" || card.tier >= 2) &&
+      (show !== "pages" || card.tier === 1) &&
+      (show !== "off" || card.patch.state !== "live")
+  );
+  const management = managed.length
+    ? section({
+        title: "Access recovery",
+        body: rows(
+          managed.map(({ card, canManage }) =>
+            row({
+              lead: patchMark(card.patch.name, card.tier),
+              name: card.patch.name,
+              description: `${card.owner.name} · ${card.patch.state}`,
+              href: cardPath(card.patch),
+              end: linkButton(canManage ? "Manage" : "View", cardPath(card.patch), {
+                size: "sm",
+                ariaLabel: `${canManage ? "Manage" : "View"} ${card.patch.name}`
+              })
+            })
+          ),
+          true
+        )
+      })
+    : "";
   const from = (current - 1) * PAGE_SIZE + 1;
   return indexPage({
     title: "All patches",
     toolbar: `${filter}${searched}`,
-    content: `${entries.length ? content : `<div class="box">${missing}</div>`}<script defer src="${copyScriptPath}"></script>`,
+    content: `${entries.length ? content : managed.length ? "" : `<div class="box">${missing}</div>`}${management}<script defer src="${copyScriptPath}"></script>`,
     ...(pages > 1
       ? {
           pagination: `<span>${from}–${from + shown.length - 1} of ${entries.length}</span><span class="cluster">${current > 1 ? linkButton("Previous", listPath(listing, current - 1), { size: "sm" }) : ""}${current < pages ? linkButton("Next", listPath(listing, current + 1), { size: "sm" }) : ""}</span>`

@@ -66,7 +66,7 @@ export type ConfirmationAction = "retire" | "delete" | "restore" | "reassign";
 export type PatchAction = "description" | "rollback" | ConfirmationAction;
 
 /** The owner and admins manage a patch: its log, its settings, and taking it down. */
-export const canManage = (card: Patches.ReadPatch, viewer: Viewer) =>
+export const canManage = (card: Pick<Patches.ReadPatch, "owner">, viewer: Viewer) =>
   card.owner.id === viewer.user.id || viewer.role !== "member";
 
 const tabLabels: Record<CardTab, string> = {
@@ -317,7 +317,7 @@ export const renderAgentAside = (input: {
   const apps = [...new Set(input.apps)];
   const foot =
     admins !== null
-      ? `<span class="meta">Agent access is off at ${company}, so no agent can use these yet. Only admins can turn it on: ${adminNames(admins, viewer.user.id)}.</span>${viewer.role !== "member" ? linkButton("Turn it on", "/settings/agent-access", { size: "sm" }) : ""}`
+      ? `<span class="meta">Agent access is off at ${company}, so no agent can use these yet. Only super admins can turn it on: ${adminNames(admins, viewer.user.id)}.</span>${viewer.role === "super_admin" ? linkButton("Turn it on", "/settings/agent-access", { size: "sm" }) : ""}`
       : apps.length === 0
         ? linkButton("Use with your agent", "/agents/connect", { size: "sm" })
         : `<span class="meta">${dot(`${plainList(apps)} ${apps.length === 1 ? "is" : "are"} connected`, "success")} · <a href="/agents">Your agents</a></span>`;
@@ -437,12 +437,12 @@ export const renderSettings = (input: {
 };
 
 /** Where Serve this version… asks about one version. */
-export const servePath = (patch: Patches.Patch, versionNumber: number) =>
+export const servePath = (patch: Pick<Patches.Patch, "name">, versionNumber: number) =>
   `${cardPath(patch, "rollback")}?version=${versionNumber}`;
 
 /** Versions: every retained version, the one at the address marked Serving, with Serve this version… for the owner and admins. */
 export const renderVersions = (input: {
-  readonly card: Patches.PortalCard;
+  readonly card: Patches.ManagementCard & Pick<Patches.PortalCard, "versions">;
   readonly viewer: Viewer;
   readonly now: number;
 }): string => {
@@ -494,10 +494,10 @@ interface DependantGroup {
   readonly resources: string[];
 }
 
-const dependantGroups = (patchCard: Patches.PortalCard) => {
+const dependantGroups = (patchCard: Patches.ManagementCard) => {
   const groups = new Map<string, DependantGroup>();
   for (const dependant of patchCard.dependants) {
-    const resource = dependant.table ?? dependant.store;
+    const resource = dependant.table ?? dependant.store ?? "shared resources";
     const existing = groups.get(dependant.patchId);
     if (existing === undefined)
       groups.set(dependant.patchId, {
@@ -548,7 +548,7 @@ export interface ConfirmationState {
  */
 export const renderConfirmation = (
   input: {
-    readonly card: Patches.PortalCard;
+    readonly card: Patches.ManagementCard & Pick<Patches.PortalCard, "currentVersion">;
     readonly viewer: Viewer;
     readonly now: number;
     /** The tab behind it, where Cancel and Close go. */
@@ -573,7 +573,7 @@ export const renderConfirmation = (
     });
   const form = (fields: string) => ({
     action: cardPath(patch, input.action),
-    fields: `${hidden("expectedPatchId", patch.id)}${fields}`
+    fields: `${hidden("expectedPatchId", patch.id)}${hidden("expectedOwnerUserId", patch.ownerUserId)}${fields}`
   });
   switch (input.action) {
     case "retire": {
@@ -652,7 +652,7 @@ export const renderConfirmation = (
         id: "patch-reassign",
         title: `Reassign ${title}`,
         closeHref: close,
-        form: form(hidden("expectedOwnerUserId", patchCard.owner.id)),
+        form: form(""),
         body: `<p class="prose">The new owner can publish to it, change it and take it down. Its versions keep who published them.</p>${field(
           {
             id: "reassign-owner",

@@ -51,7 +51,7 @@ export const byTitle = (company: string) => (a: Patches.ReadPatch, b: Patches.Re
   a.patch.name.localeCompare(b.patch.name);
 
 /** Whether the viewer may manage this patch: its owner, or any admin. */
-export const manages = (row: Patches.ReadPatch, viewer: Viewer) =>
+export const manages = (row: Pick<Patches.ReadPatch, "owner">, viewer: Viewer) =>
   viewer.role !== "member" || row.owner.id === viewer.user.id;
 
 /**
@@ -65,7 +65,7 @@ export const unopened = (
 ) => row.patch.state === "live" && row.owner.id !== viewer.user.id && !opens.has(row.patch.id);
 
 /** A patch's card at `/patches/<name>`, or one of its pages under it. */
-export const cardPath = (patch: Patches.Patch, action = "") =>
+export const cardPath = (patch: Pick<Patches.Patch, "name">, action = "") =>
   `/patches/${encodeURIComponent(patch.name)}${action ? `/${action}` : ""}`;
 
 /** The log filtered to its failed entries. */
@@ -103,7 +103,7 @@ export const failuresCell = (
       : `<span class="muted">${summary.calls === 0 ? "No calls yet" : "None"}</span>`;
 
 /** A live patch's address, relative to the instance. */
-export const patchAddress = (patch: Patches.Patch) =>
+export const patchAddress = (patch: Pick<Patches.Patch, "name" | "companyHandle">) =>
   `/${encodeURIComponent(patch.companyHandle)}/${encodeURIComponent(patch.name)}`;
 
 /** `here`, the page a menu is on, with the Share dialog for patch `name` open over it. */
