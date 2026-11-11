@@ -105,7 +105,9 @@ Done when `pnpm dev status` exits 0.
 - **A patch repo.** Follow DEVELOPMENT's **A patch repo against this worktree**.
   `patchy dev` prints a Guest URL beside the Colleague one: the patch's guest
   from another company, with `guest: true` and no agent door, which starts only
-  a tier 2 repo's `guest: true` handlers.
+  a tier 2 repo's `guest: true` handlers. Each of the three keeps their own
+  single-key shortcut setting, which names their frame as Patchy does; the
+  sheet's row changes it through Patchy's dialog.
   A tier 2 repo's agent tools answer `pnpm patchy dev agent`, which lists them as
   an agent sees them, and `pnpm patchy dev agent <tool> '<json>' [--colleague]`,
   which calls one as a dev person, so open dev pages show its changes live.

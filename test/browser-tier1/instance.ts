@@ -74,7 +74,10 @@ export interface Instance {
     html?: string,
     patchId?: string,
     declarations?: Partial<
-      Pick<typeof Manifest.Type, "tier" | "tables" | "files" | "uses" | "handlers">
+      Pick<
+        typeof Manifest.Type,
+        "tier" | "tables" | "files" | "uses" | "handlers" | "sdkImports" | "shortcutSetting"
+      >
     >,
     options?: { readonly server?: string; readonly force?: boolean }
   ): Promise<Published>;

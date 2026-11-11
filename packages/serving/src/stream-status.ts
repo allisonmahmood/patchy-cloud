@@ -4,6 +4,27 @@
 import { registry } from "@patchy/limits/registry";
 import { SWITCHER_CLOSED, switcherOpen } from "@patchy/core/switcher";
 
+/**
+ * The page's one bottom-centre stack for its state, made on first use. Its height is measured into
+ * `--patchy-status-offset`, so downloads stack above it.
+ */
+export function shellBottom(): HTMLElement {
+  const existing = document.querySelector<HTMLElement>("body > .shell-bottom");
+  if (existing !== null) return existing;
+  const root = document.createElement("div");
+  root.className = "shell-bottom";
+  root.setAttribute("aria-label", "Patchy page status");
+  document.body.append(root);
+  new ResizeObserver(() => {
+    const height = root.getBoundingClientRect().height;
+    document.documentElement.style.setProperty(
+      "--patchy-status-offset",
+      `${height > 0 ? height + 16 : 0}px`
+    );
+  }).observe(root);
+  return root;
+}
+
 export function createStreamStatus(
   frame: HTMLIFrameElement,
   versionId: string,
@@ -12,9 +33,7 @@ export function createStreamStatus(
   retry: () => void
 ) {
   const name = frame.title;
-  const root = document.createElement("div");
-  root.className = "shell-bottom";
-  root.setAttribute("aria-label", "Patchy page status");
+  const root = shellBottom();
   const glyph = () => {
     const element = document.createElement("span");
     element.className = "glyph glyph-sm";
@@ -49,15 +68,6 @@ export function createStreamStatus(
   version.hidden = true;
   version.setAttribute("role", "status");
   root.append(reconnecting, version);
-  document.body.append(root);
-  const resize = new ResizeObserver(() => {
-    const height = root.getBoundingClientRect().height;
-    document.documentElement.style.setProperty(
-      "--patchy-status-offset",
-      `${height > 0 ? height + 16 : 0}px`
-    );
-  });
-  resize.observe(root);
   // T-1 from #385: a static dim over the frame with one centred note. It holds focus until ready.
   // The dialog's name stays fixed while the note inside switches between starting and failed.
   const cover = document.createElement("dialog");
@@ -299,12 +309,11 @@ export function createStreamStatus(
     },
     close() {
       window.removeEventListener(SWITCHER_CLOSED, switcherClosed);
-      resize.disconnect();
-      document.documentElement.style.removeProperty("--patchy-status-offset");
       clearTimeout(reconnectTimer);
       clearStarting();
       cover.remove();
-      root.remove();
+      reconnecting.remove();
+      version.remove();
     }
   };
 }

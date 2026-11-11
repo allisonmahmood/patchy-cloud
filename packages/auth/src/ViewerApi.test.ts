@@ -143,6 +143,20 @@ it.layer(
     })
   );
 
+  it.effect("sends a signed-out form post back to its page, which signs in there", () =>
+    Effect.gen(function* () {
+      const ada = yield* person("shortcuts-signed-out-form");
+      // The account menu's switch names its page. Signing in from this route would come back
+      // to it, and it has no page to show.
+      const response = yield* post(undefined, { value: "off", return: "/patches?tab=tools" });
+      assert.strictEqual(response.status, 303);
+      assert.strictEqual(response.headers.get("location"), "/patches?tab=tools");
+      const elsewhere = yield* post(undefined, { value: "off", return: "//elsewhere.example/" });
+      assert.strictEqual(elsewhere.headers.get("location"), "/");
+      assert.isTrue(yield* stored(ada));
+    })
+  );
+
   it.effect("refuses a missing, unknown or repeated value, and a JSON body", () =>
     Effect.gen(function* () {
       const ada = yield* person("shortcuts-malformed");

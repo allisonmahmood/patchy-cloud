@@ -8,7 +8,7 @@ import {
   switcherTag
 } from "@patchy/core/html";
 import { doorCard, doorPage, headStart, linkButton } from "@patchy/core";
-import type { HandlerKind } from "@patchy/api";
+import type { HandlerKind, Manifest } from "@patchy/api";
 import { brokerDigest } from "./generated/broker-script.js";
 
 export { brokerScript, brokerDigest } from "./generated/broker-script.js";
@@ -50,6 +50,14 @@ interface PatchPage {
    * a member of the patch's company, loads their switcher.
    */
   readonly companyId?: string;
+  /**
+   * The viewer's single-key shortcut setting, which names the frame `patchy:shortcuts=on` or
+   * `=off` for `patchy/hotkeys` to read as its document starts, and whether to tell them this
+   * version's shortcuts ignore it. Only a company or local shell, rendered for its viewer and
+   * never cached for another, carries it. A public shell is everyone's document, a member's
+   * included, so its shortcuts stay on.
+   */
+  readonly shortcuts?: { readonly on: boolean; readonly note: boolean };
   readonly handlerKinds?: Readonly<Record<string, HandlerKind>>;
   /** Trusted host markup; the standalone renderer has no session dependency. */
   readonly head?: string;
@@ -82,6 +90,16 @@ export function renderPatchWrapper(options: PatchPage): string {
   if (options.scope !== "public" && !options.viewerId)
     throw new Error("A company or local shell needs its admitted viewer.");
   const switcher = switcherOf(options);
+  if (options.scope === "public" && options.shortcuts)
+    throw new Error(
+      "A public shell is the same document for every reader, so it carries no viewer's setting."
+    );
+  // The name is an attribute the parser sets as it creates the frame, before the frame's browsing
+  // context exists, so it reaches the sandboxed document; one set after insertion doesn't.
+  const shortcuts =
+    options.shortcuts === undefined
+      ? ""
+      : ` name="patchy:shortcuts=${options.shortcuts.on ? "on" : "off"}"${options.shortcuts.note ? " data-shortcuts-note" : ""}`;
   const content = `/~content/${encodeURIComponent(options.patch.id)}/${encodeURIComponent(options.version.id)}?n=${encodeURIComponent(options.nonce)}`;
   return `<!doctype html>
 <html lang="en">
@@ -106,7 +124,7 @@ export function renderPatchWrapper(options: PatchPage): string {
   </style>
 </head>
 <body>
-  <iframe id="patch" class="patch-frame" title="${title}" data-waiting
+  <iframe id="patch" class="patch-frame" title="${title}" data-waiting${shortcuts}
     sandbox="allow-scripts allow-modals" referrerpolicy="no-referrer"
     allow="clipboard-write *"
     data-patch-id="${escapeAttribute(options.patch.id)}" data-version-id="${escapeAttribute(options.version.id)}" data-tier="${options.version.tier}" data-scope="${options.scope}"${options.scope !== "public" ? ` data-viewer-id="${escapeAttribute(options.viewerId)}"` : ""}${switcher ? " data-switcher" : ""} data-wire="${options.version.wireVersion}" data-nonce="${escapeAttribute(options.nonce)}" data-base="${escapeAttribute(options.base)}" data-route="${escapeAttribute(options.route ?? "/")}" data-content-src="${escapeAttribute(content)}"
@@ -114,6 +132,25 @@ export function renderPatchWrapper(options: PatchPage): string {
   <!-- patch:${escapeHtml(options.patch.id)} version:${Number(options.version.versionNumber)} -->
 </body>
 </html>`;
+}
+
+/**
+ * Whether a version's single-key shortcuts may ignore the viewer's setting, as D1 decided: it is
+ * from 0.33.0 on, when `patchy/hotkeys` first shipped, and its manifest doesn't record that the
+ * CLI built it with an SDK that obeys. Recorded imports without `patchy/hotkeys` clear it. A single
+ * HTML file records none, and may carry an older SDK bundled inline, so only its release counts.
+ * Its shell tells a viewer who turned them off, until they dismiss it.
+ */
+export function ignoresShortcutSetting(version: {
+  readonly release: string;
+  readonly manifest: Pick<typeof Manifest.Type, "sdkImports" | "shortcutSetting">;
+}): boolean {
+  const [major = 0, minor = 0] = version.release.split(".").map(Number);
+  return (
+    version.manifest.shortcutSetting === undefined &&
+    (version.manifest.sdkImports?.includes("patchy/hotkeys") ?? true) &&
+    (major > 0 || minor >= 33)
+  );
 }
 
 /** Reader-facing copy: what Patchy did, why, and what to do next, in the reader's words. */

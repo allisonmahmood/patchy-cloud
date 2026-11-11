@@ -28,6 +28,8 @@ export const menus = `
     .menu-item svg { width: 16px; height: 16px; color: var(--muted); }
     @media (hover: hover) { .menu-item:hover { background: var(--hover); } }
     .menu-item-danger, .menu-item-danger svg { color: var(--danger); }
+    /* A setting's item is the switch: role="switch" on the item, its drawing at the end. */
+    .menu-item > .switch { margin-left: auto; }
     /* A Copy item waits hidden for the page's copy script, so a menu without script offers only what works. */
     .menu-item[hidden] { display: none; }
     .menu-rule { height: 1px; margin: var(--space-1) calc(-1 * var(--space-1)); border: 0; background: var(--border-subtle); }
