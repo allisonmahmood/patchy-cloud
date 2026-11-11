@@ -81,7 +81,7 @@ export const renderShareDialog = (input: {
   const title = patchTitle(patch, viewer.company.name);
   const company = viewer.company.name;
   const isPublic = patch.scope === "public";
-  // A tool can't be public, so its one choice is its company, with why; going public asks first.
+  // Tools require sign-in; pages can also offer public access after confirmation.
   const tool = tier >= 2 && !isPublic;
   const confirming = input.confirmPublic === true && !isPublic && !tool;
   const refused = input.refused;
@@ -218,7 +218,7 @@ export const renderShareDialog = (input: {
                 ]
               }
             );
-            return `<div class="pair">${choice}${tool ? `<p class="meta grow" id="${reason}">Tools can’t be public.</p>` : ""}${button("Save")}</div>`;
+            return `<div class="pair">${choice}${button("Save")}</div>`;
           }
         });
         const ids = new Set(
@@ -237,7 +237,7 @@ export const renderShareDialog = (input: {
           .join("");
         return form(
           "scope",
-          `${hidden("expectedScope", patch.scope)}${hidden("expectedLifecycleRevision", patch.lifecycleRevision)}${refusal}${audienceField}${choices}${impact}`
+          `${hidden("expectedScope", patch.scope)}${hidden("expectedLifecycleRevision", patch.lifecycleRevision)}<div class="share-audience">${refusal}${audienceField}${choices ? `<div class="share-teams">${choices}</div>` : ""}${impact}${tool ? '<p class="meta" id="share-scope-reason">People must sign in to use this tool.</p>' : ""}</div>`
         );
       })();
 

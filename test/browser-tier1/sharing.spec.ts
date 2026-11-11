@@ -106,3 +106,40 @@ test("without script, Share is a page: Copy link waits for script, and going pub
     await context.close();
   }
 });
+
+for (const javaScriptEnabled of [true, false])
+  test(`team choices follow General access with script ${javaScriptEnabled ? "on" : "off"}`, async ({
+    browser,
+    instance
+  }) => {
+    const context = await browser.newContext({ javaScriptEnabled });
+    try {
+      await prepare(context, instance);
+      const created = await context.request.post(
+        `${instance.origin}/settings/company/teams/create`,
+        {
+          headers: { origin: instance.origin },
+          form: { name: "Design" }
+        }
+      );
+      expect(created.ok()).toBe(true);
+      const patch = await instance.publish();
+      const page = await context.newPage();
+      await page.goto(`${instance.origin}/patches?share=${patch.name}`);
+      const scope = page.getByLabel("General access");
+      const team = page.getByRole("checkbox", { name: "Design", exact: true });
+      await expect(team).toBeHidden();
+      await scope.selectOption("teams");
+      await expect(team).toBeVisible();
+      await team.check();
+      await scope.selectOption("company");
+      await expect(team).toBeHidden();
+      await scope.selectOption("public");
+      await expect(team).toBeHidden();
+      await scope.selectOption("teams");
+      await expect(team).toBeChecked();
+      await expect(team).toBeVisible();
+    } finally {
+      await context.close();
+    }
+  });

@@ -327,7 +327,7 @@ it.layer(socket)("the Share dialog on a socket", (it) => {
         yield* (yield* request(`${cardPath(patch.name)}?share=${patch.name}`, workspace.owner)).text
       );
       assert.notInclude(dialog, 'value="public"');
-      assert.include(text(dialog), "Tools can’t be public.");
+      assert.include(text(dialog), "People must sign in to use this tool.");
       assert.notInclude(dialog, "Make public");
       const refused = yield* post(`${cardPath(patch.name)}/scope`, workspace.owner, {
         expectedPatchId: patch.patchId,

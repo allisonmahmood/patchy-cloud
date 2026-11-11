@@ -290,7 +290,7 @@ it.layer(socket)("all patches on a socket", (it) => {
           yield* (yield* request(`/patches?share=${payroll.name}`, workspace.owner)).text
         );
         assert.include(text(dialog), "Guests can't open this");
-        assert.include(text(dialog), "Tools can’t be public.");
+        assert.include(text(dialog), "People must sign in to use this tool.");
         assert.notInclude(dialog, 'value="public"');
       })
   );

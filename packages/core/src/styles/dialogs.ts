@@ -5,6 +5,9 @@
  * unbroken name, such as a computer's, breaks anywhere rather than pushing Close off a phone.
  */
 export const dialogs = `
+    .share-teams { display: none; }
+    .share-audience:has(select[name="scope"] option[value="teams"]:checked) .share-teams { display: block; }
+
     .app[inert] { user-select: none; }
     .modal-scrim { position: fixed; inset: 0; z-index: 40; background: var(--scrim); }
     .dialog {
