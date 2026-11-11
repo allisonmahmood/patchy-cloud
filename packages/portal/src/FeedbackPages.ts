@@ -59,6 +59,10 @@ const decodeSend = Schema.decodeUnknownEffect(
   Schema.Struct({ kind: SubmissionKind, text: Schema.String })
 );
 const decodeLink = Schema.decodeUnknownEffect(Schema.Struct({ to: Schema.String }));
+/** Where an Unlink came from: the sent request's own address returns there; the list's menu, to the list. */
+const decodeUnlink = Schema.decodeUnknownEffect(
+  Schema.Struct({ from: Schema.optionalKey(Schema.String) })
+);
 
 /** The CLI's agents by the names people know them by. */
 const codingAgents: Record<Exclude<CodingAgent, "unknown">, string> = {
@@ -121,6 +125,8 @@ const unchanged = (status: number, title: string): Refusal => ({
   body: "Nothing changed."
 });
 const withdrawn = unchanged(404, "You already withdrew that");
+/** A sent request's address asked for by someone else, or for feedback, which has no matches. */
+const notYours = unchanged(404, "That isn’t a request you sent");
 const brokenForm = (status: number): Refusal => ({
   status,
   title: "Patchy couldn’t read that",
@@ -198,21 +204,58 @@ const sendRefusal = (error: Feedback.SendRefusal, kind: SubmissionKind, text: st
 const refusalNotice = (refused: Refusal) =>
   notice({ tone: "danger", title: refused.title, body: `<p>${escapeHtml(refused.body)}</p>` });
 
+/** A request as its similar requests show beside it: its title, its matches, and its current link. */
+interface SentRequestView {
+  readonly id: string;
+  readonly title: string;
+  readonly similar: ReadonlyArray<RequestBrief>;
+  readonly link?: RequestBrief | null;
+}
+
+const sentPath = (id: string) => `/feedback/${encodeURIComponent(id)}/sent`;
+
 /**
- * What the panel shows once something is sent: a request's receipt naming its title and the
- * similar requests filing it returned, each with its status, its note, Same need and, once
- * linked, Unlink; feedback's receipt alone. Done closes the panel. The script finds each part by
- * its `data-tell`, and a match's controls and its Linked receipt by `data-match`.
+ * A sent request's receipt naming its title, then its similar requests, each with its status, its
+ * note, Same need and, once linked, Unlink, and a Linked receipt per match that shows for the one
+ * linked. Drawn in the state the request is in: linked, its match shows Unlink and its receipt and
+ * no match shows Same need. A match it links to outside the matches leads them, so Unlink stays in
+ * reach. Each form works without script: Same need, and Unlink with its `from`, land back on the
+ * request's own address. The panel's script finds each part by its `data-tell`, and a match's
+ * controls and its receipt by `data-match`.
+ */
+const sentRequest = (sent: SentRequestView) => {
+  const link = sent.link ?? null;
+  const shown =
+    link === null || sent.similar.some((match) => match.id === link.id)
+      ? sent.similar
+      : [link, ...sent.similar];
+  const ours = (match: RequestBrief) => link !== null && match.id === link.id;
+  const matches = shown.map((match, index) =>
+    row({
+      name: match.title,
+      ...(match.note === undefined ? {} : { description: match.note }),
+      end: `${status[match.status]}<form method="post" action="${escapeAttribute(path(sent.id, "link"))}" data-tell="link" data-match="${index}"${link === null ? "" : " hidden"}><input type="hidden" name="to" value="${escapeAttribute(match.id)}">${button("Same need", { size: "sm", ariaLabel: `Same need as ${match.title}` })}</form><form method="post" action="${escapeAttribute(path(sent.id, "unlink"))}" data-tell="unlink" data-match="${index}"${ours(match) ? "" : " hidden"}><input type="hidden" name="from" value="sent">${button("Unlink", { kind: "quiet", size: "sm", ariaLabel: `Unlink from ${match.title}` })}</form>`
+    })
+  );
+  const linked = shown
+    .map(
+      (match, index) =>
+        `<div data-tell="linked" data-match="${index}"${ours(match) ? "" : " hidden"}>${receipt(`Linked to ${match.title}`)}</div>`
+    )
+    .join("");
+  const similar =
+    matches.length === 0
+      ? ""
+      : `<p class="shelf-label">Similar requests</p>${rows(matches)}${linked}`;
+  return `${receipt(`Request sent: ${sent.title}`)}${similar}`;
+};
+
+/**
+ * What the panel shows once something is sent: a request's receipt and its similar requests, or
+ * feedback's receipt alone, then Done, which closes the panel.
  */
 export const renderSent = (
-  sent:
-    | {
-        readonly kind: "request";
-        readonly id: string;
-        readonly title: string;
-        readonly similar: ReadonlyArray<RequestBrief>;
-      }
-    | { readonly kind: "feedback" }
+  sent: ({ readonly kind: "request" } & SentRequestView) | { readonly kind: "feedback" }
 ): string => {
   const done = button("Done", {
     kind: "primary",
@@ -222,26 +265,24 @@ export const renderSent = (
     popovertargetaction: "hide",
     data: { tell: "done" }
   });
-  if (sent.kind === "feedback") return `${receipt("Feedback sent")}${done}`;
-  const matches = sent.similar.map((match, index) =>
-    row({
-      name: match.title,
-      ...(match.note === undefined ? {} : { description: match.note }),
-      end: `${status[match.status]}<form method="post" action="${escapeAttribute(path(sent.id, "link"))}" data-tell="link" data-match="${index}"><input type="hidden" name="to" value="${escapeAttribute(match.id)}">${button("Same need", { size: "sm", ariaLabel: `Same need as ${match.title}` })}</form><form method="post" action="${escapeAttribute(path(sent.id, "unlink"))}" data-tell="unlink" data-match="${index}" hidden>${button("Unlink", { kind: "quiet", size: "sm", ariaLabel: `Unlink from ${match.title}` })}</form>`
-    })
-  );
-  const linked = sent.similar
-    .map(
-      (match, index) =>
-        `<div data-tell="linked" data-match="${index}" hidden>${receipt(`Linked to ${match.title}`)}</div>`
-    )
-    .join("");
-  const similar =
-    matches.length === 0
-      ? ""
-      : `<p class="shelf-label">Similar requests</p>${rows(matches)}${linked}`;
-  return `${receipt(`Request sent: ${sent.title}`)}${similar}${done}`;
+  return sent.kind === "feedback"
+    ? `${receipt("Feedback sent")}${done}`
+    : `${sentRequest(sent)}${done}`;
 };
+
+/**
+ * A sent request at its own address, `/feedback/:id/sent`, as a dialog over What you sent: the
+ * panel's answer for a person without its script, where Same need and Unlink post and come back.
+ * Done and Close go to What you sent.
+ */
+export const renderSentDialog = (sent: SentRequestView) =>
+  dialog({
+    id: "sent",
+    title: "Tell Patchy",
+    closeHref: "/feedback",
+    body: sentRequest(sent),
+    foot: linkButton("Done", "/feedback", { kind: "primary" })
+  });
 
 /** Who sent it and through what: "You · Dashboard", or the agent and "CLI" or "Patchy MCP". */
 const from = (sent: Sent, viewer: RequireSession.Viewer["Service"]) => {
@@ -360,10 +401,13 @@ export const renderWithdraw = (sent: Sent, now: number) => {
  * request's receipt and matches replace the form; a refused send draws the form again with its
  * field's error, and the script keeps what the person wrote in it; Same need and Unlink swap which
  * of a match's controls show. One form is in flight at a time across the panel, so two links
- * never race, and an answer for a panel reset since it was sent is dropped. An answer that isn't
- * the panel's own, or none at all, may still have been saved, so nothing is ever sent again on
- * its own: the draft stays, and a note points to What you sent. Closing the panel after a send
- * readies it for the next one. It moves only markup the server drew and toggles `hidden`.
+ * never race. Every close settles what was in flight: its answer is dropped when it comes, and
+ * since it may have been saved, the panel opens again with the draft kept and the note that
+ * points to What you sent. An answer that isn't the panel's own, or none at all, gets the same
+ * note, and nothing is ever sent again on its own. Closing after a send readies it for the next
+ * one, and closing gives focus back to the button that opened it, or to Menu once that button is
+ * folded away, including after the switcher took it. It moves only markup the server drew and
+ * toggles `hidden`.
  */
 const tellScript = `(() => {
   const panel = document.getElementById("${tellPatchyPanel}");
@@ -374,8 +418,12 @@ const tellScript = `(() => {
   const unsure = part("unsure");
   const unsureNote = part("unsure-note");
   const pristine = compose().cloneNode(true);
-  let busy = false;
+  // The form whose answer is awaited, while one is, and how many times the panel has closed.
+  let pending = null;
   let state = 0;
+  // Where focus goes back on close, and whether it waits for the switcher to give it up.
+  let opener = null;
+  let awaiting = false;
   const drawn = (html) => {
     const template = document.createElement("template");
     template.innerHTML = html;
@@ -393,9 +441,40 @@ const tellScript = `(() => {
     }
     return fresh;
   };
+  const showUnsure = () => unsure.replaceChildren(unsureNote.content.cloneNode(true));
+  const visible = (element) => element instanceof HTMLElement && element.isConnected && element.getClientRects().length > 0;
+  const giveBack = () => {
+    const menu = document.querySelector(".app-menu-button");
+    const to = visible(opener) ? opener : visible(menu) ? menu : null;
+    to?.focus({ preventScroll: true });
+  };
+  // Focus is lost when nothing holds it, or what holds it can't be seen, such as the panel's own
+  // field once it closed, or the switcher's once it closed.
+  const lost = () => {
+    const active = document.activeElement;
+    return active === null || active === document.body || panel.contains(active) || !visible(active);
+  };
+  // A tap that dismissed the panel moves focus for itself after the panel has closed, so focus is
+  // checked again when its click lands, for a moment after closing.
+  const afterPress = () => {
+    const check = () => {
+      document.removeEventListener("click", check, true);
+      clearTimeout(timer);
+      if (lost()) giveBack();
+    };
+    const timer = setTimeout(() => document.removeEventListener("click", check, true), 1000);
+    document.addEventListener("click", check, true);
+  };
   document.addEventListener("click", (event) => {
-    const opener = event.target instanceof Element && event.target.closest('[popovertarget="${tellPatchyPanel}"][data-kind]');
-    if (opener) compose().elements.namedItem("kind").value = opener.dataset.kind;
+    const invoker = event.target instanceof Element && event.target.closest('[popovertarget="${tellPatchyPanel}"]');
+    if (!invoker || panel.contains(invoker)) return;
+    opener = invoker;
+    if (invoker.dataset.kind) compose().elements.namedItem("kind").value = invoker.dataset.kind;
+  });
+  window.addEventListener("patchy:switcher-closed", () => {
+    if (!awaiting) return;
+    awaiting = false;
+    if (lost()) giveBack();
   });
   const clear = () => {
     panel.querySelectorAll('[data-tell="refused"]').forEach((note) => note.remove());
@@ -417,18 +496,19 @@ const tellScript = `(() => {
   panel.addEventListener("submit", async (event) => {
     const form = event.target;
     event.preventDefault();
-    if (busy) return;
-    busy = true;
+    if (pending !== null) return;
+    pending = form;
     panel.setAttribute("aria-busy", "true");
     const sentAt = state;
     const answered = await post(form);
-    busy = false;
-    panel.removeAttribute("aria-busy");
+    // A close since then settled it.
     if (sentAt !== state) return;
+    pending = null;
+    panel.removeAttribute("aria-busy");
     clear();
     if (answered === null) {
       if (form === compose()) swap(pristine.cloneNode(true), true);
-      unsure.replaceChildren(unsureNote.content.cloneNode(true));
+      showUnsure();
       return;
     }
     if (form === compose()) {
@@ -436,7 +516,6 @@ const tellScript = `(() => {
         const fresh = swap(drawn(answered.html).firstElementChild, true);
         return fresh.elements.namedItem("text").focus();
       }
-      state++;
       form.hidden = true;
       answer.replaceChildren(drawn(answered.html));
       answer.hidden = false;
@@ -459,15 +538,26 @@ const tellScript = `(() => {
   });
   panel.addEventListener("toggle", (event) => {
     if (event.newState === "open") {
+      awaiting = false;
       if (!compose().hidden) compose().elements.namedItem("text").focus();
       return;
     }
-    if (!compose().hidden) return;
     state++;
-    clear();
-    swap(pristine.cloneNode(true), false);
-    answer.hidden = true;
-    answer.replaceChildren();
+    const inFlight = pending !== null;
+    pending = null;
+    panel.removeAttribute("aria-busy");
+    if (!compose().hidden) {
+      if (inFlight) swap(pristine.cloneNode(true), true);
+    } else {
+      clear();
+      swap(pristine.cloneNode(true), false);
+      answer.hidden = true;
+      answer.replaceChildren();
+    }
+    if (inFlight) showUnsure();
+    if (lost()) giveBack();
+    else awaiting = true;
+    afterPress();
   });
 })();
 `;
@@ -573,6 +663,13 @@ const refuse = Effect.fn("FeedbackPages.refuse")(function* (refused: Refusal) {
     : yield* listPage({ refused });
 });
 
+/** Without the panel's script, back to a sent request's own address, which shows what changed. */
+const backTo = (to: string) =>
+  HttpServerResponse.redirect(to, {
+    status: 303,
+    headers: { "cache-control": "private, no-store" }
+  });
+
 /** A done form: in the panel, `html`; otherwise What you sent, leading with `receipt`. */
 const done = Effect.fn("FeedbackPages.done")(function* (receiptText: string, html = "") {
   const { viewer, session, panel } = yield* context;
@@ -593,16 +690,26 @@ const send = Effect.gen(function* () {
   const feedback = yield* Feedback.Feedback;
   const sender = { ...person, surface: "dashboard" } satisfies Feedback.Sender;
   const request = requestOf(text);
+  const { panel } = yield* context;
+  // A request's answer is its similar requests: in the panel, or without its script at the
+  // request's own address. Feedback's is a receipt.
   const sent =
     kind === "request"
-      ? Effect.map(
+      ? Effect.flatMap(
           feedback.sendRequest({ sender, text: request.title, why: request.why }),
           (filed) =>
-            renderSent({ kind, id: filed.id, title: request.title, similar: filed.similar })
+            panel
+              ? Effect.succeed(
+                  panelAnswer(
+                    renderSent({ kind, id: filed.id, title: request.title, similar: filed.similar })
+                  )
+                )
+              : Effect.succeed(backTo(sentPath(filed.id)))
         )
-      : Effect.as(feedback.sendFeedback({ sender, text }), renderSent({ kind }));
+      : Effect.flatMap(feedback.sendFeedback({ sender, text }), () =>
+          done("Feedback sent", renderSent({ kind }))
+        );
   return yield* sent.pipe(
-    Effect.flatMap((html) => done(kind === "request" ? "Request sent" : "Feedback sent", html)),
     Effect.catchTags({
       InvalidText: (error) => refuseSend(sendRefusal(error, kind, text), kind),
       ContainsSecret: (error) => refuseSend(sendRefusal(error, kind, text), kind),
@@ -618,14 +725,11 @@ const send = Effect.gen(function* () {
 
 const link = Effect.fn("FeedbackPages.link")(
   function* (id: string) {
-    const { person } = yield* context;
+    const { person, panel } = yield* context;
     const { to } = yield* decodeLink(yield* form);
-    const linked = yield* (yield* Feedback.Feedback).link({
-      sender: { ...person, surface: "dashboard" },
-      id,
-      to
-    });
-    return yield* done(`Linked to ${linked.link.title}`);
+    yield* (yield* Feedback.Feedback).link({ sender: { ...person, surface: "dashboard" }, id, to });
+    // Same need is pressed only beside a sent request's matches, whose address shows it linked.
+    return panel ? panelAnswer("") : backTo(sentPath(id));
   },
   Effect.catchTags({
     SubmissionNotFound: () => refuse(withdrawn),
@@ -639,17 +743,43 @@ const link = Effect.fn("FeedbackPages.link")(
 
 const unlink = Effect.fn("FeedbackPages.unlink")(
   function* (id: string) {
-    const { person } = yield* context;
+    const { person, panel } = yield* context;
+    const { from } = yield* decodeUnlink(yield* form);
     const feedback = yield* Feedback.Feedback;
     const sent = yield* feedback.get({ person, id });
     yield* feedback.unlink({ person, id });
+    if (!panel && from === "sent") return backTo(sentPath(id));
     return yield* done(
       sent.kind === "request" && sent.link !== null
         ? `Unlinked from ${sent.link.title}`
         : "Unlinked"
     );
   },
-  Effect.catchTags({ SubmissionNotFound: () => refuse(withdrawn) })
+  Effect.catchTags({
+    SubmissionNotFound: () => refuse(withdrawn),
+    SchemaError: () => refuse(brokenForm(422)),
+    HttpServerError: () => refuse(brokenForm(413))
+  })
+);
+
+/**
+ * A sent request at its own address, the dialog over What you sent that a send without the
+ * panel's script lands on, with its similar requests, matched again, and its link. Only its
+ * sender sees it; feedback has none.
+ */
+const sentPage = Effect.fn("FeedbackPages.sentPage")(
+  function* (id: string) {
+    const { person } = yield* context;
+    const feedback = yield* Feedback.Feedback;
+    const sent = yield* feedback.get({ person, id });
+    if (sent.kind !== "request") return yield* refuse(notYours);
+    const similar = yield* feedback.similarTo({ person, id });
+    return yield* listPage({
+      title: `Sent ${sent.title}`,
+      overlay: renderSentDialog({ id, title: sent.title, similar, link: sent.link })
+    });
+  },
+  Effect.catchTags({ SubmissionNotFound: () => refuse(notYours) })
 );
 
 /** GET draws What you sent with the Withdraw dialog over it; POST withdraws and lands back on it. */
@@ -691,6 +821,11 @@ export const layer: Layer.Layer<
     yield* router.add("POST", "/feedback", post(send));
     yield* router.add("POST", "/feedback/:id/link", post(byId(link)));
     yield* router.add("POST", "/feedback/:id/unlink", post(byId(unlink)));
+    yield* router.add(
+      "GET",
+      "/feedback/:id/sent",
+      errors(RequireSession.withViewer(byId(sentPage)))
+    );
     yield* router.add(
       "GET",
       "/feedback/:id/withdraw",

@@ -198,6 +198,96 @@ it.layer(layer)("Feedback pages", (it) => {
   );
 
   it.effect(
+    "without the panel's script, a sent request has its own address, where Same need and Unlink come back to it; only its sender sees it",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const ada = yield* person();
+        const [general] = yield* sql<{ id: string }>`
+          INSERT INTO feedback.general_requests (title, status, note)
+          VALUES ('Postgres encryption options', 'shipped', 'Pick Verify full on the connect page.')
+          RETURNING id`;
+        const sent = yield* request(
+          ada,
+          post(
+            "/feedback",
+            { kind: "request", text: "Postgres connection encrypted with RSA" },
+            false
+          )
+        );
+        assert.strictEqual(sent.status, 303);
+        const [stored] = yield* submissions(ada);
+        const id = stored!.id;
+        const at = `/feedback/${id}/sent`;
+        assert.strictEqual(sent.headers.location, at);
+
+        const form = (html: string, act: "link" | "unlink") =>
+          html.match(
+            new RegExp(
+              `<form method="post" action="/feedback/${id}/${act}" data-tell="${act}" data-match="0"( hidden)?>`
+            )
+          )?.[1] === undefined
+            ? "shown"
+            : "hidden";
+        const linkedReceipt = (html: string) =>
+          html.includes('<div data-tell="linked" data-match="0"><p class="receipt"')
+            ? "shown"
+            : "hidden";
+        // A dialog over What you sent: the receipt, the match with its status, note and Same need.
+        const page = yield* (yield* request(ada, HttpClientRequest.get(at))).text;
+        assert.include(page, 'role="dialog" aria-modal="true" aria-labelledby="sent-title"');
+        assert.include(page, "<span>Request sent: Postgres connection encrypted with RSA</span>");
+        assert.include(page, '<span class="badge badge-success">Shipped</span>');
+        assert.include(page, "Pick Verify full on the connect page.");
+        assert.include(page, `name="to" value="${general!.id}"`);
+        assert.deepStrictEqual(
+          [form(page, "link"), form(page, "unlink"), linkedReceipt(page)],
+          ["shown", "hidden", "hidden"]
+        );
+        assert.include(page, '<a class="btn btn-primary" href="/feedback">Done</a>');
+        assert.include(page, '<table class="table" aria-label="What you sent">');
+
+        // Same need posts and comes back to it, linked; Unlink from it comes back unlinked.
+        const linked = yield* request(
+          ada,
+          post(`/feedback/${id}/link`, { to: general!.id }, false)
+        );
+        assert.strictEqual(linked.status, 303);
+        assert.strictEqual(linked.headers.location, at);
+        assert.strictEqual((yield* submissions(ada))[0]?.linkGeneralId, general!.id);
+        const after = yield* (yield* request(ada, HttpClientRequest.get(at))).text;
+        assert.deepStrictEqual(
+          [form(after, "link"), form(after, "unlink"), linkedReceipt(after)],
+          ["hidden", "shown", "shown"]
+        );
+        assert.include(after, "<span>Linked to Postgres encryption options</span>");
+        const unlinked = yield* request(
+          ada,
+          post(`/feedback/${id}/unlink`, { from: "sent" }, false)
+        );
+        assert.strictEqual(unlinked.status, 303);
+        assert.strictEqual(unlinked.headers.location, at);
+        assert.isNull((yield* submissions(ada))[0]?.linkGeneralId);
+        const back = yield* (yield* request(ada, HttpClientRequest.get(at))).text;
+        assert.strictEqual(form(back, "link"), "shown");
+
+        // Someone else's request, or feedback, which has no matches, isn't there for them.
+        const other = yield* person();
+        assert.strictEqual((yield* request(other, HttpClientRequest.get(at))).status, 404);
+        assert.strictEqual(
+          (yield* request(ada, post("/feedback", { kind: "feedback", text: "Lovely" }, false)))
+            .headers.location,
+          "/feedback"
+        );
+        const note = (yield* submissions(ada)).find(({ kind }) => kind === "feedback")!;
+        assert.strictEqual(
+          (yield* request(ada, HttpClientRequest.get(`/feedback/${note.id}/sent`))).status,
+          404
+        );
+      })
+  );
+
+  it.effect(
     "files a pasted paragraph as a title and a why, refusing only too short or past the field's cap",
     () =>
       Effect.gen(function* () {
