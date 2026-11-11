@@ -442,7 +442,9 @@ it.layer(layer())("People's guests", (it) => {
       yield* (yield* SqlClient.SqlClient)`UPDATE patches SET disabled_at = now()
         WHERE id = ${board.patchId}`;
       const confirmation = yield* page(admin, `/company/guests/${guest.user.id}/remove`);
-      for (const title of ["fell notes", "fell board"]) assert.include(confirmation, title);
+      assert.include(confirmation, "fell notes");
+      assert.notInclude(confirmation, "fell board");
+      assert.include(confirmation, "Restricted patch");
       assert.include(confirmation, "Unavailable");
       assert.include(confirmation, "Remove from 2 patches");
     })

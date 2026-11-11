@@ -76,7 +76,7 @@ export const OwnedPatches = Context.Reference<
 /** A patch shared with a guest, who shared it and when. */
 export interface GuestPatch {
   readonly name: string;
-  readonly title: string;
+  readonly title: string | null;
   readonly tier: number;
   /** Its lifecycle state, or `disabled` once the operator took it down, which no one opens. */
   readonly state: typeof PatchState.Type | "disabled";
@@ -234,6 +234,7 @@ const statePill = ({ state }: GuestPatch) =>
  * A disabled patch opens for no one, so its title is no link.
  */
 const patchLink = (viewer: Viewer, patch: GuestPatch) => {
+  if (patch.title === null) return `Restricted patch${statePill(patch)}`;
   const title = escapeHtml(patchTitle(patch));
   const name = encodeURIComponent(patch.name);
   if (patch.state === "disabled") return `${title}${statePill(patch)}`;
@@ -553,7 +554,7 @@ const renderGuestRemoval = (viewer: Viewer, guest: Guest): Page => {
   const patches = guest.patches
     .map(
       (patch) =>
-        `<li class="company-patch">${patchMark(patch.name, patch.tier)}<span><strong>${escapeHtml(patchTitle(patch))}</strong>${statePill(patch)}</span></li>`
+        `<li class="company-patch">${patchMark(patch.name, patch.tier)}<span><strong>${escapeHtml(patch.title === null ? "Restricted patch" : patchTitle(patch))}</strong>${statePill(patch)}</span></li>`
     )
     .join("");
   return {

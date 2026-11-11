@@ -425,7 +425,7 @@ it.layer(services)("Patch audiences", (it) => {
         userId: reader.user.id,
         admin: true
       });
-      assert.deepStrictEqual(oversight.find((g) => g.userId === outside.user.id)?.patches, []);
+      assert.equal(oversight.find((g) => g.userId === outside.user.id)?.patches[0]?.title, null);
       yield* sql`UPDATE users SET deactivated_at = now() WHERE id = ${outside.user.id}`;
       yield* patches.setSharing({
         patchId: input.patchId,
