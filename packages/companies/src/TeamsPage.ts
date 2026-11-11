@@ -321,7 +321,7 @@ const render = Effect.fn("TeamsPage.render")(function* (
                 lead: avatar(person.id, person.name, person.deactivatedAt ? "off" : undefined),
                 name: person.name + (person.id === viewer.user.id ? " (you)" : ""),
                 description: `${person.email} · ${person.deactivatedAt ? "Deactivated" : roleLabel[person.role]}`,
-                end: `${Teams.canRemoveMembership({ id: viewer.user.id, role: viewer.role }, person) ? linkButton(person.id === viewer.user.id ? "Leave…" : "Remove…", `${screenHref(selected.id, "remove")}&person=${encodeURIComponent(person.id)}`, { kind: "quiet", size: "sm", ariaLabel: `${person.id === viewer.user.id ? "Leave" : `Remove ${person.name} from`} ${selected.name}` }) : ""}`
+                end: `${Teams.canRemoveMembership({ id: viewer.user.id, role: viewer.role }, person) ? linkButton(person.id === viewer.user.id ? "Leave…" : "Remove…", `${screenHref(selected.id, "remove")}&person=${encodeURIComponent(person.id)}`, { kind: "quiet", danger: true, size: "sm", ariaLabel: `${person.id === viewer.user.id ? "Leave" : `Remove ${person.name} from`} ${selected.name}` }) : ""}`
               })
             ),
             true

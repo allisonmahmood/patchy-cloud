@@ -22,6 +22,7 @@ export interface ButtonLook {
   readonly kind?: "primary" | "secondary" | "quiet" | "danger" | "danger-solid";
   /** `sm` for row actions and compact places. */
   readonly size?: "md" | "sm";
+  readonly danger?: boolean;
   readonly icon?: IconName;
   /** As wide as what holds it. */
   readonly block?: boolean;
@@ -32,11 +33,12 @@ export interface ButtonLook {
 }
 
 /** A button's classes from its look, with `extra` last; for core helpers that draw a button. */
-export const buttonClass = ({ kind, size, block }: ButtonLook, extra = "") =>
+export const buttonClass = ({ kind, size, block, danger }: ButtonLook, extra = "") =>
   [
     "btn",
     kind === undefined || kind === "secondary" ? "" : `btn-${kind}`,
     size === "sm" ? "btn-sm" : "",
+    danger ? "btn-danger" : "",
     block === true ? "btn-block" : "",
     extra
   ]
