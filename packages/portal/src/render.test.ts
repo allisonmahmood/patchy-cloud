@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { RequireSession } from "@patchy/auth";
 import { renderAgentAside } from "./render.js";
 
-const viewer = (role: "admin" | "member") =>
+const viewer = (role: "super_admin" | "admin" | "member") =>
   ({
     user: { id: "usr_jordan", email: "jordan@brightline.example", name: "Jordan Lee" },
     company: { id: "cmp_brightline", handle: "brightline", name: "Bright & <Co>" },
@@ -46,9 +46,9 @@ describe("renderAgentAside", () => {
   });
 
   it("names every admin while access is off, the viewer first as you, and lets an admin turn it on", () => {
-    const html = renderAgentAside({ tools, viewer: viewer("admin"), admins, apps: [] });
+    const html = renderAgentAside({ tools, viewer: viewer("super_admin"), admins, apps: [] });
     expect(html).toContain(
-      "Agent access is off at Bright &amp; &lt;Co&gt;, so no agent can use these yet. Only admins can turn it on: you, Allison &lt;A&gt; and Priya Shah."
+      "Agent access is off at Bright &amp; &lt;Co&gt;, so no agent can use these yet. Only super admins can turn it on: you, Allison &lt;A&gt; and Priya Shah."
     );
     expect(html).toContain('href="/settings/agent-access">Turn it on</a>');
     expect(html).not.toContain("Use with your agent");
@@ -61,7 +61,7 @@ describe("renderAgentAside", () => {
       admins: admins.filter((admin) => admin.id !== "usr_jordan"),
       apps: []
     });
-    expect(html).toContain("Only admins can turn it on: Allison &lt;A&gt; and Priya Shah.");
+    expect(html).toContain("Only super admins can turn it on: Allison &lt;A&gt; and Priya Shah.");
     expect(html).not.toContain("Turn it on</a>");
     expect(html).not.toContain("Use with your agent");
   });

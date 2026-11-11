@@ -82,6 +82,35 @@ export const canOpen = Effect.fn("Audiences.canOpen")(function* (
 ) {
   return (yield* forPatches(companyId, userId))(patch);
 });
+/** An explicit team selection cannot remove existing grants the actor cannot see. */
+export const preserveHiddenTeams = Effect.fn("Audiences.preserveHiddenTeams")(function* (input: {
+  readonly audience: PatchAudience;
+  readonly previous?: PatchAudience;
+  readonly companyId: string;
+  readonly actorId: string;
+}) {
+  const { audience, previous, companyId, actorId } = input;
+  if (audience.members.kind !== "teams" || previous?.members.kind !== "teams") return audience;
+  const visible = new Set(
+    (yield* (yield* Teams.Teams)
+      .list({ companyId, actorId })
+      .pipe(
+        Effect.catchTags({ RoleForbidden: () => Effect.fail(new AudienceExcludesOwner()) })
+      )).map((team) => team.id)
+  );
+  return {
+    ...audience,
+    members: {
+      kind: "teams" as const,
+      teamIds: [
+        ...new Set([
+          ...audience.members.teamIds,
+          ...previous.members.teamIds.filter((id) => !visible.has(id))
+        ])
+      ]
+    }
+  };
+});
 /** Recheck the actor and owner under the caller's transaction, including inactive-owner repairs. */
 export const validate = Effect.fn("Audiences.validate")(function* (input: {
   readonly audience: PatchAudience;

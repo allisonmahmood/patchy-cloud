@@ -206,6 +206,24 @@ it.layer(services)("company page and actions", (it) => {
     })
   );
 
+  it.effect("focuses team refusals instead of the confirmation controls", () =>
+    Effect.gen(function* () {
+      const owner = yield* createCompany("teams-refusal-focus");
+      const root = "/settings/company/teams";
+      const created = yield* send(`${root}/create`, post(owner.user, { name: "Design" }));
+      const teamId = new URL(created.headers.get("location")!, base).searchParams.get("team")!;
+      for (const [action, status] of [
+        ["add", 400],
+        ["delete", 409]
+      ] as const) {
+        const response = yield* send(`${root}/${action}?team=${teamId}`, post(owner.user, {}));
+        assert.strictEqual(response.status, status);
+        const html = main(yield* Effect.promise(() => response.text()));
+        assert.include(html, '<div class="refusal" tabindex="-1" autofocus>');
+        assert.strictEqual(html.match(/ autofocus/g)?.length, 1);
+      }
+    })
+  );
   it.effect("manages durable teams through settings and keeps ordinary members read-only", () =>
     Effect.gen(function* () {
       const owner = yield* createCompany("teams-settings");

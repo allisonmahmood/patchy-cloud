@@ -40,6 +40,8 @@ describe("htmlPage app body", () => {
       ["/patches", "All patches"],
       ["/agents", "Your agents"],
       ["/settings/people", "Settings"],
+      ["/settings/company", "Company"],
+      ["/settings/company/teams", "Teams"],
       ["/settings/people", "People"],
       ["/settings/integrations", "Integrations"],
       ["/settings/agent-access", "Agent access"]

@@ -171,7 +171,7 @@ const guestCounts = Effect.fn("HomePages.guestCounts")(function* (
 const connectionsNeedingAttention = Effect.fn("HomePages.connectionsNeedingAttention")(
   function* () {
     const { viewer } = yield* context;
-    if (viewer.role !== "admin") return [];
+    if (viewer.role !== "super_admin") return [];
     return yield* ConnectionAttention.needingAttention(viewer.company.id).pipe(
       Effect.catch((error) =>
         Effect.logWarning("Home left out the company's connections.", error).pipe(Effect.as([]))

@@ -489,9 +489,9 @@ const render = Effect.fn("CompanyPage.render")(function* (
     readonly name: string;
     readonly line: string;
     readonly after?: string;
-    readonly role?: Users.Role;
+    readonly role?: string;
   }) =>
-    `<div class="cell-name">${spec.mark}<div class="row-main"><span class="row-name">${escapeHtml(spec.name)}${spec.after === undefined ? "" : ` ${spec.after}`}</span>${spec.line === "" ? "" : `<span class="row-desc">${spec.line}</span>`}${spec.role === undefined ? "" : `<span class="row-desc show-sm">${roleLabel(spec.role)}</span>`}</div></div>`;
+    `<div class="cell-name">${spec.mark}<div class="row-main"><span class="row-name">${escapeHtml(spec.name)}${spec.after === undefined ? "" : ` ${spec.after}`}</span>${spec.line === "" ? "" : `<span class="row-desc">${spec.line}</span>`}${spec.role === undefined ? "" : `<span class="row-desc show-sm">${escapeHtml(spec.role)}</span>`}</div></div>`;
   const none = '<span class="muted">—</span>';
 
   const userRow = (user: Users.User) => {
@@ -542,7 +542,7 @@ const render = Effect.fn("CompanyPage.render")(function* (
           ...(user.name.trim() ? [escapeHtml(user.email)] : []),
           ...(user.deactivatedAt === null ? [] : [`Deactivated ${time(user.deactivatedAt)}`])
         ].join(" · "),
-        role: user.role,
+        role: roleLabel(user.role),
         ...(self ? { after: '<span class="you">(you)</span>' } : {})
       }),
       roleLabel(user.role),
@@ -571,7 +571,7 @@ const render = Effect.fn("CompanyPage.render")(function* (
         name: invite.email,
         line,
         after: status,
-        role: invite.role
+        role: roleLabel(invite.role)
       }),
       roleLabel(invite.role),
       ...(owned ? [none] : []),
@@ -596,14 +596,19 @@ const render = Effect.fn("CompanyPage.render")(function* (
     personCell({
       mark: avatar(guest.userId, guest.name),
       name: guest.name,
-      line: `${escapeHtml(guest.email)} · ${escapeHtml(guest.companyName)}`
+      line: `${escapeHtml(guest.email)} · ${escapeHtml(guest.companyName)}`,
+      ...(show === "guests" ? {} : { role: "Guest" })
     }),
-    guest.patches
-      .map(
-        (patch) =>
-          `<div class="cell-name">${patchMark(patch.name, patch.tier)}<div class="row-main"><span>${patchLink(viewer, patch)} ${offBadge(patch)}</span><span class="row-desc">Shared by ${escapeHtml(patch.sharedBy)} · ${time(patch.sharedAt)}</span></div></div>`
-      )
-      .join(""),
+    ...(show === "guests"
+      ? [
+          guest.patches
+            .map(
+              (patch) =>
+                `<div class="cell-name">${patchMark(patch.name, patch.tier)}<div class="row-main"><span>${patchLink(viewer, patch)} ${offBadge(patch)}</span><span class="row-desc">Shared by ${escapeHtml(patch.sharedBy)} · ${time(patch.sharedAt)}</span></div></div>`
+            )
+            .join("")
+        ]
+      : ["Guest", ...(owned ? [`${guest.patches.length} patches`] : []), none]),
     ...(admin
       ? [
           menu({
@@ -644,7 +649,7 @@ const render = Effect.fn("CompanyPage.render")(function* (
               ? [userRow(entry.user)]
               : entry.kind === "invite"
                 ? [inviteRow(entry.invite)]
-                : []
+                : [guestRow(entry.guest)]
           )
         });
   const empty = emptyState(
@@ -981,7 +986,9 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
           })
         : Effect.void
     );
-    return done(`${displayName(user)} is now ${user.role === "admin" ? "an admin" : "a member"}`);
+    return done(
+      `${displayName(user)} is now ${user.role === "super_admin" ? "a super admin" : user.role === "admin" ? "an admin" : "a member"}`
+    );
   }).pipe(
     Effect.catchTags({
       SchemaError: () => refuse(viewer, "Choose Member, Admin or Super admin.", 422),

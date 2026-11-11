@@ -23,7 +23,7 @@
       "key": "allison",
       "name": "Allison Mahmood",
       "email": "allison@brightline.example",
-      "role": "admin",
+      "role": "super_admin",
       "computers": [
         {
           "name": "Studio Mac mini",

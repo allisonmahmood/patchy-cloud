@@ -247,7 +247,7 @@ const result = (
 };
 
 const forbidden: View.Notice = {
-  message: "Only an admin can manage company connections.",
+  message: "Only a super admin can manage company connections.",
   code: "access_denied",
   status: 403
 };

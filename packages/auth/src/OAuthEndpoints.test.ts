@@ -722,7 +722,7 @@ it.layer(services)("the authorization server's endpoints", (it) => {
       assert.notInclude(memberHtml, 'value="allow"');
 
       const adminHtml = yield* text(yield* consentPage(query));
-      assert.include(adminHtml, "You’re an admin: turn it on, then connect again from Agent.");
+      assert.include(adminHtml, "You’re a super admin: turn it on, then connect again from Agent.");
       assert.include(
         adminHtml,
         '<a class="btn btn-primary btn-block" href="/settings/agent-access">Turn it on</a>'

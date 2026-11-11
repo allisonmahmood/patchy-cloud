@@ -50,7 +50,7 @@ test("an admin invites in a dialog over People, takes someone through deactivati
   await page.reload();
   await expect(page.getByRole("switch")).toHaveCount(0);
   await expect(page.getByRole("main")).toContainText(on ? "Off" : "On");
-  await expect(page.getByRole("main")).toContainText("Only admins can change this.");
+  await expect(page.getByRole("main")).toContainText("Only super admins can change this.");
 });
 
 test("without script, a deactivation's confirmation keeps its choice through a reload, Back and Forward", async ({
@@ -60,7 +60,7 @@ test("without script, a deactivation's confirmation keeps its choice through a r
   const first = await instance.publish();
   const second = await instance.publish();
   // The colleague, made an admin, deactivates the owner of both.
-  await instance.platform.query("UPDATE users SET role='admin' WHERE id='usr_colleague'");
+  await instance.platform.query("UPDATE users SET role='super_admin' WHERE id='usr_colleague'");
   const context = await browser.newContext({ javaScriptEnabled: false });
   try {
     await prepare(context, instance);

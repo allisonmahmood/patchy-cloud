@@ -255,7 +255,9 @@ describe("the connections index", () => {
     for (const hidden of ["Last call", "Unused", "Connect an integration", 'class="menu"'])
       expect(html).not.toContain(hidden);
     expect(html).toContain("Needs attention<span");
-    expect(html).toContain("Only admins connect integrations. Admins: Dana and Jordan.");
+    expect(html).toContain(
+      "Only super admins connect integrations. Super admins: Dana and Jordan."
+    );
     // Asking opens Tell Patchy's composer, Request picked, rather than an email: in place with
     // script, at its own address without.
     expect(html).toContain(
@@ -287,7 +289,7 @@ describe("the connections index", () => {
     expect(html).toContain('<span class="im im-dashed" aria-hidden="true">+</span>');
     const member = View.renderCatalogue({ admin: false, admins: ["Dana"], rows: [], offers }).body;
     expect(member).not.toContain("connect/postgres");
-    expect(member).toContain("Only admins connect integrations. Admins: Dana.");
+    expect(member).toContain("Only super admins connect integrations. Super admins: Dana.");
     expect(member).toContain("Something else");
   });
 
@@ -297,7 +299,9 @@ describe("the connections index", () => {
     expect(admin).toContain('href="/settings/integrations/connect/postgres"');
     expect(admin).not.toContain('class="table"');
     const member = index([], { admin: false });
-    expect(member).toContain("Only admins connect integrations. Admins: Dana and Jordan.");
+    expect(member).toContain(
+      "Only super admins connect integrations. Super admins: Dana and Jordan."
+    );
     expect(member).not.toContain("connect/postgres");
     expect(member).toContain("Tell us what you'd connect");
   });
@@ -376,7 +380,7 @@ describe("a connection's page", () => {
     expect(html).not.toContain("/test");
     expect(html).not.toContain('class="menu"');
     expect(html).toContain("What patches can read");
-    expect(html).toContain("Only admins can change it. Admins: Dana.");
+    expect(html).toContain("Only super admins can change it. Super admins: Dana.");
   });
 
   it("says what patches can read beside its facts, and the add line while connected", () => {

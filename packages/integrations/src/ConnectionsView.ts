@@ -215,9 +215,9 @@ export const feedback = (value: Notice | undefined) => {
   });
 };
 
-/** The words for who can change what a member reads: "Only admins connect integrations. Admins: Ada." */
+/** The words for who can change what a member reads: "Only super admins connect integrations. Super admins: Ada." */
 const onlyAdmins = (admins: ReadonlyArray<string>) =>
-  `Only admins connect integrations.${admins.length === 0 ? "" : ` Admins: ${listed(admins)}.`}`;
+  `Only super admins connect integrations.${admins.length === 0 ? "" : ` Super admins: ${listed(admins)}.`}`;
 
 /** A connection's state in words: Connected quietly; Needs attention and Paused as badges. */
 const status = (item: {
@@ -705,7 +705,7 @@ const callsTable = (
         ])}${call.sql === null ? "" : `<pre class="code-panel"><code>${escapeHtml(call.sql)}</code></pre>`}`
       }
     }))
-  })}<p class="meta">${escapeHtml(`${latest}, newest first. Only admins see this. ${logged}`)}</p>`;
+  })}<p class="meta">${escapeHtml(`${latest}, newest first. Only super admins see this. ${logged}`)}</p>`;
 };
 
 const patchLink = (patch: string) =>
@@ -867,7 +867,7 @@ const overview = (
       ["Used by", usedByFact(connection)],
       ["Guests", connection.blockGuests ? "Blocked" : "Allowed"],
       ["Added by", escapeHtml(connection.addedBy)]
-    ])}${input.admin ? "" : `<p class="meta">${escapeHtml(`Only admins can change it.${input.admins.length === 0 ? "" : ` Admins: ${listed(input.admins)}.`}`)}</p>`}`
+    ])}${input.admin ? "" : `<p class="meta">${escapeHtml(`Only super admins can change it.${input.admins.length === 0 ? "" : ` Super admins: ${listed(input.admins)}.`}`)}</p>`}`
   })}</div>`;
   return { main: `${description}${readsSection}${use}`, aside: about };
 };

@@ -321,7 +321,7 @@ it.layer(services)("company connection pages", (it) => {
         teamIds: [team.id]
       });
       assert.equal((yield* send(path, { headers: { cookie: cookie(member) } })).status, 404);
-      const listed = yield* send("/company/connections", { headers: { cookie: cookie(member) } });
+      const listed = yield* send("/settings/integrations", { headers: { cookie: cookie(member) } });
       assert.notInclude(yield* Effect.promise(() => listed.text()), "postgres/audience-page");
       yield* (yield* Teams.Teams).setMemberships({
         companyId: owner.company.id,
@@ -648,7 +648,7 @@ it.layer(services)("company connection pages", (it) => {
             );
           const rotate = yield* send(`${path}/rotate`, { headers: { cookie: cookie(viewer) } });
           const rotateHtml = yield* Effect.promise(() => rotate.text());
-          if (viewer.role === "admin") {
+          if (viewer.role === "super_admin") {
             const settings = yield* send(`${path}/settings`, {
               headers: { cookie: cookie(viewer) }
             });
@@ -1136,7 +1136,7 @@ it.layer(services)("company connection pages", (it) => {
         const empty = yield* read(member, "/settings/integrations");
         assert.include(
           empty.html,
-          `Only admins connect integrations. Admins: ${owner.user.name} and second-admin.`
+          `Only super admins connect integrations. Super admins: ${owner.user.name} and second-admin.`
         );
         assert.include(empty.html, "Something else");
         assert.notInclude(empty.html, `href="${connectPath}"`);

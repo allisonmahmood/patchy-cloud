@@ -326,7 +326,7 @@ it.layer(services(pidgeon.layer))("Pidgeon connection pages", (it) => {
       ])
         assert.strictEqual(response.status, 403);
       const view = yield* read(path, member);
-      assert.include(view.html, "Only admins can change it.");
+      assert.include(view.html, "Only super admins can change it.");
       const foreign = yield* createCompany("pidgeon-guard-foreign");
       assert.strictEqual((yield* read(path, foreign.user)).status, 404);
       assert.strictEqual((yield* send(`${path}/delete`, post(foreign.user))).status, 404);

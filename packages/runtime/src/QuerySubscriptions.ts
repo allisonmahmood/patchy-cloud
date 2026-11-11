@@ -81,9 +81,11 @@ export const make = Effect.gen(function* () {
       if (declaration.kind === "sharedTable") {
         allowed.add(`table:${declaration.patchId}:${declaration.table}`);
         allowed.add(`patch:${declaration.patchId}`);
+        allowed.add(`members:${binding.companyId}`);
       } else if (declaration.kind === "sharedStore") {
         allowed.add(`store:${declaration.patchId}:${declaration.store}`);
         allowed.add(`patch:${declaration.patchId}`);
+        allowed.add(`members:${binding.companyId}`);
       } else if (declaration.kind === "members") allowed.add(`members:${binding.companyId}`);
     }
     // Resume keys are untrusted. Only fence declared resources; callbacks still

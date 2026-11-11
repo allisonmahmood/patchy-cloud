@@ -119,7 +119,7 @@ it.layer(Platform)("scenarios", (it) => {
         yield* fs.writeFileString(
           path.join(root, "scenarios", "worried", "scenario.json"),
           `{"company":{"name":"Worried","handle":"worried"},"publisher":"a","patches":[],
-          "people":[{"key":"a","name":"A","email":"a@worried.example","role":"admin"}],
+          "people":[{"key":"a","name":"A","email":"a@worried.example","role":"super_admin"}],
           "connections":[{"integration":"postgres","handle":"warehouse","description":"Data",
             "state":"needs-attention"}]}`
         );

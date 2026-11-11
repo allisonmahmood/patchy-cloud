@@ -345,21 +345,25 @@ it.layer(layer())("People All guests", (it) => {
       const all = yield* page(admin, "/company");
       assert.match(all.replace(/<[^>]*>/g, " "), /All\s+3\b/);
       assert.match(all.replace(/<[^>]*>/g, " "), /Guests\s+1\b/);
-      assert.strictEqual(all.split(`<strong>${guest.user.name}</strong>`).length - 1, 1);
+      assert.strictEqual(
+        all.split(`<span class="row-name">${guest.user.name}</span>`).length - 1,
+        1
+      );
       assert.include(all, "2 patches");
-      const removal = `/company/guests/${guest.user.id}/remove`;
+      assert.include(all, '<span class="row-desc show-sm">Guest</span>');
+      const removal = `/settings/people/guests/${guest.user.id}/remove`;
       assert.include(all, removal);
       const memberAll = yield* page(member, "/company");
       assert.notInclude(memberAll, removal);
       for (const query of [guest.user.name, guest.user.email]) {
         const searched = yield* page(admin, `/company?q=${encodeURIComponent(query)}`);
         assert.include(searched, guest.user.email);
-        assert.include(searched, "1 match for");
+        assert.strictEqual(searched.split('<span class="row-name">').length - 1, 1);
       }
       assert.notInclude(yield* page(admin, "/company?show=admins"), guest.user.email);
       const guests = yield* page(admin, "/company?show=guests");
       assert.include(guests, guest.user.email);
-      assert.notInclude(guests, "<strong>Max</strong>");
+      assert.notInclude(guests, '<span class="row-name">Max</span>');
       yield* people(admin, removal, "POST");
       const after = yield* page(admin, "/company");
       assert.notInclude(after, guest.user.email);

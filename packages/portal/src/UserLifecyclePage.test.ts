@@ -871,24 +871,26 @@ it.layer(socket)("user lifecycle pages on a socket", (it) => {
   );
 
   it.effect(
-    "refuses the last active admin on GET and rechecks the rule after a pick was drawn",
+    "refuses the last active super admin on GET and rechecks the rule after a pick was drawn",
     () =>
       Effect.gen(function* () {
         const workspace = yield* company();
         const users = yield* Users.Users;
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`UPDATE users SET role = 'super_admin' WHERE id = ${workspace.admin.id}`;
         const patch = yield* publish(workspace.admin, "last-admin-tool");
         const path = userPath(workspace.admin, "deactivate");
         const page = yield* request(path, workspace.admin);
         assert.strictEqual(page.status, 409);
         const html = yield* page.text;
-        assert.include(text(html), "The last active admin cannot be demoted or deactivated.");
+        assert.include(text(html), "The last active super admin cannot be demoted or deactivated.");
         assert.notInclude(forms(html), path);
         assert.strictEqual((yield* post(path, workspace.admin, { choice: "keep" })).status, 409);
         yield* users.setRole({
           companyId: workspace.id,
           actorId: workspace.admin.id,
           userId: workspace.owner.id,
-          role: "admin"
+          role: "super_admin"
         });
         assert.strictEqual((yield* request(path, workspace.admin)).status, 200);
         yield* users.deactivate({

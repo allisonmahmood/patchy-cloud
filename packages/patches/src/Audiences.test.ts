@@ -294,6 +294,28 @@ it.layer(services)("Patch audiences", (it) => {
       assert.deepStrictEqual(result.audience.members, teamAudience([own.id, hidden.id]).members);
     })
   );
+  it.effect("publishing preserves existing teams the owner cannot see", () =>
+    Effect.gen(function* () {
+      const patches = yield* Patches.Patches;
+      const own = yield* team("Publish owner team", [uploader.user.id, admin.user.id]);
+      const hidden = yield* team("Publish hidden team", [reader.user.id]);
+      const input = Fixtures.recordInput(uploader, { audience: teamAudience([own.id]) });
+      yield* Fixtures.record(input);
+      yield* patches.setSharing({
+        patchId: input.patchId,
+        actor: { userId: admin.user.id, admin: true },
+        audience: teamAudience([own.id, hidden.id])
+      });
+      const update = Fixtures.recordInput(uploader, {
+        intent: "update",
+        patchId: input.patchId,
+        audience: teamAudience([own.id])
+      });
+      yield* patches.preflight(update);
+      const result = yield* Fixtures.record(update);
+      assert.deepStrictEqual(result.audience, teamAudience([own.id, hidden.id]));
+    })
+  );
   it.effect("legacy Company sharing retains teams; explicit audience widens", () =>
     Effect.gen(function* () {
       const patches = yield* Patches.Patches;

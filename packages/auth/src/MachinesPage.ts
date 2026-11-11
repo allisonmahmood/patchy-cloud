@@ -162,7 +162,7 @@ const accessAdmins = Effect.fn("MachinesPage.accessAdmins")(function* (viewer: V
     .pipe(Effect.catchTags({ CompanyNotFound: Effect.die }));
   if (access.on) return null;
   return (yield* (yield* Users.Users).list(viewer.company.id))
-    .filter((user) => user.role === "admin" && user.deactivatedAt === null)
+    .filter((user) => user.role === "super_admin" && user.deactivatedAt === null)
     .map((user) => user.name.trim() || user.email)
     .sort((a, b) => a.localeCompare(b));
 });
@@ -194,9 +194,9 @@ const accessOff = (viewer: Viewer, admins: ReadonlyArray<string>) =>
   notice({
     tone: "warning",
     title: `Agent access is off at ${viewer.company.name}`,
-    body: `<p>${admins.length === 0 ? "An admin" : sentenceList(admins)} can turn it on.</p>`,
+    body: `<p>${admins.length === 0 ? "A super admin" : sentenceList(admins)} can turn it on.</p>`,
     action:
-      viewer.role === "admin"
+      viewer.role === "super_admin"
         ? linkButton("Turn it on", "/settings/agent-access", { size: "sm" })
         : undefined
   });
@@ -204,7 +204,7 @@ const accessOff = (viewer: Viewer, admins: ReadonlyArray<string>) =>
 /** The header's status line: whether agent access is on, and who can change it. */
 const accessLine = ({ viewer, admins }: View) => {
   const company = viewer.company.name;
-  const admin = viewer.role === "admin";
+  const admin = viewer.role === "super_admin";
   return admins === null
     ? [
         dot(`Agent access is on at ${company}`, "success"),
@@ -214,7 +214,7 @@ const accessLine = ({ viewer, admins }: View) => {
         dot(`Agent access is off at ${company}`, "warning"),
         admin
           ? '<a href="/settings/agent-access">Turn it on</a>'
-          : `${admins.length === 0 ? "An admin" : sentenceList(admins)} can turn it on`
+          : `${admins.length === 0 ? "A super admin" : sentenceList(admins)} can turn it on`
       ];
 };
 

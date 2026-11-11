@@ -109,7 +109,7 @@ const attentionOf = (
         act: `<form method="post" action="${escapeAttribute(cardPath(patch, "restore"))}">${restoreForm(patch)}${button("Restore", { size: "sm", ariaLabel: `Restore ${title}` })}</form>`
       };
   }
-  if (row.owner.deactivated && viewer.role === "admin")
+  if (row.owner.deactivated && viewer.role !== "member")
     return {
       title: "Its owner is deactivated",
       detail: "Nobody can publish to it until someone else owns it.",
@@ -153,7 +153,7 @@ const actions = (
   if (!manages(row, viewer)) return rowMenu(patch.id, title, items);
   const manage = [
     menuLink(cardPath(patch, "settings"), "Settings", false, title),
-    ...(viewer.role === "admin"
+    ...(viewer.role !== "member"
       ? [menuLink(cardPath(patch, "reassign"), "Reassign…", false, title)]
       : []),
     ...(patch.state === "live"

@@ -315,3 +315,26 @@ it.effect("ignores unrelated membership changes for queries without a directory 
     });
   }).pipe(Effect.provide(NodeCryptography.layer))
 );
+
+for (const declaration of [binding.manifest.uses.catalog!, binding.manifest.uses.assets!])
+  it.effect(`resumes a ${declaration.kind} membership fence without a members declaration`, () =>
+    Effect.gen(function* () {
+      const adapter = yield* QuerySubscriptions.make.pipe(
+        Effect.provideService(SubscriptionReads.SubscriptionReads, {
+          admit: () => Effect.die("Unexpected primitive admission"),
+          read: () => Effect.die("Unexpected primitive read"),
+          revisions: () => Effect.succeed({})
+        }),
+        Effect.provideService(Invocation.Invocation, {
+          call: () => Effect.die("Admission must not invoke a query")
+        })
+      );
+      const keys = yield* adapter.admit({
+        op: "server.call",
+        args: { handler: "demo.read", args: {} },
+        binding: { ...binding, manifest: { ...binding.manifest, uses: { source: declaration } } },
+        dependencies: [memberDirectory, "members:another-company"]
+      });
+      assert.deepStrictEqual(keys, ["patch:consumer", memberDirectory]);
+    }).pipe(Effect.provide(NodeCryptography.layer))
+  );

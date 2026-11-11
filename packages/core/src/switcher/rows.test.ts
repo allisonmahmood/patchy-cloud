@@ -123,6 +123,8 @@ describe("what the switcher lists", () => {
           "Home",
           "All patches",
           "Your agents",
+          "Company",
+          "Teams",
           "People",
           "Integrations",
           "Agent access",
@@ -163,7 +165,16 @@ describe("what the switcher lists", () => {
     expect(result[0]!.rows[0]!.title).toBe("Fuel Log");
     expect(view(result).at(-1)).toEqual([
       "Patchy",
-      ["All patches", "Your agents", "People", "Integrations", "Agent access", "What’s new"]
+      [
+        "All patches",
+        "Your agents",
+        "Company",
+        "Teams",
+        "People",
+        "Integrations",
+        "Agent access",
+        "What’s new"
+      ]
     ]);
     expect(result.some((section) => section.label === "This patch")).toBe(false);
   });
@@ -226,7 +237,16 @@ describe("what the switcher lists", () => {
     expect(view(result)).toEqual([
       [
         "Patchy",
-        ["All patches", "Your agents", "People", "Integrations", "Agent access", "What’s new"]
+        [
+          "All patches",
+          "Your agents",
+          "Company",
+          "Teams",
+          "People",
+          "Integrations",
+          "Agent access",
+          "What’s new"
+        ]
       ]
     ]);
     expect(result[0]!.rows.at(-1)!.dot).toBe(false);

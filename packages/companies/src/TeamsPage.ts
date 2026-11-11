@@ -22,6 +22,7 @@ import {
   menu,
   notice,
   productMark,
+  refusalNotice,
   row,
   rows,
   searchField,
@@ -72,8 +73,7 @@ const screenHref = (id: string, screen: Screen) => `${address(id)}&view=${screen
 const peopleCount = (count: number) => `${count} ${count === 1 ? "person" : "people"}`;
 const hidden = (name: string, value: string) =>
   `<input type="hidden" name="${escapeAttribute(name)}" value="${escapeAttribute(value)}">`;
-const problem = (refused?: Refusal) =>
-  refused ? notice({ tone: "danger", title: refused.message }) : "";
+const problem = (refused?: Refusal) => (refused ? refusalNotice(refused.message) : "");
 const teamMark = () => productMark({ icon: "people" });
 const cancel = (href: string, autofocus = false) =>
   linkButton("Cancel", href, { kind: "quiet", autofocus });
@@ -228,7 +228,7 @@ const render = Effect.fn("TeamsPage.render")(function* (
           closeHref: directoryHref,
           form: { action: operation(selected.id, "restore") },
           body: `${problem(refused)}<p class="prose">The team and its recorded memberships will return.</p>`,
-          foot: cancel(directoryHref, true) + button("Restore team", { kind: "primary" })
+          foot: cancel(directoryHref, !refused) + button("Restore team", { kind: "primary" })
         })
       };
     return page;
@@ -363,7 +363,7 @@ const render = Effect.fn("TeamsPage.render")(function* (
         closeHref: teamHref,
         form: { action: operation(selected.id, "delete") },
         body: `${problem(refused)}<p class="prose">Memberships are kept for restoration. A team used by a patch or connection can’t be deleted.</p>`,
-        foot: cancel(teamHref, true) + button("Delete team", { kind: "danger-solid" })
+        foot: cancel(teamHref, !refused) + button("Delete team", { kind: "danger-solid" })
       })
     };
   if (view.screen === "remove") {
@@ -382,7 +382,7 @@ const render = Effect.fn("TeamsPage.render")(function* (
         form: { action: operation(selected.id, "remove"), fields: hidden("userId", person.id) },
         body: `${problem(refused)}${rows([row({ lead: avatar(person.id, person.name), name: person.name, description: person.email })], true)}<p class="prose">${self ? "You’ll" : `${escapeHtml(person.name)} will`} lose access granted by this team.</p>`,
         foot:
-          cancel(teamHref, true) +
+          cancel(teamHref, !refused) +
           button(self ? "Leave team" : "Remove person", { kind: "danger-solid" })
       })
     };

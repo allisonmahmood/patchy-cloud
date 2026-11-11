@@ -255,7 +255,7 @@ export const renderHome = (input: HomeInput): Template => {
               ? emptyState({
                   title: "No patches yet",
                   body: `What ${company} builds shows up here.`,
-                  ...(viewer.role === "admin"
+                  ...(viewer.role !== "member"
                     ? { action: linkButton("Invite people", "/settings/people", { size: "sm" }) }
                     : {})
                 })

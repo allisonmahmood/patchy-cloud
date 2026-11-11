@@ -1338,6 +1338,8 @@ export const make = Effect.gen(function* () {
       Effect.provideService(SqlClient.SqlClient, sql),
       Effect.provideService(Teams.Teams, teamService)
     );
+  const preserveHiddenTeams = (...args: Parameters<typeof Audiences.preserveHiddenTeams>) =>
+    Audiences.preserveHiddenTeams(...args).pipe(Effect.provideService(Teams.Teams, teamService));
   const validateAudience = (...args: Parameters<typeof Audiences.validate>) =>
     Audiences.validate(...args).pipe(
       Effect.provideService(SqlClient.SqlClient, sql),
@@ -2273,8 +2275,14 @@ export const make = Effect.gen(function* () {
               Effect.catchTags(dieOnSchemaError)
             )
           : Option.none();
-      yield* validateAudience({
+      const audience = yield* preserveHiddenTeams({
         audience: input.audience,
+        companyId: input.companyId,
+        actorId: input.ownerUserId,
+        ...(Option.isSome(previous) ? { previous: previous.value.audience } : {})
+      });
+      yield* validateAudience({
+        audience,
         companyId: input.companyId,
         actorId: input.ownerUserId,
         ownerId: input.ownerUserId,
@@ -2283,7 +2291,7 @@ export const make = Effect.gen(function* () {
       if (Option.isSome(previous))
         yield* refuseAudienceNarrowing(
           previous.value,
-          input.audience,
+          audience,
           { userId: input.ownerUserId, admin: false },
           input.force
         );
@@ -2462,16 +2470,19 @@ export const make = Effect.gen(function* () {
         // Lock company authority before any patch/user row, matching team management.
         yield* sql`SELECT id FROM companies WHERE id = ${input.companyId} FOR NO KEY UPDATE`;
         const existing = input.intent === "update" ? yield* publishable(input) : null;
-        const audience =
-          input.audience ??
-          (existing !== null &&
-          (input.scope === undefined ||
-            input.scope === existing.scope ||
-            (input.scope === "company" && existing.audience.members.kind === "teams"))
-            ? existing.audience
-            : existing !== null
-              ? Audiences.company(input.scope)
-              : Audiences.company(input.scope));
+        const audience = yield* preserveHiddenTeams({
+          audience:
+            input.audience ??
+            (existing !== null &&
+            (input.scope === undefined ||
+              input.scope === existing.scope ||
+              (input.scope === "company" && existing.audience.members.kind === "teams"))
+              ? existing.audience
+              : Audiences.company(input.scope)),
+          companyId: input.companyId,
+          actorId: input.ownerUserId,
+          ...(existing === null ? {} : { previous: existing.audience })
+        });
         yield* validateAudience({
           audience,
           companyId: input.companyId,
@@ -2955,34 +2966,16 @@ export const make = Effect.gen(function* () {
       return yield* new StaleAction({ patchId });
     if (expectedScope !== undefined && row.scope !== expectedScope)
       return yield* new StaleAction({ patchId });
-    let chosen =
-      input.audience ??
-      (input.scope === "company" && row.audience.members.kind === "teams"
-        ? row.audience
-        : Audiences.company(input.scope));
-    if (!actor.admin && chosen.members.kind === "teams" && row.audience.members.kind === "teams") {
-      const visible = new Set(
-        yield* teamService
-          .memberships(row.companyId, [actor.userId])
-          .pipe(Effect.map((rows) => rows.get(actor.userId) ?? []))
-          .pipe(
-            Effect.provideService(SqlClient.SqlClient, sql),
-            Effect.provideService(Teams.Teams, teamService)
-          )
-      );
-      chosen = {
-        ...chosen,
-        members: {
-          kind: "teams",
-          teamIds: [
-            ...new Set([
-              ...chosen.members.teamIds,
-              ...row.audience.members.teamIds.filter((id) => !visible.has(id))
-            ])
-          ]
-        }
-      };
-    }
+    const chosen = yield* preserveHiddenTeams({
+      audience:
+        input.audience ??
+        (input.scope === "company" && row.audience.members.kind === "teams"
+          ? row.audience
+          : Audiences.company(input.scope)),
+      previous: row.audience,
+      companyId: row.companyId,
+      actorId: actor.userId
+    });
     const scope = Audiences.scopeOf(chosen);
     if (scope === "public" && row.currentVersionId !== null) {
       const served = yield* findVersionById({ patchId, versionId: row.currentVersionId }).pipe(

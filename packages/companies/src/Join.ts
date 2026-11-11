@@ -149,7 +149,12 @@ const render = Effect.fn("Join.render")(function* (
     );
     const joinForm = (inviteId: string, id: string) =>
       `<form id="${escapeAttribute(id)}" method="post" action="${escapeAttribute(action)}"><input type="hidden" name="action" value="join"><input type="hidden" name="inviteId" value="${escapeAttribute(inviteId)}"></form>`;
-    const role = (invite: Companies.Invite) => (invite.role === "admin" ? "an admin" : "a member");
+    const role = (invite: Companies.Invite) =>
+      invite.role === "super_admin"
+        ? "a super admin"
+        : invite.role === "admin"
+          ? "an admin"
+          : "a member";
     const [only] = offers;
     if (offers.length === 1 && only !== undefined) {
       const by = only.inviter === undefined ? "" : `${escapeHtml(only.inviter)} invited `;
