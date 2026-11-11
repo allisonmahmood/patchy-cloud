@@ -110,6 +110,7 @@ const failureSchema = Schema.Struct({
   error: Schema.String,
   kind: Schema.Literals(["local", "rejected", "unreachable"]),
   code: Schema.optionalKey(Schema.String),
+  feedbackHint: Schema.optionalKey(Schema.String),
   warnings: Schema.optionalKey(Schema.Array(Schema.String)),
   ...refusalFields
 });
@@ -438,9 +439,19 @@ const installedFailure = Effect.fn("Project.installedFailure")(function* (
     case "rejected":
       return yield* Api.fromRefusal(error, error.error);
     case "unreachable":
-      return yield* new UnreachableError({ ...fields, instanceUrl });
+      // The installed CLI offers the hint only after an answer it could not use, without saying
+      // whether a status or a body; one without it got no answer, or predates the hint.
+      return yield* new UnreachableError({
+        ...fields,
+        instanceUrl,
+        reason: error.feedbackHint === undefined ? "transport" : "response"
+      });
     case "local":
-      return yield* new LocalError(fields);
+      return yield* new LocalError({
+        ...fields,
+        // Only its `Unexpected error` carries the hint.
+        ...(error.feedbackHint === undefined ? {} : { unexpected: true })
+      });
   }
 });
 
@@ -1036,9 +1047,11 @@ export const add = Effect.fn("Project.add")(function* (
             : refusal(error, "Could not read the shared source.")
         )
       );
+    // The instance answered, but its company database was unavailable to list the source's resources.
     if (source.inventory === null)
       return yield* new UnreachableError({
         instanceUrl: instance.apiUrl,
+        reason: "response",
         code: "source_unavailable",
         message: "The shared source's inventory is unavailable. Try again later."
       });

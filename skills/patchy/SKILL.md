@@ -568,9 +568,11 @@ browser sign-out is a separate control, **Sign out** in the account menu.
   (network failure, undecodable body or unmodelled 5xx) — try later or contact
   Patchy about the unavailable instance. `130` is an interruption.
 - Every command takes `--json`: one JSON document on stdout on success;
-  `{ ok: false, error, kind, code?, state?, owner?, dependants?, sources?, purgeAt?, warnings? }`
+  `{ ok: false, error, kind, code?, state?, owner?, dependants?, sources?, purgeAt?, feedbackHint?, warnings? }`
   on stderr on failure. `kind` is `local`, `rejected` or `unreachable` and matches
   the exit code. Branch on `kind`/exit first, then `code` when present.
+  `feedbackHint` appears only when Patchy itself may be at fault (an unmodelled 5xx,
+  an unreadable body, an unexpected error) and offers `patchy feedback`.
   Relay `warnings` even when a later step fails. Repo checks emit local
   `instance_mismatch`, `release_mismatch`, `toolchain_unsupported`, `stale_generated`,
   `invalid_manifest`, `import_refused`, `too_large` and `tier_mismatch` (exit 1).

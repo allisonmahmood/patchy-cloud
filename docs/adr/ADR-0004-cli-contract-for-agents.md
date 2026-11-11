@@ -39,12 +39,24 @@ command failures. A defect is `Unexpected error: <message>`, exit 1, with a
 stack only at `--log-level debug`. Text diagnostics may include repair steps or
 lists of validation failures; their line count is not the branching contract.
 
+A failure Patchy may have caused offers `patchy feedback`: an answer the CLI
+could not use, such as an unmodelled 5xx or an unreadable body, and a defect.
+Text mode adds the line
+`If Patchy got this wrong, tell Patchy's team: patchy feedback "<what you ran and what happened>"`
+after the error; `--json` carries it as `feedbackHint`. It offers the command and
+doesn't order a call. A transport failure, including a body cut off mid-stream,
+a refusal, a local mistake or a sign-in state carries none, nor does any failure
+of `patchy feedback` itself. A command relaying the installed CLI's failure keeps
+its hint.
+`UnreachableError` records which it was, transport, response or decode, where
+it is created; exit 3 covers all three.
+
 `--json` is global, accepted before or after the subcommand:
 
 - **Success:** exactly one stdout JSON document, with the command's shape below.
   Warnings are fields in that document, never JSON-mode stderr; install, build
   and generation progress do not leak into stdout. `status` always uses JSON.
-- **Failure:** one stderr document `{ ok: false, error, kind, code?, state?, owner?, dependants?, sources?, purgeAt?, versionNumber?, baseVersion?, latestVersion?, publishedBy?, publishedAt?, admins?, reason?, from?, details?, retryAfterSeconds?, warnings? }`, ordinarily
+- **Failure:** one stderr document `{ ok: false, error, kind, code?, state?, owner?, dependants?, sources?, purgeAt?, versionNumber?, baseVersion?, latestVersion?, publishedBy?, publishedAt?, admins?, reason?, from?, details?, retryAfterSeconds?, feedbackHint?, warnings? }`, ordinarily
   empty stdout, and the exit code for `kind`. `code` preserves exposed wire
   refusals and identifies [local repo checks](#local-repo-refusal-codes), plus
   local dev codes such as `not_additive`, `not_running` and `no_agent_tools`; not every
