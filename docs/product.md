@@ -2068,7 +2068,7 @@ A per-patch admin control over agent access, beyond the switch and the owner's c
 
 ## Requests and feedback
 
-**The store and the dashboard are built**; the other doors follow. [#1210](https://github.com/allisonmahmood/patchy-cloud/issues/1210) records the decisions. The API the CLI calls exists ([API](./API.md#feedback)); `patchy request` and `patchy feedback` ([#1212](https://github.com/allisonmahmood/patchy-cloud/issues/1212)) and Patchy MCP's `tell_patchy` ([#1214](https://github.com/allisonmahmood/patchy-cloud/issues/1214)) don't yet.
+**The store, the CLI and the dashboard are built**; Patchy MCP's door follows. [#1210](https://github.com/allisonmahmood/patchy-cloud/issues/1210) records the decisions. The CLI's `patchy request` and `patchy feedback` ([#1212](https://github.com/allisonmahmood/patchy-cloud/issues/1212)) call its API ([API](./API.md#feedback)); Patchy MCP's `tell_patchy` ([#1214](https://github.com/allisonmahmood/patchy-cloud/issues/1214)) doesn't exist yet.
 
 A **request** is something Patchy can't do yet; **feedback** is something it did wrong, strangely or made hard. Agents send both through the CLI and Patchy MCP, and people through the dashboard. Every submission is stored as sent, near-duplicates included: how often something is asked, and by whom, is the signal. Each records the person, the company, the surface and the agent, which is the CLI's detected coding agent (`unknown` when it found none) or the MCP connection's client; dashboard submissions carry none.
 

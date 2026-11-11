@@ -15,6 +15,7 @@ import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy
 import { Companies, Users } from "@patchy/companies";
 import * as Testing from "@patchy/company-database/testing";
 import { NodeCryptography } from "@patchy/core";
+import { SUBMISSION_TEXT_MAX, SUBMISSION_TITLE_MAX } from "@patchy/api";
 import { Feedback } from "@patchy/feedback";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import * as FeedbackPages from "./FeedbackPages.js";
@@ -90,7 +91,7 @@ const submissions = (who: Person) =>
   );
 
 describe("a dashboard request's title and why", () => {
-  const { TITLE_MAX } = Feedback;
+  const TITLE_MAX = SUBMISSION_TITLE_MAX;
   /** Words "w0 w1 w2 …" running to at least `length` characters. */
   const words = (length: number) => {
     let text = "w0";
@@ -305,7 +306,7 @@ it.layer(layer)("Feedback pages", (it) => {
         });
 
         // The cap counts characters, as the store does: an emoji is one, though it is two UTF-16 units.
-        const longest = `${"x".repeat(Feedback.TEXT_MAX - 1)}🙂`;
+        const longest = `${"x".repeat(SUBMISSION_TEXT_MAX - 1)}🙂`;
         for (const kind of ["request", "feedback"] as const)
           assert.strictEqual(
             (yield* request(ada, post("/feedback", { kind, text: longest }))).status,

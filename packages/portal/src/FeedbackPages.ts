@@ -19,7 +19,15 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import type * as SqlClient from "effect/sql/SqlClient";
-import { CodingAgent, type RequestBrief, type RequestStatus, SubmissionKind } from "@patchy/api";
+import {
+  CodingAgent,
+  type RequestBrief,
+  type RequestStatus,
+  SUBMISSION_TEXT_MAX,
+  SUBMISSION_TITLE_MAX,
+  SUBMISSION_TITLE_MIN,
+  SubmissionKind
+} from "@patchy/api";
 import { pageResponse, Receipt, RequireSession, Session } from "@patchy/auth";
 import type { Companies, Users } from "@patchy/companies";
 import {
@@ -138,15 +146,15 @@ const oneLine = (text: string) => text.replace(/\s+/gu, " ").trim();
 const characters = (text: string) => [...text].length;
 const fitsTitle = (text: string) => {
   const length = characters(text);
-  return length >= Feedback.TITLE_MIN && length <= Feedback.TITLE_MAX;
+  return length >= SUBMISSION_TITLE_MIN && length <= SUBMISSION_TITLE_MAX;
 };
 
 /** `line` cut to a title: at the last word boundary that leaves room for "…", else mid-word. */
 const shortened = (line: string) => {
   const all = [...line];
-  const room = all.slice(0, Feedback.TITLE_MAX - 1);
+  const room = all.slice(0, SUBMISSION_TITLE_MAX - 1);
   const boundary = all[room.length] === " " ? room.length : room.lastIndexOf(" ");
-  const kept = boundary >= Feedback.TITLE_MIN ? room.slice(0, boundary) : room;
+  const kept = boundary >= SUBMISSION_TITLE_MIN ? room.slice(0, boundary) : room;
   return `${kept.join("").trimEnd()}…`;
 };
 
@@ -160,7 +168,7 @@ export const requestOf = (
   text: string
 ): { readonly title: string; readonly why: string | null } => {
   const whole = oneLine(text);
-  if (characters(whole) <= Feedback.TITLE_MAX) return { title: whole, why: null };
+  if (characters(whole) <= SUBMISSION_TITLE_MAX) return { title: whole, why: null };
   const first = oneLine(text.trim().split(/\r?\n/u)[0] ?? "");
   return { title: fitsTitle(first) ? first : shortened(whole), why: text.trim() };
 };
@@ -183,8 +191,8 @@ const sendRefusal = (error: Feedback.SendRefusal, kind: SubmissionKind, text: st
         title:
           length === 0
             ? `Write your ${noun} first`
-            : length > Feedback.TEXT_MAX
-              ? `Your ${noun} is longer than ${Feedback.TEXT_MAX.toLocaleString("en-US")} characters`
+            : length > SUBMISSION_TEXT_MAX
+              ? `Your ${noun} is longer than ${SUBMISSION_TEXT_MAX.toLocaleString("en-US")} characters`
               : length < error.minimum
                 ? `A request is at least ${error.minimum} characters`
                 : `Your ${noun} has a control character in it`,
