@@ -227,6 +227,7 @@ const desk = Effect.fn("live.desk")(function* (
   connection: Pidgeon,
   patchId: string
 ) {
+  yield* RuntimeTest.seedPatch(patchId);
   const handlers = yield* Operations.makeHandlers.pipe(
     Effect.provide(Layer.merge(Live.layer, Directory.layer)),
     Effect.provideService(ConnectionStore.ConnectionStore, store)

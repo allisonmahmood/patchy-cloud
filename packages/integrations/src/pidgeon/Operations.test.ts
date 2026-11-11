@@ -23,6 +23,7 @@ import * as AttioSource from "../attio/Source.js";
 import * as ImapTest from "../test/imap.js";
 import * as SqlConnectionStore from "../SqlConnectionStore.js";
 import * as PidgeonTest from "../test/pidgeon.js";
+import { seedPatch } from "../test/runtime.js";
 import * as Operations from "./Operations.js";
 
 /**
@@ -229,8 +230,7 @@ let made = 0;
  */
 const setup = (answers: (address: Address) => ReadonlyArray<PidgeonTest.Recorded> = () => []) =>
   Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    yield* sql`INSERT INTO patches (id, company_id, owner_user_id, title, name) VALUES ('deskpatch001', ${who.companyId}, ${who.userId}, 'Integration operations', 'deskpatch001') ON CONFLICT (id) DO NOTHING`;
+    yield* seedPatch("deskpatch001");
     made++;
     const address = (id: string, handle: string): Address => ({
       id,
