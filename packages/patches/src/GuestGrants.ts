@@ -17,7 +17,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { GuestReason, guestReasonText, Manifest, PatchState, SharingScope } from "@patchy/api";
-import { type CompanyPage, Teams, Users } from "@patchy/companies";
+import { type CompanyPage, Users } from "@patchy/companies";
 import { ConnectionStore } from "@patchy/integrations";
 import * as Patches from "./Patches.js";
 
@@ -536,15 +536,8 @@ export const make = Effect.gen(function* () {
     companyId: string,
     viewer?: Patches.Actor
   ) {
-    const person =
-      viewer === undefined
-        ? undefined
-        : (yield* Teams.people(companyId, [viewer.userId]).pipe(
-            Effect.provideService(SqlClient.SqlClient, sql)
-          ))[0];
-    const oversight = person?.active === true && person.role === "super_admin";
     const visible =
-      viewer === undefined || oversight
+      viewer === undefined
         ? undefined
         : new Set(
             (yield* patches
