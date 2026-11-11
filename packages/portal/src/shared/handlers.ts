@@ -286,7 +286,7 @@ export const shareOverlay = Effect.fn("Portal.shareOverlay")(function* (
     ...(sharing.submitted ? { submitted: sharing.submitted } : {}),
     teams: yield* (yield* Teams.Teams)
       .list({ companyId: viewer.company.id, actorId: viewer.user.id })
-      .pipe(Effect.provide(Teams.layer), Effect.catchTags({ RoleForbidden: Effect.die })),
+      .pipe(Effect.catchTags({ RoleForbidden: Effect.die })),
     viewer,
     publicBaseUrl: session.publicBaseUrl,
     back: pagePath(sharing.at),

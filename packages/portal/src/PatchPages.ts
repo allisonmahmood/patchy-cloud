@@ -176,6 +176,48 @@ const agentAside = Effect.fn("PatchPages.agentAside")(function* (card: Patches.P
   return renderAgentAside({ tools, viewer, admins, apps });
 });
 
+/** Both card modes show the same owner-only audit with actor attribution. */
+const ownershipHistory = Effect.fn("PatchPages.ownershipHistory")(function* (
+  card: Patches.ManagementCard
+) {
+  const { viewer } = yield* context;
+  if (card.owner.id !== viewer.user.id) return "";
+  const history = yield* (yield* Patches.Patches).managementHistory(card.patch.id, viewer.user.id);
+  if (!history.length) return "";
+  const names = yield* (yield* Users.Users).names(history.map((entry) => entry.actorId));
+  return section({
+    title: "Administrative self-joining",
+    body: rows(
+      history.map((entry) =>
+        row({
+          name: `${names.get(entry.actorId) ?? "Company administrator"} joined ${entry.teamName}`,
+          description: entry.createdAt.toISOString()
+        })
+      ),
+      true
+    )
+  });
+});
+
+/** Keep eligibility and stale-authority handling together; fetch only for the reassign dialog. */
+const reassignmentCandidates = Effect.fn("PatchPages.reassignmentCandidates")(function* (
+  patchId: string
+) {
+  const { viewer } = yield* context;
+  const eligible = yield* (yield* Patches.Patches)
+    .eligibleOwners(patchId, { userId: viewer.user.id, admin: viewer.role !== "member" })
+    .pipe(
+      Effect.catchTags({
+        NotOwner: () => new Patches.PatchUnavailable({ patchId }),
+        OwnerAccessLost: () => new Patches.PatchUnavailable({ patchId })
+      })
+    );
+  const ids = new Set(eligible.map((person) => person.id));
+  return (yield* (yield* Users.Users).list(viewer.company.id)).filter((person) =>
+    ids.has(person.id)
+  );
+});
+
 /**
  * Overview's main column: the patch's facts, why its guests can't open it, and the recent log.
  * A page holds one notice, so a refusal over it leaves out the guests' warning until the next look.
@@ -190,13 +232,6 @@ const overview = Effect.fn("PatchPages.overview")(function* (
   const { viewer } = yield* context;
   const { readOnly } = options;
   const reason = options.refused ? undefined : (yield* turnedAway([selected]))?.get(card.patch.id);
-  const history =
-    card.owner.id === viewer.user.id
-      ? yield* (yield* Patches.Patches).managementHistory(card.patch.id, viewer.user.id)
-      : [];
-  const names = history.length
-    ? yield* (yield* Users.Users).names(history.map((entry) => entry.actorId))
-    : new Map<string, string>();
   return (
     renderOverview({
       card,
@@ -206,21 +241,7 @@ const overview = Effect.fn("PatchPages.overview")(function* (
       activity: yield* recentActivity(card, now),
       ...(readOnly ? { readOnly } : {}),
       ...(reason === undefined ? {} : { turnedAway: reason })
-    }) +
-    (history.length
-      ? section({
-          title: "Administrative self-joining",
-          body: rows(
-            history.map((entry) =>
-              row({
-                name: `${names.get(entry.actorId) ?? "Company administrator"} joined ${entry.teamName}`,
-                description: entry.createdAt.toISOString()
-              })
-            ),
-            true
-          )
-        })
-      : "")
+    }) + (yield* ownershipHistory(card))
   );
 });
 
@@ -283,6 +304,78 @@ interface CardOptions {
 const notAvailable = (state: Patches.Patch["state"]) =>
   `This patch is ${state}. This action is not available. Nothing was done.`;
 
+/** Management metadata never goes through portalCard or the content rendering path. */
+const renderRecovery: (management: Patches.ManagementView, options: CardOptions) => Page =
+  Effect.fn("PatchPages.renderRecovery")(function* (
+    management: Patches.ManagementView,
+    options: CardOptions
+  ) {
+    const { viewer, session, url } = yield* context;
+    const name = management.record.name;
+    const card = {
+      ...management.card,
+      versions: management.versions,
+      currentVersion:
+        management.versions.find((version) => version.id === management.record.currentVersionId)
+          ?.versionNumber ?? 0
+    };
+    const here = cardPath(card.patch);
+    const now = yield* Clock.currentTimeMillis;
+    const editable = management.canManage && !options.readOnly;
+    const controls = editable
+      ? [
+          ...(card.patch.state === "live"
+            ? [
+                linkButton("Share…", `${here}?share=${encodeURIComponent(name)}`, {
+                  kind: "primary"
+                }),
+                linkButton("Retire…", `${here}/retire`)
+              ]
+            : [linkButton("Restore…", `${here}/restore`, { kind: "primary" })]),
+          ...(viewer.role !== "member" ? [linkButton("Reassign…", `${here}/reassign`)] : []),
+          ...(card.patch.state !== "deleted"
+            ? [linkButton("Delete…", `${here}/delete`, { kind: "danger" })]
+            : [])
+        ].join("")
+      : "";
+    const confirm = editable ? options.confirm : undefined;
+    const confirmation =
+      confirm === undefined
+        ? undefined
+        : confirm.action === "reassign"
+          ? renderConfirmation({
+              ...confirm,
+              action: "reassign",
+              card,
+              viewer,
+              now,
+              close: here,
+              members: yield* reassignmentCandidates(card.patch.id)
+            })
+          : renderConfirmation({ ...confirm, card, viewer, now, close: here });
+    const sharing =
+      confirmation === undefined && editable ? (options.sharing ?? asked(url)) : undefined;
+    const overlay = confirmation ?? (yield* shareOverlay([card], sharing));
+    return pageResponse(
+      {
+        title: name,
+        status: options.status ?? sharing?.status ?? 200,
+        ...detailPage({
+          title: name,
+          parent: { label: "All patches", href: "/patches" },
+          mark: patchMark(card.patch.name, card.tier),
+          meta: [escapeHtml(card.owner.name), escapeHtml(card.patch.state)],
+          actions: controls,
+          main: `<div class="stack">${notice({ tone: "warning", title: management.canManage ? "You can manage this patch, but can’t open its content" : "You own this patch, but can’t open it", body: management.canManage ? undefined : "<p>Ask an admin to restore your team access or reassign it.</p>", action: viewer.role !== "member" ? linkButton("Manage teams", "/settings/company/teams") : undefined })}${options.notice ? notice({ tone: "danger", title: options.notice }) : ""}${card.versions.length ? section({ title: "Versions", body: renderVersions({ card, viewer, now }) }) : ""}${yield* ownershipHistory(
+            card
+          )}</div>`
+        }),
+        app: { ...withOverlay(viewer, overlay), section: "patches" }
+      },
+      session
+    );
+  });
+
 /**
  * One patch's page at `/patches/<name>` on one of its tabs, with any dialog over it. A member
  * asking for Settings gets Overview. An act's dialog checks first that the viewer may do it and
@@ -298,101 +391,7 @@ export const render: (name: string, options?: CardOptions) => Page = Effect.fn("
     const management = (yield* patches.management(viewer.company.id, viewer.user.id, {
       name
     })).find((view) => view.record.name === name);
-    if (management && !management.canOpen) {
-      const card = {
-        ...management.card,
-        versions: management.versions,
-        currentVersion:
-          management.versions.find((version) => version.id === management.record.currentVersionId)
-            ?.versionNumber ?? 0
-      };
-      const here = cardPath(card.patch);
-      const now = yield* Clock.currentTimeMillis;
-      const history =
-        management.record.ownerId === viewer.user.id
-          ? yield* patches.managementHistory(card.patch.id, viewer.user.id)
-          : [];
-      const people = yield* (yield* Users.Users).list(viewer.company.id);
-      const eligible =
-        management.canManage && viewer.role !== "member"
-          ? new Set(
-              (yield* patches
-                .eligibleOwners(card.patch.id, { userId: viewer.user.id, admin: true })
-                .pipe(
-                  Effect.catchTags({
-                    NotOwner: () => new Patches.PatchUnavailable({ patchId: card.patch.id }),
-                    OwnerAccessLost: () => new Patches.PatchUnavailable({ patchId: card.patch.id })
-                  })
-                )).map((person) => person.id)
-            )
-          : new Set<string>();
-      const editable = management.canManage && !options.readOnly;
-      const controls = editable
-        ? [
-            ...(card.patch.state === "live"
-              ? [
-                  linkButton("Share…", `${here}?share=${encodeURIComponent(name)}`, {
-                    kind: "primary"
-                  }),
-                  linkButton("Retire…", `${here}/retire`)
-                ]
-              : [linkButton("Restore…", `${here}/restore`, { kind: "primary" })]),
-            ...(viewer.role !== "member" ? [linkButton("Reassign…", `${here}/reassign`)] : []),
-            ...(card.patch.state !== "deleted"
-              ? [linkButton("Delete…", `${here}/delete`, { kind: "danger" })]
-              : [])
-          ].join("")
-        : "";
-      const confirm = editable ? options.confirm : undefined;
-      const confirmation =
-        confirm === undefined
-          ? undefined
-          : confirm.action === "reassign"
-            ? renderConfirmation({
-                ...confirm,
-                action: "reassign",
-                card,
-                viewer,
-                now,
-                close: here,
-                members: people.filter((person) => eligible.has(person.id))
-              })
-            : renderConfirmation({ ...confirm, card, viewer, now, close: here });
-      const sharing =
-        confirmation === undefined && editable ? (options.sharing ?? asked(url)) : undefined;
-      const overlay = confirmation ?? (yield* shareOverlay([card], sharing));
-      return pageResponse(
-        {
-          title: name,
-          status: options.status ?? sharing?.status ?? 200,
-          ...detailPage({
-            title: name,
-            parent: { label: "All patches", href: "/patches" },
-            mark: patchMark(card.patch.name, card.tier),
-            meta: [escapeHtml(card.owner.name), escapeHtml(card.patch.state)],
-            actions: controls,
-            main: `<div class="stack">${notice({ tone: "warning", title: management.canManage ? "You can manage this patch, but can’t open its content" : "You own this patch, but can’t open it", body: management.canManage ? undefined : "<p>Ask an admin to restore your team access or reassign it.</p>", action: viewer.role !== "member" ? linkButton("Manage teams", "/settings/company/teams") : undefined })}${options.notice ? notice({ tone: "danger", title: options.notice }) : ""}${card.versions.length ? section({ title: "Versions", body: renderVersions({ card, viewer, now }) }) : ""}${
-              history.length
-                ? section({
-                    title: "Administrative self-joining",
-                    body: rows(
-                      history.map((change) =>
-                        row({
-                          name: `${people.find((person) => person.id === change.actorId)?.name ?? "Company administrator"} joined ${change.teamName}`,
-                          description: change.createdAt.toISOString()
-                        })
-                      ),
-                      true
-                    )
-                  })
-                : ""
-            }</div>`
-          }),
-          app: { ...withOverlay(viewer, overlay), section: "patches" }
-        },
-        session
-      );
-    }
+    if (management && !management.canOpen) return yield* renderRecovery(management, options);
     const selected = (yield* patches.read({ ...access, state: "all" })).find(
       (row) => row.patch.name === name
     );
@@ -473,17 +472,6 @@ export const render: (name: string, options?: CardOptions) => Page = Effect.fn("
     const failures =
       tab === "overview" ? (yield* callSummary([selected]))?.get(patch.id)?.failures : undefined;
     const title = patchTitle(patch, viewer.company.name);
-    const eligible =
-      confirm?.action === "reassign" && viewer.role !== "member"
-        ? new Set(
-            (yield* patches.eligibleOwners(patch.id, { userId: viewer.user.id, admin: true }).pipe(
-              Effect.catchTags({
-                NotOwner: () => new Patches.PatchUnavailable({ patchId: patch.id }),
-                OwnerAccessLost: () => new Patches.PatchUnavailable({ patchId: patch.id })
-              })
-            )).map((person) => person.id)
-          )
-        : new Set<string>();
     const confirmation =
       confirm === undefined
         ? undefined
@@ -495,9 +483,7 @@ export const render: (name: string, options?: CardOptions) => Page = Effect.fn("
               viewer,
               now,
               close: here,
-              members: (yield* (yield* Users.Users).list(viewer.company.id)).filter((person) =>
-                eligible.has(person.id)
-              )
+              members: yield* reassignmentCandidates(patch.id)
             })
           : renderConfirmation({ ...confirm, card, viewer, now, close: here });
     const sharing =

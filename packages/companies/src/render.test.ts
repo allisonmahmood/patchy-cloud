@@ -34,18 +34,20 @@ it.layer(services)("team lifecycle rendering", (it) => {
       const ref = { companyId: company.company.id, actorId: company.user.id };
       const team = yield* (yield* Teams.Teams).create({ ...ref, name: "Research <script>" });
       const confirmation = yield* view(viewer, `?team=${team.id}&confirm=delete`);
+      const confirmationOverlay = "overlay" in confirmation ? (confirmation.overlay ?? "") : "";
       assert.include(confirmation.body, "Research &lt;script&gt;");
-      assert.notInclude(confirmation.body, "<script>");
-      assert.include(confirmation.body, `action="${TeamsPage.path}/delete?team=${team.id}"`);
+      assert.notInclude(confirmation.body + confirmationOverlay, "<script>");
+      assert.include(confirmationOverlay, `action="${TeamsPage.path}/delete?team=${team.id}"`);
       yield* (yield* Teams.Teams)
         .setDeleted({ ...ref, teamId: team.id, deleted: true })
         .pipe(Effect.provideService(Teams.References, () => Effect.succeed(false)));
       const active = yield* view(viewer, "");
       assert.notInclude(active.body, "Research &lt;script&gt;");
       const deleted = yield* view(viewer, `?team=${team.id}&deleted=1&confirm=restore`);
+      const restoreOverlay = "overlay" in deleted ? (deleted.overlay ?? "") : "";
       assert.include(deleted.body, "Research &lt;script&gt;");
-      assert.notInclude(deleted.body, "<script>");
-      assert.include(deleted.body, `action="${TeamsPage.path}/restore?team=${team.id}"`);
+      assert.notInclude(deleted.body + restoreOverlay, "<script>");
+      assert.include(restoreOverlay, `action="${TeamsPage.path}/restore?team=${team.id}"`);
     })
   );
   it.effect("keeps deleted teams and confirmation controls out of ordinary member views", () =>

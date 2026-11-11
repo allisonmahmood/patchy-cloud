@@ -269,7 +269,9 @@ const render = Effect.fn("TeamsPage.render")(function* (
       .filter((id) => !visible.has(id))
       .map((id) => hidden("userId", id))
       .join("");
-    const selectedNames = [...picked].map((id) => people.find((person) => person.id === id)!.name);
+    const selectedNames = active
+      .filter((person) => picked.has(person.id))
+      .map((person) => person.name);
     const form = `<form method="get" action="${path}">${hidden("team", selected.id)}${hidden("view", "add")}${retained}<div class="stack">${problem(refused)}${search}${picked.size ? notice({ tone: "info", title: `${peopleCount(picked.size)} selected`, body: `<p>${escapeHtml(selectedNames.join(", "))}</p>` }) : ""}${fieldset}<div class="btn-group">${button("Add selected people", { kind: "primary", formAction: operation(selected.id, "add"), formMethod: "post" })}${cancel(teamHref)}</div></div></form>`;
     return {
       title: `Add people to ${selected.name}`,
