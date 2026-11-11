@@ -32,6 +32,29 @@ const autofocused = (html: string) =>
   );
 
 it.layer(socket)("the Share dialog on a socket", (it) => {
+  it.effect("lets a super admin reach existing reassignment from the owner row", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const patch = yield* publish(workspace.owner, "change-owner");
+      const path = `/patches?share=${patch.name}`;
+      for (const person of [workspace.owner, workspace.admin])
+        assert.notInclude(yield* (yield* request(path, person)).text, "Change owner…");
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE users SET role = 'super_admin' WHERE id = ${workspace.admin.id}`;
+      const html = shareDialog(yield* (yield* request(path, workspace.admin)).text);
+      assert.isTrue(
+        links(html).some(
+          (link) =>
+            link.href === `${cardPath(patch.name)}/reassign` && link.text === "Change owner…"
+        )
+      );
+      const confirmation = yield* (yield* request(
+        `${cardPath(patch.name)}/reassign`,
+        workspace.admin
+      )).text;
+      assert.include(confirmation, "New owner");
+    })
+  );
   it.effect(
     "asks in the Share dialog before a patch goes public, without publishing a version",
     () =>

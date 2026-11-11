@@ -24,7 +24,13 @@ import {
   select
 } from "@patchy/core";
 import type { GuestGrants, Patches } from "@patchy/patches";
-import { hidden, patchAddress, shareHref, turnedAwayTitle } from "./shared/presentation.js";
+import {
+  cardPath,
+  hidden,
+  patchAddress,
+  shareHref,
+  turnedAwayTitle
+} from "./shared/presentation.js";
 
 type Viewer = RequireSession.Viewer["Service"];
 
@@ -162,7 +168,7 @@ export const renderShareDialog = (input: {
           : !input.access.ownerCanOpen
             ? { description: "No content access" }
             : {}),
-        end: '<span class="meta">Owner</span>'
+        end: `<span class="meta">Owner</span>${viewer.role === "super_admin" ? linkButton("Change owner…", cardPath(patch, "reassign"), { kind: "quiet", size: "sm" }) : ""}`
       }),
       ...audienceRows,
       ...input.guests.map((guest) =>
