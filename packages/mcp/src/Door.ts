@@ -15,6 +15,7 @@
  * naming its admins while it is off. `find_patches` and `open_patch` are the catalogue's;
  * `read_patch` runs a patch's read tool through the host's invocation, and `change_patch` a
  * change tool under its change key, each once the host's admission lets it in (`Admission`).
+ * `tell_patchy` sends Feedback's service a request or feedback as the person (`Tell`).
  *
  * The request's wide event, opened by the server around every route, gains the connection, the
  * revision and method, the door's tool, the patch's tool a call named, the `Origin` and each
@@ -45,8 +46,10 @@ import * as Catalogue from "./Catalogue.js";
 import type * as ChangeKeys from "./ChangeKeys.js";
 import * as RequestTrust from "./RequestTrust.js";
 import * as Revisions from "./Revisions.js";
+import * as Tell from "./Tell.js";
 import * as Tools from "./Tools.js";
 import { Cryptography } from "@patchy/core";
+import type { Feedback } from "@patchy/feedback";
 
 /** Who answers, on every revision. */
 const serverInfo = { name: "patchy", title: "Patchy", version: CURRENT_RELEASE };
@@ -102,6 +105,7 @@ export const layer: Layer.Layer<
       | Patches.Patches
       | Companies.Companies
       | Users.Users
+      | Feedback.Feedback
     >
 > = HttpRouter.use((router) =>
   Effect.gen(function* () {
@@ -313,7 +317,9 @@ export const layer: Layer.Layer<
               ? yield* Catalogue.open(identity, args, publicUrl)
               : name === "read_patch"
                 ? yield* Calls.read(identity, args, publicUrl, invocation, admit)
-                : yield* Calls.change(identity, args, publicUrl, invocation, admit));
+                : name === "change_patch"
+                  ? yield* Calls.change(identity, args, publicUrl, invocation, admit)
+                  : yield* Tell.tell(identity, args, publicUrl));
         // However a refusal came about, the agent reads it whole, so it keeps the read cap.
         return yield* toolAnswer(request.era, request.id, fitRefusal(answered));
       });

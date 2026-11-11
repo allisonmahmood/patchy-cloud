@@ -4,7 +4,7 @@
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
-  "description": "Patchy MCP: the door at /mcp through which people's agents find and use their company's patches, its revisions, request trust, bearer, limits, catalogue and calls.",
+  "description": "Patchy MCP: the door at /mcp through which people's agents find and use their company's patches, its revisions, request trust, bearer, limits, catalogue, calls and tell_patchy.",
   "exports": {
     ".": {
       "development": "./src/index.ts",
@@ -25,6 +25,7 @@
     "@patchy/auth": "workspace:*",
     "@patchy/companies": "workspace:*",
     "@patchy/core": "workspace:*",
+    "@patchy/feedback": "workspace:*",
     "@patchy/limits": "workspace:*",
     "@patchy/patches": "workspace:*",
     "@patchy/runtime": "workspace:*",

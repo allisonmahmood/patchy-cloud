@@ -1,13 +1,28 @@
 /**
- * What every worker agent is shown first: the door's four fixed tools, which disclose a
- * company's patches progressively, and the instructions naming who the agent acts for
- * (docs/product.md › The door › What a client learns first). The tool list is identical for
- * everyone, so it carries the loop in its descriptions for clients that skip instructions.
+ * What every worker agent is shown first: the door's five fixed tools, four that disclose a
+ * company's patches progressively and `tell_patchy`, which sends Patchy's team a request or
+ * feedback, and the instructions naming who the agent acts for (docs/product.md › The door ›
+ * What a client learns first). The tool list is identical for everyone, so it carries the loop
+ * in its descriptions for clients that skip instructions.
  */
-import { agentToolsBytes, type JsonSchema, type ToolCallResult, toolRefusal } from "@patchy/api";
+import {
+  agentToolsBytes,
+  type JsonSchema,
+  SUBMISSION_TEXT_MAX,
+  SUBMISSION_TITLE_MAX,
+  SUBMISSION_TITLE_MIN,
+  type ToolCallResult,
+  toolRefusal
+} from "@patchy/api";
 
 /** The door's tool names, in the order `tools/list` shows them. */
-export const NAMES = ["find_patches", "open_patch", "read_patch", "change_patch"] as const;
+export const NAMES = [
+  "find_patches",
+  "open_patch",
+  "read_patch",
+  "change_patch",
+  "tell_patchy"
+] as const;
 export type Name = (typeof NAMES)[number];
 
 export const isName = (name: string): name is Name => NAMES.some((known) => known === name);
@@ -130,6 +145,39 @@ export const tools: readonly Tool[] = [
       additionalProperties: false
     },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false }
+  },
+  {
+    name: "tell_patchy",
+    title: "Tell Patchy",
+    // Clients that load tools on demand find them by text, so it says "feature request" and
+    // "feedback" in so many words.
+    description:
+      "Send Patchy's team a feature request or feedback about Patchy itself, as the person you act for: a request when Patchy can't do something, such as an integration or capability they need; feedback when it does, but wrongly or confusingly, such as a refusal that made no sense. A patch's own missing tool goes to the patch's owner, not here. Send each once. Leave out keys and tokens, connection strings, rows, file contents, other people's personal details and pasted logs; a credential is refused. A request answers similar ones with their status, and a shipped one's note says how to use it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        kind: {
+          type: "string",
+          enum: ["request", "feedback"],
+          description: "request: Patchy can't do it. feedback: it does, but wrongly or confusingly."
+        },
+        text: {
+          type: "string",
+          minLength: 1,
+          maxLength: SUBMISSION_TEXT_MAX,
+          description: `For a request, its title: one line saying what Patchy should do, ${SUBMISSION_TITLE_MIN}–${SUBMISSION_TITLE_MAX} characters. For feedback, what happened and what you expected, up to ${SUBMISSION_TEXT_MAX.toLocaleString("en-US")}.`
+        },
+        why: {
+          type: "string",
+          maxLength: SUBMISSION_TEXT_MAX,
+          description:
+            "A request's reason: what the person is trying to do and why it matters. Requests only: feedback with a why is refused, so put everything in its text."
+        }
+      },
+      required: ["kind", "text"],
+      additionalProperties: false
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false }
   }
 ];
 
@@ -141,7 +189,8 @@ const cut = (name: string) =>
 
 /**
  * What a connection is told first, under 512 characters: who it acts for and at which company,
- * the loop, that it reaches only what builders added, and that every change is logged.
+ * the loop, that it reaches only what builders added, that every change is logged, and that
+ * what Patchy itself lacks or gets wrong goes to `tell_patchy`.
  */
 export const instructions = (identity: {
   readonly user: { readonly name: string; readonly email: string };
@@ -149,7 +198,7 @@ export const instructions = (identity: {
 }): string => {
   const person = cut(identity.user.name.trim() === "" ? identity.user.email : identity.user.name);
   const company = cut(identity.company.name);
-  return `You act for ${person} at ${company} through Patchy, where the company's internal tools are patches. find_patches lists the ones they can open, open_patch shows one's tools, then read_patch runs a read and change_patch a change. You reach only the tools each patch's builder added for agents; when one is missing, say so and name the patch's owner. Every change you make is logged as them, via you.`;
+  return `You act for ${person} at ${company} through Patchy, where company tools are patches. find_patches lists those they can open, open_patch shows one's tools, read_patch runs a read and change_patch a change. You reach only tools builders added for agents; if one is missing, name the patch's owner. Every change is logged as them, via you. Send what Patchy itself lacks or gets wrong to tell_patchy.`;
 };
 
 /** "Ada", "Ada and Ben", "Ada, Ben and Cleo". */
