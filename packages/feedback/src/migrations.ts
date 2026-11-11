@@ -1,5 +1,5 @@
 /**
- * The feedback capability's schema, id 34 in the global migration sequence: the `feedback`
+ * The feedback capability's schema, id 37 in the global migration sequence: the `feedback`
  * schema, where requests and feedback land whichever surface sent them, and the general requests
  * Patchy's team writes. Its own schema, so one read role can see these rows and nothing else
  * (`packages/feedback/read-role.sql`).
@@ -7,7 +7,7 @@
 import { ddl, type Migrations } from "@patchy/sql";
 
 export const migrations: Migrations = {
-  "0034_feedback": ddl(
+  "0037_feedback": ddl(
     `CREATE SCHEMA feedback`,
     // Written by Patchy's team with an operator credential, and how a need crosses companies:
     // every company's matching sees them. `note` is public, such as how to use a shipped thing.
