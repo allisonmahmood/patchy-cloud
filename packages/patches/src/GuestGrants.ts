@@ -17,7 +17,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { GuestReason, guestReasonText, Manifest, PatchState, SharingScope } from "@patchy/api";
-import { type CompanyPage, Users } from "@patchy/companies";
+import { type CompanyPage, Teams, Users } from "@patchy/companies";
 import { ConnectionStore } from "@patchy/integrations";
 import * as Patches from "./Patches.js";
 
@@ -536,6 +536,8 @@ export const make = Effect.gen(function* () {
     companyId: string,
     viewer?: Patches.Actor
   ) {
+    const person = viewer === undefined ? undefined : (yield* Teams.people(companyId,[viewer.userId]).pipe(Effect.provideService(SqlClient.SqlClient,sql)))[0];
+    const oversight = person?.active === true && person.role === "super_admin";
     const visible =
       viewer === undefined
         ? undefined
@@ -550,7 +552,7 @@ export const make = Effect.gen(function* () {
     for (const row of yield* companyGrantRows(companyId)) {
       const patch: CompanyPage.GuestPatch = {
         name: row.patchName,
-        title: row.title,
+        title: visible === undefined || visible.has(row.patchName) ? row.title : null,
         tier: row.tier,
         state: row.state,
         sharedBy: Users.displayName({ name: row.sharerName, email: row.sharerEmail }),
@@ -558,7 +560,7 @@ export const make = Effect.gen(function* () {
       };
       const guest = found.get(row.userId);
       if (guest) {
-        if (visible === undefined || visible.has(row.patchName)) guest.patches.push(patch);
+        if (oversight || visible === undefined || visible.has(row.patchName)) guest.patches.push(patch);
       } else {
         const { userId, name, email, companyName } = row;
         const guestName = Users.displayName({ name, email });
@@ -567,7 +569,7 @@ export const make = Effect.gen(function* () {
           name: guestName,
           email,
           companyName,
-          patches: visible === undefined || visible.has(row.patchName) ? [patch] : []
+          patches: oversight || visible === undefined || visible.has(row.patchName) ? [patch] : []
         });
       }
     }

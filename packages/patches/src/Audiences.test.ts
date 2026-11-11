@@ -261,6 +261,9 @@ it.layer(services)("Patch audiences", (it) => {
         admin: false
       });
       assert.deepStrictEqual(outsiderView.find((g) => g.userId === outside.user.id)?.patches, []);
+      yield* sql`UPDATE users SET role = 'super_admin' WHERE id = ${reader.user.id}`;
+      const oversight = yield* grants.companyGuests(viewer.companyId, {userId: reader.user.id, admin:true});
+      assert.equal(oversight.find((g) => g.userId === outside.user.id)?.patches[0]?.title, null);
       yield* sql`UPDATE users SET deactivated_at = now() WHERE id = ${outside.user.id}`;
       yield* patches.setSharing({
         patchId: input.patchId,
