@@ -155,49 +155,46 @@ const services = Layer.mergeAll(
 );
 
 it.layer(services)("company page and actions", (it) => {
-  it.effect(
-    "keeps rejected team names in the expanded form with the selected team and accessible field error",
-    () =>
-      Effect.gen(function* () {
-        const owner = yield* createCompany("teams-name-recovery");
-        const root = "/settings/company/teams";
-        yield* send(`${root}/create`, post(owner.user, { name: "Design <studio>" }));
-        const created = yield* send(`${root}/create`, post(owner.user, { name: "Engineering" }));
-        const teamId = new URL(created.headers.get("location")!, base).searchParams.get("team")!;
-        const name = " design <studio> ";
-        for (const action of ["create", "rename"] as const) {
-          const response = yield* send(
-            `${root}/${action}?team=${teamId}`,
-            post(owner.user, { name })
-          );
-          assert.strictEqual(response.status, 409);
-          const html = yield* Effect.promise(() => response.text());
-          const id = action === "create" ? "team-name-Create-team" : "team-name-Save-name";
-          assert.include(html, `id="${id}" name="name" value=" design &lt;studio&gt; "`);
-          assert.include(html, `aria-invalid="true" aria-describedby="${id}-error" autofocus`);
-          assert.include(
-            html,
-            `class="note note-refused field-callout" id="${id}-error" role="alert"`
-          );
-          assert.include(html, '<details class="teams-form" open>');
-          assert.include(html, '<h2 class="section-heading">Engineering</h2>');
-          assert.include(html, `${root}/${action}?team=${teamId}`);
-        }
-        const invalid = yield* send(
-          `${root}/rename?team=${teamId}`,
-          post(owner.user, { name: "x".repeat(101) })
+  it.effect("keeps rejected team names on the focused form with an accessible field error", () =>
+    Effect.gen(function* () {
+      const owner = yield* createCompany("teams-name-recovery");
+      const root = "/settings/company/teams";
+      yield* send(`${root}/create`, post(owner.user, { name: "Design <studio>" }));
+      const created = yield* send(`${root}/create`, post(owner.user, { name: "Engineering" }));
+      const teamId = new URL(created.headers.get("location")!, base).searchParams.get("team")!;
+      const name = " design <studio> ";
+      for (const action of ["create", "rename"] as const) {
+        const response = yield* send(
+          `${root}/${action}?team=${teamId}`,
+          post(owner.user, { name })
         );
-        assert.strictEqual(invalid.status, 400);
-        const invalidHtml = yield* Effect.promise(() => invalid.text());
-        assert.include(invalidHtml, `value="${"x".repeat(101)}"`);
-        assert.include(invalidHtml, 'aria-describedby="team-name-Save-name-error"');
-        const current = yield* send(`${root}?team=${teamId}`, {
-          headers: { cookie: cookie(owner.user) }
-        });
-        const currentHtml = yield* Effect.promise(() => current.text());
-        assert.include(currentHtml, '<h2 class="section-heading">Engineering</h2>');
-        assert.notInclude(main(currentHtml), 'aria-invalid="true"');
-      })
+        assert.strictEqual(response.status, 409);
+        const html = yield* Effect.promise(() => response.text());
+        const id = "team-name";
+        assert.include(html, `id="${id}" name="name" value=" design &lt;studio&gt; "`);
+        assert.include(html, `aria-invalid="true" aria-describedby="${id}-error" autofocus`);
+        assert.include(html, `class="note note-refused" id="${id}-error" role="alert"`);
+        assert.include(html, 'class="teams-form confirmation-form"');
+        assert.include(
+          html,
+          `action="${root}/${action}${action === "rename" ? `?team=${teamId}` : ""}"`
+        );
+      }
+      const invalid = yield* send(
+        `${root}/rename?team=${teamId}`,
+        post(owner.user, { name: "x".repeat(101) })
+      );
+      assert.strictEqual(invalid.status, 400);
+      const invalidHtml = yield* Effect.promise(() => invalid.text());
+      assert.include(invalidHtml, `value="${"x".repeat(101)}"`);
+      assert.include(invalidHtml, 'aria-describedby="team-name-error"');
+      const current = yield* send(`${root}?team=${teamId}`, {
+        headers: { cookie: cookie(owner.user) }
+      });
+      const currentHtml = yield* Effect.promise(() => current.text());
+      assert.include(currentHtml, '<h1 class="page-heading">Engineering</h1>');
+      assert.notInclude(main(currentHtml), 'aria-invalid="true"');
+    })
   );
 
   it.effect("manages durable teams through settings and keeps ordinary members read-only", () =>
@@ -218,7 +215,7 @@ it.layer(services)("company page and actions", (it) => {
       const html = yield* Effect.promise(() => page.text());
       assert.include(html, "Design &lt;studio&gt;");
       assert.include(html, member.name);
-      assert.include(html, `${root}/rename?team=`);
+      assert.include(html, "view=rename");
       assert.notInclude(html, `${root}/delete`);
       const readonly = yield* send(location, { headers: { cookie: cookie(member) } });
       const readonlyHtml = yield* Effect.promise(() => readonly.text());
@@ -246,10 +243,51 @@ it.layer(services)("company page and actions", (it) => {
       );
       const after = yield* send(location, { headers: { cookie: cookie(admin) } });
       const afterHtml = yield* Effect.promise(() => after.text());
-      assert.include(afterHtml, 'aria-label="Teams"');
-      assert.notInclude(afterHtml, `aria-label="Remove ${member.name} from`);
+      assert.include(afterHtml, '<h1 class="page-heading">Design &lt;studio&gt;</h1>');
+      assert.notInclude(afterHtml, `aria-label="Actions for ${member.name}"`);
     })
   );
+  it.effect("separates the team directory, roster and searchable people picker", () =>
+    Effect.gen(function* () {
+      const owner = yield* createCompany("teams-focused-ui");
+      const member = yield* addUser(owner, "picker-member");
+      const inactive = yield* addUser(owner, "picker-inactive");
+      const root = "/settings/company/teams";
+      const created = yield* send(`${root}/create`, post(owner.user, { name: "Design" }));
+      const location = created.headers.get("location")!;
+      const teamId = new URL(location, base).searchParams.get("team")!;
+      yield* send(`${root}/add?team=${teamId}`, post(owner.user, { userId: member.id }));
+      yield* (yield* Users.Users).deactivate({
+        companyId: owner.company.id,
+        actorId: owner.user.id,
+        userId: inactive.id
+      });
+      const read = Effect.fn(function* (url: string) {
+        const response = yield* send(url, { headers: { cookie: cookie(owner.user) } });
+        assert.strictEqual(response.status, 200);
+        return main(yield* Effect.promise(() => response.text()));
+      });
+      const directory = yield* read(root);
+      assert.include(directory, 'aria-label="Teams"');
+      assert.include(directory, location);
+      assert.notInclude(directory, member.name);
+      const roster = yield* read(location);
+      assert.include(roster, member.name);
+      assert.notInclude(roster, 'type="checkbox"');
+      const picker = yield* read(`${location}&view=add`);
+      assert.include(picker, `value="${member.id}" checked disabled`);
+      assert.include(picker, `value="${inactive.id}" disabled`);
+      assert.include(picker, "Already in team");
+      assert.include(picker, "Deactivated");
+      const searched = yield* read(`${location}&view=add&q=${encodeURIComponent(member.email)}`);
+      assert.include(searched, member.name);
+      assert.notInclude(searched, inactive.name);
+      const missing = yield* read(`${root}?q=not-a-team`);
+      assert.include(missing, "No teams match your search.");
+      assert.notInclude(missing, location);
+    })
+  );
+
   it.effect(
     "guards team settings forms against cross-origin writes and rolls back a stale multi-person selection",
     () =>
@@ -276,8 +314,8 @@ it.layer(services)("company page and actions", (it) => {
         assert.strictEqual(response.status, 409);
         const page = yield* send(location, { headers: { cookie: cookie(owner.user) } });
         const pageHtml = yield* Effect.promise(() => page.text());
-        assert.include(pageHtml, 'aria-label="Teams"');
-        assert.notInclude(pageHtml, `aria-label="Remove ${member.name} from`);
+        assert.include(pageHtml, '<h1 class="page-heading">Design</h1>');
+        assert.notInclude(pageHtml, `aria-label="Actions for ${member.name}"`);
         assert.strictEqual(
           (yield* send(`${root}/create`, post(owner.user, { name: " design " }))).status,
           409
