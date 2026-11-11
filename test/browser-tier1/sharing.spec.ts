@@ -20,7 +20,7 @@ test("an owner shares a page from its menu, and the guest opens it from Home and
   await expect(page).toHaveURL(`${instance.origin}/patches?share=${patch.name}`);
   await expect(dialog.getByRole("status")).toHaveText(`Shared ${title} with Jo Rivera`);
   await expect(dialog.getByText("guest@pine.example · Pine Studio")).toBeVisible();
-  await dialog.getByRole("link", { name: "Done" }).click();
+  await dialog.getByRole("link", { name: "Close", exact: true }).last().click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
 
   // Someone new to Patchy meets the Final step first.
@@ -177,7 +177,12 @@ for (const javaScriptEnabled of [true, false])
       await expect(access).toContainText("Engineering");
       await expect(patchRow).toContainText("2 teams");
       await engineeringChoice.uncheck();
-      await page.getByRole("button", { name: "Save", exact: true }).click();
+      const save = page.getByRole("button", { name: "Save", exact: true });
+      await expect(save).toHaveAttribute("form", "share-access-form");
+      await expect(
+        page.locator(".dialog-foot").getByRole("button", { name: "Save", exact: true })
+      ).toBeVisible();
+      await save.click();
       await expect(access).toContainText("Design");
       await expect(access).not.toContainText("Engineering");
       await expect(patchRow).toContainText("1 team");

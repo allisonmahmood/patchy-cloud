@@ -48,7 +48,7 @@ const refusalText = (refused: ShareRefusal, viewer: Viewer): string => {
  * The Share dialog over the page it opened from: invite a guest by email, with the people this
  * company has shared with before as suggestions; the people with access, its owner and its guests
  * with Remove; general access, where going public asks first and a tool says why it can't; then
- * Copy link and Done. Each form posts and comes back to `back` with the dialog open. While the
+ * Copy link, Close and Save. Each form posts and comes back to `back` with the dialog open. While the
  * patch is public its guests keep their access, but inviting waits. The page behind loads the
  * copy script.
  */
@@ -66,7 +66,7 @@ export const renderShareDialog = (input: {
   };
   readonly viewer: Viewer;
   readonly publicBaseUrl: string;
-  /** The page behind, as a path and query: where the forms return and Done goes. */
+  /** The page behind, as a path and query: where the forms return and Close goes. */
   readonly back: string;
   readonly guests: readonly GuestGrants.Guest[];
   readonly suggestions: readonly GuestGrants.Person[];
@@ -102,7 +102,7 @@ export const renderShareDialog = (input: {
       ? "scope"
       : "invite";
   const form = (act: "add-guest" | "remove-guest" | "scope", body: string) =>
-    `<form method="post" action="${escapeAttribute(`/patches/${encodeURIComponent(patch.name)}/${act}`)}" novalidate>${hidden("expectedPatchId", patch.id)}${hidden("expectedOwnerUserId", patch.ownerUserId)}${hidden("back", input.back)}${body}</form>`;
+    `<form${act === "scope" ? ' id="share-access-form"' : ""} method="post" action="${escapeAttribute(`/patches/${encodeURIComponent(patch.name)}/${act}`)}" novalidate>${hidden("expectedPatchId", patch.id)}${hidden("expectedOwnerUserId", patch.ownerUserId)}${hidden("back", input.back)}${body}</form>`;
 
   const known = new Set(input.guests.map((guest) => guest.userId));
   const suggestions = input.suggestions
@@ -246,7 +246,7 @@ export const renderShareDialog = (input: {
                 ]
               }
             );
-            return `<div class="pair">${choice}${button("Save")}</div>`;
+            return choice;
           }
         });
         const ids = new Set(
@@ -285,7 +285,7 @@ export const renderShareDialog = (input: {
     size: "lg",
     closeHref: input.back,
     body: `${input.receipt === undefined ? "" : receipt(input.receipt)}${warning}${invite}${people}${audience}`,
-    foot: `<span class="dialog-foot-start">${copyButton(link, { label: "Copy link", size: "sm" })}</span>${linkButton("Done", input.back, { kind: "primary" })}`
+    foot: `<span class="dialog-foot-start">${copyButton(link, { label: "Copy link", size: "sm" })}</span>${linkButton("Close", input.back, { kind: "quiet" })}${confirming ? "" : button("Save", { kind: "primary", form: "share-access-form" })}`
   });
 };
 

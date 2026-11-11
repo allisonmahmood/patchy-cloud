@@ -67,13 +67,13 @@ it.layer(socket)("the Share dialog on a socket", (it) => {
         assert.include(text(shareDialog(confirm)), "Make Scope &lt;save&gt; public?");
         assert.include(confirm, 'name="confirm" value="public">Make public</button>');
         assert.deepStrictEqual(formFields(confirm, scopePath), fields);
-        // Its Cancel goes back to the dialog, and starts focused; Done leaves the asking behind.
+        // Its Cancel goes back to the dialog, and starts focused; Close leaves the asking behind.
         assert.include(
           shareDialog(confirm),
           `<a class="btn btn-quiet" href="/patches?share=${patch.name}" autofocus>Cancel</a>`
         );
         assert.isTrue(
-          links(confirm).some((link) => link.href === "/patches" && link.text === "Done")
+          links(confirm).some((link) => link.href === "/patches" && link.text === "Close")
         );
         assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
         assert.deepStrictEqual(reported(patch.patchId), []);
@@ -163,7 +163,7 @@ it.layer(socket)("the Share dialog on a socket", (it) => {
         back: "/patches?show=pages"
       });
       assert.isTrue(
-        links(dialog).some((link) => link.href === "/patches?show=pages" && link.text === "Done")
+        links(dialog).some((link) => link.href === "/patches?show=pages" && link.text === "Close")
       );
       // A member gets the page without it.
       assert.notInclude(forms(yield* (yield* request(opened, workspace.member)).text), addPath);
