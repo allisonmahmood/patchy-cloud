@@ -361,7 +361,7 @@ it.layer(harness)("the door", (it) => {
   );
 
   it.effect(
-    "lists the same four tools for everyone, read_patch read-only and change_patch destructive",
+    "lists the same five tools for everyone, read_patch read-only and change_patch destructive",
     () =>
       Effect.gen(function* () {
         const first = yield* connected("list-a");
@@ -378,7 +378,7 @@ it.layer(harness)("the door", (it) => {
         assert.deepStrictEqual(lists[2], JSON.parse(JSON.stringify(tools)));
         assert.deepStrictEqual(
           tools.map((tool) => tool.name),
-          ["find_patches", "open_patch", "read_patch", "change_patch"]
+          ["find_patches", "open_patch", "read_patch", "change_patch", "tell_patchy"]
         );
         for (const tool of tools) assert.isAbove(tool.description.length, 50, tool.name);
         // The limits the catalogue enforces are the ones it advertises.
@@ -394,8 +394,27 @@ it.layer(harness)("the door", (it) => {
           destructiveHint: true,
           idempotentHint: false
         });
+        // Sending adds a submission and changes nothing else; clients that load tools on demand
+        // find it by these words.
+        assert.deepStrictEqual(tools[4]!.annotations, {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: false
+        });
+        for (const words of ["feature request", "feedback", "patch's owner"])
+          assert.include(tools[4]!.description, words);
       })
   );
+
+  it("keeps the instructions under 512 characters with the longest name and company", () => {
+    const long = Tools.instructions({
+      user: { name: "Ä".repeat(300), email: "ada@example.com" },
+      company: { name: "Z".repeat(300) }
+    });
+    assert.isBelow([...long].length, 512);
+    assert.include(long, "Send what Patchy itself lacks or gets wrong to tell_patchy.");
+    assert.include(long, `You act for ${"Ä".repeat(63)}… at ${"Z".repeat(63)}…`);
+  });
 
   it.effect("answers an unknown tool name -32602", () =>
     Effect.gen(function* () {
@@ -464,7 +483,8 @@ it.layer(harness)("the door", (it) => {
             ["find_patches", { detail: "everything" }],
             ["open_patch", { patch: "new-business" }],
             ["read_patch", { patch: "new-business", tool: "listDeals", args: {} }],
-            ["change_patch", { patch: "new-business", tool: "addLead", args: {}, key: "k1" }]
+            ["change_patch", { patch: "new-business", tool: "addLead", args: {}, key: "k1" }],
+            ["tell_patchy", { kind: "feedback", text: "Agent access is confusing" }]
           ] as const) {
             const response = yield* send(call(person.token, name, args));
             assert.strictEqual(response.status, 200, name);
@@ -488,6 +508,10 @@ it.layer(harness)("the door", (it) => {
               outcome: "refused"
             });
           }
+        assert.deepStrictEqual(
+          yield* sql`SELECT id FROM feedback.submissions WHERE company_id = ${acme.id}`,
+          []
+        );
         // Discovery and the tool list keep working.
         for (const method of ["server/discover", "tools/list"])
           assert.isUndefined(at((yield* send(modern(ben!.token, method))).json, "error"), method);

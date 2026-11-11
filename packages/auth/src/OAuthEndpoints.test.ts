@@ -500,6 +500,7 @@ it.layer(services)("the authorization server's endpoints", (it) => {
         '<span class="strong">Patchy Dev</span><span class="meta">dev@patchy.local</span>',
         "Let Agent use Patchy Dev’s patches as you?",
         "It can find the patches you can open and use the agent tools their builders added, as you",
+        "It can send requests and feedback to Patchy’s team",
         "Every change it makes is logged as Patchy Dev via Agent",
         '<li class="can-no">',
         "It can’t do anything you can’t, or publish",

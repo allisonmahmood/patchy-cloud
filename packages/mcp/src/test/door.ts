@@ -1,7 +1,7 @@
 /**
  * The door over a migrated database, a request at a time as the router hands it over, with
- * what its tools read and write: Patches, Companies, Users, change keys and the company
- * admission pages share. Each suite builds its own door per test, so its in-memory buckets
+ * what its tools read and write: Patches, Companies, Users, change keys, Feedback and the
+ * company admission pages share. Each suite builds its own door per test, so its in-memory buckets
  * and calls in flight start empty, and sends from its own address.
  */
 import { assert } from "@effect/vitest";
@@ -29,6 +29,7 @@ import { AgentConnections, MachineTokens } from "@patchy/auth";
 import { Companies, Users } from "@patchy/companies";
 import * as CompanyTesting from "@patchy/company-database/testing";
 import { contentHash } from "../../../../test/crypto.js";
+import { Feedback } from "@patchy/feedback";
 import { ConnectionStoreDev } from "@patchy/integrations/dev";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import { Patches } from "@patchy/patches";
@@ -58,13 +59,14 @@ export const harnessWith = (connections: ReadonlyArray<ConnectionStoreDev.DevCon
     AgentConnections.layer,
     ChangeKeys.layer,
     MachineTokens.layer,
-    Limits.layer,
-    CompanyAdmission.layer.pipe(Layer.provideMerge(OperatingLimits.layer)),
+    CompanyAdmission.layer,
     Patches.layer,
     Companies.layer,
     Users.layer,
+    Feedback.layer,
     WideEvents.layerWithSink.pipe(Layer.provide(sink))
   ).pipe(
+    Layer.provideMerge(Layer.mergeAll(Limits.layer, OperatingLimits.layer)),
     Layer.provideMerge(Analytics.layerNoop),
     Layer.provideMerge(ConnectionStoreDev.layer(connections)),
     Layer.provideMerge(Tables.layer),
