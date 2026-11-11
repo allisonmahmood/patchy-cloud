@@ -235,7 +235,7 @@ const statePill = ({ state }: GuestPatch) =>
  */
 const patchLink = (viewer: Viewer, patch: GuestPatch) => {
   if (patch.title === null) return `Restricted patch${statePill(patch)}`;
-  const title = escapeHtml(patchTitle(patch));
+  const title = escapeHtml(patchTitle({ name: patch.name, title: patch.title }));
   const name = encodeURIComponent(patch.name);
   if (patch.state === "disabled") return `${title}${statePill(patch)}`;
   const href =
@@ -554,7 +554,7 @@ const renderGuestRemoval = (viewer: Viewer, guest: Guest): Page => {
   const patches = guest.patches
     .map(
       (patch) =>
-        `<li class="company-patch">${patchMark(patch.name, patch.tier)}<span><strong>${escapeHtml(patch.title === null ? "Restricted patch" : patchTitle(patch))}</strong>${statePill(patch)}</span></li>`
+        `<li class="company-patch">${patchMark(patch.name, patch.tier)}<span><strong>${escapeHtml(patch.title === null ? "Restricted patch" : patchTitle({ name: patch.name, title: patch.title }))}</strong>${statePill(patch)}</span></li>`
     )
     .join("");
   return {
