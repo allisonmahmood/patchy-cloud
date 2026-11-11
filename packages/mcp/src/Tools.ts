@@ -5,8 +5,15 @@
  * What a client learns first). The tool list is identical for everyone, so it carries the loop
  * in its descriptions for clients that skip instructions.
  */
-import { agentToolsBytes, type JsonSchema, type ToolCallResult, toolRefusal } from "@patchy/api";
-import { Feedback } from "@patchy/feedback";
+import {
+  agentToolsBytes,
+  type JsonSchema,
+  SUBMISSION_TEXT_MAX,
+  SUBMISSION_TITLE_MAX,
+  SUBMISSION_TITLE_MIN,
+  type ToolCallResult,
+  toolRefusal
+} from "@patchy/api";
 
 /** The door's tool names, in the order `tools/list` shows them. */
 export const NAMES = [
@@ -157,12 +164,12 @@ export const tools: readonly Tool[] = [
         text: {
           type: "string",
           minLength: 1,
-          maxLength: Feedback.TEXT_MAX,
-          description: `For a request, its title: one line saying what Patchy should do, ${Feedback.TITLE_MIN}–${Feedback.TITLE_MAX} characters. For feedback, what happened and what you expected, up to ${Feedback.TEXT_MAX.toLocaleString("en-US")}.`
+          maxLength: SUBMISSION_TEXT_MAX,
+          description: `For a request, its title: one line saying what Patchy should do, ${SUBMISSION_TITLE_MIN}–${SUBMISSION_TITLE_MAX} characters. For feedback, what happened and what you expected, up to ${SUBMISSION_TEXT_MAX.toLocaleString("en-US")}.`
         },
         why: {
           type: "string",
-          maxLength: Feedback.TEXT_MAX,
+          maxLength: SUBMISSION_TEXT_MAX,
           description:
             "A request's reason: what the person is trying to do and why it matters. Requests only: feedback with a why is refused, so put everything in its text."
         }
