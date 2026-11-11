@@ -5,3 +5,5 @@ packages/serving/src/generated/
 packages/core/src/generated/
 # Builder output the eval's judges are calibrated on, kept exactly as built.
 scripts/dev/eval-calibration/
+# A patch page built with an older patchy/hotkeys, kept exactly as built.
+test/browser-tier1/hotkeys-0.38.html

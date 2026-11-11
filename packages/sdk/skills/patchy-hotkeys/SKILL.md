@@ -119,7 +119,9 @@ useHotkey("Enter", saveTitle, { within: titleField });
 `within: ref` makes a hotkey fire only while focus is on that element or inside it, as CSS
 `:focus-within` reads it. Use it for keys that belong to one part of the page: arrows in a list
 or a chart, Enter and Escape in an inline editor, Enter in a quick-add field. Write these as
-hotkeys, not `onKeyDown`, and don't fake them with `enabled`.
+hotkeys, not `onKeyDown`, and don't fake them with `enabled`. A key `within` an element keeps
+firing when the viewer turns single-key shortcuts off, since the viewer put focus there; one
+`within` the page's `<body>` or root element is page-wide and stops.
 
 A keyboard list keeps focus on the list and draws the active row from state:
 
@@ -308,6 +310,27 @@ dialog with none, can leave the frame for the shell's controls or the browser's.
 where focus went, so Escape can stop reaching the dialog, which stays open. So a modal dialog in
 a patch keeps Tab and Shift+Tab among the tabbable elements it has when the key is pressed, and
 on the dialog itself while it has none.
+
+## When a viewer turns single-key shortcuts off
+
+A viewer can turn single-key shortcuts off, for speech input, which can type a letter that fires
+one by accident. They do it from the sheet's first row, which Patchy confirms in its own dialog,
+or from the account menu on Patchy's pages. Patch code can't change it. `patchy/hotkeys` obeys:
+
+- A page-wide hotkey whose every step types a character fires nothing and leaves its key to the
+  page: `"A"`, `"Shift+A"`, `"G H"`, `"?"`, `"Space"`, `"+"`. Shift doesn't change that. A
+  sequence under way starts over when the setting changes.
+- Mod and Alt chords, named keys such as Escape, Enter and the arrows, a sequence with any of
+  those, such as `"G Mod+K"`, and hotkeys `within` an element still fire.
+- The sheet's `?` stops too, and Mod+/ still opens it: Mod+/ is the sheet's while one is
+  mounted, so a page's own Mod+/ never fires then.
+- The sheet keeps every command as a button and draws a stopped command's keys as off, so a
+  labelled command stays a click away. An unlabelled single-key hotkey is out of reach.
+- Patchy passes the setting into the page in `window.name`, which is Patchy's: patch code
+  doesn't set or read it.
+- A public patch's shortcuts stay on, and its sheet has no row.
+- A version published before the setting keeps its shortcuts until it is built and published
+  again with the current release.
 
 ## The shortcuts sheet
 

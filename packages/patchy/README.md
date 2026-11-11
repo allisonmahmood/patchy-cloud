@@ -218,6 +218,25 @@ page's `<body>`, outside the patch's root element, so restyle it with selectors
 that don't depend on where it's mounted, such as `.hotkey-sheet …`, and set
 `--look-*` overrides on `:root` or `body`.
 
+A viewer can turn single-key shortcuts off, for speech input, from the sheet's
+first row or the account menu on Patchy's own pages, and `patchy/hotkeys` obeys.
+While they are off, a page-wide hotkey whose every step types a character,
+Shift included, such as `"A"`, `"G H"` or the sheet's `"?"`, fires nothing and
+leaves its key to the page. Mod and Alt chords, named keys such as Escape and
+the arrows, a sequence with either, and hotkeys `within` an element still fire,
+so a key that belongs to one part of the page is written `within` it. The sheet
+keeps each stopped command as a button with its keys drawn off, and its row asks
+Patchy, which confirms the change in its own dialog; patch code can't change it.
+Patchy names the patch's frame with the setting before the page starts, so the
+page reads it in `window.name`, which patch code leaves alone. A public patch's
+shell has no viewer, so its shortcuts stay on. A repo build records
+`shortcutSetting: 1` in its manifest, since the CLI built its page with this
+release's SDK. A version from 0.33.0 on without it may carry an older
+`patchy/hotkeys` and keep its shortcuts: a repo build from before the setting
+that imports it, or a single HTML file, which records no imports and is
+published as it is. Patchy tells a viewer who turned them off, until they
+dismiss it for that patch.
+
 ### Generated downloads and printing
 
 The generated client's `download(name, data): Promise<null>` accepts `Blob`,
@@ -1261,7 +1280,7 @@ export, `server/agent.ts` and a nested `agent/` folder are local
 `invalid_manifest`; a page import from `agent/` is `import_refused`. When
 `tsconfig.json` leaves out an agent file, dev builds and publish warn that
 `pnpm typecheck` skips the agent tools.
-`handlers` and `sdkImports` are recorded in the manifest. The instance inspects
+`handlers`, `sdkImports` and `shortcutSetting` are recorded in the manifest. The instance inspects
 the stored server bytes in a throwaway process; descriptor disagreement, a
 top-level throw, an unresolved import or an unfinished initializer is
 `invalid_manifest`, exit 2. Local descriptor failures are exit 1. Zero handlers

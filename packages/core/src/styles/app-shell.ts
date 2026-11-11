@@ -53,7 +53,8 @@ export const appShell = `
       .app-whats-new { position-anchor: --whats-new; }
       .app-account-menu { position-anchor: --account; }
     }
-    .app-account-menu { width: 220px; }
+    /* Wide enough for its switch's label on one line. */
+    .app-account-menu { width: 248px; }
     .app-whats-new { width: min(360px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; }
     /* Headlines only: the kind in muted text, then the change's title. */
     .app-headlines { display: grid; margin: 0; padding: 0; list-style: none; }

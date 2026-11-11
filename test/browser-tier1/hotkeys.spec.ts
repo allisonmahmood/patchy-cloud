@@ -708,7 +708,9 @@ test("the sheet opens by ? or its button, lists by group with its own rows last,
   await test.step("while it is open unlisted hotkeys wait, and Tab goes round its buttons, past a command that starts with Tab", async () => {
     await page.keyboard.press("j");
     const commands = dialog.locator(".hotkey-command");
+    // The shell names a company patch's frame, so the setting's row leads.
     await expect(commands).toHaveText([
+      "Single-key shortcutsOn",
       "Go homeGthenH",
       "Go to timelineGthenT",
       "Create taskCthenT",
@@ -1344,7 +1346,8 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
     await page.keyboard.press("Control+/");
     await expect(sheet.getByRole("button", { name: "Close", exact: true })).toBeFocused();
     const commands = sheet.locator(".hotkey-command");
-    for (const index of [0, 1]) {
+    // The setting's row, then the dialog's Close, then Priority 5.
+    for (const index of [0, 1, 2]) {
       await page.keyboard.press("Tab");
       await expect(commands.nth(index)).toBeFocused();
     }
@@ -1496,10 +1499,11 @@ interface StubWindow {
 }
 
 /**
- * Opens a page's source in a stand-in for Patchy's shell, for what today's shell doesn't do yet. It
- * names the patch's frame before inserting it, as a shell carrying the viewer's setting does,
- * since a name set on an inserted sandboxed frame doesn't reach its document. It bootstraps the
- * page with a port and answers `shortcuts.setting` as `window.answer` says.
+ * Opens a page's source in a stand-in for Patchy's shell, which answers `shortcuts.setting` as
+ * `window.answer` says, after it, so the SDK's side can be timed without Patchy's dialog;
+ * shortcut-setting.spec.ts drives the real shell. It names the patch's frame before inserting it,
+ * as the real shell's markup does, since a name set on an inserted sandboxed frame doesn't reach
+ * its document, and bootstraps the page with a port.
  */
 const openInStub = async (page: Page, instance: Instance, tsx: string, name: string) => {
   const content = `${instance.origin}/~content/stub/hotkeys?n=stub`;
@@ -1706,11 +1710,11 @@ for (const client of [true, false])
     ]);
   });
 
-test("under today's shell, which doesn't name the frame, every hotkey fires and the sheet has no row", async ({
+test("under a shell that doesn't name the frame, as a public patch's doesn't, every hotkey fires and the sheet has no row", async ({
   page,
   instance
 }) => {
-  const patch = await publish(instance, setting);
+  const patch = await instance.publish("public", await pageHtml(setting));
   expect((await page.goto(patch.address))?.status()).toBe(200);
   const frame = contentFrame(page);
   const view = page.frameLocator("#patch");

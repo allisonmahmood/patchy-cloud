@@ -6,7 +6,8 @@ const app = {
   viewer: {
     user: { id: "usr_sam", name: "Sam", email: "sam@northwind.example" },
     company: { id: "cmp_northwind", name: "Northwind" },
-    whatsNewSeen: 0
+    whatsNewSeen: 0,
+    singleKeyShortcuts: true
   },
   section: "people"
 } as const;
