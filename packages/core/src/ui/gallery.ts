@@ -202,7 +202,7 @@ const colours = demo(
 
 const buttons = demo(
   "Buttons",
-  `<div class="stack"><div class="btn-group">${linkButton("Open", "#buttons", { kind: "primary", icon: "external" })}${button("Share", { type: "button", icon: "share" })}${button("Cancel", { type: "button", kind: "quiet" })}${button("Delete…", { type: "button", kind: "danger", icon: "trash" })}${button("Delete New Business", { type: "button", kind: "danger-solid" })}</div><div class="btn-group">${button("Save", { type: "button", kind: "primary", size: "sm" })}${button("Reassign…", { type: "button", size: "sm" })}${iconButton("More", "more")}${iconButton("Copy", "copy")}${button("Testing…", { type: "button", kind: "primary", pending: true })}<form method="post" action="${link("flow")}">${button("Test", { size: "sm", pendingLabel: "Testing…" })}</form></div></div>`,
+  `<div class="stack"><div class="btn-group">${linkButton("Open", "#buttons", { kind: "primary", icon: "external" })}${button("Share", { type: "button", icon: "share" })}${button("Cancel", { type: "button", kind: "quiet" })}${button("Delete…", { type: "button", kind: "danger", icon: "trash" })}${button("Delete New Business", { type: "button", kind: "danger-solid" })}</div><div class="btn-group">${button("Save", { type: "button", kind: "primary", size: "sm" })}${button("Reassign…", { type: "button", size: "sm" })}${iconButton("More", "more")}${iconButton("Copy", "copy")}${button("Opens panel", { type: "button", size: "sm", popovertarget: "g-panel", icon: "message" })}<div class="menu" id="g-panel" popover><p class="menu-head"><strong>A panel</strong>Opened by its button</p></div>${button("Testing…", { type: "button", kind: "primary", pending: true })}<form method="post" action="${link("flow")}">${button("Test", { size: "sm", pendingLabel: "Testing…" })}</form></div></div>`,
   stateTable("Button", [
     ["Rest", "2px ink edge; primary is blue with a 2px hard shadow"],
     ["Hover (fine pointer)", "lifts 1px into a deeper shadow; quiet and icon buttons tint instead"],
@@ -211,6 +211,10 @@ const buttons = demo(
     [
       "Pending",
       "with a pending label, the pressed submit says it, such as Testing…, static, aria-disabled; it holds room for the longer label from the start, so nothing moves, and its form takes no second submit until the page answers (Test here, Test and connect on the Flow page)"
+    ],
+    [
+      "Opens a panel",
+      "a button may name a popover it opens or closes, such as Ask for an integration opening Tell Patchy (the Opens panel button here)"
     ],
     ["Touch", "44px tall"]
   ])
@@ -233,7 +237,7 @@ const fields = demo(
           ]
         })
     }
-  )}${choiceGroup({ id: "g-plan", legend: "Plan", error: "Pick a plan.", choices: (aria) => `${radio({ name: "plan", value: "team", label: "Team", aria })}${radio({ name: "plan", value: "company", label: "Company", aria })}` })}${field({ id: "g-note", label: "Emails", hint: "One per line.", control: (aria) => textarea(aria, { name: "emails", grow: true }) })}${choiceGroup({ id: "g-access", legend: "Who can open it", choices: `${radio({ name: "access", value: "company", label: "People at Acme Co", checked: true })}${radio({ name: "access", value: "public", label: "Anyone on the internet" })}${checkbox({ name: "remember", value: "1", label: "Remember this computer", checked: true })}` })}${choiceGroup(
+  )}${choiceGroup({ id: "g-plan", legend: "Plan", error: "Pick a plan.", choices: (aria) => `${radio({ name: "plan", value: "team", label: "Team", aria })}${radio({ name: "plan", value: "company", label: "Company", aria })}` })}${field({ id: "g-note", label: "Emails", hint: "One per line.", control: (aria) => textarea(aria, { name: "emails", grow: true }) })}${choiceGroup({ id: "g-tell-kind", legend: "Request or feedback", hideLegend: true, choices: (aria) => `${radio({ name: "tell", value: "request", label: "Request", checked: true, aria })}${radio({ name: "tell", value: "feedback", label: "Feedback", aria })}` })}${field({ id: "g-tell", label: "What to tell Patchy", hideLabel: true, control: (aria) => textarea(aria, { name: "tell", rows: 3 }) })}${choiceGroup({ id: "g-access", legend: "Who can open it", choices: `${radio({ name: "access", value: "company", label: "People at Acme Co", checked: true })}${radio({ name: "access", value: "public", label: "Anyone on the internet" })}${checkbox({ name: "remember", value: "1", label: "Remember this computer", checked: true })}` })}${choiceGroup(
     {
       id: "g-mode",
       legend: "Patches may",
@@ -253,6 +257,10 @@ const fields = demo(
       "what is typed exactly, such as a handle: a phone neither capitalises nor corrects it"
     ],
     ["Secret", "masked; Show appears with script and toggles the mask"],
+    [
+      "Hidden label",
+      "the label or legend kept for readers, out of sight, where what holds the field names it, such as Tell Patchy's panel"
+    ],
     [
       "Live hint",
       "a part of the hint follows what is typed, or its example while empty, such as the name on the Flow page; without script it shows what was submitted"
@@ -366,6 +374,10 @@ const navigation = demo(
     ],
     ["Hover (fine pointer)", "ink text"],
     ["Focus", "2px ink ring, inside a strip that scrolls"],
+    [
+      "Opens a panel",
+      "a button may name a popover it opens or closes, such as Ask for an integration opening Tell Patchy (the Opens panel button here)"
+    ],
     ["Touch", "44px tall"]
   ])
 );

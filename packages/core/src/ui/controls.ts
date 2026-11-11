@@ -65,11 +65,14 @@ export const button = (
     readonly value?: string;
     /** The id of the form it submits, when it sits outside it. */
     readonly form?: string;
+    /** The id of the popover it opens, closes or toggles, such as Tell Patchy's panel. */
+    readonly popovertarget?: string;
+    readonly popovertargetaction?: "show" | "hide" | "toggle";
     readonly pending?: boolean;
     readonly pendingLabel?: string;
   } = {}
 ) =>
-  `<button class="${buttonClass(options)}" type="${options.type ?? "submit"}"${attribute("name", options.name)}${attribute("value", options.value)}${attribute("form", options.form)}${options.pending === true ? ' aria-disabled="true"' : ""}${attribute("data-pending", options.pendingLabel)}${lookAttributes(options)}>${options.pendingLabel === undefined ? buttonInner(label, options) : `<span>${buttonInner(label, options)}</span>`}</button>`;
+  `<button class="${buttonClass(options)}" type="${options.type ?? "submit"}"${attribute("name", options.name)}${attribute("value", options.value)}${attribute("form", options.form)}${attribute("popovertarget", options.popovertarget)}${attribute("popovertargetaction", options.popovertargetaction)}${options.pending === true ? ' aria-disabled="true"' : ""}${attribute("data-pending", options.pendingLabel)}${lookAttributes(options)}>${options.pendingLabel === undefined ? buttonInner(label, options) : `<span>${buttonInner(label, options)}</span>`}</button>`;
 
 /**
  * A link drawn as a button, for an action that is a place: Open, Connect, Cancel. `id` makes it
@@ -139,6 +142,11 @@ export const field = (spec: {
   /** The refusal for this field after a submit, in Patchy's words. */
   readonly error?: string;
   readonly optional?: boolean;
+  /**
+   * Keeps the label for readers and out of sight, where what holds the field already names it,
+   * such as Tell Patchy's panel.
+   */
+  readonly hideLabel?: boolean;
   readonly control: (aria: FieldControl) => string;
 }) => {
   const hintId = `${spec.id}-hint`;
@@ -149,7 +157,7 @@ export const field = (spec: {
   ]
     .filter((id) => id !== undefined)
     .join(" ");
-  return `<div class="fieldset"><label class="field-label" for="${escapeAttribute(spec.id)}">${escapeHtml(spec.label)}${spec.optional === true ? ' <span class="field-optional">(optional)</span>' : ""}</label>${spec.hint === undefined ? "" : `<p class="field-hint" id="${escapeAttribute(hintId)}">${hintText(spec.id, spec.hint)}</p>`}${spec.control({ id: spec.id, describedBy: describedBy === "" ? undefined : describedBy, invalid: spec.error !== undefined })}${spec.error === undefined ? "" : `<p class="field-error" id="${escapeAttribute(errorId)}">${escapeHtml(spec.error)}</p>`}</div>`;
+  return `<div class="fieldset"><label class="field-label${spec.hideLabel === true ? " sr-only" : ""}" for="${escapeAttribute(spec.id)}">${escapeHtml(spec.label)}${spec.optional === true ? ' <span class="field-optional">(optional)</span>' : ""}</label>${spec.hint === undefined ? "" : `<p class="field-hint" id="${escapeAttribute(hintId)}">${hintText(spec.id, spec.hint)}</p>`}${spec.control({ id: spec.id, describedBy: describedBy === "" ? undefined : describedBy, invalid: spec.error !== undefined })}${spec.error === undefined ? "" : `<p class="field-error" id="${escapeAttribute(errorId)}">${escapeHtml(spec.error)}</p>`}</div>`;
 };
 
 const controlAttributes = (aria: FieldControl) =>
@@ -267,6 +275,8 @@ export interface ChoiceAria {
 export const choiceGroup = (spec: {
   readonly id: string;
   readonly legend: string;
+  /** Keeps the legend for readers and out of sight, as `field`'s `hideLabel` does. */
+  readonly hideLegend?: boolean;
   readonly hint?: string;
   readonly error?: string;
   /** Trusted HTML, or drawn from the group's `aria`: `checkbox`, `radio` or `choiceCards` output. */
@@ -284,7 +294,7 @@ export const choiceGroup = (spec: {
     describedBy: ids === "" ? undefined : ids,
     invalid: spec.error !== undefined
   };
-  return `<fieldset class="fieldset" id="${escapeAttribute(spec.id)}"${attribute("aria-describedby", aria.describedBy)}${aria.invalid ? ' aria-invalid="true"' : ""}><legend class="field-label">${escapeHtml(spec.legend)}</legend>${spec.hint === undefined ? "" : `<p class="field-hint" id="${escapeAttribute(hintId)}">${escapeHtml(spec.hint)}</p>`}<div class="choice-row">${typeof spec.choices === "string" ? spec.choices : spec.choices(aria)}</div>${spec.error === undefined ? "" : `<p class="field-error" id="${escapeAttribute(errorId)}">${escapeHtml(spec.error)}</p>`}</fieldset>`;
+  return `<fieldset class="fieldset" id="${escapeAttribute(spec.id)}"${attribute("aria-describedby", aria.describedBy)}${aria.invalid ? ' aria-invalid="true"' : ""}><legend class="field-label${spec.hideLegend === true ? " sr-only" : ""}">${escapeHtml(spec.legend)}</legend>${spec.hint === undefined ? "" : `<p class="field-hint" id="${escapeAttribute(hintId)}">${escapeHtml(spec.hint)}</p>`}<div class="choice-row">${typeof spec.choices === "string" ? spec.choices : spec.choices(aria)}</div>${spec.error === undefined ? "" : `<p class="field-error" id="${escapeAttribute(errorId)}">${escapeHtml(spec.error)}</p>`}</fieldset>`;
 };
 
 /**

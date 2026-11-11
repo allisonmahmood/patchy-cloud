@@ -138,6 +138,31 @@ it.layer(layer)("requests and feedback", (it) => {
           (yield* send(b.ben.cli, "Postgres connection encrypted with RSA")).similar,
           3
         );
+
+        // Matched again later, a request ranks against what is there now, never itself, and only
+        // its own sender asks; feedback has no matches, so its id answers as missing.
+        const feedback = yield* Feedback.Feedback;
+        const again = yield* feedback.similarTo({ person: b.ada, id: filed.id });
+        assert.lengthOf(again, 3);
+        assert.notInclude(JSON.stringify(again), filed.id);
+        assert.notInclude(JSON.stringify(again), "AES");
+        assert.deepInclude(again, {
+          id: options,
+          title: "Postgres encryption options",
+          status: "shipped",
+          note: "Every Postgres connection is encrypted with TLS; ask for anything more here."
+        });
+        const note = yield* feedback.sendFeedback({ sender: b.ada.cli, text: "Postgres again" });
+        for (const [person, id] of [
+          [b.ben, filed.id],
+          [a.ada, filed.id],
+          [b.ada, note.id],
+          [b.ada, "req_\u0000"]
+        ] as const)
+          assert.strictEqual(
+            (yield* feedback.similarTo({ person, id }).pipe(Effect.flip))._tag,
+            "SubmissionNotFound"
+          );
       })
   );
 
@@ -550,6 +575,15 @@ it.layer(layer)("requests and feedback", (it) => {
         assert.isNull(page.nextCursor);
         assert.notInclude(JSON.stringify(page), "Secret plans");
         assert.notInclude(JSON.stringify(page), "Sales needs it");
+        // One read by id is the same item, and only the person's own.
+        assert.deepStrictEqual(yield* feedback.get({ person: c.ada, id: request.id }), {
+          ...page.submissions[1]!
+        });
+        for (const id of [request.id, "req_\u0000"])
+          assert.strictEqual(
+            (yield* feedback.get({ person: c.ben, id }).pipe(Effect.flip))._tag,
+            "SubmissionNotFound"
+          );
         assert.deepStrictEqual(
           (yield* feedback.list({ person: c.ada, kind: "feedback" })).submissions.map(
             ({ id }) => id

@@ -34,7 +34,8 @@ import {
   switchForm,
   table,
   type Template,
-  tabs
+  tabs,
+  tellPatchyHref
 } from "@patchy/core";
 import type { RuntimeLog } from "@patchy/runtime";
 import type { Usage } from "./ConnectionStore.js";
@@ -169,8 +170,15 @@ const filterPath = (filters: Filters) => {
   return search ? `${indexPath}?${search}` : indexPath;
 };
 
-/** Where a company tells Patchy what it would connect; the company's contact for now. */
-export const askPath = "mailto:allison@patchyhq.com";
+/**
+ * How a company asks Patchy for an integration it would connect: a link to Tell Patchy's composer
+ * with Request picked, so the ask lands with Patchy's requests. The panel's script opens the panel
+ * beside it instead; without script, the link opens the composer at its own address.
+ */
+const ask = (
+  label: string,
+  look: { readonly kind?: "quiet"; readonly size?: "sm"; readonly ariaLabel?: string } = {}
+) => linkButton(label, tellPatchyHref("request"), look);
 
 const name = (connection: { readonly integration: Integration; readonly handle: string }) =>
   `${connection.integration.key}/${connection.handle}`;
@@ -335,11 +343,7 @@ const catalogue = (offers: ReadonlyArray<Offer>, rows_: ReadonlyArray<Row>, admi
         lead: productMark("+", { dashed: true }),
         name: "Something else",
         description: "Tell us what you'd connect",
-        end: linkButton("Ask", askPath, {
-          kind: "quiet",
-          size: "sm",
-          ariaLabel: "Ask for an integration"
-        })
+        end: ask("Ask", { kind: "quiet", size: "sm", ariaLabel: "Ask for an integration" })
       })
     ],
     true
@@ -458,7 +462,7 @@ export const renderIndex = (input: {
     ],
     actions: admin
       ? linkButton("Connect an integration", cataloguePath, { kind: "primary", icon: "plus" })
-      : linkButton("Ask for an integration", askPath),
+      : ask("Ask for an integration"),
     ...(all.length >= CONTROLS_AT ? { toolbar: toolbar(all, filters, admin) } : {}),
     content: `${feedback(input.notice)}${
       shown.length === 0

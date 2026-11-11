@@ -304,8 +304,11 @@ it.layer(socket)("a patch's card on a socket", (it) => {
         userId: guest.id,
         grantedBy: workspace.owner.id
       });
+      // The page's own notices; the shell's Tell Patchy keeps its one note inert outside the page.
       const notices = (html: string) =>
-        [...html.matchAll(/<p class="notice-title">([^<]*)<\/p>/g)].map((match) => match[1]);
+        [
+          ...html.slice(html.indexOf("<main")).matchAll(/<p class="notice-title">([^<]*)<\/p>/g)
+        ].map((match) => match[1]);
       const clean = yield* (yield* request(cardPath(patch.name), workspace.admin)).text;
       assert.deepStrictEqual(notices(clean), ["Guests can't open this"]);
       yield* (yield* Patches.Patches).reassign(

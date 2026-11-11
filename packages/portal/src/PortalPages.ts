@@ -3,6 +3,7 @@
 import * as Layer from "effect/Layer";
 import * as AllPatchesPages from "./AllPatchesPages.js";
 import * as Assets from "./Assets.js";
+import * as FeedbackPages from "./FeedbackPages.js";
 import * as HomePages from "./HomePages.js";
 import * as PatchPages from "./PatchPages.js";
 import * as SharePages from "./SharePages.js";
@@ -27,5 +28,6 @@ export const layer: Routes = Layer.mergeAll(
   }),
   UserLifecyclePage.layer,
   WhatsNewPages.layer,
+  FeedbackPages.layer,
   SwitcherList.layer
 );

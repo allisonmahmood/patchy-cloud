@@ -28,7 +28,8 @@ import {
   type HandlerDescriptors
 } from "@patchy/api";
 import { Analytics } from "@patchy/analytics";
-import { Limits } from "@patchy/limits";
+import { Feedback } from "@patchy/feedback";
+import { Limits, OperatingLimits } from "@patchy/limits";
 import { AgentConnections, MachineTokens, RequireSession, Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import { Companies, Users } from "@patchy/companies";
@@ -103,7 +104,8 @@ export const services = Layer.mergeAll(
   InvocationLog.layer,
   MachineTokens.layer,
   AgentConnections.layer,
-  Limits.layer
+  Limits.layer,
+  Feedback.layer.pipe(Layer.provide(Layer.mergeAll(Limits.layer, OperatingLimits.layer)))
 ).pipe(
   Layer.provideMerge(recordingAnalytics),
   Layer.provideMerge(
