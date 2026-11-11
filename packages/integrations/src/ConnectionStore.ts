@@ -123,7 +123,7 @@ export class ConnectionNotConnected extends Schema.TaggedError<ConnectionNotConn
   readonly code = "connection_not_connected";
   readonly status = 409;
   override get message() {
-    return "This connection is not connected. Ask a company administrator to reconnect it.";
+    return "This connection is paused. Ask a company administrator to resume it.";
   }
 }
 export class StaleGenerated extends Schema.TaggedError<StaleGenerated>()("StaleGenerated", {}) {
@@ -212,7 +212,7 @@ export class ConnectionInUse extends Schema.TaggedError<ConnectionInUse>()("Conn
   readonly code = "connection_in_use";
   readonly status = 409;
   override get message() {
-    return "A stored patch version declares this connection. Disconnect it instead of deleting it.";
+    return "A stored patch version declares this connection, so it can't be disconnected. Pause it instead.";
   }
 }
 export class ConnectionMutationUnavailable extends Schema.TaggedError<ConnectionMutationUnavailable>()(
@@ -329,6 +329,12 @@ export interface Usage {
   readonly retired: number;
   readonly deleted: number;
   readonly disabled: number;
+  /**
+   * The other patches with a declaring version, by name: retired, deleted or disabled ones, and
+   * live ones whose served version no longer declares it. With `usedBy`, every patch that keeps
+   * it from being deleted.
+   */
+  readonly declaredBy: ReadonlyArray<string>;
   /** Some stored version of a company patch declares it, so it cannot be deleted. */
   readonly declared: boolean;
 }
@@ -338,6 +344,7 @@ export const unused: Usage = {
   retired: 0,
   deleted: 0,
   disabled: 0,
+  declaredBy: [],
   declared: false
 };
 

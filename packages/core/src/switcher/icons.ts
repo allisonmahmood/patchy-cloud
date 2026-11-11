@@ -18,6 +18,9 @@ export const icons: Readonly<Record<Icon, string>> = {
   integrations: icon(
     '<path d="M9 3v5M15 3v5"/><path d="M6.5 8h11v3.5a5.5 5.5 0 0 1-11 0z"/><path d="M12 17v4"/>'
   ),
+  "agent-access": icon(
+    '<path d="M12 3.5 5 6.2v5.3c0 4.3 2.9 7.5 7 9 4.1-1.5 7-4.7 7-9V6.2z"/><path d="m9 12 2.2 2.2L15.5 10"/>'
+  ),
   "whats-new": icon(
     '<path d="M12 3.5c.7 4.4 1.9 6.6 7.5 8.5-5.6 1.9-6.8 4.1-7.5 8.5-.7-4.4-1.9-6.6-7.5-8.5 5.6-1.9 6.8-4.1 7.5-8.5z"/>'
   ),

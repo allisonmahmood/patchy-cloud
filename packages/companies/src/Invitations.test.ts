@@ -141,6 +141,46 @@ it.layer(
       }).pipe(Effect.provide(InviteMail.layerRecording))
   );
 
+  it.effect("sends one email for two presses of the same Resend, and again for a fresh form", () =>
+    Effect.gen(function* () {
+      const companies = yield* Companies.Companies;
+      const recording = yield* InviteMail.Recording;
+      const { company, user } = yield* companies.create(companyInput("mail-repeat"));
+      const created = yield* Invitations.create({
+        companyId: company.id,
+        invitedBy: user.id,
+        email: "repeat@example.com"
+      });
+      yield* TestClock.adjust("1 hour");
+      const form = {
+        companyId: company.id,
+        inviteId: created.invite.id,
+        actorId: user.id,
+        shownExpiry: created.invite.expiresAt.getTime()
+      };
+      const [first, second] = yield* Effect.all(
+        [Invitations.resend(form), Invitations.resend(form)],
+        { concurrency: "unbounded" }
+      );
+      assert.sameMembers([first.repeated, second.repeated], [false, true]);
+      const sent = (yield* recording.events).filter((event) => event.operation === "create");
+      assert.lengthOf(sent, 2);
+      const [current] = yield* companies.listInvites(company.id);
+      assert.strictEqual(current!.clerkInvitationId, sent[1]!.id);
+
+      yield* TestClock.adjust("1 hour");
+      const again = yield* Invitations.resend({
+        ...form,
+        shownExpiry: current!.expiresAt.getTime()
+      });
+      assert.isFalse(again.repeated);
+      assert.lengthOf(
+        (yield* recording.events).filter((event) => event.operation === "create"),
+        3
+      );
+    }).pipe(Effect.provide(InviteMail.layerRecording))
+  );
+
   it.effect(
     "retries failed delivery without duplicating the invite and sends nothing when the previous link cannot be revoked",
     () =>

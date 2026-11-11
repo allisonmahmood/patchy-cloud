@@ -29,7 +29,7 @@ const pidgeon = PidgeonTest.canned();
 
 it.layer(services(pidgeon.layer))("Pidgeon connection pages", (it) => {
   it.effect(
-    "connects as one page: the key first, the rest dim until it's checked, with its script outside",
+    "connects in the shared frame: the key first, the rest locked until it's checked, with its script outside",
     () =>
       Effect.gen(function* () {
         const owner = yield* createCompany("pidgeon-page");
@@ -37,26 +37,34 @@ it.layer(services(pidgeon.layer))("Pidgeon connection pages", (it) => {
         assert.strictEqual(page.status, 200);
         const { html } = page;
         for (const part of [
-          "Connect Pidgeon email",
-          'data-pidgeon-connect data-addresses="/company/connections/connect/pidgeon/addresses"',
+          '<h1 class="title">Connect Pidgeon email</h1>',
+          'data-pidgeon-connect data-addresses="/settings/integrations/connect/pidgeon/addresses"',
           '<input type="hidden" name="attempt"',
-          'id="pidgeon-key" type="password" name="key"',
-          '<span class="form-step-number" aria-hidden="true">1</span>Admin key',
-          '<button class="btn btn-primary" type="submit" disabled data-pidgeon-submit>Connect</button>',
-          '<aside class="side-panel"',
-          "Choose <strong>Admin</strong>, for every address rather than a few",
-          "Your admin key is used once and never stored.",
-          "revoke it only to retire it or after a leak, then replace their keys here",
-          "A key just for Patchy keeps a revocation to Patchy.",
-          "Builders' agents read it while they build; what they send in dev goes nowhere.",
+          '<span class="flow-number">1</span>Make an admin key',
+          "Choose Admin, for every address rather than a few",
+          '<span class="flow-number">2</span>Paste the admin key',
+          'type="password" id="pidgeon-key"',
+          'data-pidgeon-find-wrap hidden><button class="btn" type="button" data-pidgeon-find="">Find addresses</button>',
+          '<span class="flow-number">3</span>Choose an address',
+          '<span class="flow-number">4</span>Patches may',
+          '<span class="flow-number">5</span>Name it',
+          "Once connected",
+          "What builders' agents send while they build goes nowhere",
+          "Revoking your admin key in Pidgeon later disconnects addresses connected with it.",
+          '<button class="btn btn-primary" type="submit" data-pending="Testing…"><span>Test and connect</span></button>',
           '<script defer src="/assets/pidgeon-connect.js"></script>',
           "<noscript>"
         ])
           assert.include(html, part);
+        // One frame: no side panel of its own, and nothing marked done.
+        for (const gone of ['class="side-panel"', "card-split", "step-done"])
+          assert.notInclude(html.slice(html.indexOf("<body>")), gone);
         // Address, Patches may and Name it wait for the key; the key's own part doesn't.
-        assert.strictEqual(
-          html.match(/<fieldset class="form-step" id="[^"]+" disabled data-pidgeon-step>/g)?.length,
-          3
+        assert.strictEqual(html.match(/<fieldset class="flow-section" disabled>/g)?.length, 3);
+        // Test and connect waits with them, shut without script.
+        assert.include(
+          html,
+          '<fieldset class="fieldset" disabled data-ready-gate><button class="btn btn-primary" type="submit" data-pending="Testing…"><span>Test and connect</span></button></fieldset>'
         );
         assert.notMatch(html.replace(switcherRelay, ""), /<script(?![^>]*\bsrc=)/);
         assert.include(page.response.headers.get("content-security-policy")!, "script-src 'self'");
@@ -107,7 +115,14 @@ it.layer(services(pidgeon.layer))("Pidgeon connection pages", (it) => {
       assert.include(html, 'data-kept-local-part="-desk"');
       assert.include(html, 'data-kept-send-policy="open"');
       assert.include(html, 'value="pageattempt1"');
-      assert.include(html, 'id="pidgeon-address-error" role="alert"');
+      // The refusal keeps its place under the address; the address is locked again until the key
+      // is checked, so a summary above the actions takes focus and says how to get back.
+      assert.include(html, '<p class="field-error" id="pidgeon-address-error">');
+      assert.include(html, '<div tabindex="-1" autofocus data-relock>');
+      assert.include(
+        html,
+        "Paste the admin key again and find addresses: your other choices are kept."
+      );
       assert.notInclude(html, typed);
       assert.deepStrictEqual(pidgeon.requests, []);
     })
@@ -126,24 +141,39 @@ it.layer(services(pidgeon.layer))("Pidgeon connection pages", (it) => {
           test: true,
           retired: [{ id: "key-old", name: "Patchy support oldattempt01" }]
         });
-        const tag = '<span class="tag">Test · mail stays in Pidgeon</span>';
-        const index = yield* read("/company/connections", owner.user);
-        assert.include(index.html, `<strong>pidgeon/support</strong></a>${tag}`);
-        const page = yield* read("/company/connections/conn_page_test", owner.user);
+        const tag = "Test, mail stays in Pidgeon";
+        const index = yield* read("/settings/integrations", owner.user);
+        assert.match(
+          index.html,
+          /pidgeon\/support<\/a><span class="row-desc">[^<]* · Test, mail stays in Pidgeon<\/span>/
+        );
+        // An old key left active is its own reason, beside a working connection.
+        assert.include(index.html, '<span class="badge badge-warning">Needs attention</span>');
+        const page = yield* read("/settings/integrations/conn_page_test", owner.user);
         for (const part of [
-          `<h1 class="page-heading">pidgeon/support${tag}</h1>`,
+          '<h1 class="title">pidgeon/support</h1>',
+          tag,
+          '<span class="badge badge-warning">Needs attention</span>',
           "<dt>Address</dt><dd>support@acme.example</dd>",
           "<dt>Writes to</dt><dd>Replies only</dd>",
           "<dt>Patches may</dt><dd>Read and send</dd>",
           "2 labels.",
-          '<li class="list-row"><code>Billing</code></li>',
+          '<span class="row-name">Billing</span>',
           "The old key is still active in Pidgeon",
           "named Patchy support oldattempt01",
+          `<form method="post" action="/settings/integrations/conn_page_test/test"><button class="btn btn-primary btn-sm" type="submit">Test</button></form>`,
           ">Change access…</a>",
           ">Replace key…</a>"
         ])
           assert.include(page.html, part);
         assert.notInclude(page.html, "Rotate");
+        // A replacement that couldn't revoke the old key says so, and the warning stays beside it.
+        const replaced = yield* read(
+          "/settings/integrations/conn_page_test?result=rotate",
+          owner.user
+        );
+        assert.include(replaced.html, "couldn't revoke the old one yet");
+        assert.include(replaced.html, "The old key is still active in Pidgeon");
         // Today's sends against the connection's budget, counted as Patchy counts them.
         assert.include(page.html, "<dt>Sends today</dt><dd>0 of 200 · resets at 00:00 UTC</dd>");
         const sql = yield* SqlClient.SqlClient;
@@ -153,7 +183,7 @@ it.layer(services(pidgeon.layer))("Pidgeon connection pages", (it) => {
         yield* sql`INSERT INTO pidgeon_sends (connection_id, day, sends)
           VALUES ('conn_page_test', ${today}::date, 2)`;
         assert.include(
-          (yield* read("/company/connections/conn_page_test", owner.user)).html,
+          (yield* read("/settings/integrations/conn_page_test", owner.user)).html,
           "<dt>Sends today</dt><dd>2 of 200 · resets at 00:00 UTC</dd>"
         );
         // A connection that only reads, and sent nothing today, has no such line.
@@ -165,7 +195,7 @@ it.layer(services(pidgeon.layer))("Pidgeon connection pages", (it) => {
           access: "read"
         });
         assert.notInclude(
-          (yield* read("/company/connections/conn_page_read", owner.user)).html,
+          (yield* read("/settings/integrations/conn_page_read", owner.user)).html,
           "Sends today"
         );
         // A live connection carries no label.
@@ -175,8 +205,25 @@ it.layer(services(pidgeon.layer))("Pidgeon connection pages", (it) => {
           userId: owner.user.id,
           handle: "orders"
         });
-        const live = yield* read("/company/connections/conn_page_live", owner.user);
-        assert.include(live.html, '<h1 class="page-heading">pidgeon/orders</h1>');
+        const live = yield* read("/settings/integrations/conn_page_live", owner.user);
+        assert.include(live.html, '<h1 class="title">pidgeon/orders</h1>');
+        assert.notInclude(live.html, tag);
+        assert.notInclude(live.html, "Needs attention");
+        // A test address with no old key is its own reason, with the way to a live one.
+        yield* PidgeonTest.seed({
+          id: "conn_page_sandbox",
+          companyId: owner.company.id,
+          userId: owner.user.id,
+          handle: "sandbox",
+          test: true
+        });
+        const sandbox = yield* read("/settings/integrations/conn_page_sandbox", owner.user);
+        assert.include(sandbox.html, '<p class="notice-title">This is a test address</p>');
+        assert.include(
+          sandbox.html,
+          '<a class="btn btn-sm" href="/settings/integrations/connect/pidgeon">Connect a live address</a>'
+        );
+        assert.include(sandbox.html, "patchy add pidgeon/sandbox");
       })
   );
 
@@ -191,12 +238,12 @@ it.layer(services(pidgeon.layer))("Pidgeon connection pages", (it) => {
         handle: "unused"
       });
       const deleted = yield* follow(
-        yield* send("/company/connections/conn_page_unused/delete", post(owner.user)),
+        yield* send("/settings/integrations/conn_page_unused/delete", post(owner.user)),
         owner.user
       );
       assert.include(
         deleted.html,
-        "Connection deleted, and its key revoked in Pidgeon. The address and its mail stay in Pidgeon."
+        "Disconnected, and its key revoked in Pidgeon. The address and its mail stay in Pidgeon."
       );
       assert.deepStrictEqual(
         events.flatMap((event) =>
@@ -228,7 +275,7 @@ it.layer(services(pidgeon.layer))("Pidgeon connection pages", (it) => {
           ${JSON.stringify({ uses: { desk: { kind: "pidgeon", handle: "declared", id: "conn_page_declared", revision: 1 } } })}::jsonb,
           'page-declared', 'test', '{}'::jsonb, 201)`;
       const refused = yield* send(
-        "/company/connections/conn_page_declared/delete",
+        "/settings/integrations/conn_page_declared/delete",
         post(owner.user)
       );
       assert.strictEqual(refused.status, 409);
@@ -249,7 +296,7 @@ it.layer(services(pidgeon.layer))("Pidgeon connection pages", (it) => {
         userId: owner.user.id,
         handle: "guarded"
       });
-      const path = "/company/connections/conn_page_guarded";
+      const path = "/settings/integrations/conn_page_guarded";
       const admin = "pgn_test_neverSentAnywhere001";
       const requests = pidgeon.requests.length;
       const found = yield* send(Page.addressesPath, post(member, { key: admin }));
@@ -279,7 +326,7 @@ it.layer(services(pidgeon.layer))("Pidgeon connection pages", (it) => {
       ])
         assert.strictEqual(response.status, 403);
       const view = yield* read(path, member);
-      assert.include(view.html, "Only admins can change this connection.");
+      assert.include(view.html, "Only admins can change it.");
       const foreign = yield* createCompany("pidgeon-guard-foreign");
       assert.strictEqual((yield* read(path, foreign.user)).status, 404);
       assert.strictEqual((yield* send(`${path}/delete`, post(foreign.user))).status, 404);

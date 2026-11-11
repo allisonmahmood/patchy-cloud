@@ -14,7 +14,7 @@ const jar = (response: HttpServerResponse.HttpServerResponse) =>
 
 describe("Receipt", () => {
   it("shows a receipt once to the person it was left for", () => {
-    const response = Receipt.set(HttpServerResponse.redirect("/machines"), {
+    const response = Receipt.set(HttpServerResponse.redirect("/agents"), {
       userId: "usr_a",
       text: "Revoked Studio Mac mini",
       publicBaseUrl: https

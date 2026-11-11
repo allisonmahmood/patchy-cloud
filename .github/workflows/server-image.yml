@@ -54,6 +54,9 @@ jobs:
         run: |
           docker load --input .local/server-image.tar
           node scripts/server-image-smoke.mjs --image patchy-server:ci
+      # Anyone can download this artifact, so the image never holds the display
+      # font: only a production deploy fetches it (docs/OPERATIONS.md › The
+      # display font). Built here, titles are Geist. Keep it that way.
       - uses: actions/upload-artifact@v7
         with:
           name: server-image-linux-amd64

@@ -11,7 +11,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import { Companies, Users } from "@patchy/companies";
-import { WhatsNew } from "@patchy/core";
+import { WhatsNew, WhatsNewLinks } from "@patchy/core";
 import * as Testing from "@patchy/company-database/testing";
 import * as WhatsNewPages from "./WhatsNewPages.js";
 
@@ -66,21 +66,104 @@ const seenPost = (through: string, origin = PUBLIC_BASE_URL) =>
     HttpClientRequest.setHeaders({ origin })
   );
 
+/** Each change a page shows, in reading order: its permalink's id, and whether it starts open. */
+const changes = (html: string) =>
+  html
+    .split('<details class="change"')
+    .slice(1)
+    .flatMap((entry) => {
+      const id = entry.match(/<div class="change-body" id="([^"]+)">/)?.[1];
+      return id === undefined ? [] : [{ id, open: entry.startsWith(" open>") }];
+    });
+/** The ids of every change a page shows, in reading order. */
+const shown = (html: string) => changes(html).map(({ id }) => id);
+/** The ids of the changes a page shows open and marked new to the viewer, in reading order. */
+const marked = (html: string) => {
+  const open = changes(html).filter((change) => change.open);
+  assert.strictEqual(
+    html.match(/aria-label="New to you"/g)?.length ?? 0,
+    open.length,
+    "every open change, and only those, carries the new-to-you dot"
+  );
+  return open.map(({ id }) => id);
+};
+/** The ids of a month's changes that shipped after `seen`. */
+const newIn = (month: string, seen: number) =>
+  WhatsNew.releases
+    .filter((release) => WhatsNewLinks.monthOf(release) === month && release.id > seen)
+    .flatMap((release) => release.changes.map((_, n) => WhatsNewLinks.changeId(release, n)));
+const months = [...new Set(WhatsNew.releases.map(WhatsNewLinks.monthOf))];
+const newest = months[0]!;
+
 it.layer(layer)("What's new pages", (it) => {
-  it.effect("highlights what shipped since the last visit, then counts the visit as seen", () =>
+  it.effect(
+    "open the newest month, mark what shipped since the last visit, then count it seen",
+    () =>
+      Effect.gen(function* () {
+        const sam = yield* person(0);
+        const first = yield* request(sam, HttpClientRequest.get("/whats-new"));
+        assert.strictEqual(first.status, 200);
+        const html = yield* first.text;
+        assert.deepStrictEqual(shown(html), newIn(newest, -1));
+        assert.deepStrictEqual(marked(html), newIn(newest, 0));
+        // The bell on the page itself is already caught up.
+        assert.notInclude(html, 'class="whats-new-dot"></span>');
+        assert.strictEqual(yield* seenBy(sam), WhatsNew.latestRelease);
+        // Its earlier month carries the marker the page was drawn with, so it still marks.
+        assert.include(html, `href="/whats-new/${months[1]}?since=0"`);
+
+        const again = yield* (yield* request(sam, HttpClientRequest.get(`/whats-new/${newest}`)))
+          .text;
+        assert.deepStrictEqual(shown(again), shown(html));
+        assert.deepStrictEqual(marked(again), []);
+      })
+  );
+
+  it.effect("give an earlier month its own address, and leave the marker where it was", () =>
     Effect.gen(function* () {
       const sam = yield* person(0);
-      const first = yield* (yield* request(sam, HttpClientRequest.get("/whats-new"))).text;
-      assert.strictEqual(
-        first.match(/whats-new-change whats-new-unseen/g)?.length ?? 0,
-        WhatsNew.changesSince(0).length
-      );
-      // The bell on the page itself is already caught up.
-      assert.notInclude(first, 'class="whats-new-dot"');
-      assert.strictEqual(yield* seenBy(sam), WhatsNew.latestRelease);
+      const response = yield* request(sam, HttpClientRequest.get(`/whats-new/${months[1]}`));
+      assert.strictEqual(response.status, 200);
+      const html = yield* response.text;
+      assert.deepStrictEqual(marked(html), newIn(months[1]!, 0));
+      assert.include(html, `href="/whats-new/${newest}?since=0"`);
+      assert.strictEqual(yield* seenBy(sam), 0);
+    })
+  );
 
-      const again = yield* (yield* request(sam, HttpClientRequest.get("/whats-new"))).text;
-      assert.notInclude(again, "whats-new-change whats-new-unseen");
+  it.effect("mark what was new when a link was drawn, never less than the marker says", () =>
+    Effect.gen(function* () {
+      const before = WhatsNew.latestRelease - 1;
+      const caughtUp = yield* person(WhatsNew.latestRelease);
+      const fromPanel = yield* (yield* request(
+        caughtUp,
+        HttpClientRequest.get(`/whats-new?since=${before}`)
+      )).text;
+      assert.deepStrictEqual(marked(fromPanel), newIn(newest, before));
+
+      // Each opens the newest month, which raises the marker, so each is someone new. An empty
+      // or blank value is no marker, not zero.
+      for (const since of [String(WhatsNew.latestRelease), "soon", "-1", "", "%20", "0x1"]) {
+        const html = yield* (yield* request(
+          yield* person(before),
+          HttpClientRequest.get(`/whats-new/${newest}?since=${since}`)
+        )).text;
+        assert.deepStrictEqual(marked(html), newIn(newest, before));
+      }
+    })
+  );
+
+  it.effect("answer a month nothing shipped in inside the app, without moving the marker", () =>
+    Effect.gen(function* () {
+      const sam = yield* person(0);
+      for (const month of ["2025-01", "nonsense"]) {
+        const response = yield* request(sam, HttpClientRequest.get(`/whats-new/${month}`));
+        assert.strictEqual(response.status, 404);
+        const html = yield* response.text;
+        assert.include(html, "Nothing shipped that month");
+        assert.include(html, 'class="app-foot"');
+      }
+      assert.strictEqual(yield* seenBy(sam), 0);
     })
   );
 
@@ -124,36 +207,56 @@ it.layer(layer)("What's new pages", (it) => {
   );
 });
 
-describe("the changelog", () => {
-  const release = (id: number, date: string, title: string): WhatsNew.Release => ({
+describe("a month of What's new", () => {
+  const release = (
+    id: number,
+    date: string,
+    title: string,
+    behindTheScenes: ReadonlyArray<string> = []
+  ): WhatsNew.Release => ({
     id,
     date,
     through: String(id).repeat(40).slice(0, 40),
     changes: [{ kind: "Fixed", title, detail: `${title} works again.`, prs: [id] }],
-    behindTheScenes: [],
+    behindTheScenes,
     patchChanges: []
   });
-  // Two releases went out on the 7th, one on the 6th.
+  // Two releases went out on 7 October, one in September and one in November.
   const releases = [
-    release(3, "2026-10-07", "Third"),
+    release(4, "2026-11-02", "Fourth"),
+    release(3, "2026-10-07", "Third", ["Quieter logs."]),
     release(2, "2026-10-07", "Second"),
-    release(1, "2026-10-06", "First")
+    release(1, "2026-09-30", "First")
   ];
-  /** The page's changes and seen rule, in reading order. */
-  const reading = (seen: number) =>
-    [
-      ...WhatsNewPages.render(releases, seen).matchAll(
-        /<strong>(\w+)<\/strong>|You’ve seen everything below/g
-      )
-    ].map(([, title]) => title ?? "rule");
-  const tinted = (seen: number) =>
-    WhatsNewPages.render(releases, seen).match(/whats-new-change whats-new-unseen/g)?.length ?? 0;
+  const october = (seen: number) => WhatsNewPages.render(releases, "2026-10", seen)!.body;
 
-  it("rules off where seen changes begin, inside a day or between days", () => {
-    assert.deepStrictEqual(reading(2), ["Third", "rule", "Second", "First"]);
-    assert.deepStrictEqual(reading(1), ["Third", "Second", "rule", "First"]);
-    assert.strictEqual(tinted(2), 1);
-    assert.strictEqual(tinted(1), 2);
+  it("shows one month's days, its changes newest first, opening at their permalinks", () => {
+    const html = october(0);
+    assert.deepStrictEqual(shown(html), ["change-3-0", "change-2-0"]);
+    assert.strictEqual(html.match(/<h2 class="section-title">/g)?.length, 1);
+    assert.include(html, '<h2 class="section-title">Wednesday, 7 October</h2>');
+    assert.include(html, '<a href="/whats-new/2026-10#change-3-0">Link to this change</a>');
+    assert.include(html, "Behind the scenes · 1 change");
+    assert.include(html, "<li>Quieter logs.</li>");
+  });
+
+  it("marks only what shipped after the marker", () => {
+    assert.deepStrictEqual(marked(october(0)), ["change-3-0", "change-2-0"]);
+    assert.deepStrictEqual(marked(october(2)), ["change-3-0"]);
+    assert.deepStrictEqual(marked(october(4)), []);
+    assert.include(october(2), "1 new to you");
+    assert.notInclude(october(4), "new to you");
+  });
+
+  it("links the months either side, carrying the marker while anything is new", () => {
+    assert.include(october(2), 'href="/whats-new/2026-09?since=2"');
+    assert.include(october(2), 'href="/whats-new/2026-11?since=2"');
+    assert.include(october(4), 'href="/whats-new/2026-09"');
+    assert.include(october(4), 'href="/whats-new/2026-11"');
+    const november = WhatsNewPages.render(releases, "2026-11", 4)!.body;
+    assert.include(november, 'href="/whats-new/2026-10"');
+    assert.notInclude(november, "/whats-new/2026-12");
+    assert.isUndefined(WhatsNewPages.render(releases, "2026-08", 0));
   });
 
   it("publishes only New and Improved changes, without PRs, through, patch changes or releases left empty", () => {
@@ -199,12 +302,5 @@ describe("the changelog", () => {
         }
       ]
     );
-  });
-
-  it("has no rule or tint once everything is seen, and tints it all for someone new to it", () => {
-    assert.deepStrictEqual(reading(3), ["Third", "Second", "First"]);
-    assert.strictEqual(tinted(3), 0);
-    assert.deepStrictEqual(reading(0), ["Third", "Second", "First"]);
-    assert.strictEqual(tinted(0), 3);
   });
 });

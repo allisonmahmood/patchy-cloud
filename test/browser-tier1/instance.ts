@@ -21,6 +21,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { applyDevSeed } from "@patchy/auth/seed";
+import * as Terms from "../../packages/companies/src/Terms.js";
 import * as LocalTaskProvider from "../../packages/execution/src/localTaskProvider.js";
 import type { BrowserContext } from "@playwright/test";
 import { RuntimeStreamFrame, type Manifest } from "../../packages/api/src/index.js";
@@ -236,8 +237,8 @@ export async function startCluster(): Promise<Cluster> {
       }
     };
     // Exactly what a brand-new instance held: the server's migrations, the dev seed, the
-    // colleague and someone at another company to share with. No patches, placements or name
-    // backfill.
+    // colleague and someone at another company to share with, all past the terms prompt. No
+    // patches, placements or name backfill.
     await postgres.createDatabase(TEMPLATE);
     await Effect.runPromise(
       migrate(migrations).pipe(Effect.provide(layerFromUrl(Redacted.make(url(TEMPLATE)))))
@@ -253,6 +254,11 @@ export async function startCluster(): Promise<Cluster> {
       );
       await template.query(
         "INSERT INTO users (id, clerk_user_id, company_id, email, name, role) VALUES ('usr_guest', 'user_guest', 'cmp_pine', 'guest@pine.example', 'Jo Rivera', 'member')"
+      );
+      // Both signed up under the current terms, as the dev user did, so no page asks them first.
+      await template.query(
+        "INSERT INTO terms_acceptances (user_id, terms_revision, privacy_revision, via, accepted_at) SELECT id, $1, $2, 'sign-up', now() FROM users WHERE id IN ('usr_colleague', 'usr_guest')",
+        [Terms.current.terms, Terms.current.privacy]
       );
     });
     const baseline = await connect("postgres", async (admin) => {

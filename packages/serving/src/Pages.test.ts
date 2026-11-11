@@ -1,3 +1,4 @@
+import { Teams } from "@patchy/companies";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import { assert, it } from "@effect/vitest";
@@ -44,7 +45,8 @@ import {
   FRONTEND_API_HOST,
   PUBLIC_BASE_URL
 } from "@patchy/auth/testing";
-import { Companies, InviteMail, Teams, Users } from "@patchy/companies";
+import { Companies, InviteMail, Users } from "@patchy/companies";
+import { withoutAppAssets } from "@patchy/core";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { ContentStore } from "@patchy/content-store";
 import { contentHash } from "../../../test/crypto.js";
@@ -57,7 +59,8 @@ import * as Wakes from "../../runtime/src/Wakes.js";
 import * as Pages from "./Pages.js";
 import {
   CONTENT_SECURITY_POLICY,
-  PATCH_CONTENT_SECURITY_POLICY,
+  NOTICE_SECURITY_POLICY,
+  PATCH_ROBOTS_TAG,
   SHELL_SECURITY_POLICY,
   noticeContentSecurityPolicy,
   servingHeaders,
@@ -698,7 +701,31 @@ it.layer(layer)("pages", (it) => {
         assert.strictEqual(elsewhere.headers["cache-control"], "no-store");
         assert.isUndefined(elsewhere.headers["x-patchy-sign-in-url"]);
         assert.include(elsewhere.headers["content-type"], "text/html");
+        // A first-party notice: it draws in the app's fonts, and nothing else loads.
+        assert.strictEqual(elsewhere.headers["content-security-policy"], NOTICE_SECURITY_POLICY);
       }
+      // A content URL's 404 stays under the frame's sandbox, which admits no font of the app's,
+      // so the page asks for none.
+      const content = yield* get("/~content/patchmissing1/ver_1", {});
+      assert.strictEqual(content.status, 404);
+      assert.strictEqual(content.headers["content-security-policy"], CONTENT_SECURITY_POLICY);
+      const page = yield* content.text;
+      assert.include(page, "This page isn't available");
+      assert.notMatch(page, /@font-face|rel="preload"|\/assets\/fonts\//);
+      assert.strictEqual(
+        Number(content.headers["content-length"]),
+        new TextEncoder().encode(page).length
+      );
+    })
+  );
+
+  it.effect("serves stopping notices as first-party pages that may draw in the app's fonts", () =>
+    Effect.gen(function* () {
+      const notice = yield* get("/~shell/notice/stream_limit?return=/acme/kudos", {});
+      assert.strictEqual(notice.status, 200);
+      assert.strictEqual(notice.headers["content-security-policy"], NOTICE_SECURITY_POLICY);
+      assert.include(NOTICE_SECURITY_POLICY, "font-src 'self'");
+      assert.include(yield* notice.text, 'data-notice="stream_limit"');
     })
   );
 
@@ -938,6 +965,52 @@ it.layer(services)("pages in memory", (it) => {
         : body;
   });
 
+  it.effect(
+    "asks a colleague or guest yet to accept the terms on a patch's page, never its frame or a public page",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const grants = yield* GuestGrants.GuestGrants;
+        const company = yield* publish("Asked first");
+        const open = yield* publish("Open to anyone", "public");
+        // Both were here before acceptances began, so neither has one recorded.
+        yield* sql`INSERT INTO companies (id, handle, name) VALUES ('cmp_terms_guest', 'terms-guest', 'Guest Co')`;
+        yield* sql`
+          INSERT INTO users (id, clerk_user_id, company_id, email, name, role) VALUES
+            ('usr_terms_colleague', 'user_terms_colleague', ${DEV_SEED.companyId},
+              'colleague@terms.example', 'Sam', 'member'),
+            ('usr_terms_guest', 'user_terms_guest', 'cmp_terms_guest',
+              'guest@terms.example', 'Gus', 'member')`;
+        yield* grants.grant({
+          patchId: company.patchId,
+          userId: "usr_terms_guest",
+          grantedBy: DEV_SEED.userId
+        });
+        const text = (response: Response) => Effect.promise(() => response.text());
+        for (const person of ["colleague", "guest"]) {
+          const cookie = signedInCookies(
+            signSession({ sub: `user_terms_${person}`, email: `${person}@terms.example` })
+          );
+          const page = { cookie, "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" };
+          const asked = yield* send(company.path, { headers: page });
+          assert.strictEqual(asked.status, 200);
+          assert.strictEqual(asked.headers.get("x-robots-tag"), PATCH_ROBOTS_TAG);
+          const prompt = yield* text(asked);
+          assert.include(prompt, "We’ve updated our terms");
+          assert.notInclude(prompt, "Asked first");
+          const frame = yield* send(`/~content/${company.patchId}/${company.versionId}`, {
+            headers: { ...page, "sec-fetch-dest": "iframe" }
+          });
+          assert.include(yield* text(frame), "<h1>Asked first</h1>");
+          const anyone = yield* send(open.path, { headers: page });
+          assert.notInclude(yield* text(anyone), "We’ve updated our terms");
+          // Without a browser's fetch metadata, as an agent reads it, the page is served.
+          const read = yield* send(company.path, { headers: { cookie } });
+          assert.notInclude(yield* text(read), "We’ve updated our terms");
+        }
+      })
+  );
+
   it.effect("names the broker's bytes in a scripted shell's URL", () =>
     Effect.gen(function* () {
       const { path, versionId } = yield* publish("Scripted shell", "public");
@@ -1173,7 +1246,12 @@ it.layer(services)("pages in memory", (it) => {
         assert.isNull(door.headers.get("location"));
         assert.isNull(door.headers.get("www-authenticate"));
         const body = yield* Effect.promise(() => door.text());
-        assert.strictEqual(body, yield* Effect.promise(() => login.text()));
+        const loginBody = yield* Effect.promise(() => login.text());
+        // In the frame's sandbox the door asks for none of the app's fonts, which it would be refused.
+        assert.strictEqual(
+          body,
+          path.startsWith("/~content/") ? withoutAppAssets(loginBody) : loginBody
+        );
         assert.notInclude(body, "Hidden title");
         assert.strictEqual(
           (body.match(/<a /g) ?? []).length,
@@ -1333,10 +1411,7 @@ it.layer(services)("pages in memory", (it) => {
     { returnTo = "/", status = 200 }: { readonly returnTo?: string; readonly status?: number } = {}
   ) {
     assert.strictEqual(response.status, status);
-    assert.strictEqual(
-      response.headers.get("content-security-policy"),
-      PATCH_CONTENT_SECURITY_POLICY
-    );
+    assert.strictEqual(response.headers.get("content-security-policy"), NOTICE_SECURITY_POLICY);
     assert.strictEqual(response.headers.get("cache-control"), "private, no-store");
     assert.strictEqual(
       yield* Effect.promise(() => response.text()),
@@ -1540,13 +1615,14 @@ it.layer(services)("pages in memory", (it) => {
         rebuild
       );
 
-      // The frame's notice keeps the relay alone, under the content policy.
+      // The frame's notice keeps the relay alone, under the content policy, which admits none of
+      // the app's fonts, so it asks for none.
       const framed = yield* open(signedInCookies(), `/~content/${patchId}/${versionId}?n=boot_x`);
       assert.strictEqual(framed.status, 409);
       assert.strictEqual(framed.headers.get("content-security-policy"), CONTENT_SECURITY_POLICY);
       assert.strictEqual(
         yield* Effect.promise(() => framed.text()),
-        renderShellNotice("needs_rebuild", "")
+        withoutAppAssets(renderShellNotice("needs_rebuild", ""))
       );
 
       // Anyone else meets the address's door as before: sign in, the deactivated page.
@@ -1708,6 +1784,36 @@ it.layer(services)("pages in memory", (it) => {
         assert.strictEqual((yield* send(`${path}/~v/1`)).status, 401);
         assert.strictEqual((yield* visit(elsewhere.cookie, `${path}/~v/1`)).status, 404);
       })
+  );
+
+  it.effect("records a guest's open of a patch shared with them, and reports none", () =>
+    Effect.gen(function* () {
+      const patches = yield* Patches.Patches;
+      const { patchId, versionId, path } = yield* publish(
+        "Shared rota",
+        undefined,
+        null,
+        "shared-rota"
+      );
+      const guest = yield* outsider("opening-guest");
+      yield* (yield* GuestGrants.GuestGrants).grant({
+        patchId,
+        userId: guest.user.id,
+        grantedBy: DEV_SEED.userId
+      });
+      const opened = Effect.map(patches.opens(guest.user.id), (opens) =>
+        opens.some((entry) => entry.patchId === patchId)
+      );
+      const visit = (at: string) => send(at, { headers: { ...navigation, cookie: guest.cookie } });
+
+      // Its frame's content isn't an open; the address is, for the guest's own Shared with you.
+      assert.strictEqual((yield* visit(`/~content/${patchId}/${versionId}?n=b`)).status, 200);
+      assert.isFalse(yield* opened);
+      assert.strictEqual((yield* visit(path)).status, 200);
+      assert.isTrue(yield* opened);
+      // Activation counts members only.
+      assert.deepStrictEqual(firstOpens(patchId), []);
+    })
   );
 
   it.effect(

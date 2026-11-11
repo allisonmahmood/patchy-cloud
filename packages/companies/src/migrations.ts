@@ -151,7 +151,7 @@ export const migrations: Migrations = {
       PRIMARY KEY (user_id, terms_revision, privacy_revision)
     )`
   ),
-  "0037_company_roles": ddl(
+  "0038_company_roles": ddl(
     `ALTER TABLE users DROP CONSTRAINT users_role_check`,
     `ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('member', 'admin', 'super_admin'))`,
     `ALTER TABLE invites DROP CONSTRAINT invites_role_check`,
@@ -159,7 +159,7 @@ export const migrations: Migrations = {
     `UPDATE users SET role = 'super_admin' WHERE role = 'admin'`,
     `UPDATE invites SET role = 'super_admin' WHERE role = 'admin'`
   ),
-  "0038_company_teams": ddl(
+  "0039_company_teams": ddl(
     `CREATE TABLE company_teams (
       id TEXT PRIMARY KEY,
       company_id TEXT NOT NULL REFERENCES companies(id),
@@ -192,7 +192,7 @@ export const migrations: Migrations = {
       FOREIGN KEY (company_id, actor_id) REFERENCES users(company_id, id)
     )`
   ),
-  "0041_team_lifecycle": ddl(
+  "0042_team_lifecycle": ddl(
     `ALTER TABLE company_teams ADD COLUMN deleted_at TIMESTAMPTZ`,
     `CREATE TABLE company_team_lifecycle (
       company_id TEXT NOT NULL, team_id TEXT NOT NULL, revision BIGINT NOT NULL,

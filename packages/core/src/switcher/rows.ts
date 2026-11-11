@@ -15,7 +15,7 @@
  * version lands on the patch's current one, and a renamed patch goes by its new name.
  */
 import { patchTitle } from "../patch-marks.js";
-import { places, whatsNewPath } from "../places.js";
+import { pagePlaces, type Place, places, whatsNewPath } from "../places.js";
 import type { Kept } from "./cache.js";
 import { byTitle, rank } from "./rank.js";
 
@@ -26,6 +26,7 @@ export type Icon =
   | "agents"
   | "people"
   | "integrations"
+  | "agent-access"
   | "whats-new"
   | "overview"
   | "versions"
@@ -43,7 +44,7 @@ export interface Row {
   readonly detail?: string | undefined;
   /** What's new has changes the viewer hasn't seen. */
   readonly dot?: boolean;
-  /** For ranking: the patch's name and open score. */
+  /** For ranking: a second name it answers to, and how much the viewer uses it (places: -1). */
   readonly name?: string | undefined;
   readonly score?: number | undefined;
   /** When the viewer last opened it, in epoch milliseconds. */
@@ -75,34 +76,45 @@ export interface Here {
   readonly path: string;
 }
 
-type Place = (typeof places)[number]["items"][number];
-
-/** The sidebar's places the switcher lists, by the icon each wears; Agent access isn't one. */
-const placeIcons: Partial<Record<Place["section"], Icon>> = {
+/** The icon each of the sidebar's places wears in the menu. */
+const placeIcons: Readonly<Record<Place["section"], Icon>> = {
   home: "home",
+  "company-settings": "people",
+  teams: "people",
   patches: "patches",
   agents: "agents",
   people: "people",
-  integrations: "integrations"
+  integrations: "integrations",
+  "agent-access": "agent-access"
 };
 
-/** Patchy's places, the page's own left out. */
+/** The sidebar place that opens on `place` without being a page, as Settings opens People. */
+const opener = (place: Place) =>
+  places.find((parent) => "children" in parent && parent.href === place.href)?.label;
+
+/**
+ * Patchy's places, the page's own left out: every sidebar place with a page, each also found by
+ * the name of a place that opens on it ("settings" finds People), then What's new. A place ranks
+ * below a patch or one of its pages that matches as well, so "set" on a patch finds its Settings
+ * first.
+ */
 const placeRows = (here: Here, unseen: number): Row[] =>
   [
-    ...places
-      .flatMap((group): ReadonlyArray<Place> => group.items)
-      .flatMap((item): Row[] => {
-        const icon = placeIcons[item.section];
-        return icon === undefined
-          ? []
-          : [{ key: `place:${item.section}`, href: item.href, title: item.label, mark: { icon } }];
-      }),
+    ...pagePlaces.map((place): Row => ({
+      key: `place:${place.section}`,
+      href: place.href,
+      title: place.label,
+      mark: { icon: placeIcons[place.section] },
+      name: opener(place),
+      score: -1
+    })),
     {
       key: "place:whats-new",
       href: whatsNewPath,
       title: "What’s new",
       mark: { icon: "whats-new" },
-      dot: unseen > 0
+      dot: unseen > 0,
+      score: -1
     } satisfies Row
   ].filter((row) => row.href !== here.path);
 
@@ -153,7 +165,7 @@ export const sections = (
           return {
             key: `patch:${patch.id}`,
             href: path(list.company.handle, patch.name),
-            title: patchTitle(patch),
+            title: patchTitle(patch, list.company.name),
             mark: { patch: { name: patch.name, tier: patch.tier } },
             detail: openedAt === undefined ? undefined : sinceLabel(openedAt, now),
             name: patch.name,
@@ -168,7 +180,7 @@ export const sections = (
         .map((patch) => ({
           key: `patch:${patch.id}`,
           href: path(patch.company.handle, patch.name),
-          title: patchTitle(patch),
+          title: patchTitle(patch, patch.company.name),
           mark: { patch: { name: patch.name, tier: patch.tier } },
           detail: patch.company.name,
           name: patch.name

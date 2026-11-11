@@ -69,7 +69,7 @@ export class AccessDenied extends Schema.TaggedError<AccessDenied>()("PostgresAc
   readonly code = "access_denied";
   readonly status = 403;
   override get message() {
-    return "This connection is no longer available. Ask a company administrator to reconnect it.";
+    return "This connection is no longer available. Ask a company administrator to resume it.";
   }
 }
 export class SourceUnavailable extends Schema.TaggedError<SourceUnavailable>()(

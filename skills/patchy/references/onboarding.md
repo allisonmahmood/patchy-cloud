@@ -121,8 +121,8 @@ it was saved. Say:
 
 > This machine is logged in to `<company.name>` as `<user.email>`, named
 > "`<machine.name>`". Its publishing key is saved here. It lasts 90 days or
-> 30 idle days, whichever comes first; you can revoke it on Your agents
-> at `/machines`.
+> 30 idle days, whichever comes first; you can disconnect this computer on
+> Your agents at `/agents`.
 
 After the main skill's identity check confirms the intended publisher, name
 the user, company, role and machine before publishing. Describe the key as

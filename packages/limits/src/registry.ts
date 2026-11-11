@@ -1581,8 +1581,7 @@ export const registry = {
     default: 50,
     unit: "addresses",
     scope: "company",
-    measure:
-      "Addresses in one invite from the Company page; more are refused before any email goes out",
+    measure: "Addresses in one invite from People; more are refused before any email goes out",
     refusal: null,
     overridable: false
   },
@@ -1694,6 +1693,16 @@ export const registry = {
     measure:
       "One Patchy MCP request body: the tier 2 argument cap plus 64 KiB of envelope. A larger one is answered 413 before it is parsed",
     refusal: "too_large",
+    overridable: false
+  },
+  "feedback.sends.perMinute": {
+    kind: "operating",
+    default: 10,
+    unit: "sends/minute",
+    scope: "viewer",
+    measure:
+      "Requests and feedback one person sends per host replica, both kinds and every surface together; linking, unlinking, listing and withdrawing spend none",
+    refusal: "rate_limited",
     overridable: false
   },
   "rate.protectedApi.perMinute": {

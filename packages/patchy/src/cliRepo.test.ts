@@ -6,6 +6,7 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  unlinkSync,
   writeFileSync
 } from "node:fs";
 import path from "node:path";
@@ -124,7 +125,7 @@ describe("patch-repo commands", () => {
       const failure = JSON.parse(result.stderr);
       expect(failure).toMatchObject({ ok: false, kind });
       expect(failure.code).toBe(code);
-      if (status === 404) expect(failure.error).toContain(`${instance.url}/company`);
+      if (status === 404) expect(failure.error).toContain(`${instance.url}/settings/people`);
       expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toBe(projectConfig);
     }
   );
@@ -1073,6 +1074,14 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
       exit: 3,
       kind: "unreachable"
     },
+    // Generation runs in the installed CLI, whose failure document the command relays.
+    {
+      args: ["remove", "salesDb"],
+      route: "/api/sdk/generate",
+      status: 503,
+      exit: 3,
+      kind: "unreachable"
+    },
     {
       args: ["remove", "salesDb"],
       route: "/api/sdk/generate",
@@ -1080,7 +1089,7 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
       exit: 3,
       kind: "unreachable"
     }
-  ])("reports $kind on $args's actual $route path", async ({ args, route, status, exit, kind }) => {
+  ])("reports $kind on $args's $route ($status)", async ({ args, route, status, exit, kind }) => {
     const instance = await stubInstance((request, respond, disconnect) => {
       if (request.url.split("?")[0] === route) {
         if (status === 0) return disconnect();
@@ -1097,8 +1106,33 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
     );
     const result = await runCli([...args, "--api-url", instance.url, "--json"], { cwd: dir, env });
     expect(result).toMatchObject({ status: exit, stdout: "" });
-    expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, kind });
+    const failure = JSON.parse(result.stderr);
+    expect(failure).toMatchObject({ ok: false, kind });
+    // Only an answer Patchy may have gotten wrong offers `patchy feedback`.
+    expect("feedbackHint" in failure).toBe(status >= 500);
     expect(instance.requests.some((request) => request.url.split("?")[0] === route)).toBe(true);
+  });
+
+  it("relays the installed CLI's Unexpected error with its feedback hint, still exit 1", async () => {
+    const instance = await stubInstance(projectHandler);
+    const dir = projectTree(instance.url);
+    const failure = {
+      ok: false,
+      error: "Unexpected error: boom",
+      kind: "local",
+      feedbackHint: `If Patchy got this wrong, tell Patchy's team: patchy feedback "<what you ran and what happened>"`
+    };
+    // An installed CLI whose generation crashes, in place of the linked package.
+    const installed = path.join(dir, "node_modules/patchy");
+    unlinkSync(installed);
+    mkdirSync(path.join(installed, "dist"), { recursive: true });
+    writeFileSync(
+      path.join(installed, "dist/index.js"),
+      `process.stderr.write(${JSON.stringify(JSON.stringify(failure))});\nprocess.exitCode = 1;\n`
+    );
+    const result = await runCli(["refresh", "--json"], { cwd: dir, env });
+    expect(result).toMatchObject({ status: 1, stdout: "" });
+    expect(JSON.parse(result.stderr)).toMatchObject(failure);
   });
 
   it("refuses init from a CLI behind its instance before asking for a purpose or writing", async () => {

@@ -110,6 +110,7 @@ const failureSchema = Schema.Struct({
   error: Schema.String,
   kind: Schema.Literals(["local", "rejected", "unreachable"]),
   code: Schema.optionalKey(Schema.String),
+  feedbackHint: Schema.optionalKey(Schema.String),
   warnings: Schema.optionalKey(Schema.Array(Schema.String)),
   ...refusalFields
 });
@@ -438,9 +439,19 @@ const installedFailure = Effect.fn("Project.installedFailure")(function* (
     case "rejected":
       return yield* Api.fromRefusal(error, error.error);
     case "unreachable":
-      return yield* new UnreachableError({ ...fields, instanceUrl });
+      // The installed CLI offers the hint only after an answer it could not use, without saying
+      // whether a status or a body; one without it got no answer, or predates the hint.
+      return yield* new UnreachableError({
+        ...fields,
+        instanceUrl,
+        reason: error.feedbackHint === undefined ? "transport" : "response"
+      });
     case "local":
-      return yield* new LocalError(fields);
+      return yield* new LocalError({
+        ...fields,
+        // Only its `Unexpected error` carries the hint.
+        ...(error.feedbackHint === undefined ? {} : { unexpected: true })
+      });
   }
 });
 
@@ -558,7 +569,7 @@ const refusal = (error: Api.ClientFailure, fallback: string) =>
       return yield* new RejectedError({
         refusal: {
           ok: false,
-          error: `${Api.refusalMessage(error, fallback)}\nAsk an admin at ${instance.apiUrl}/company${error.code === "connection_not_connected" ? "/connections" : ""}.`,
+          error: `${Api.refusalMessage(error, fallback)}\nAsk an admin at ${instance.apiUrl}${error.code === "connection_not_connected" ? "/settings/integrations" : "/settings/people"}.`,
           code: error.code
         },
         cause: error
@@ -991,7 +1002,7 @@ export const add = Effect.fn("Project.add")(function* (
         refusal: {
           ok: false,
           code: "connection_not_connected",
-          error: `No connected ${label} connection${handle ? ` named ${handle}` : ""}. Ask an admin at ${instance.apiUrl}/company/connections.`
+          error: `No connected ${label} connection${handle ? ` named ${handle}` : ""}. Ask an admin at ${instance.apiUrl}/settings/integrations.`
         }
       });
     if (connections.length > 1)
@@ -1012,7 +1023,7 @@ export const add = Effect.fn("Project.add")(function* (
       refusal: {
         ok: false as const,
         code: "patch_not_openable",
-        error: `That shared ${resource} is not available to you. Ask an admin at ${instance.apiUrl}/company.`
+        error: `That shared ${resource} is not available to you. Ask an admin at ${instance.apiUrl}/settings/people.`
       }
     };
     const observed: { status?: number } = {};
@@ -1036,9 +1047,11 @@ export const add = Effect.fn("Project.add")(function* (
             : refusal(error, "Could not read the shared source.")
         )
       );
+    // The instance answered, but its company database was unavailable to list the source's resources.
     if (source.inventory === null)
       return yield* new UnreachableError({
         instanceUrl: instance.apiUrl,
+        reason: "response",
         code: "source_unavailable",
         message: "The shared source's inventory is unavailable. Try again later."
       });

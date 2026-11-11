@@ -42,7 +42,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "fonts"
   ],
   "scripts": {
     "build": "node ../../scripts/build-core-scripts.mjs && effect-tsgo tsc -p tsconfig.json",

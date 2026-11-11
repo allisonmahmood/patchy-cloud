@@ -158,6 +158,8 @@ const mcpFields = {
   catalogueDetail: Schema.optionalKey(Schema.Boolean),
   catalogueContinued: Schema.optionalKey(Schema.Boolean)
 };
+/** The request or feedback a request sent, linked, unlinked or withdrew: its id, never its text. */
+const feedbackFields = { submissionId: Schema.optionalKey(Schema.String) };
 /** Why a subscription ran: what made it dirty first, while it waited for a slot. */
 export const RerunTrigger = Schema.Literals([
   "initial",
@@ -304,6 +306,7 @@ export const EventFields = Schema.Struct({
   ...routeFields,
   ...cliFields,
   ...mcpFields,
+  ...feedbackFields,
   ...documentFields,
   ...rerunFields,
   ...subscriptionRequestFields,
@@ -337,6 +340,7 @@ export const RequestEvent = Schema.Struct({
   ...routeFields,
   ...cliFields,
   ...mcpFields,
+  ...feedbackFields,
   ...documentFields,
   ...subscriptionRequestFields,
   ...operations

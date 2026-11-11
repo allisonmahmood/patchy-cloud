@@ -276,7 +276,7 @@ export const layer: Layer.Layer<
       return Tools.agentAccessOff({
         company: identity.company.name,
         admins,
-        turnOnAt: `${publicUrl.href.replace(/\/+$/u, "")}/company/agent-access`
+        turnOnAt: `${publicUrl.href.replace(/\/+$/u, "")}/settings/agent-access`
       });
     });
 

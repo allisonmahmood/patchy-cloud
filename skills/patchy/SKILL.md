@@ -1,13 +1,13 @@
 ---
 name: patchy
-description: Publish an HTML page on Patchy Cloud, start a patch repo, find company tools or data sources, manage a patch's lifecycle or description, read a Patchy link, change the company look, or run onboarding.
+description: Publish an HTML page on Patchy Cloud, start a patch repo, find company tools or data sources, manage a patch's lifecycle or description, read a Patchy link, change the company look, run onboarding, or tell Patchy's team what it lacks or got wrong.
 ---
 
 # Patchy
 
 Use this global skill to publish a page, start a tool's patch repo, discover
-company tools and data sources, manage a patch, read one, change the company look, or
-sign the machine in.
+company tools and data sources, manage a patch, read one, change the company look,
+tell Patchy's team what it lacks or got wrong, or sign the machine in.
 Inside a patch repo, its project skills govern building.
 
 ## Onboarding
@@ -65,8 +65,8 @@ All levels accept `--json`. Top-level success is `{ patches, connections }`
 merged from two routes; the other levels print the wire body with no `ok`
 wrapper. Branch on `declarable`, `reason` and `paused` (an IMAP connection whose password its server refused, which fails every call until a super admin fixes it), never parse the human `hint`.
 Unshared tables and stores name their owner; off sources need restoration
-before use. Disconnected connections point to the super admin's
-browser at `/company/connections`. Listing grants no access and reads no rows
+before use. Disconnected connections, which the pages call paused, point to the
+admin's browser at `/settings/integrations`. Listing grants no access and reads no rows
 or file contents.
 
 ## Where patch files live
@@ -297,6 +297,31 @@ its keys and units, and update the config description if needed. Notices do not
 block commands; under `--json`, read `warnings` on success or failure. Publish
 recovery retains the saved attempt's notices.
 
+## Requests and feedback
+
+`patchy request` and `patchy feedback` reach Patchy's team, the people who build
+Patchy: not the company, a patch's owner or your harness's own feedback tool. A
+patch's own bug, or an agent tool it lacks, goes to that patch's owner.
+
+- **Request** when Patchy can't do what the person needs, such as an integration,
+  a command or an SDK capability, even after a workaround. Name the capability,
+  not a guessed command, and put the need and its constraints in `--why`:
+  `patchy request "Gmail integration" --why "Sales tracks replies in the pipeline patch; reading is enough" --json`.
+  It stores the request and exits 0 with up to three `similar` requests. Run a
+  match's `link` command, with `--why`, only when it is the same need. A shipped
+  match's `note` says how to use it now; `next` says what is left.
+- **Feedback** when Patchy did something wrong, surprising or harder than it
+  should be. Say what you ran, what you expected and what happened:
+  `patchy feedback "Ran patchy publish --json; expected a URL; got exit 3, then the same publish worked" --json`.
+
+Send once per problem, when you finish or give up, and tell the person the id.
+Patchy attaches the person, company, agent and CLI version; the rest is your own
+words about the problem. Leave out keys, connection strings, rows, file contents,
+other people's personal details and pasted logs. `contains_secret` names the
+field to rewrite. Text or `--why` of `-` reads stdin. After exit 3 the send may
+have been stored: check `patchy request list` or `patchy feedback list` before
+sending again. `withdraw <id>` deletes one.
+
 ## Good fits
 
 - implementation plans
@@ -423,8 +448,8 @@ Call the credential the user's **publishing key**: it is this machine's user-own
 machine token, not the browser's sign-in. Say **sign in** for the person in their
 browser and **log this machine in** for publishing. Signing in uses Google,
 Microsoft or an emailed code. The poll mints the key after browser confirmation;
-it works for 90 days or 30 idle days, whichever comes first, and can be revoked
-on **Your agents** at `/machines`. Re-login replaces the saved login key only
+it works for 90 days or 30 idle days, whichever comes first, and the person can
+disconnect this computer on **Your agents** at `/agents`. Re-login replaces the saved login key only
 when it belongs to the same user, without changing ownership of their pages.
 
 To log this machine out, run `patchy logout`. It forgets the stored publishing key
@@ -494,9 +519,9 @@ browser sign-out is a separate control, **Sign out** in the account menu.
   `patch_not_openable` is definitive (exit 2): correct the shared-table/store declaration
   or restore source access before publishing a fresh attempt.
   `connection_not_connected` and `stale_generated` are also definitive (exit 2).
-  A super admin reconnects at `/company/connections`; a stale declaration needs a
+  An admin resumes it at `/settings/integrations`; a stale declaration needs a
   regenerated snapshot stamp. Connection strings belong only in the person's
-  browser connect/rotate form, never in CLI arguments or an agent transcript.
+  browser connect or replace form, never in CLI arguments or an agent transcript.
 - Republishing the same local file updates the patch it already created on that instance
   and preserves its sharing scope unless `--share company` or `--share public` is supplied.
   Pass `--new` to force a fresh patch, or `--patch` to update a known patch only.
@@ -551,9 +576,11 @@ browser sign-out is a separate control, **Sign out** in the account menu.
   (network failure, undecodable body or unmodelled 5xx) — try later or contact
   Patchy about the unavailable instance. `130` is an interruption.
 - Every command takes `--json`: one JSON document on stdout on success;
-  `{ ok: false, error, kind, code?, state?, owner?, dependants?, sources?, purgeAt?, warnings? }`
+  `{ ok: false, error, kind, code?, state?, owner?, dependants?, sources?, purgeAt?, feedbackHint?, warnings? }`
   on stderr on failure. `kind` is `local`, `rejected` or `unreachable` and matches
   the exit code. Branch on `kind`/exit first, then `code` when present.
+  `feedbackHint` appears only when Patchy itself may be at fault (an unmodelled 5xx,
+  an unreadable body, an unexpected error) and offers `patchy feedback`.
   Relay `warnings` even when a later step fails. Repo checks emit local
   `instance_mismatch`, `release_mismatch`, `toolchain_unsupported`, `stale_generated`,
   `invalid_manifest`, `import_refused`, `too_large` and `tier_mismatch` (exit 1).
@@ -601,10 +628,13 @@ Patch code handles that error; it does not replace the page or disable local rou
 
 Runtime notices belong to Patchy, not the uploaded document. `session_expired`
 and `principal_changed` require the notice's Sign in link and a whole-page reload;
-never replay an unanswered write. `access_denied` has no reload offer: report the
-access restriction. A needs-rebuild door requires the owner to refresh, rebuild
-and publish. A shell mismatch refreshes once automatically; a terminal mismatch
-is a visible failure to report, not an invitation to keep refreshing.
+never replay an unanswered write. Once a patch is company-only again, a page
+opened while it was public can get them with no notice; a whole-page reload
+checks access again, as any company link does. `access_denied` has no reload
+offer: report the access restriction. A needs-rebuild door requires the owner
+to refresh, rebuild and publish. A shell mismatch refreshes once automatically;
+a terminal mismatch is a visible failure to report, not an invitation to keep
+refreshing.
 
 When a page refuses access, report the refusal rather than treating its HTML as the patch:
 

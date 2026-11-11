@@ -492,6 +492,68 @@ it.layer(layer)("AgentConnections", (it) => {
     })
   );
 
+  it.effect("lists a person's connections that ended on their own in the last 30 days", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const userId = yield* person("ended_alone");
+      const unused = (id: string, connected: string, used: string | null) =>
+        sql`UPDATE agent_connections SET created_at = clock_timestamp() - ${connected}::interval,
+            last_used_at = clock_timestamp() - ${used}::interval WHERE id = ${id}`;
+      const idle = yield* connect(userId, "Idle");
+      yield* unused(idle.connection.id, "50 days", "35 days");
+      const never = yield* connect(userId, "Never called");
+      yield* unused(never.connection.id, "40 days", null);
+      const gone = yield* connect(userId, "Long gone");
+      yield* unused(gone.connection.id, "90 days", "61 days");
+      const disconnected = yield* connect(userId, "Disconnected");
+      yield* unused(disconnected.connection.id, "50 days", "35 days");
+      yield* AgentConnections.AgentConnections.use((connections) =>
+        connections.disconnect({ id: disconnected.connection.id, userId })
+      );
+      // A newer connection from the same client under the same name stands for the app, whatever
+      // became of it.
+      const replaced = yield* connect(userId, "Claude");
+      yield* unused(replaced.connection.id, "50 days", "35 days");
+      yield* connect(userId, "Claude");
+      const swapped = yield* connect(userId, "Gemini");
+      yield* unused(swapped.connection.id, "50 days", "35 days");
+      const swap = yield* connect(userId, "Gemini");
+      yield* AgentConnections.AgentConnections.use((connections) =>
+        connections.disconnect({ id: swap.connection.id, userId })
+      );
+      // An older one still working doesn't hide a newer one that ended.
+      const working = yield* connect(userId, "Codex");
+      yield* unused(working.connection.id, "60 days", "0 days");
+      const desk = yield* connect(userId, "Codex");
+      yield* unused(desk.connection.id, "50 days", "33 days");
+      yield* connect(yield* person("ended_someone"), "Someone else's");
+
+      const ended = () =>
+        AgentConnections.AgentConnections.use((connections) => connections.ended(userId));
+      const listed = yield* ended();
+      assert.deepStrictEqual(
+        listed.map(({ id, clientName }) => ({ id, clientName })),
+        [
+          { id: desk.connection.id, clientName: "Codex" },
+          { id: idle.connection.id, clientName: "Idle" },
+          { id: never.connection.id, clientName: "Never called" }
+        ]
+      );
+      const days = (from: string, to: string) => (Date.parse(to) - Date.parse(from)) / 86_400_000;
+      const hour = 1 / 24 + 1e-6;
+      assert.closeTo(days(listed[1]!.lastUsedAt!, listed[1]!.endedAt), 30, hour);
+      assert.isNull(listed[2]!.lastUsedAt);
+      assert.closeTo(days(listed[2]!.connectedAt, listed[2]!.endedAt), 30, hour);
+      // Ended ones aren't live, and Disconnect everything ends what was left of them too.
+      const live = yield* AgentConnections.AgentConnections.use((connections) =>
+        connections.list(userId)
+      );
+      assert.deepStrictEqual(live.map(({ clientName }) => clientName).sort(), ["Claude", "Codex"]);
+      yield* MachineTokens.MachineTokens.use((tokens) => tokens.revokeAll(userId));
+      assert.deepStrictEqual(yield* ended(), []);
+    })
+  );
+
   it.effect("a dev-minted connection's access token outlives the hour", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

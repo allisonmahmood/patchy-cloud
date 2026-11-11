@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
+import type * as Terms from "./Terms.js";
 
 export const Role = Schema.Literals(["member", "admin", "super_admin"]);
 export type Role = typeof Role.Type;
@@ -176,6 +177,16 @@ export class Users extends Context.Service<
     readonly markWhatsNewSeen: (input: {
       readonly userId: string;
       readonly through: number;
+    }) => Effect.Effect<void, SqlError>;
+    /** Whether the person has accepted these terms and privacy notice revisions, or later ones. */
+    readonly hasAcceptedTerms: (input: {
+      readonly userId: string;
+      readonly revisions: Terms.Revisions;
+    }) => Effect.Effect<boolean, SqlError>;
+    /** Records the person accepting these revisions at the prompt; accepting them again adds nothing. */
+    readonly acceptTerms: (input: {
+      readonly userId: string;
+      readonly revisions: Terms.Revisions;
     }) => Effect.Effect<void, SqlError>;
   }
 >()("@patchy/companies/Users") {}
@@ -413,6 +424,30 @@ export const make = Effect.gen(function* () {
       WHERE id = ${input.userId} AND whats_new_seen < ${input.through}`;
   });
 
+  // Revisions are plain ISO dates, so later is greater under byte order, whatever the locale.
+  const hasAcceptedTerms = Effect.fn("Users.hasAcceptedTerms")(function* (input: {
+    readonly userId: string;
+    readonly revisions: Terms.Revisions;
+  }) {
+    const rows = yield* sql`
+      SELECT 1 FROM terms_acceptances WHERE user_id = ${input.userId}
+        AND terms_revision COLLATE "C" >= ${input.revisions.terms}
+        AND privacy_revision COLLATE "C" >= ${input.revisions.privacy}
+      LIMIT 1`;
+    return rows.length > 0;
+  });
+  const acceptTerms = Effect.fn("Users.acceptTerms")(function* (input: {
+    readonly userId: string;
+    readonly revisions: Terms.Revisions;
+  }) {
+    const now = yield* Clock.currentTimeMillis;
+    yield* sql`
+      INSERT INTO terms_acceptances (user_id, terms_revision, privacy_revision, via, accepted_at)
+      VALUES (${input.userId}, ${input.revisions.terms}, ${input.revisions.privacy}, 'prompt',
+        to_timestamp(${now / 1_000}))
+      ON CONFLICT DO NOTHING`;
+  });
+
   return Users.of({
     findByClerkId,
     findByEmail,
@@ -423,7 +458,9 @@ export const make = Effect.gen(function* () {
     checkDeactivation,
     deactivate,
     reactivate,
-    markWhatsNewSeen
+    markWhatsNewSeen,
+    hasAcceptedTerms,
+    acceptTerms
   });
 });
 

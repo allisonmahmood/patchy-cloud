@@ -131,7 +131,7 @@ it.layer(services)("beta links", (it) => {
       const open = yield* send(path);
       assert.strictEqual(open.status, 200);
       assert.include(open.html, "A Patchy Cloud spot for Acme");
-      assert.include(open.html, "set up Acme's company next");
+      assert.include(open.html, "set up Acme’s company next");
       assert.notInclude(open.html, secret);
       assert.strictEqual(open.headers.get("referrer-policy"), "same-origin");
       assert.include(open.headers.get("content-security-policy")!, "form-action 'self'");
@@ -143,7 +143,8 @@ it.layer(services)("beta links", (it) => {
       assert.strictEqual(foreign.status, 403);
       const invalid = yield* claim(path, "jane at acme");
       assert.strictEqual(invalid.status, 422);
-      assert.include(invalid.html, 'role="alert"');
+      assert.include(invalid.html, 'aria-invalid="true"');
+      assert.include(invalid.html, '<p class="field-error" id="beta-email-error">');
       assert.include(invalid.html, 'value="jane at acme"');
       assert.deepStrictEqual(yield* invites, []);
 
@@ -187,7 +188,7 @@ it.layer(services)("beta links", (it) => {
       const { id, path } = yield* newLink("Initech");
       yield* claim(path, "pete@initech.test").pipe(clerkDown);
       const failed = yield* send(path);
-      assert.include(failed.html, "We couldn't send your invitation");
+      assert.include(failed.html, "We couldn’t send your invitation");
       assert.include(failed.html, "p•••@initech.test");
       assert.include(failed.html, 'value="retry"');
       assert.strictEqual(BetaLinks.state(yield* listed(id), 0), "failed");

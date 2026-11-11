@@ -263,6 +263,7 @@ const readPublished = HttpIncomingMessage.schemaBodyJson(
 const readRelease = HttpIncomingMessage.schemaBodyJson(
   Schema.Struct({ package: Schema.Struct({ tarball: Schema.String }) })
 );
+const readFiled = HttpIncomingMessage.schemaBodyJson(Schema.Struct({ id: Schema.String }));
 const readStarted = HttpIncomingMessage.schemaBodyJson(
   Schema.Struct({ deviceCode: Schema.String, userCode: Schema.String })
 );
@@ -372,8 +373,8 @@ it.layer(server({ PATCHY_PUBLIC_BASE_URL: publicBaseUrl }).pipe(Layer.provideMer
             { route: "/login/device", ...attributed }
           ],
           [
-            signedIn(HttpClientRequest.get("/company/connections")),
-            { route: "/company/connections", status: 200, ...attributed }
+            signedIn(HttpClientRequest.get("/settings/integrations")),
+            { route: "/settings/integrations", status: 200, ...attributed }
           ],
           [
             signedIn(HttpClientRequest.get(new URL(created.address).pathname)),
@@ -464,6 +465,41 @@ it.layer(server({ PATCHY_PUBLIC_BASE_URL: publicBaseUrl }).pipe(Layer.provideMer
 
         for (const probe of ["/healthz", "/healthz/deep"])
           assert.deepStrictEqual((yield* eventsOf(HttpClientRequest.get(probe))).events, []);
+      })
+    );
+
+    it.effect("names a request's submission and never its text, accepted or refused", () =>
+      Effect.gen(function* () {
+        const canary = "Zanzibar-canary-7731";
+        const token = ["gh", "p_", "a1B2".repeat(9)].join("");
+        const file = (text: string) =>
+          eventOf(
+            HttpClientRequest.post("/api/requests").pipe(
+              bearer,
+              HttpClientRequest.setHeader("Patchy-Cli", "0.34.0 publish codex"),
+              HttpClientRequest.bodyJsonUnsafe({ text, why: canary })
+            )
+          );
+        const filed = yield* file(`${canary} integration`);
+        const { id } = yield* readFiled(filed.response);
+        assert.include(filed.event, {
+          route: "/api/requests",
+          status: 201,
+          submissionId: id,
+          agent: "codex",
+          ...attributed
+        });
+        const refused = yield* file(`${canary} ${token}`);
+        assert.include(refused.event, {
+          route: "/api/requests",
+          status: 422,
+          code: "contains_secret"
+        });
+        assert.notProperty(refused.event, "submissionId");
+        for (const event of [filed.event, refused.event]) {
+          assert.notInclude(WideEvents.formatJson(event), canary);
+          assert.notInclude(WideEvents.formatJson(event), token);
+        }
       })
     );
 

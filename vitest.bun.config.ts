@@ -10,7 +10,8 @@ import base from "./vitest.config.js";
  * - the CLI's process and dev-loop tests, which run the CLI as people do on their
  *   own Node: through `process.execPath` with Node-only flags such as
  *   `--input-type=module --eval`, Node's own HTTP dispatcher, and the repo's
- *   Vite resolved the way Node resolves it;
+ *   Vite resolved the way Node resolves it; and the CLI's failure reasons, which
+ *   read that dispatcher's errors;
  * - the SDK's install tests, which spawn `process.execPath` the same way;
  * - the lint rules' tests, because Oxlint's RuleTester runs only on Node;
  * - the dev runner's tests, which need a real `node` first on PATH, as on a
@@ -19,6 +20,7 @@ import base from "./vitest.config.js";
  *   with `pnpm dev` itself on Bun.
  */
 const nodeOnly = [
+  "packages/patchy/src/Api.undici.test.ts",
   "packages/patchy/src/cli.test.ts",
   "packages/patchy/src/cliLifecycle.test.ts",
   "packages/patchy/src/cliLook.test.ts",

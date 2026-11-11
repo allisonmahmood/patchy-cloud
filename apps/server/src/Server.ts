@@ -58,6 +58,7 @@ import {
   ResourceChanges
 } from "@patchy/company-database";
 import { FilesystemContentStore, S3ContentStore } from "@patchy/content-store";
+import { Feedback, FeedbackApi } from "@patchy/feedback";
 import {
   ConnectionPages,
   ConnectionsApi,
@@ -90,7 +91,7 @@ import {
   PatchesApi,
   Audiences
 } from "@patchy/patches";
-import { PortalPages, SwitcherList, WhatsNewPages } from "@patchy/portal";
+import { Fonts, Gallery, PortalPages } from "@patchy/portal";
 import { Tables, TableOperations, Files, Members, SubscriptionReads } from "@patchy/primitives";
 import { Pages, servingHeaders, TrustedProxies } from "@patchy/serving";
 import {
@@ -116,6 +117,7 @@ import * as ApiGuard from "./ApiGuard.js";
 import * as DevelopmentInvocation from "./DevelopmentInvocation.js";
 import * as FleetInvocation from "./FleetInvocation.js";
 import * as MemberDirectory from "./MemberDirectory.js";
+import * as Moved from "./Moved.js";
 import { migrations } from "./migrations.js";
 import * as RequestEvents from "./RequestEvents.js";
 import * as SetupPickup from "./SetupPickup.js";
@@ -213,7 +215,7 @@ const grantedGuests = Layer.effect(
   })
 );
 
-/** The Company page's Patches column comes from Patches, which Companies cannot depend on. */
+/** People's Patches column comes from Patches, which Companies cannot depend on. */
 const ownedPatches = Layer.effect(
   CompanyPage.OwnedPatches,
   Effect.map(
@@ -259,6 +261,7 @@ const services = Layer.mergeAll(
   Content.layer,
   DeletionSweep.layer,
   DeviceLogins.layer,
+  Feedback.layer,
   OrphanSweep.layer,
   Layer.unwrap(
     Effect.gen(function* () {
@@ -404,6 +407,7 @@ const api = Layer.mergeAll(HttpApiBuilder.layer(PatchyApi), ApiGuard.notFound).p
     ConnectionsApi.layer,
     DevReads.layer,
     LookApi.layer,
+    FeedbackApi.layer,
     SdkApi.layer,
     RuntimeApi.layer,
     RuntimeStreamApi.layer
@@ -416,7 +420,8 @@ const api = Layer.mergeAll(HttpApiBuilder.layer(PatchyApi), ApiGuard.notFound).p
  * edge, so an event names the method the client sent; the trusted-proxy walk,
  * so everything after it keys on the client's address rather than the proxy's;
  * the serving headers, so a refusal is covered as well as a page; the API
- * guard, ahead of the router. One global middleware rather than four, so
+ * guard; then the moved pages' rewrite, which hands an old POST to the
+ * router under its new URL. One global middleware rather than five, so
  * the order is written down instead of left to how layers build.
  */
 const middleware = HttpRouter.middleware(
@@ -424,7 +429,7 @@ const middleware = HttpRouter.middleware(
     const events = yield* RequestEvents.edge;
     const trustedProxies = yield* TrustedProxies.make;
     const guard = yield* ApiGuard.make;
-    return (app) => events(trustedProxies(servingHeaders(guard(app))));
+    return (app) => events(trustedProxies(servingHeaders(guard(Moved.rewrite(app)))));
   }),
   { global: true }
 );
@@ -448,9 +453,9 @@ const app = Layer.mergeAll(
     FrontDoor.layer.pipe(Layer.provide(SetupPickup.layer)),
     Pages.layer,
     PortalPages.layer,
-    SwitcherList.layer,
-    WhatsNewPages.layer,
+    Fonts.layer,
     landing,
+    Moved.routes,
     AuthPages.layer,
     DemoLink.routes(Pages.notFound),
     BetaLinkPages.routes(Pages.notFound),
@@ -458,7 +463,10 @@ const app = Layer.mergeAll(
     OAuthEndpoints.layer,
     Door.layer,
     Layer.unwrap(
-      Effect.map(DevPersonas.enabled, (personas) => (personas ? DevPersonas.routes : Layer.empty))
+      // The persona picker and the `/~ui` gallery exist only where personas sign people in.
+      Effect.map(DevPersonas.enabled, (personas) =>
+        personas ? Layer.mergeAll(DevPersonas.routes, Gallery.layer) : Layer.empty
+      )
     ),
     ConnectionPages.layer
   ).pipe(Layer.provide(RequestEvents.layer)),

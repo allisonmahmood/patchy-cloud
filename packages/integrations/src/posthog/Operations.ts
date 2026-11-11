@@ -30,7 +30,7 @@ export class ConnectionRefused extends Schema.TaggedError<ConnectionRefused>()(
   readonly code = "source_unavailable" as const;
   readonly status = 503;
   override get message() {
-    return "PostHog refused this connection's key or project. Ask a company administrator to check it at /company/connections.";
+    return "PostHog refused this connection's key or project. Ask a company administrator to check it at /settings/integrations.";
   }
 }
 

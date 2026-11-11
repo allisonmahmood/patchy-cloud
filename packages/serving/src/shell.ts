@@ -3,11 +3,11 @@ import {
   escapeHtml,
   faviconLink,
   htmlPage,
-  shellStyles,
+  servedStyles,
   switcherRelay,
   switcherTag
 } from "@patchy/core/html";
-import { headStart } from "@patchy/core";
+import { doorCard, doorPage, headStart, linkButton } from "@patchy/core";
 import type { HandlerKind } from "@patchy/api";
 import { brokerDigest } from "./generated/broker-script.js";
 
@@ -95,7 +95,7 @@ export function renderPatchWrapper(options: PatchPage): string {
   ${options.head ?? ""}
   <script defer src="${brokerSrc}"></script>
   <style>
-    ${shellStyles}
+    ${servedStyles}
     html, body { height: 100%; margin: 0; background: #ffffff; }
     body { overflow: hidden; }
     .patch-frame { display: block; width: 100%; height: 100%; border: 0; background: #ffffff; }
@@ -221,8 +221,8 @@ export function renderShellNotice(
 }
 
 /**
- * The shared notice card: brand, kicker, heading, one message and at most one link. The shell
- * notices and the 404 compose it.
+ * The shared notice: a door with its kicker, title, one message and at most one link. The shell
+ * notices and the 404 compose it; a stopping notice is marked with its code.
  */
 export function renderNoticePage(notice: {
   readonly kicker: string;
@@ -237,7 +237,21 @@ export function renderNoticePage(notice: {
   return htmlPage({
     title: notice.title,
     head: notice.head,
-    styles: ".auth-card p:last-child { margin-bottom: 0; }",
-    body: `<main class="auth-card"${notice.code === undefined ? "" : ` data-notice="${notice.code}"`}><div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div><p class="auth-kicker">${escapeHtml(notice.kicker)}</p><h1 class="page-heading">${escapeHtml(notice.title)}</h1><p>${escapeHtml(notice.message)}</p>${notice.action === undefined ? "" : `<div class="actions"><a class="btn btn-primary" href="${escapeAttribute(notice.action.href)}">${escapeHtml(notice.action.label)}</a></div>`}</main>`
+    body: doorCard(
+      doorPage({
+        kicker: notice.kicker,
+        title: notice.title,
+        body: `<p>${escapeHtml(notice.message)}</p>`,
+        ...(notice.action === undefined
+          ? {}
+          : {
+              actions: linkButton(notice.action.label, notice.action.href, {
+                kind: "primary",
+                block: true
+              })
+            })
+      }),
+      notice.code === undefined ? {} : { data: { notice: notice.code } }
+    )
   });
 }

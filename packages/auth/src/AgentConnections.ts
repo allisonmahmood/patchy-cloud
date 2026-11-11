@@ -85,6 +85,18 @@ export interface Listed {
   readonly endsAt: string;
 }
 
+/** A connection that ended on its own, as Your agents lists it: when, and its last call. */
+export interface Ended {
+  readonly id: string;
+  readonly clientName: string;
+  readonly clientSite: string;
+  readonly connectedAt: string;
+  /** Its last call, or `null` if it never made one. */
+  readonly lastUsedAt: string | null;
+  /** 30 days after its last call, or after connecting if never called. */
+  readonly endedAt: string;
+}
+
 /** A new agent connection, as the consent page showed it, and its first tokens. */
 export interface Connected {
   readonly connection: {
@@ -138,6 +150,14 @@ export class AgentConnections extends Context.Service<
     readonly sweepRetries: Effect.Effect<void, SqlError>;
     /** The person's live connections for Your agents, newest first. */
     readonly list: (userId: string) => Effect.Effect<ReadonlyArray<Listed>, SqlError>;
+    /**
+     * The person's connections that ended on their own in the last 30 days, after 30 days
+     * without a call, newest ending first: Your agents' Access ended rows. One disconnected or
+     * ended with everything the person held isn't listed, nor one with a newer connection from
+     * the same client under the same name, whatever became of that one: the newest stands for
+     * the app.
+     */
+    readonly ended: (userId: string) => Effect.Effect<ReadonlyArray<Ended>, SqlError>;
     /**
      * Your agents' Disconnect: ends one of the person's own connections, so its next call and
      * refresh are refused, and answers its client's name for the receipt. Nobody ends another
@@ -289,6 +309,34 @@ export const make = Effect.gen(function* () {
       ORDER BY c.created_at DESC, c.id`
   });
 
+  // Not live only because 30 days passed without a call, and within 30 days of that. Only the
+  // newest connection of a client and name can be listed.
+  const endedConnections = SqlSchema.findAll({
+    Request: Schema.String,
+    Result: Schema.Struct({
+      id: Schema.String,
+      clientName: Schema.String,
+      clientSite: Schema.String,
+      connectedAt: Schema.Date,
+      lastUsedAt: Schema.NullOr(Schema.Date),
+      endedAt: Schema.Date
+    }),
+    execute: (userId) => sql`
+      SELECT c.id, c.client_name AS "clientName", c.client_site AS "clientSite",
+        c.created_at AS "connectedAt", c.last_used_at AS "lastUsedAt",
+        COALESCE(c.last_used_at, c.created_at) + interval '30 days' AS "endedAt"
+      FROM agent_connections c JOIN users u ON u.id = c.user_id
+      WHERE c.user_id = ${userId} AND c.revoked_at IS NULL AND u.deactivated_at IS NULL
+        AND (u.credentials_ended_at IS NULL OR u.credentials_ended_at < c.created_at)
+        AND COALESCE(c.last_used_at, c.created_at) <= clock_timestamp() - interval '30 days'
+        AND COALESCE(c.last_used_at, c.created_at) > clock_timestamp() - interval '60 days'
+        AND NOT EXISTS (
+          SELECT 1 FROM agent_connections l
+          WHERE l.user_id = c.user_id AND l.client_id = c.client_id
+            AND l.client_name = c.client_name AND (l.created_at, l.id) > (c.created_at, c.id))
+      ORDER BY "endedAt" DESC, c.id`
+  });
+
   const secondsLeft = SqlSchema.findOne({
     Request: Schema.String,
     Result: Schema.Struct({ seconds: Schema.Int }),
@@ -431,6 +479,18 @@ export const make = Effect.gen(function* () {
     }));
   });
 
+  const ended = Effect.fn("AgentConnections.ended")(function* (userId: string) {
+    const rows = yield* endedConnections(userId).pipe(
+      Effect.catchTags({ SchemaError: Effect.die })
+    );
+    return rows.map((row): Ended => ({
+      ...row,
+      connectedAt: row.connectedAt.toISOString(),
+      lastUsedAt: row.lastUsedAt?.toISOString() ?? null,
+      endedAt: row.endedAt.toISOString()
+    }));
+  });
+
   // The UPDATE takes the connection's row, so a refresh rotating it finishes first, or waits and
   // then finds it ended.
   const endOwned = SqlSchema.findOneOption({
@@ -458,6 +518,7 @@ export const make = Effect.gen(function* () {
     refresh,
     sweepRetries,
     list,
+    ended,
     disconnect
   });
 });

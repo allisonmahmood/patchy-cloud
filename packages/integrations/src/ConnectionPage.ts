@@ -1,3 +1,4 @@
+import { radio, checkbox } from "@patchy/core";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -9,8 +10,8 @@ import { Integration, integrations } from "@patchy/api";
 import type { RequireSession } from "@patchy/auth";
 import { Teams, Users } from "@patchy/companies";
 import { ContractLimits } from "@patchy/limits";
-import { escapeHtml, escapeAttribute } from "@patchy/core";
 import { RuntimeLog } from "@patchy/runtime";
+import * as ConnectFrame from "./ConnectFrame.js";
 import * as ConnectionStore from "./ConnectionStore.js";
 import * as View from "./ConnectionsView.js";
 import * as PostgresPage from "./postgres/Page.js";
@@ -25,7 +26,7 @@ export type Target =
   | { readonly kind: "index" }
   | { readonly kind: "catalogue" }
   | { readonly kind: "connect"; readonly integration: string }
-  | { readonly kind: "view"; readonly id: string }
+  | { readonly kind: "view"; readonly id: string; readonly tab: View.Tab }
   | { readonly kind: "confirm"; readonly id: string; readonly action: View.Confirmation };
 
 /** A change an admin submits. */
@@ -40,12 +41,11 @@ export type Change =
 export interface Page {
   readonly title: string;
   readonly body: string;
+  /** A dialog over the page, such as Replace key over a connection's Settings. */
+  readonly overlay?: string;
   readonly status?: number;
   readonly redirect?: string;
 }
-
-/** Every connections page's layout, the shared frame's and each integration's own. */
-export const styles = `${View.styles}${PidgeonPage.styles}${AttioPage.styles}`;
 
 type Submitted = Readonly<Record<string, string | undefined>>;
 
@@ -58,6 +58,10 @@ interface CredentialsPage {
   readonly submit?: string;
   /** The fields; a refused submit keeps what the integration echoes, never secrets. */
   readonly fields: (submitted: Submitted, refusal?: View.Notice) => string;
+  /** The fields it shows, where a refusal can sit; one about any other reads above its actions. */
+  readonly shows: ReadonlyArray<View.Field>;
+  /** What the form starts with, such as a Change access dialog's current access. */
+  readonly initial?: (connection: ConnectionStore.Connection) => Submitted;
 }
 
 /** What the pages say about one integration; the layout around it is the same for every one. */
@@ -65,13 +69,8 @@ interface IntegrationPage {
   readonly integration: View.Integration;
   readonly offer: View.Offer;
   readonly actions: View.Actions;
-  /** The shared connect frame's intro and fields, unless the integration has its own page. */
-  readonly connectIntro?: string;
-  /** The steps around the connect form, when connecting starts outside Patchy. */
-  readonly walkthrough?: View.Walkthrough;
-  readonly connectFields?: (submitted: Submitted, refusal?: View.Notice) => string;
-  /** The whole connect page, for an integration whose connecting takes more than a form. */
-  readonly renderConnect?: (submitted: Submitted, refusal?: View.Notice) => string;
+  /** What its connect page asks for; the shared frame draws it. */
+  readonly connect: ConnectFrame.ConnectSpec;
   readonly rotate: CredentialsPage;
   /** Absent where a connection can't move to another target. */
   readonly retarget?: CredentialsPage;
@@ -102,40 +101,77 @@ const pages: { readonly [K in Integration]: IntegrationPage } = {
   imap: ImapPage
 };
 const offers = integrations.map((integration) => pages[integration].offer);
+/**
+ * A connection's integration as the pages name and mark it: wearing the logo of the provider the
+ * connection reaches where Patchy knows it, such as Gmail's for a mailbox on Gmail's server.
+ */
+export const integrationOf = (connection: ConnectionStore.Connection): View.Integration =>
+  connection.integration === "imap"
+    ? { ...ImapPage.integration, mark: ImapPage.mark(connection) }
+    : pages[connection.integration].integration;
 const isIntegration = Schema.is(Integration);
 
-/**
- * Where a connection reads, its facts, what its page keeps saying and the label beside its name,
- * in its integration's words.
- */
-const about = (
-  connection: ConnectionStore.Connection
-): {
+/** What a connection's page and row say about it, in its integration's words. */
+interface About {
   readonly source: string;
   readonly facts: ReadonlyArray<readonly [string, string]>;
-  readonly standing?: ReadonlyArray<View.Standing>;
+  readonly credential: View.Connection["credential"];
+  readonly target?: View.Connection["target"];
+  readonly access?: string;
+  readonly attention?: View.Attention | undefined;
   readonly tag?: string | undefined;
-  readonly attention?: string | undefined;
-} =>
-  connection.integration === "postgres"
-    ? { source: PostgresPage.source(connection), facts: PostgresPage.facts(connection) }
-    : connection.integration === "posthog"
-      ? { source: PostHogPage.source(connection), facts: PostHogPage.facts(connection) }
-      : connection.integration === "attio"
-        ? { source: AttioPage.source(connection), facts: AttioPage.facts(connection) }
-        : connection.integration === "imap"
-          ? {
-              source: ImapPage.source(connection),
-              facts: ImapPage.facts(connection),
-              tag: ImapPage.tag(connection),
-              attention: ImapPage.attention(connection)
-            }
-          : {
-              source: PidgeonPage.source(connection),
-              facts: PidgeonPage.facts(connection),
-              standing: PidgeonPage.standing(connection),
-              tag: PidgeonPage.tag(connection)
-            };
+}
+
+/**
+ * Where a connection reads, its facts and credentials, why it needs an admin and the word beside
+ * its name, in its integration's words. An Attio key a check found writable and an IMAP login a
+ * server refused name whose check or login it was, from `people`.
+ */
+const about = (
+  connection: ConnectionStore.Connection,
+  people: ReadonlyMap<string, string>,
+  now: number
+): About => {
+  switch (connection.integration) {
+    case "postgres":
+      return {
+        source: PostgresPage.source(connection),
+        facts: PostgresPage.facts(connection),
+        credential: PostgresPage.credential(connection),
+        target: PostgresPage.target(connection)
+      };
+    case "posthog":
+      return {
+        source: PostHogPage.source(connection),
+        facts: PostHogPage.facts(connection),
+        credential: PostHogPage.credential(connection),
+        target: PostHogPage.target(connection)
+      };
+    case "attio":
+      return {
+        source: AttioPage.source(connection),
+        facts: AttioPage.facts(connection),
+        credential: AttioPage.credential(connection),
+        attention: AttioPage.attention(connection, people, now)
+      };
+    case "imap":
+      return {
+        source: ImapPage.source(connection),
+        facts: ImapPage.facts(connection),
+        credential: ImapPage.credential(connection),
+        attention: ImapPage.attention(connection, people, now)
+      };
+    case "pidgeon":
+      return {
+        source: PidgeonPage.source(connection),
+        facts: PidgeonPage.facts(connection),
+        credential: PidgeonPage.credential(connection),
+        access: PidgeonPage.allowed(connection),
+        attention: PidgeonPage.attention(connection),
+        tag: PidgeonPage.tag(connection)
+      };
+  }
+};
 /** What a snapshot lets patches read, in its integration's words. */
 const readsOf = (metadata: ConnectionStore.Metadata) =>
   metadata.integration === "postgres"
@@ -167,6 +203,8 @@ const atField = (
     notice.title === undefined && notice.code !== undefined && page.refusalTitles?.has(notice.code)
       ? { ...notice, title: page.refusalTitles.get(notice.code) }
       : notice;
+  // A refusal with somewhere else to go stays above the form, where its way out is a button.
+  if (titled.next !== undefined) return { ...titled, field: undefined };
   if (titled.field !== undefined)
     return fields.includes(titled.field) ? titled : { ...titled, field: undefined };
   const field = refusedField(page, titled.code);
@@ -182,12 +220,12 @@ const results = {
   access: "Access changed. Existing patches keep what they were published with until refreshed.",
   refresh:
     "Schema refreshed. Existing patches keep their pinned schema; regenerate before publishing against the new schema.",
-  disconnect: "Connection disconnected. Patches cannot use it until an admin reconnects it.",
-  reconnect: "Connection tested and reconnected. Its schema revision is unchanged.",
+  disconnect: "Paused. Patches can't read it until an admin resumes it.",
+  reconnect: "Tested and resumed. Its revision is unchanged.",
   description: "Description updated.",
   "block-guests": "Guests blocked. Patches that use this connection turn their guests away.",
   "allow-guests": "Guests allowed. Patches that use this connection admit their guests again.",
-  delete: "Connection deleted. Its schema snapshots have been kept."
+  delete: "Disconnected. Its credentials are gone and its name is free; its snapshots are kept."
 } as const;
 const isResult = Schema.is(Schema.Literals(Object.keys(results) as Array<keyof typeof results>));
 type Result = keyof typeof results;
@@ -209,7 +247,7 @@ const result = (
 };
 
 const forbidden: View.Notice = {
-  message: "Only a super admin can manage company connections.",
+  message: "Only an admin can manage company connections.",
   code: "access_denied",
   status: 403
 };
@@ -220,18 +258,20 @@ const filters = (query: URLSearchParams): View.Filters => {
   return {
     q: (query.get("q") ?? "").trim().toLowerCase().slice(0, 100),
     source: query.get("source") || undefined,
-    view: view === "attention" || view === "unused" ? view : "all"
+    view: view === "attention" || view === "paused" || view === "unused" ? view : "all"
   };
 };
 
 const row = (
   connection: ConnectionStore.Connection,
-  usage: ReadonlyMap<string, ConnectionStore.Usage>
+  usage: ReadonlyMap<string, ConnectionStore.Usage>,
+  people: ReadonlyMap<string, string>,
+  now: number
 ): View.Row => {
-  const known = about(connection);
+  const known = about(connection, people, now);
   return {
     id: connection.id,
-    integration: pages[connection.integration].integration,
+    integration: integrationOf(connection),
     handle: connection.handle,
     description: connection.description,
     source: known.source,
@@ -242,6 +282,29 @@ const row = (
   };
 };
 
+/** The word for replacing an integration's credentials, by its key: "Replace key". */
+const rotateLabel = (integration: string) =>
+  isIntegration(integration) ? pages[integration].actions.rotate : "Replace key";
+
+/**
+ * The company's people by id, and its active admins' names for the line that tells members whom
+ * to ask. A directory that can't be read leaves the pages and their actions working, without names.
+ */
+const directory = Effect.fn("ConnectionPage.directory")(function* (
+  viewer: RequireSession.Viewer["Service"]
+) {
+  return yield* (yield* Users.Users).list(viewer.company.id).pipe(
+    Effect.map((users) => ({
+      people: new Map(users.map((user) => [user.id, user.name])) as ReadonlyMap<string, string>,
+      admins: users
+        .filter((user) => user.role === "super_admin" && user.deactivatedAt === null)
+        .map((user) => user.name)
+        .sort((a, b) => a.localeCompare(b)) as ReadonlyArray<string>
+    })),
+    Effect.catchTags({ SqlError: () => Effect.succeed(null) })
+  );
+});
+
 const index = Effect.fn("ConnectionPage.index")(function* (
   viewer: RequireSession.Viewer["Service"],
   query: URLSearchParams,
@@ -249,10 +312,12 @@ const index = Effect.fn("ConnectionPage.index")(function* (
 ) {
   const store = yield* ConnectionStore.ConnectionStore;
   const admin = viewer.role === "super_admin";
-  const connections = yield* admin
-    ? store.list(viewer.company.id)
-    : store.list(viewer.company.id, viewer.user.id);
+  const connections = yield* store.list(
+    viewer.company.id,
+    viewer.role === "super_admin" ? undefined : viewer.user.id
+  );
   const usage = yield* store.usage(viewer.company.id, viewer.user.id);
+  const now = yield* Clock.currentTimeMillis;
   // Members can see connection status, but must never read the call log.
   const lastCalls: View.LastCalls | undefined = admin
     ? yield* (yield* RuntimeLog.RuntimeLog)
@@ -267,30 +332,19 @@ const index = Effect.fn("ConnectionPage.index")(function* (
           Effect.catchTags({ SqlError: () => Effect.succeed("unavailable" as const) })
         )
     : undefined;
-  // Names to ask are a courtesy: an unreadable directory leaves them out.
-  const admins =
-    !admin && connections.length === 0
-      ? yield* (yield* Users.Users).list(viewer.company.id).pipe(
-          Effect.map((users) =>
-            users
-              .filter((user) => user.role === "super_admin" && user.deactivatedAt === null)
-              .map((user) => user.name)
-              .sort((a, b) => a.localeCompare(b))
-          ),
-          Effect.catchTags({ SqlError: () => Effect.succeed([]) })
-        )
-      : [];
+  const known = yield* directory(viewer);
+  const people = known?.people ?? new Map<string, string>();
   return {
     title: "Integrations",
-    body: View.renderIndex({
+    ...View.renderIndex({
       admin,
-      company: viewer.company.name,
-      admins,
-      rows: connections.map((connection) => row(connection, usage)),
+      admins: known?.admins ?? [],
+      rows: connections.map((connection) => row(connection, usage, people, now)),
       lastCalls,
       offers,
+      rotate: rotateLabel,
       filters: filters(query),
-      now: yield* Clock.currentTimeMillis,
+      now,
       notice
     }),
     status: notice?.status
@@ -300,15 +354,15 @@ const index = Effect.fn("ConnectionPage.index")(function* (
 const catalogue = Effect.fn("ConnectionPage.catalogue")(function* (
   viewer: RequireSession.Viewer["Service"]
 ) {
-  const store = yield* ConnectionStore.ConnectionStore;
-  const connections = yield* viewer.role === "super_admin"
-    ? store.list(viewer.company.id)
-    : store.list(viewer.company.id, viewer.user.id);
+  const connections = yield* (yield* ConnectionStore.ConnectionStore).list(viewer.company.id);
+  const now = yield* Clock.currentTimeMillis;
+  const admins = viewer.role === "super_admin" ? [] : ((yield* directory(viewer))?.admins ?? []);
   return {
     title: "Connect an integration",
-    body: View.renderCatalogue({
+    ...View.renderCatalogue({
       admin: viewer.role === "super_admin",
-      rows: connections.map((connection) => row(connection, new Map())),
+      admins,
+      rows: connections.map((connection) => row(connection, new Map(), new Map(), now)),
       offers
     })
   } satisfies Page;
@@ -338,22 +392,21 @@ const connectForm = Effect.fn("ConnectionPage.connectForm")(function* (
   const connections = yield* (yield* ConnectionStore.ConnectionStore).list(viewer.company.id);
   return {
     title: `Connect ${page.integration.label}`,
-    body:
-      page.renderConnect !== undefined
-        ? page.renderConnect(submitted, notice)
-        : View.renderConnect({
-            integration: page.integration,
-            intro: page.connectIntro ?? "",
-            fields: page.connectFields?.(submitted, notice) ?? "",
-            ...(page.walkthrough === undefined ? {} : { walkthrough: page.walkthrough }),
-            notice,
-            back: connections.length === 0 ? View.indexPath : View.cataloguePath
-          }),
+    ...ConnectFrame.render({
+      integration: page.integration,
+      spec: page.connect,
+      submitted,
+      ...(notice === undefined ? {} : { notice }),
+      back: connections.length === 0 ? View.indexPath : View.cataloguePath
+    }),
     status: notice?.status
   } satisfies Page;
 });
 
-/** One connection in the pages' words: its integration's facts, usage and who added it. */
+/**
+ * One connection in the pages' words: its integration's facts, credentials and usage, who added
+ * it, why it needs an admin, and the company's admins for the line that tells members whom to ask.
+ */
 const connectionView = Effect.fn("ConnectionPage.connectionView")(function* (
   viewer: RequireSession.Viewer["Service"],
   id: string
@@ -368,41 +421,22 @@ const connectionView = Effect.fn("ConnectionPage.connectionView")(function* (
       companyId: viewer.company.id,
       lookup: { id }
     });
-  const selected = yield* store.audience(viewer.company.id, id);
-  const teams =
-    selected.kind === "teams"
-      ? yield* (yield* Teams.Teams)
-          .list({ companyId: viewer.company.id, actorId: viewer.user.id })
-          .pipe(Effect.catchTags({ RoleForbidden: Effect.die }))
-      : [];
   const page = pages[connection.integration];
   const usage =
     (yield* store.usage(viewer.company.id, viewer.user.id)).get(id) ?? ConnectionStore.unused;
   // Deactivated people keep their names: they still added connections and made calls. A
   // directory that cannot be read leaves the page and its actions working, without names.
-  const people = yield* (yield* Users.Users).list(viewer.company.id).pipe(
-    Effect.map((users) => new Map(users.map((user) => [user.id, user.name]))),
-    Effect.catchTags({ SqlError: () => Effect.succeed(null) })
-  );
-  const known = about(connection);
-  // An Attio key a check found writable, and an IMAP login a server refused, name whose it was.
-  const standing =
-    connection.integration === "attio"
-      ? AttioPage.standing(connection, people ?? new Map(), yield* Clock.currentTimeMillis)
-      : connection.integration === "imap"
-        ? ImapPage.standing(connection, people ?? new Map(), yield* Clock.currentTimeMillis)
-        : known.standing;
+  const known = yield* directory(viewer);
+  const people = known?.people ?? new Map<string, string>();
+  const now = yield* Clock.currentTimeMillis;
+  const told = about(connection, people, now);
   // A Pidgeon connection's sends today, against its budget; a count that can't be read says so.
   const sends =
     connection.integration === "pidgeon"
       ? PidgeonPage.sendsToday(
           connection,
           yield* store
-            .sends(
-              viewer.company.id,
-              id,
-              DateTime.formatIsoDateUtc(DateTime.makeUnsafe(yield* Clock.currentTimeMillis))
-            )
+            .sends(viewer.company.id, id, DateTime.formatIsoDateUtc(DateTime.makeUnsafe(now)))
             .pipe(Effect.orElseSucceed(() => undefined)),
           yield* ContractLimits.get("pidgeon.sends.daily")
         )
@@ -410,111 +444,131 @@ const connectionView = Effect.fn("ConnectionPage.connectionView")(function* (
   return {
     connection,
     page,
-    people: people ?? new Map<string, string>(),
+    people,
+    admins: known?.admins ?? [],
     view: {
       id: connection.id,
-      integration: page.integration,
+      integration: integrationOf(connection),
       handle: connection.handle,
       description: connection.description,
       status: connection.status,
       blockGuests: connection.blockGuests,
-      mode: page.offer.mode,
       testedAt: connection.lastTestedAt,
       addedBy:
-        people === null
+        known === null
           ? "Unknown"
           : (people.get(connection.createdBy) ?? "Someone no longer in the company"),
-      facts: [
-        ...known.facts,
-        ...sends,
-        [
-          "Audience",
-          selected.kind === "company"
-            ? "Company"
-            : teams
-                .filter((team) => selected.teamIds.includes(team.id))
-                .map((team) => team.name)
-                .join(", ")
-        ]
-      ],
-      ...(standing === undefined ? {} : { standing }),
-      ...(known.tag === undefined ? {} : { tag: known.tag }),
+      facts: [...told.facts, ...sends],
+      credential: told.credential,
+      ...(told.target === undefined ? {} : { target: told.target }),
+      ...(told.access === undefined ? {} : { access: told.access }),
+      ...(told.attention === undefined ? {} : { attention: told.attention }),
+      ...(told.tag === undefined ? {} : { tag: told.tag }),
       ...usage
     } satisfies View.Connection
   };
 });
+type Loaded = Effect.Success<ReturnType<typeof connectionView>>;
 
+/** What a connection's page carries besides its tab and notice. */
+interface Extra {
+  /** A description a refused save typed, kept in Settings' field. */
+  readonly description?: string | undefined;
+  /** Settings opens with the description in focus, as its old Edit description address asks. */
+  readonly focusDescription?: boolean;
+  /** A dialog over Settings, and the status its refusal answers with. */
+  readonly overlay?: string;
+  readonly status?: number | undefined;
+  /** The connection as `connectionView` already read it, so a dialog's page reads it once. */
+  readonly loaded?: Loaded;
+}
+
+/**
+ * A connection's page on `tab`, with a completed action's receipt or a refusal. Overview reads
+ * what patches can read; Calls, for admins, reads the call log and its names.
+ */
 const connectionPage = Effect.fn("ConnectionPage.connectionPage")(function* (
   viewer: RequireSession.Viewer["Service"],
   id: string,
-  given?: View.Notice | Result
+  tab: View.Tab,
+  given?: View.Notice | Result,
+  extra: Extra = {}
 ) {
   const store = yield* ConnectionStore.ConnectionStore;
   const admin = viewer.role === "super_admin";
-  const { connection, page, people, view } = yield* connectionView(viewer, id);
+  const { connection, page, people, admins, view } =
+    extra.loaded ?? (yield* connectionView(viewer, id));
   const notice =
     typeof given === "string"
       ? result(page, given, connection)
       : given === undefined
         ? undefined
-        : atField(page, given, []);
-  const reads = yield* store.snapshot(viewer.company.id, id, connection.metadataRevision).pipe(
-    Effect.map((metadata) => ({
-      ...readsOf(metadata),
-      revision: connection.metadataRevision,
-      foundAt: connection.lastDiscoveredAt
-    })),
-    Effect.catchTags({ ConnectionNotFound: () => Effect.succeed(null) })
-  );
+        : atField(page, given, tab === "settings" ? ["description"] : []);
+  const reads =
+    tab === "overview"
+      ? yield* store.snapshot(viewer.company.id, id, connection.metadataRevision).pipe(
+          Effect.map((metadata) => ({
+            ...readsOf(metadata),
+            revision: connection.metadataRevision,
+            foundAt: connection.lastDiscoveredAt
+          })),
+          Effect.catchTags({ ConnectionNotFound: () => Effect.succeed(null) })
+        )
+      : null;
   // Members can see safe connection metadata, but must never read the call log. A log or its
   // names that cannot be read leave administration working.
-  const calls = admin
-    ? yield* Effect.gen(function* () {
-        const list = yield* (yield* RuntimeLog.RuntimeLog).recent({
-          companyId: viewer.company.id,
-          connectionId: id,
-          limit: View.RECENT_CALLS
-        });
-        const versions = yield* store.versions(
-          viewer.company.id,
-          list.flatMap((call) => (call.versionId === null ? [] : [call.versionId])),
-          viewer.user.id
-        );
-        // A patch's guests call as themselves, from outside the company's directory.
-        const guests = yield* (yield* Users.Users).names(
-          list.flatMap((call) =>
-            call.effectivePrincipal === "patch" || people.has(call.effectivePrincipal)
-              ? []
-              : [call.effectivePrincipal]
-          )
-        );
-        return {
-          list,
-          names: { people: new Map([...people, ...guests]), versions },
-          logged: page.logged
-        };
-      }).pipe(
-        Effect.catch(() =>
-          Effect.succeed({
-            list: "unavailable" as const,
-            names: { people, versions: new Map() },
+  const calls =
+    admin && tab === "calls"
+      ? yield* Effect.gen(function* () {
+          const list = yield* (yield* RuntimeLog.RuntimeLog).recent({
+            companyId: viewer.company.id,
+            connectionId: id,
+            limit: View.RECENT_CALLS
+          });
+          const versions = yield* store.versions(
+            viewer.company.id,
+            list.flatMap((call) => (call.versionId === null ? [] : [call.versionId]))
+          );
+          // A patch's guests call as themselves, from outside the company's directory.
+          const guests = yield* (yield* Users.Users).names(
+            list.flatMap((call) =>
+              call.effectivePrincipal === "patch" || people.has(call.effectivePrincipal)
+                ? []
+                : [call.effectivePrincipal]
+            )
+          );
+          return {
+            list,
+            names: { people: new Map([...people, ...guests]), versions },
             logged: page.logged
-          })
+          };
+        }).pipe(
+          Effect.catch(() =>
+            Effect.succeed({
+              list: "unavailable" as const,
+              names: { people, versions: new Map() },
+              logged: page.logged
+            })
+          )
         )
-      )
-    : undefined;
+      : undefined;
   return {
     title: `${connection.integration}/${connection.handle}`,
-    body: View.renderConnection({
+    ...View.renderConnection({
       connection: view,
+      tab,
       reads,
       actions: page.actions,
       calls,
       admin,
+      admins,
       now: yield* Clock.currentTimeMillis,
-      notice
+      notice,
+      ...(extra.description === undefined ? {} : { description: extra.description }),
+      ...(extra.focusDescription === undefined ? {} : { focusDescription: extra.focusDescription })
     }),
-    status: notice?.status
+    ...(extra.overlay === undefined ? {} : { overlay: extra.overlay }),
+    status: extra.status ?? notice?.status
   } satisfies Page;
 });
 
@@ -525,21 +579,41 @@ const notOffered: View.Notice = {
   status: 404
 };
 
+/** Why a connection that something declares isn't disconnected: which patches, and what to do. */
+const inUse = (usage: ConnectionStore.Usage): View.Notice => ({
+  message: View.declaredBy(usage),
+  code: "connection_in_use",
+  status: 409
+});
+
+/**
+ * A change that needs its own form or a second look, as a dialog over the connection's Settings:
+ * Replace key, Change project or Point elsewhere, Change access, Pause and Disconnect. Edit
+ * description's old address opens Settings with its field in focus.
+ */
 const confirmationPage = Effect.fn("ConnectionPage.confirmationPage")(function* (
   viewer: RequireSession.Viewer["Service"],
   id: string,
   action: View.Confirmation,
   form: {
-    readonly description?: string;
+    readonly description?: string | undefined;
     readonly submitted?: Submitted;
     readonly notice?: View.Notice;
   } = {}
 ) {
-  const { connection, page, view } = yield* connectionView(viewer, id);
-  // Delete is offered only while nothing declares the connection; a stale link says why.
-  if (action === "delete" && view.declared) return yield* connectionPage(viewer, id, inUse(id));
+  if (action === "description")
+    return yield* connectionPage(viewer, id, "settings", form.notice, {
+      description: form.description,
+      focusDescription: true
+    });
+  const loaded = yield* connectionView(viewer, id);
+  const { connection, page, view } = loaded;
+  // Disconnect is offered only while nothing declares the connection; a stale link says why.
+  if (action === "delete" && view.declared)
+    return yield* connectionPage(viewer, id, "settings", inUse(view), { loaded });
   if (action === "audience") {
-    if (viewer.role !== "super_admin") return yield* connectionPage(viewer, id, forbidden);
+    if (viewer.role !== "super_admin")
+      return yield* connectionPage(viewer, id, "settings", forbidden);
     const selected = yield* (yield* ConnectionStore.ConnectionStore).audience(
       viewer.company.id,
       id
@@ -547,51 +621,81 @@ const confirmationPage = Effect.fn("ConnectionPage.confirmationPage")(function* 
     const teams = yield* (yield* Teams.Teams)
       .list({ companyId: viewer.company.id, actorId: viewer.user.id })
       .pipe(Effect.catchTags({ RoleForbidden: Effect.die }));
-    const fields = `<fieldset><legend class="field-label">Who can use this connection?</legend><label class="field-choice"><input class="field-radio" type="radio" name="audience" value="company" ${selected.kind === "company" ? "checked" : ""}> Company</label><label class="field-choice"><input class="field-radio" type="radio" name="audience" value="teams" ${selected.kind === "teams" ? "checked" : ""}> Selected teams</label>${teams.map((team) => `<label class="field-choice"><input class="field-checkbox" type="checkbox" name="team-${escapeAttribute(team.id)}" value="yes" ${selected.kind === "teams" && selected.teamIds.includes(team.id) ? "checked" : ""}> ${escapeHtml(team.name)}</label>`).join("")}</fieldset>`;
-    return {
-      title: "Connection audience",
-      body: View.renderConfirmation({
-        connection: view,
-        action,
-        actions: page.actions,
-        form: { title: "Connection audience", consequence: "", fields, submit: "Save audience" },
-        notice: form.notice
-      })
-    } satisfies Page;
+    const overlay = View.renderDialog({
+      connection: view,
+      action,
+      actions: page.actions,
+      form: {
+        title: "Connection audience",
+        consequence: "Choose who can build patches with this connection.",
+        fields:
+          radio({
+            name: "audience",
+            value: "company",
+            label: "Company",
+            checked: selected.kind === "company"
+          }) +
+          radio({
+            name: "audience",
+            value: "teams",
+            label: "Selected teams",
+            checked: selected.kind === "teams"
+          }) +
+          teams
+            .map((team) =>
+              checkbox({
+                name: `team-${team.id}`,
+                value: "yes",
+                label: team.name,
+                checked: selected.kind === "teams" && selected.teamIds.includes(team.id)
+              })
+            )
+            .join(""),
+        submit: "Save audience"
+      },
+      ...(form.notice ? { notice: form.notice } : {})
+    });
+    return yield* connectionPage(viewer, id, "settings", undefined, {
+      overlay,
+      loaded,
+      status: form.notice?.status
+    });
   }
   const credentials =
     action === "rotate" || action === "retarget" || action === "access" ? page[action] : undefined;
   if ((action === "retarget" || action === "access") && credentials === undefined)
-    return yield* connectionPage(viewer, id, notOffered);
+    return yield* connectionPage(viewer, id, "settings", notOffered, { loaded });
   const name = `${view.integration.key}/${view.handle}`;
-  return {
-    title: name,
-    body: View.renderConfirmation({
-      connection: view,
-      action,
-      actions: page.actions,
-      form: credentials && {
-        title: credentials.title(name),
-        consequence:
-          typeof credentials.consequence === "string"
-            ? credentials.consequence
-            : credentials.consequence(connection),
-        fields: credentials.fields(yield* withAttempt(form.submitted ?? {}), form.notice),
-        ...(credentials.submit === undefined ? {} : { submit: credentials.submit })
-      },
-      ...(page.consequences === undefined ? {} : { consequences: page.consequences }),
-      description: form.description,
-      notice: form.notice
-    }),
-    status: form.notice?.status
-  } satisfies Page;
-});
-
-const inUse = (id: string): View.Notice => ({
-  message: new ConnectionStore.ConnectionInUse({}).message,
-  code: "connection_in_use",
-  status: 409,
-  next: { href: View.connectionPath(id, "disconnect"), label: "Disconnect it instead" }
+  const notice =
+    form.notice === undefined ? undefined : atField(page, form.notice, credentials?.shows ?? []);
+  const overlay = View.renderDialog({
+    connection: view,
+    action,
+    actions: page.actions,
+    ...(credentials === undefined
+      ? {}
+      : {
+          form: {
+            title: credentials.title(name),
+            consequence:
+              typeof credentials.consequence === "string"
+                ? credentials.consequence
+                : credentials.consequence(connection),
+            fields: credentials.fields(
+              yield* withAttempt(form.submitted ?? credentials.initial?.(connection) ?? {}),
+              notice
+            ),
+            ...(credentials.submit === undefined ? {} : { submit: credentials.submit })
+          }
+        }),
+    ...(page.consequences === undefined ? {} : { consequences: page.consequences }),
+    ...(notice === undefined ? {} : { notice })
+  });
+  return yield* connectionPage(viewer, id, "settings", undefined, {
+    overlay,
+    status: notice?.status,
+    loaded
+  });
 });
 
 /** Renders a page; Auth supplies a live viewer, and no query parameter selects authority. */
@@ -605,7 +709,7 @@ export const read = Effect.fn("ConnectionPage.read")(function* (
   const admin = viewer.role === "super_admin";
   switch (target.kind) {
     case "index": {
-      // A deleted connection's integration may have its own words for what deleting did.
+      // A disconnected connection's integration may have its own words for what that did.
       const named = query.get("integration");
       const page = named !== null && isIntegration(named) ? pages[named] : undefined;
       return yield* index(viewer, query, done && result(page, done));
@@ -621,9 +725,12 @@ export const read = Effect.fn("ConnectionPage.read")(function* (
       if (!admin) return yield* index(viewer, new URLSearchParams(), forbidden);
       return yield* connectForm(viewer, target.integration);
     case "view":
-      return yield* connectionPage(viewer, target.id, done);
+      // Members read Overview; Calls and Settings refuse them on it.
+      if (!admin && target.tab !== "overview")
+        return yield* connectionPage(viewer, target.id, "overview", forbidden);
+      return yield* connectionPage(viewer, target.id, target.tab, done);
     case "confirm":
-      if (!admin) return yield* connectionPage(viewer, target.id, forbidden);
+      if (!admin) return yield* connectionPage(viewer, target.id, "overview", forbidden);
       return yield* confirmationPage(viewer, target.id, target.action);
   }
 });
@@ -682,20 +789,6 @@ const reporter = Effect.fn("ConnectionPage.reporter")(function* (
     });
 });
 
-/** The fields a credentials form can show a refusal at. */
-const credentialFields: ReadonlyArray<View.Field> = [
-  "credentials",
-  "region",
-  "project",
-  "key",
-  "address",
-  "access",
-  "host",
-  "port",
-  "username",
-  "password"
-];
-
 const connect = Effect.fn("ConnectionPage.connect")(function* (
   viewer: RequireSession.Viewer["Service"],
   integration: Integration
@@ -709,7 +802,7 @@ const connect = Effect.fn("ConnectionPage.connect")(function* (
       viewer,
       integration,
       submitted,
-      atField(page, notice, ["handle", "description", ...credentialFields])
+      atField(page, notice, ConnectFrame.shows(page.connect))
     );
   if (form === null) return yield* refused(unreadable);
   return yield* Effect.gen(function* () {
@@ -750,28 +843,27 @@ const act = Effect.fn("ConnectionPage.act")(function* (
       switch (kind) {
         case "rotate":
         case "retarget":
-        case "access": {
-          const { page } = yield* connectionView(viewer, id);
-          return yield* confirmationPage(viewer, id, kind, {
-            submitted,
-            notice: atField(page, notice, credentialFields)
+        case "access":
+        case "audience":
+          return yield* confirmationPage(viewer, id, kind, { submitted, notice });
+        case "description":
+          return yield* connectionPage(viewer, id, "settings", notice, {
+            description: text(form?.description)
           });
+        // A failed Pause or Disconnect draws its dialog again, to try again from; one something
+        // declares can't be disconnected at all, so Settings says which.
+        case "delete": {
+          if (notice.code !== "connection_in_use")
+            return yield* confirmationPage(viewer, id, kind, { notice });
+          const loaded = yield* connectionView(viewer, id);
+          return yield* connectionPage(viewer, id, "settings", inUse(loaded.view), { loaded });
         }
-        case "description": {
-          const { page } = yield* connectionView(viewer, id);
-          return yield* confirmationPage(viewer, id, kind, {
-            description: text(form?.description),
-            notice: atField(page, notice, ["description"])
-          });
-        }
-        case "delete":
-          return yield* connectionPage(
-            viewer,
-            id,
-            notice.code === "connection_in_use" ? inUse(id) : notice
-          );
+        case "disconnect":
+          return yield* confirmationPage(viewer, id, kind, { notice });
+        case "block-guests":
+        case "allow-guests":
+          return yield* connectionPage(viewer, id, "settings", notice);
         default: {
-          const { page } = yield* connectionView(viewer, id);
           // A key that stopped working, an Attio key that can write, or a password a mail server
           // refused, is fixed by replacing it.
           const replace =
@@ -782,7 +874,7 @@ const act = Effect.fn("ConnectionPage.act")(function* (
               : notice.code === "auth_failed"
                 ? { next: { href: View.connectionPath(id, "rotate"), label: "Replace password…" } }
                 : {};
-          return yield* connectionPage(viewer, id, { ...atField(page, notice, []), ...replace });
+          return yield* connectionPage(viewer, id, "overview", { ...notice, ...replace });
         }
       }
     });
@@ -814,7 +906,7 @@ const act = Effect.fn("ConnectionPage.act")(function* (
       return {
         title: "Connection audience",
         body: "",
-        redirect: View.connectionPath(id)
+        redirect: View.connectionPath(id, "settings")
       } satisfies Page;
     } else if (kind === "description") {
       const fields = yield* decodeDescription(form);
@@ -827,7 +919,7 @@ const act = Effect.fn("ConnectionPage.act")(function* (
       // The connection is gone, but a key it held is still live in Pidgeon: say which.
       if (deleted.keyLeft !== null)
         return yield* index(viewer, new URLSearchParams(), {
-          title: "Connection deleted, but its key is still active in Pidgeon",
+          title: "Disconnected, but its key is still active in Pidgeon",
           message: `Patchy couldn't revoke it: ${deleted.keyLeft}. Revoke it in Pidgeon under Developers › API keys. The address and its mail stay in Pidgeon.`,
           code: "pidgeon_key_left",
           status: 200
@@ -836,11 +928,14 @@ const act = Effect.fn("ConnectionPage.act")(function* (
       yield* store[kind](input);
     }
     const done = `?result=${kind}${kind === "delete" && integration !== undefined ? `&integration=${integration}` : ""}`;
-    return {
-      title: "Integrations",
-      body: "",
-      redirect: `${kind === "delete" ? View.indexPath : View.connectionPath(id)}${done}`
-    } satisfies Page;
+    // A change made in Settings lands back on Settings; Test, Refresh and Resume on Overview.
+    const settled =
+      kind === "delete"
+        ? View.indexPath
+        : kind === "test" || kind === "refresh" || kind === "reconnect"
+          ? View.connectionPath(id)
+          : View.connectionPath(id, "settings");
+    return { title: "Integrations", body: "", redirect: `${settled}${done}` } satisfies Page;
   }).pipe(
     Effect.catch((error) =>
       refused(
@@ -871,7 +966,7 @@ export const submit = Effect.fn("ConnectionPage.submit")(function* (
   // Refused before the body is read: a member's form never reaches the store.
   if (viewer.role !== "super_admin") {
     if (change.kind === "connect") return yield* index(viewer, new URLSearchParams(), forbidden);
-    return yield* connectionPage(viewer, change.id, forbidden);
+    return yield* connectionPage(viewer, change.id, "overview", forbidden);
   }
   if (change.kind !== "connect") return yield* act(viewer, change.id, change.kind);
   if (!isIntegration(change.integration))

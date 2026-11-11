@@ -8,6 +8,7 @@
  * (docs/adr/ADR-0004).
  */
 import * as Schema from "effect/Schema";
+import type * as HttpClientError from "effect/http/HttpClientError";
 import {
   AdminRequired,
   Behind,
@@ -37,7 +38,12 @@ const fields = {
 };
 
 /** Fixable without touching the network: arguments, files, local state, the HTML. */
-export class LocalError extends Schema.TaggedError<LocalError>()("LocalError", fields) {
+export class LocalError extends Schema.TaggedError<LocalError>()("LocalError", {
+  ...fields,
+  // The installed CLI's own `Unexpected error`, relayed: exit 1 there and here, and like a defect
+  // of this CLI's it offers `patchy feedback`.
+  unexpected: Schema.optionalKey(Schema.Literal(true))
+}) {
   readonly kind = "local";
 }
 
@@ -143,10 +149,59 @@ const encodeRefusalDetails = Schema.encodeSync(
 );
 export const refusalDetails = (error: RejectedError) => encodeRefusalDetails(error.refusal);
 
+/**
+ * Why no usable answer came: none arrived whole (`transport`: DNS, connect, a timeout, a body cut
+ * off), the answer was a status or state nothing describes (`response`), or its body could not be
+ * read (`decode`).
+ * The output contract offers `patchy feedback` after the last two, never after `transport`.
+ */
+export const UnreachableReason = Schema.Literals(["transport", "response", "decode"]);
+export type UnreachableReason = typeof UnreachableReason.Type;
+
+/**
+ * Whether a response's body stopped arriving. Effect reports it as a `DecodeError` or
+ * `EmptyBodyError` caused by the connection's error; parsing a body that arrived fails with a
+ * `SyntaxError`, or as a `SchemaError`.
+ */
+export const bodyCutOff = (error: HttpClientError.HttpClientError | Schema.SchemaError): boolean =>
+  error._tag === "HttpClientError" &&
+  (error.reason._tag === "DecodeError" || error.reason._tag === "EmptyBodyError") &&
+  error.reason.cause !== undefined &&
+  !(error.reason.cause instanceof SyntaxError);
+
+/**
+ * Why a request failed in the HTTP client, or its body failed the schema it was read with. Effect
+ * reports two things as a `DecodeError` that this tells apart: a body that stopped arriving, which
+ * is `transport`, and the generated client's answer to a status the API doesn't declare, such as
+ * a 500, which is `response`. Only a body that arrived and could not be read is `decode`.
+ */
+export const unreachableReason = (
+  error: HttpClientError.HttpClientError | Schema.SchemaError
+): UnreachableReason => {
+  if (error._tag === "SchemaError") return "decode";
+  const reason = error.reason;
+  switch (reason._tag) {
+    // Nothing answered: the connection failed, or a request that could not be built was never sent.
+    case "TransportError":
+    case "EncodeError":
+    case "InvalidUrlError":
+      return "transport";
+    case "StatusCodeError":
+      return "response";
+    case "DecodeError":
+    case "EmptyBodyError": {
+      if (bodyCutOff(error)) return "transport";
+      const { status } = reason.response;
+      return status >= 200 && status < 300 ? "decode" : "response";
+    }
+  }
+};
+
 /** No usable answer from the instance: connect, timeout, 5xx, an unparseable body. */
 export class UnreachableError extends Schema.TaggedError<UnreachableError>()("UnreachableError", {
   ...fields,
-  instanceUrl: Schema.String
+  instanceUrl: Schema.String,
+  reason: UnreachableReason
 }) {
   readonly kind = "unreachable";
 }

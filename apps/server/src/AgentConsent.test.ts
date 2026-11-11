@@ -76,7 +76,7 @@ it.layer(
       );
       assert.strictEqual(page.status, 200);
       const html = yield* page.text;
-      assert.include(html, "Connect Claude Code to Patchy Dev?");
+      assert.include(html, "Let Claude Code use Patchy Dev’s patches as you?");
       assert.include(html, "Your answer goes to a program on this computer");
 
       const field = (name: string) => new RegExp(`name="${name}" value="([^"]*)"`).exec(html)![1]!;

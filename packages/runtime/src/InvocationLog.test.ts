@@ -57,7 +57,7 @@ it.layer(
   )
 )("InvocationLog", (it) => {
   it.effect(
-    "counts each patch's failed top-level entries of the last day as the Failed filter does",
+    "counts each patch's top-level calls of the last day, and those the Failed filter shows",
     () =>
       Effect.gen(function* () {
         yield* TestClock.setTime(NOW);
@@ -91,13 +91,17 @@ it.layer(
         yield* entry("fail-a4", "failpatch-a", NOW - HOUR, null);
         yield* entry("fail-a5", "failpatch-a", NOW - HOUR, "handler_error", "fail-a2");
         yield* entry("fail-b1", "failpatch-b", NOW - HOUR, "success");
-        const failures = yield* log.failures({
+        yield* entry("fail-c1", "failpatch-c", NOW - 25 * HOUR, "failure");
+        const calls = yield* log.calls({
           companyId: DEV_SEED.companyId,
           since: NOW - 24 * HOUR
         });
-        // Too old, unknown (overdue and pending), nested and successful entries don't count.
-        assert.strictEqual(failures.get("failpatch-a"), 2);
-        assert.isFalse(failures.has("failpatch-b"));
+        // Every top-level entry of the last day is a call, an unknown one (overdue and pending)
+        // included; only those the Failed filter shows are failures. Older and nested ones don't
+        // count, so a patch whose only calls are older has none.
+        assert.deepStrictEqual(calls.get("failpatch-a"), { calls: 3, failures: 2 });
+        assert.deepStrictEqual(calls.get("failpatch-b"), { calls: 1, failures: 0 });
+        assert.isFalse(calls.has("failpatch-c"));
         const filtered = yield* log.page({
           companyId: DEV_SEED.companyId,
           patchId: "failpatch-a",

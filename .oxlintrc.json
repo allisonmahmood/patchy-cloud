@@ -89,6 +89,33 @@
   },
   "overrides": [
     {
+      // The UI system's rules hold every page Patchy renders: pages compose core's templates and
+      // helpers and carry no styles of their own (.agents/skills/ui-consistency). Left out: core,
+      // which owns the helpers and the stylesheet; the CLI and the SDK, whose pages are a builder's
+      // own patch; tests; and the served wrapper's page state, which a running patch's shell draws
+      // in the browser on the frozen servedStyles.
+      "files": ["packages/*/src/**/*.ts", "apps/*/src/**/*.ts"],
+      "excludeFiles": [
+        "packages/core/**",
+        "packages/patchy/**",
+        "packages/sdk/**",
+        "**/*.test.ts",
+        "**/test/**",
+        "**/testing.ts",
+        "packages/serving/src/stream-status.ts",
+        "packages/serving/src/downloads.ts"
+      ],
+      "rules": {
+        "patchy/no-hand-drawn-components": "error",
+        "patchy/no-page-styles": "error"
+      }
+    },
+    {
+      // The served wrapper's shell carries servedStyles in its own <style>, byte for byte.
+      "files": ["packages/serving/src/shell.ts"],
+      "rules": { "patchy/no-page-styles": "off" }
+    },
+    {
       // CLI imports stay wire-only except for isolated server-artifact inspection.
       "files": ["packages/patchy/src/**"],
       "excludeFiles": [
@@ -208,6 +235,7 @@
         "scripts/flake-report.ts",
         "scripts/rollback-rehearsal.ts",
         "scripts/test-clerk.ts",
+        "scripts/ui-report.ts",
         "scripts/verify.ts"
       ],
       "rules": { "no-console": "off" }

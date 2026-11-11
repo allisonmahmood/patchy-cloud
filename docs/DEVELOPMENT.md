@@ -222,6 +222,14 @@ keep working. An instance whose `.local/dev/personas.env` also holds
 `PATCHY_DEV_PERSONAS_KEY`, as `pnpm dev eval`'s does, opens `/dev/sign-in`
 only with `key=<it>` and otherwise answers 403 without naming anyone.
 
+The seed's dev user and every scenario person start past the **terms prompt**,
+as if they had signed up under the current terms, except a scenario person
+marked `termsPending`: `team`'s Cleo gets it on her first page in a browser and
+keeps getting it until she accepts. A persona with a new email records the
+acceptance when it creates or joins a company. The prompt answers only a
+browser's page load, so `curl` and the CLI never see it, while `shot`, `film`
+and `compare` do.
+
 `pnpm patchy` runs the CLI from source and finds this worktree's
 `.local/dev/env` from any directory beneath it. A command uses
 `PATCHY_API_TOKEN`, then a stored login for the instance, then the seed's
@@ -251,7 +259,7 @@ environment's `worker-codex` launcher mints one for you and hands it to Codex;
 PKCE challenge and its state. The instance fetches the client's metadata
 document from the internet: Claude Code's is
 `https://claude.ai/oauth/claude-code-client-metadata`, whose redirect is
-`http://127.0.0.1:<any port>/callback`. Turn agent access on at Company first,
+`http://127.0.0.1:<any port>/callback`. Turn agent access on in Settings first,
 or the page says it's off; a scenario can start with it on. An environment's
 `worker-claude` launcher is Claude Code connecting this way. Allow sends `code`, `state` and `iss` to the
 redirect, and the code exchanges at `/oauth/token` on `127.0.0.1`; Deny sends
@@ -285,6 +293,36 @@ A patch's own content renders in a sandboxed frame, so use a browser for it:
 and prints the final URL, status and every console error and uncaught
 exception from the page and its frames. `<person>` is any email, or an
 environment person's key or first name.
+
+First-party pages compose core's UI system: tokens, helpers and five page
+templates (`.agents/skills/ui-consistency/SKILL.md`). The local instance serves
+its gallery at `/~ui`, every helper in its states and one page per template at
+`/~ui/<template>`, only while personas sign people in; production has none.
+`pnpm dev shot <person> /~ui` captures it. `pnpm check` holds pages to the
+system: its tests fail a colour, type role, corner, shadow or control height
+the app's stylesheet writes outside its token block, and a helper core exports
+that the gallery doesn't draw, and `pnpm lint` fails a page module that styles
+itself or draws a button, badge, notice or field by hand. `pnpm ui:report`
+lists the stylesheet's values off the tokens, by chunk, while you fix them.
+
+### Titles' typeface
+
+Production sets titles in Cabinet Grotesk, which isn't in the repository: its
+file comes from a private bucket ([Operations](OPERATIONS.md#the-display-font)).
+Without it, as in CI, evidence instances and most checkouts, titles are Geist
+and pages declare no face for it, so nothing is fetched and nothing fails.
+Someone with read access to the bucket, as Patchy's administrators have, can
+put the file where the server looks, beside the committed fonts, and restart:
+
+```sh
+aws s3 cp "s3://patchy-fonts-$(aws sts get-caller-identity --query Account --output text)/$(jq -r .sha256 packages/core/fonts/display-font.json)/CabinetGrotesk-Extrabold.woff2" packages/core/fonts/
+pnpm dev stop && pnpm dev
+```
+
+The file is ignored by git; keep it out of commits and anywhere else that is
+shared. The server refuses to start if its bytes aren't the pinned ones, and
+the `/~ui` gallery names the face titles are drawn in. Tests don't depend on
+it.
 
 ### Environments: `pnpm dev up`
 
@@ -330,7 +368,7 @@ An environment is this instance plus what a multi-person check or demo needs:
 - **Worker agents**: people's own agents using the environment's patches
   through Patchy MCP at `<url>/mcp`, as a person's Claude Code or Codex would.
   A patch's agent area is what they reach, so they need a tier 2 patch with an
-  `agent/` folder and agent access on at Company; `brightline` has both. The two
+  `agent/` folder and agent access on in Settings; `brightline` has both. The two
   launchers sit beside `agent` and start in the environment's `workers/`, an
   empty folder of their own, behind the same guard and with a temp folder per
   session. Their CLI state never logs in, so they reach Patchy only through the
@@ -367,9 +405,12 @@ An environment is this instance plus what a multi-person check or demo needs:
   `-c 'mcp_servers.patchy-dev-<hash>.tools.change_patch.approval_mode="approve"'`.
 
 [`scenarios/`](../scenarios/README.md) lists the scenarios: `team` (the default)
-is three people and no patches; `brightline` is a five-person agency with tier 2
+is three people, one yet to accept the terms, and no patches; `brightline` is a five-person agency with tier 2
 patches and a single-file tier 1 page, agent areas on two of its tier 2 ones and agent access on, and takes
-about a minute; `pidgeon` is Lumen Bikes with `pidgeon/support` connected to a
+about a minute; `dense` is Brightline Studio at full size, for first-party pages in every state:
+patches owned across the studio with their history, retired and deleted ones, guests both ways,
+deactivated and invited people, and every integration's connections written offline in each state,
+in about three and a half minutes; `pidgeon` is Lumen Bikes with `pidgeon/support` connected to a
 new Pidgeon test address holding customer mail, and a tier 2 Support desk whose
 actions answer it; `patchy dev` in its workspace reads that address's mail through
 this instance and simulates its sends; `attio` is Northwind Sales with
@@ -725,6 +766,11 @@ can quote it.
   and phone widths. Allow and exchange the code, Deny, answer after switching
   persona in another tab (asked again, 409), and answer from another origin
   (403). Nothing reaches the client's redirect except Allow and Deny.
+- **Terms prompt.** On `team`, `pnpm dev shot cleo /` and a patch's address
+  both show the prompt, which links the dated terms and privacy pages; Accept
+  goes on to that page with its query, and nobody else is asked. Its frame, a
+  public patch, `curl` and the CLI are never asked. Accept after switching
+  persona in another tab asks again (409) and records nothing.
 - **Patchy MCP.** `pnpm dev up brightline`, then connect Claude Code through
   consent with the environment's `worker-claude` and Codex with
   `worker-codex <person>`, never with your own config. Have each find the
@@ -741,9 +787,14 @@ can quote it.
   `delete --yes` and `restore` through the CLI
   and the notices at the patch's address. A source with a published consumer
   refuses retirement with `has_dependants` until `--force`.
+- **First-party pages.** Look at a change to core's helpers or styles in
+  `/~ui` first, then on the pages it reaches with `pnpm dev shot`, at desktop
+  and 390px and with a coarse pointer (44px controls), and without script: a
+  dialog is a page, Show stays hidden, a live hint shows what was drawn and a
+  pending submit just submits.
 - **Company management.** Invite, revoke, change roles, deactivate and
-  reactivate from `/company`; deactivation revokes the user's machine tokens and
-  the last active admin cannot be demoted.
+  reactivate from `/settings/people`; deactivation revokes the user's machine
+  tokens and the last active admin cannot be demoted.
 - **Front door and onboarding.** `pnpm test:packed-cli-e2e` runs the
   `/llms.txt` install line on a clean HOME and npm prefix. To watch an agent
   follow the portal's setup line, give it a throwaway machine, never the

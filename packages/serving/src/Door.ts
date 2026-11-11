@@ -4,7 +4,7 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as WideEvents from "@patchy/analytics/wide-events";
-import { RequireSession, Session, pageResponse, returnPath } from "@patchy/auth";
+import { RequireSession, Session, returnPath, unavailableDoor } from "@patchy/auth";
 import type { Users } from "@patchy/companies";
 
 /**
@@ -49,21 +49,13 @@ const admission = Effect.gen(function* () {
   Effect.catchTags({
     SessionError: () =>
       Effect.succeed({
-        result: pageResponse({
-          title: "Sign-in service unavailable",
-          body: "<p>Please try again.</p>",
-          status: 502
-        }),
+        result: unavailableDoor("sign-in"),
         cookies: [],
         handshake: undefined
       }),
     SqlError: () =>
       Effect.succeed({
-        result: pageResponse({
-          title: "Company service unavailable",
-          body: "<p>Please try again.</p>",
-          status: 503
-        }),
+        result: unavailableDoor("patchy"),
         cookies: [],
         handshake: undefined
       })

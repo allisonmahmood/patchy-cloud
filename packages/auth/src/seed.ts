@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import { Terms } from "@patchy/companies";
 import { Cryptography, NodeCryptography } from "@patchy/core";
 import * as Sql from "@patchy/sql";
 import * as AgentConnections from "./AgentConnections.js";
@@ -23,6 +24,18 @@ export const DEV_SEED = {
   tokenName: "Dev Machine",
   token: "patchy-dev-token"
 } as const;
+
+/**
+ * A seeded person's acceptance of the current terms, as their sign-up would have recorded it, so
+ * dev and test instances start past the terms prompt. Seeding again adds nothing.
+ */
+export const acceptCurrentTerms = Effect.fn("acceptCurrentTerms")(function* (userId: string) {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`
+    INSERT INTO terms_acceptances (user_id, terms_revision, privacy_revision, via, accepted_at)
+    VALUES (${userId}, ${Terms.current.terms}, ${Terms.current.privacy}, 'sign-up', now())
+    ON CONFLICT DO NOTHING`;
+});
 
 /** Seeds a migrated dev database atomically; the runner and live browser tier can bind a Clerk user. */
 export async function applyDevSeed(
@@ -47,6 +60,7 @@ export async function applyDevSeed(
         ON CONFLICT (id) DO UPDATE SET clerk_user_id = EXCLUDED.clerk_user_id,
           company_id = EXCLUDED.company_id, email = EXCLUDED.email, name = EXCLUDED.name,
           role = EXCLUDED.role, created_at = EXCLUDED.created_at, deactivated_at = NULL`;
+          yield* acceptCurrentTerms(DEV_SEED.userId);
           yield* sql`
         INSERT INTO machine_tokens (id, user_id, name, token_hash, created_at, expires_at, last_used_at)
         VALUES (${DEV_SEED.tokenId}, ${DEV_SEED.userId}, ${DEV_SEED.tokenName},

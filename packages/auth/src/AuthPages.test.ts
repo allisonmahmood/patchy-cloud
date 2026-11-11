@@ -9,7 +9,8 @@ import * as Layer from "effect/Layer";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
-import { Companies, InviteMail, Teams, TeamsPage, Users } from "@patchy/companies";
+import * as SqlClient from "effect/sql/SqlClient";
+import { Companies, Teams, TeamsPage, InviteMail, Terms, Users } from "@patchy/companies";
 import { Analytics } from "@patchy/analytics";
 import { Limits } from "@patchy/limits";
 import * as AgentConnections from "./AgentConnections.js";
@@ -90,7 +91,7 @@ it.layer(services)("first-party pages in memory", (it) => {
       const defaultLogin = yield* send("/login");
       assert.include(
         yield* Effect.promise(() => defaultLogin.text()),
-        encodeURIComponent(`${origin}/machines`)
+        encodeURIComponent(`${origin}/agents`)
       );
       for (const target of [
         "https://foreign.invalid/",
@@ -104,7 +105,7 @@ it.layer(services)("first-party pages in memory", (it) => {
         assert.strictEqual(response.status, 200);
         assert.include(
           yield* Effect.promise(() => response.text()),
-          encodeURIComponent(`${origin}/machines`)
+          encodeURIComponent(`${origin}/agents`)
         );
       }
     })
@@ -153,6 +154,11 @@ it.layer(services)("first-party pages in memory", (it) => {
       // Patchy, not the browser, refuses a handle, under the address it opens.
       assert.include(html, " novalidate>");
       assert.include(html, `for="company-handle">${new URL(base).host}/</label>`);
+      // A phone neither capitalises nor corrects the address.
+      assert.match(
+        html,
+        /<input [^>]*name="handle"[^>]* autocapitalize="none" autocorrect="off" spellcheck="false"/
+      );
       assert.include(html, 'action="/logout"');
       assert.include(page.headers.get("content-security-policy")!, "form-action 'self'");
       // A no-referrer policy nulls a browser form's Origin and breaks the CSRF check.
@@ -161,6 +167,8 @@ it.layer(services)("first-party pages in memory", (it) => {
       assert.include(html, "/auth/session.js");
       // Clerk refreshes the session cookie from a blob worker; blocking it signs out form POSTs.
       assert.include(page.headers.get("content-security-policy")!, "worker-src blob:");
+      // The app's fonts, from this origin, on a signed-in door as on every first-party page.
+      assert.include(page.headers.get("content-security-policy")!, "font-src 'self'");
       const created = yield* send(
         enrollment,
         post({ action: "create", name: "Acme <Studio>", handle: "acme-enroll" }, sessionCookie)
@@ -174,7 +182,7 @@ it.layer(services)("first-party pages in memory", (it) => {
       assert.deepInclude(identity, { role: "super_admin" });
       const joined = yield* send("/join", { headers: { cookie: sessionCookie } });
       assert.strictEqual(joined.status, 303);
-      assert.strictEqual(joined.headers.get("location"), "/company");
+      assert.strictEqual(joined.headers.get("location"), "/settings/people");
       const returning = yield* send("/join?return=%2Fprivate%3Fview%3Dmine", {
         headers: { cookie: sessionCookie }
       });
@@ -185,7 +193,7 @@ it.layer(services)("first-party pages in memory", (it) => {
         { headers: { cookie: sessionCookie } }
       );
       assert.strictEqual(unsafeReturn.status, 303);
-      assert.strictEqual(unsafeReturn.headers.get("location"), "/company");
+      assert.strictEqual(unsafeReturn.headers.get("location"), "/settings/people");
       const refused = yield* send(
         "/join",
         post({ action: "create", name: "Other", handle: "other-enroll" }, sessionCookie)
@@ -255,13 +263,17 @@ it.layer(services)("first-party pages in memory", (it) => {
         )
       );
       assert.strictEqual(create.status, 409);
+      const createHtml = yield* Effect.promise(() => create.text());
+      // A refusal no field owns sits above the button and takes the page's focus.
+      assert.include(createHtml, '<div class="refusal" tabindex="-1" autofocus>');
+      assert.include(createHtml, "You have an invitation. Choose a company to join below.");
       assert.strictEqual(yield* (yield* Users.Users).findByClerkId("user_invitee"), null);
       const joined = yield* send(
         "/join",
         post({ action: "join", inviteId: second.id }, sessionCookie)
       );
       assert.strictEqual(joined.status, 303);
-      assert.strictEqual(joined.headers.get("location"), "/company");
+      assert.strictEqual(joined.headers.get("location"), "/settings/people");
       const user = yield* (yield* Users.Users).findByClerkId("user_invitee");
       assert.strictEqual(user?.companyId, other.company.id);
       assert.strictEqual(user?.role, "admin");
@@ -301,8 +313,9 @@ it.layer(services)("first-party pages in memory", (it) => {
           `${DEV_SEED.companyHandle} is taken`
         ],
         ['Keep "this"', "admin", 422, "handle", "admin is reserved"],
+        ['Keep "this"', "agents", 422, "handle", "agents is reserved"],
         ['Keep "this"', "-invalid", 422, "handle", "Start and end with a letter or digit"],
-        ['Keep "this"', "Acme", 422, "handle", "Handles are lowercase"],
+        ['Keep "this"', "Acme", 422, "handle", "Addresses are lowercase"],
         ["   ", "fine-handle", 422, "name", "Enter a company name"]
       ] as const) {
         const response = yield* send(
@@ -313,14 +326,13 @@ it.layer(services)("first-party pages in memory", (it) => {
         const html = yield* Effect.promise(() => response.text());
         if (field === "handle") assert.include(html, "Keep &quot;this&quot;");
         assert.include(html, `name="handle" value="${handle}"`);
-        assert.include(
+        assert.match(
           html,
-          `aria-describedby="company-${field}-error" aria-invalid="true" autofocus`
+          new RegExp(
+            `id="company-${field}" aria-describedby="[^"]*company-${field}-error" aria-invalid="true"[^>]*autofocus`
+          )
         );
-        assert.include(
-          html,
-          `id="company-${field}-error" role="alert"><strong class="note-title">${title}</strong>`
-        );
+        assert.include(html, `<p class="field-error" id="company-${field}-error">${title}.`);
       }
       assert.strictEqual(events.length, reported);
     })
@@ -333,10 +345,10 @@ it.layer(services)("first-party pages in memory", (it) => {
           "/join",
           post({ action: "create", name: "Acme", handle }, cookie("user_bad_case"))
         ).pipe(Effect.flatMap((response) => Effect.promise(() => response.text())));
-      assert.include(yield* refused("Acme"), "Try <strong>acme</strong>.");
+      assert.include(yield* refused("Acme"), "Addresses are lowercase. Try acme.");
       const taken = yield* refused(DEV_SEED.companyHandle.toUpperCase());
-      assert.include(taken, "Handles are lowercase");
-      assert.notInclude(taken, "Try <strong>");
+      assert.include(taken, "Addresses are lowercase.");
+      assert.notInclude(taken, "Try ");
     })
   );
 
@@ -382,6 +394,90 @@ it.layer(services)("first-party pages in memory", (it) => {
         (yield* (yield* Users.Users).findByClerkId("user_fetch_metadata"))?.name,
         "Alex"
       );
+    })
+  );
+
+  it.effect("asks someone yet to accept the current terms on their next page, then goes on", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const users = yield* Users.Users;
+      const { company } = yield* (yield* Companies.Companies).create({
+        handle: "terms-prompt",
+        name: "Terms Company",
+        clerkUserId: "user_terms_admin",
+        email: "terms-admin@example.com",
+        userName: "Admin"
+      });
+      // Someone already here when acceptances began has none recorded.
+      yield* sql`
+        INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
+        VALUES ('usr_terms', 'user_terms', ${company.id}, 'user_terms@example.com', 'Alex', 'member')`;
+      const sessionCookie = cookie("user_terms");
+      const page = { "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" };
+      const viewerOf = (response: Response) =>
+        Effect.promise(() => response.json() as Promise<{ user: { id: string } }>);
+      // Fetches, frames and clients without a browser's fetch metadata are never asked.
+      const passing: ReadonlyArray<Record<string, string>> = [
+        {},
+        { "sec-fetch-mode": "cors", "sec-fetch-dest": "empty" },
+        { "sec-fetch-mode": "navigate", "sec-fetch-dest": "iframe" }
+      ];
+      for (const headers of passing) {
+        const passed = yield* send("/private", { headers: { cookie: sessionCookie, ...headers } });
+        assert.strictEqual((yield* viewerOf(passed)).user.id, "usr_terms");
+      }
+      const prompt = yield* send("/private?view=mine", {
+        headers: { cookie: sessionCookie, ...page }
+      });
+      assert.strictEqual(prompt.status, 200);
+      assert.strictEqual(prompt.headers.get("cache-control"), "private, no-store");
+      const html = yield* Effect.promise(() => prompt.text());
+      assert.include(html, "We’ve updated our terms");
+      assert.include(html, `href="${Terms.url("terms", Terms.current.terms)}"`);
+      assert.include(html, `href="${Terms.url("privacy", Terms.current.privacy)}"`);
+      // Accept sits in the door's actions and names the form it submits.
+      assert.include(html, '<form id="terms-accept" method="post" action="/auth/terms">');
+      assert.match(html, /<button [^>]*type="submit"[^>]*form="terms-accept"[^>]*>/);
+      assert.include(html, 'name="return" value="/private?view=mine"');
+      assert.include(html, 'action="/logout"');
+      const answer = (fields: Record<string, string> = {}) =>
+        send(
+          "/auth/terms",
+          post(
+            {
+              userId: "usr_terms",
+              terms: Terms.current.terms,
+              privacy: Terms.current.privacy,
+              return: "/private?view=mine",
+              ...fields
+            },
+            sessionCookie,
+            page
+          )
+        );
+      const accepted = users.hasAcceptedTerms({ userId: "usr_terms", revisions: Terms.current });
+      // A page left open across an account switch or new terms records nothing and asks again.
+      for (const [fields, note] of [
+        [{ userId: "usr_someone_else" }, "You signed in as someone else"],
+        [{ terms: "2026-01-01" }, "The terms changed"]
+      ] as const) {
+        const asked = yield* answer(fields);
+        assert.strictEqual(asked.status, 409);
+        const again = yield* Effect.promise(() => asked.text());
+        assert.include(again, note);
+        assert.include(again, 'name="userId" value="usr_terms"');
+        assert.isFalse(yield* accepted);
+      }
+      const onward = yield* answer();
+      assert.strictEqual(onward.status, 303);
+      assert.strictEqual(onward.headers.get("location"), "/private?view=mine");
+      assert.isTrue(yield* accepted);
+      const next = yield* send("/private", { headers: { cookie: sessionCookie, ...page } });
+      assert.strictEqual((yield* viewerOf(next)).user.id, "usr_terms");
+      // Once accepted, a stale page just goes on, and only ever to a local page.
+      const late = yield* answer({ terms: "2026-01-01", return: "//foreign.invalid/" });
+      assert.strictEqual(late.status, 303);
+      assert.strictEqual(late.headers.get("location"), "/");
     })
   );
 
@@ -573,10 +669,10 @@ it.layer(
       assert.strictEqual(response.status, 303);
       for (const directive of response.headers.getSetCookie())
         jar.setCookieSync(directive, `${publicUrl}/logout`, { ignoreError: true });
-      for (const path of ["/", "/login/device", "/machines", "/company"])
+      for (const path of ["/", "/login/device", "/agents", "/settings/people"])
         assert.strictEqual(jar.getCookieStringSync(`${publicUrl}${path}`), "preference=keep");
-      const next = yield* send("/company", {
-        headers: { cookie: jar.getCookieStringSync(`${publicUrl}/company`) }
+      const next = yield* send("/settings/people", {
+        headers: { cookie: jar.getCookieStringSync(`${publicUrl}/settings/people`) }
       }).pipe(Effect.provide(sessionLayer));
       assert.strictEqual(next.status, 401);
     })

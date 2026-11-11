@@ -2046,6 +2046,13 @@ async function seedOtherUserToken() {
          'packed-other@patchy.local', 'Other Publisher', 'member', now())`,
       [DEV_SEED.companyId]
     );
+    // Signed up under the current terms, as the seed's user did, so no page asks them first.
+    const { current } = await import("../packages/companies/dist/Terms.js");
+    await client.query(
+      `INSERT INTO terms_acceptances (user_id, terms_revision, privacy_revision, via, accepted_at)
+       VALUES ('usr_packed_other', $1, $2, 'sign-up', now())`,
+      [current.terms, current.privacy]
+    );
     await client.query(
       `INSERT INTO machine_tokens
          (id, user_id, name, token_hash, created_at, expires_at, last_used_at)

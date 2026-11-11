@@ -28,6 +28,7 @@ import * as WideEvents from "@patchy/analytics/wide-events";
 import {
   type RequireSession,
   Session,
+  TermsPrompt,
   withCookies,
   sessionScripts,
   returnPath,
@@ -56,7 +57,7 @@ import {
 import {
   NO_REFERRER_POLICY,
   CONTENT_SECURITY_POLICY,
-  PATCH_CONTENT_SECURITY_POLICY,
+  NOTICE_SECURITY_POLICY,
   PATCH_ROBOTS_TAG,
   PUBLIC_PATCH_CACHE_CONTROL,
   PRIVATE_PATCH_CACHE_CONTROL,
@@ -75,9 +76,10 @@ class StoredDocumentMismatch extends Schema.TaggedError<StoredDocumentMismatch>(
   }
 }
 
-/** The HTML 404, uncached like every non-patch response. */
+/** The HTML 404, uncached like every non-patch response, under the notices' policy. */
 export const notFound = HttpServerResponse.html(renderNotFound()).pipe(
-  HttpServerResponse.setStatus(404)
+  HttpServerResponse.setStatus(404),
+  HttpServerResponse.setHeader("content-security-policy", NOTICE_SECURITY_POLICY)
 );
 
 /**
@@ -127,7 +129,7 @@ const shellNotice = (
         ...patchUrlHeaders,
         "content-security-policy":
           viewer === undefined
-            ? PATCH_CONTENT_SECURITY_POLICY
+            ? NOTICE_SECURITY_POLICY
             : noticeContentSecurityPolicy(session.clerk?.frontendApiHost)
       }
     }
@@ -303,6 +305,18 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
     ) {
       return withCookies(HttpServerResponse.setHeaders(notFound, patchUrlHeaders), cookies);
     }
+    // A patch's page is a page boundary, as a portal page is: someone who hasn't accepted the
+    // current terms, a guest included, is asked here first. Public pages and frames never ask.
+    if (kind === "address" && !isPublic) {
+      const prompt = yield* TermsPrompt.prompt(session, admission.user).pipe(
+        Effect.catchTags({ SqlError: Effect.die })
+      );
+      if (prompt !== null)
+        return withCookies(
+          HttpServerResponse.setHeader(prompt, "x-robots-tag", PATCH_ROBOTS_TAG),
+          cookies
+        );
+    }
     if (served.value.patch.state !== "live" && !isAlias) {
       const canOpen = yield* Patches.Openability;
       const notice = yield* patches
@@ -319,8 +333,7 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
       return withCookies(
         pageResponse(
           {
-            title: `${notice.value.patch.name} is ${notice.value.patch.state}`,
-            body: renderAddressNotice({ ...notice.value, viewer: admission, now }),
+            ...renderAddressNotice({ ...notice.value, viewer: admission, now }),
             app: { viewer: admission, section: "patches" }
           },
           session
@@ -391,22 +404,22 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
         )
     })
   );
-  // An admitted member opening the current version's address, not an older version or the
-  // frame's content request, is an open for their own Home: it is what clears "new to you". A
-  // public patch's member counts too; a public page rendered for no one records none.
+  // The page's viewer opening the current version's address, not an older version or the
+  // frame's content request, is an open for their own Home: it is what clears the dot after a
+  // patch they never opened. A public patch's member counts too, and so does a guest of a patch
+  // shared with them, for Shared with you; a public page rendered for no one records none.
   const viewerId = viewer?.user.id;
-  // A guest has no Home in the patch's company to record an open for.
   const member =
     !HttpServerResponse.isHttpServerResponse(admission) &&
     admission.company.id === served.value.patch.companyId;
   // A colleague's first open is the one business event serving reports: activation is counted
-  // in it. It reports with the open's commit, so a reader who leaves mid-COMMIT can't leave a first
-  // open recorded and never reported, while the open itself, lock waits included, stays
-  // cancellable. Tracking never fails the page.
-  if (kind === "address" && viewerId !== undefined && member) {
+  // in it, so a guest's never reports. It reports with the open's commit, so a reader who leaves
+  // mid-COMMIT can't leave a first open recorded and never reported, while the open itself, lock
+  // waits included, stays cancellable. Tracking never fails the page.
+  if (kind === "address" && viewerId !== undefined) {
     const { patch } = served.value;
     yield* withReportedCommit(patches.recordOpen(viewerId, patch.id, version.id), (firstOpen) =>
-      firstOpen && viewerId !== patch.ownerUserId
+      firstOpen && member && viewerId !== patch.ownerUserId
         ? analytics.track({
             name: "patch.first_opened",
             principalId: viewerId,

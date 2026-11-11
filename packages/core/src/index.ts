@@ -9,7 +9,7 @@ export {
   SWITCHER_RELAY_SOURCE,
   switcherRelay,
   switcherTag,
-  whatsNewKind
+  withoutAppAssets
 } from "./html.js";
 export type { AppShell } from "./html.js";
 export {
@@ -19,12 +19,16 @@ export {
   isPage,
   isWelcomePage,
   patchTitle,
+  recovery,
+  recoveryLine,
   renderOffPatch
 } from "./patch-presentation.js";
+export type { Recovery } from "./patch-presentation.js";
 export type { ChoiceCard, TileOption } from "./components.js";
 export { copyLine, copyScript, copyScriptPath } from "./copy-line.js";
+export { displayFont, fontFile, fontUrl, fonts, hasDisplayFont, servedFonts } from "./fonts.js";
+export type { Font } from "./fonts.js";
 export {
-  agentIcon,
   agentMark,
   avatar,
   choiceCards,
@@ -32,7 +36,6 @@ export {
   menuLink,
   menuPost,
   monogram,
-  monogramTint,
   patchMark,
   rowMenu,
   searchField,
@@ -41,4 +44,6 @@ export {
 export * as Cryptography from "./Cryptography.js";
 export * as NodeCryptography from "./NodeCryptography.js";
 export * as WhatsNew from "./whatsNew.js";
+export * as WhatsNewLinks from "./whatsNewLinks.js";
 export { isPublicAddress } from "./addresses.js";
+export * from "./ui/index.js";

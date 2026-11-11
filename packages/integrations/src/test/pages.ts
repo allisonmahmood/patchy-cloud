@@ -135,7 +135,7 @@ export const addMember = Effect.fn(function* (owner: {
     name: "Member"
   });
 });
-export const connectPath = "/company/connections/connect/pidgeon";
+export const connectPath = "/settings/integrations/connect/pidgeon";
 /** The company's Pidgeon connection by its handle. */
 export const connectedId = Effect.fn(function* (companyId: string, handle: string) {
   const connections = yield* (yield* ConnectionStore.ConnectionStore).list(companyId);

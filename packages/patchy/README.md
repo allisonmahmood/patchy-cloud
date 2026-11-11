@@ -592,8 +592,9 @@ into `patchy add shared-table <patchId>/<table>` or
 `patchy add shared-store <patchId>/<store>`. Unshared entries name the owner;
 retired or deleted sources must be restored.
 Agents branch on `declarable`, `reason` and a connection's `paused`, not the human `hint`.
-A paused IMAP connection's server refused its password: every call fails `auth_failed`
-until a super admin's Test or Replace password, so `list connections` says so instead of an add hint.
+A `paused` IMAP connection's server refused its password, which the pages call Needs
+attention: every call fails `auth_failed` until an admin's Test or Replace password, so `list
+connections` says so instead of an add hint.
 
 Names and canonical ids are accepted; a pasted URL resolves by its final path
 segment. Names resolve only non-deleted patches. A deleted patch needs its id
@@ -622,7 +623,7 @@ instance's release tarball as described above.
 
 `patchy add postgres`, `patchy add posthog`, `patchy add pidgeon`, `patchy add attio` or `patchy add imap` selects that integration's sole connected
 connection; with several it lists copy-ready choices from `list connections` and stops.
-With none, it names `/company/connections`.
+With none, it names `/settings/integrations`.
 The default connection alias camel-cases the handle's hyphens; a shared table or
 store alias defaults to its resource name. `--as` overrides the default.
 
@@ -659,8 +660,8 @@ outside the repo builds tier 2 as the pinned `pnpm patchy` does.
 Use actual connection names from `list connections`; inspect one with
 `list connections <integration>/<handle>`, such as `postgres/warehouse`. Shared-table targets come from the discovery
 chain above, using the response's canonical patch id.
-Connection setup and reconnection belong to a super admin's browser at
-`/company/connections`; no CLI command accepts a
+Connecting, resuming and replacing a connection belong to an admin's browser at
+`/settings/integrations`; no CLI command accepts a
 connection string. A shared source must be openable; restore its access with its
 owner or correct the declaration. With no publishing key, non-interactive init
 exits 1 with `Run: patchy login` before laying down files. A company with no
@@ -1015,7 +1016,7 @@ They check the code, company and email, name the machine, and confirm;
 
 The poll mints the publishing key after confirmation; the CLI saves it locally
 and never prints it. It works for 90 days or 30 idle days, whichever comes
-first; revoke it on **Your agents** at `/machines`. Re-login with a saved
+first; disconnect this computer on **Your agents** at `/agents`. Re-login with a saved
 login key for the same user inherits its name and replaces it when the terminal
 completes, without changing ownership of any patches. Keys from `auth set`,
 the environment or the dev seed are not named as predecessors.
@@ -1071,7 +1072,7 @@ then revoke only the key just deleted through `POST /api/logout`. A 401 means
 it is already invalid and counts as success. An unreachable instance cannot
 undo the local logout: exit 0, with this warning:
 
-> Logged out on this machine. The key could not be revoked; it expires on its own after 30 idle days, or revoke it now on Your agents.
+> Logged out on this machine, but Patchy couldn't disconnect it. It ends on its own after 30 idle days, or disconnect it now on Your agents.
 
 Logout removes only local stored credentials. Inside a worktree it says
 _This worktree's dev instance still publishes with its seeded key_;
@@ -1278,8 +1279,8 @@ publish with agent tools adds a line built from the manifest it sent, such as
 through Patchy's MCP at <instance>/mcp.`; JSON gains no field, since `handlers`
 lists them as `agent.<export>` with their handler `kind`. While the company's
 agent access is off, publish warns that no agent can use them yet and that an
-super admin turns it on at `<instance>/company`. When the patch has guests and the
-version would close it to them, such as by declaring a connection a super admin set to
+admin turns it on at `<instance>/settings/agent-access`. When the patch has guests and the
+version would close it to them, such as by declaring a connection an admin set to
 block guests, publish still succeeds, exit 0, and a `warnings` entry says why.
 
 Every publish JSON success includes `artifacts.html: { sha256, bytes }`.
@@ -1383,9 +1384,9 @@ File publishing onto a patch with cumulative table or store inventory is still
 `has_primitives` (422, exit 2, `rejected`), even if its current version omits
 those definitions. Publish that patch from its repo, now supported by this CLI.
 For `patch_not_openable`, correct the shared-table declaration or restore source
-access. For `connection_not_connected`, a super admin reconnects at
-`/company/connections`; `stale_generated` requires `pnpm patchy refresh`.
-Connection secrets belong only in the super admin's browser connect/rotate form,
+access. For `connection_not_connected`, an admin resumes it at
+`/settings/integrations`; `stale_generated` requires `pnpm patchy refresh`.
+Connection secrets belong only in the admin's browser connect or replace form,
 never CLI arguments or an agent transcript.
 
 Without `--share`, a new patch defaults to `company` and an update preserves the patch's current scope. An explicit `--share company` or `--share public` sets it in either direction while publishing the new version:
@@ -1531,6 +1532,47 @@ null at the start of the log. An entry's `agent` is `{ name }` when the person's
 agent made the call and null for their page's; an instance from before agents
 sends none, which the CLI prints as null. Another member's key is refused with `not_owner`,
 exit 2, naming the owner.
+
+### Requests and feedback
+
+Tell Patchy's team what Patchy can't do yet, a **request**, or what it did wrong,
+strangely or made hard, **feedback**. Each send is stored as the signed-in person,
+with the coding agent and CLI release from the `Patchy-Cli` header; inside a
+published patch repo it also names `patchy.json`'s patch. These commands run
+anywhere with the saved login and accept `--json`. Any text argument, or `--why`,
+may be `-` to read it from stdin; only one of them per call.
+
+| command                                                      | behaviour                                                                                                                                                  | `--json` success                                                  |
+| ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `patchy request "<what Patchy should do>" [--why "<need>"]`  | Stores the request, then prints its id and up to three similar requests, the company's own and Patchy's general ones, shipped ones with their public note. | `{ ok, id, similar: [{ id, title, status, note?, link }], next }` |
+| `patchy request link <id> <match-id> [--why "<reason>"]`     | Links your request to a match that is the same need, replacing any earlier link.                                                                           | `{ ok, id, link }`                                                |
+| `patchy request unlink <id>`                                 | Clears the link and its reason.                                                                                                                            | `{ ok, id, link: null }`                                          |
+| `patchy feedback "<what you ran, expected, and happened>"`   | Stores the feedback and prints its id.                                                                                                                     | `{ ok, id }`                                                      |
+| `patchy request list` or `patchy feedback list`              | One page of what you sent of that kind, through any surface, newest first; `--cursor` takes the page's `nextCursor`. Never a note or a why.                | `{ submissions, nextCursor }`                                     |
+| `patchy request withdraw <id>` or `patchy feedback withdraw` | Deletes one of yours, and clears other requests' links to it.                                                                                              | `{ ok, id }`                                                      |
+
+A filed request is exit 0 whether or not it has matches. Each match's `link` is
+the exact command that links to it, its ids quoted for the shell when they need
+it, and `next` says what is left: nothing, unless
+a match fully meets the need, or has shipped and the person should hear so.
+[`docs/API.md`](../../docs/API.md#feedback) owns the wire fields.
+
+Before sending, the CLI checks what the store would refuse anyway and exits 1,
+`local`, with nothing sent: a request outside 3–200 characters once whitespace
+collapses, a why or feedback over 4,000, stdin that isn't UTF-8 or passes that
+bound (reading stops there), and an id that isn't `req_` or `fbk_` and 24
+lowercase letters and digits, as the store mints them. A match id isn't checked:
+a general request's id is Patchy's team's.
+
+Refusals are `rejected`, exit 2, in the instance's words with their `code`:
+`contains_secret` names the field and kind of credential to remove,
+`invalid_text` the field out of bounds, `rate_limited` when to send again,
+`not_found` an id that isn't one of yours, and `invalid_link` a match you
+couldn't have been shown. An instance without requests answers these routes
+with its catch-all 404, which is exit 2: "<instance> doesn't take requests yet."
+A refusal whose body can't be read is exit 3. A send whose answer is lost or
+unreadable is exit 3 and may have been stored: the CLI never sends it again, and
+its message says to check `list` first.
 
 ### The company look
 
@@ -1691,6 +1733,11 @@ A decoded wire refusal is `rejected`, including the API's declared 503 `busy`
 and `source_unavailable` responses. Other 4xx responses are rejected; transport
 failures, unmodelled 5xx and unreadable bodies are unreachable. A bug in the CLI
 is `Unexpected error: <message>`, exit 1; add `--log-level debug` for the stack.
+After an answer the CLI could not use, such as an unmodelled 5xx or an
+unreadable body, or after an `Unexpected error`, the CLI adds `If Patchy got this wrong, tell Patchy's team: patchy feedback "<what you ran and what happened>"`
+on the next line, or `feedbackHint` under `--json`. No answer at all or one cut off
+mid-body, a refusal, a local mistake, a sign-in state and `patchy feedback`'s own
+failures carry none.
 Text diagnostics can include multiple repair or validation lines. Branch on the
 exit code and optional domain code, not prose or its line count.
 
@@ -1710,12 +1757,12 @@ warning after the local logout succeeds, never exit 3.
 Every command takes these, before or after the subcommand:
 
 - `--api-url <url>` — the highest-precedence instance override; for repo commands it must match the authoritative stored instance. See [precedence](#environment-variables).
-- `--json` prints one result document on stdout. Command success shapes are documented above; `auth set` prints `{ "ok": true, "instanceUrl" }`, `validate` prints `{ "ok": true, "warnings" }`, and `whoami`, `publish`, `share`, `retire`, `delete`, `restore`, `rollback`, `describe`, `logs`, `look`, `look publish` and `look restore` print the API shapes in [`docs/API.md`](../../docs/API.md). Publish and share include `scope`. `status` prints JSON either way.
+- `--json` prints one result document on stdout. Command success shapes are documented above; `auth set` prints `{ "ok": true, "instanceUrl" }`, `validate` prints `{ "ok": true, "warnings" }`, and `whoami`, `publish`, `share`, `retire`, `delete`, `restore`, `rollback`, `describe`, `logs`, `look`, `look publish`, `look restore`, `request link`, `request unlink`, `feedback`, `withdraw` and both `list`s of requests and feedback print the API shapes in [`docs/API.md`](../../docs/API.md); `request` adds `link` and `next`. Publish and share include `scope`. `status` prints JSON either way.
 
-A failure is `{ ok: false, error, kind, code?, state?, owner?, dependants?, sources?, purgeAt?, versionNumber?, baseVersion?, latestVersion?, publishedBy?, publishedAt?, admins?, warnings? }`
+A failure is `{ ok: false, error, kind, code?, state?, owner?, dependants?, sources?, purgeAt?, versionNumber?, baseVersion?, latestVersion?, publishedBy?, publishedAt?, admins?, feedbackHint?, warnings? }`
 on stderr, ordinarily with empty stdout and the exit code for `kind`. Lifecycle
 refusals retain the affected owner, patch state, dependant/source lists or reclaim
-date; `admin_required` retains the company's `admins`. Notices discovered before a later failure remain in `warnings`; success
+date; `admin_required` retains the company's `admins`. `feedbackHint` is the line [above](#exit-codes) that offers `patchy feedback`. Notices discovered before a later failure remain in `warnings`; success
 warnings stay in the stdout document. There is no separate JSON-mode warning output.
 
 Branch on `kind`/exit first, then `code`. Codes preserve wire refusals and identify
@@ -1755,6 +1802,8 @@ without `--json`, it is one line on stderr, and usage may precede it on stdout.
 - `--foreground` — on `dev`, wait and stream logs after readiness; interruption stops only a session this invocation started.
 - `--note <text>` — on `look publish`, required: why this revision exists, such as `darker green`.
 - `--compare` — on `look preview`: the folder's look beside the company's, or the Patchy look when it has none.
+- `--why <text>` — on `request`, the need behind it and its constraints; on `request link`, why the match meets the need. `-` reads it from stdin.
+- `--cursor <cursor>` — on `request list` and `feedback list`, continue from a page's `nextCursor`.
 
 ## Environment variables
 
@@ -1788,10 +1837,11 @@ The dev seed is available only when the URL source is `dev-env`. An explicit
 
 Every request a command sends to the instance names the CLI in one header,
 `Patchy-Cli: <release> <command> <agent>`, such as
-`Patchy-Cli: 0.0.1 publish codex`. The instance records it in its usage records
-and nothing else depends on it. The command is the one you ran (`auth set`,
+`Patchy-Cli: 0.0.1 publish codex`. The instance records it in its usage records,
+and the agent and release on each request or feedback sent; nothing else depends on it. The command is the one you ran (`auth set`,
 `status`, `setup` and `validate` send no requests; `look publish`,
-`look restore` and `look preview` send `look`). The agent is the first of
+`look restore` and `look preview` send `look`, and `request`'s and `feedback`'s subcommands send
+`request` and `feedback`). The agent is the first of
 these whose variable is set in the CLI's environment (`GROK_AGENT` only at
 `1`), or `unknown`:
 

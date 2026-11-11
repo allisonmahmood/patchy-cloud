@@ -18,7 +18,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { overlay, pressSampleData } from "../environment.js";
-import type { Scenario } from "../scenario.js";
+import { type Scenario, sourceOf } from "../scenario.js";
 import type { RunIdentities } from "./fixtures.js";
 import { decodeListed, type Door, type Listed, openAs } from "./grade.js";
 import { SetupFailed } from "./home.js";
@@ -172,10 +172,7 @@ export const stage = Effect.fn("Eval.stage")(function* (input: {
       // The side's own AGENTS.md stays: its template is part of what an eval measures.
       const agentsFile = path.join(workspace, patch.repo, "AGENTS.md");
       const agentsTemplate = yield* fs.readFileString(agentsFile);
-      yield* overlay(
-        path.join(input.scenarioDir, "patches", patch.repo),
-        path.join(workspace, patch.repo)
-      );
+      yield* overlay(sourceOf(path, input.scenarioDir, patch), path.join(workspace, patch.repo));
       yield* fs.writeFileString(agentsFile, agentsTemplate);
       yield* step(`Refreshing ${patch.repo}`, inRepo, "pnpm", ["patchy", "refresh", "--json"]);
       yield* step(`Publishing ${patch.repo}`, inRepo, "pnpm", [
@@ -196,7 +193,7 @@ export const stage = Effect.fn("Eval.stage")(function* (input: {
       repoIds.set(patch.repo, project.value.patch);
     } else {
       yield* fs.copyFile(
-        path.join(input.scenarioDir, "files", patch.file),
+        sourceOf(path, input.scenarioDir, patch),
         path.join(workspace, sourceName(patch))
       );
       yield* step(`Publishing ${patch.name}`, spec, "patchy", [

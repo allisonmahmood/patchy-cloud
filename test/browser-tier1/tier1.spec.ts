@@ -761,6 +761,43 @@ test("real sessions: login door, logout, expiry, account switch, revocation and 
   }
 });
 
+test("a kept public copy that starts after its patch went back to the company reloads as the company page", async ({
+  page,
+  context,
+  instance
+}) => {
+  const patch = await instance.publish("public");
+  const frame = await open(page, patch);
+  await expect(frame.locator("#identity")).toHaveText("anonymous");
+  // A copy a browser can start again without asking the server, as a cached public page was.
+  const kept = await context.request.get(patch.address);
+  expect(kept.status()).toBe(200);
+  const keptBody = await kept.body();
+  await instance.share(patch.patchId, "company");
+
+  // `me` now names the viewer, which the copy's patch must never get: it would act as nobody.
+  await page.route(
+    patch.address,
+    (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "text/html",
+        headers: { "content-security-policy": kept.headers()["content-security-policy"]! },
+        body: keptBody
+      }),
+    { times: 1 }
+  );
+  await page.goto(patch.address);
+  await expect(page.locator("#patch")).toHaveAttribute("data-scope", "company");
+  await expect(page.frameLocator("#patch").locator("#identity")).toHaveText("usr_dev");
+  const reloaded = page.frames().find((candidate) => candidate.url().includes("/~content/"))!;
+  expect(
+    await reloaded.evaluate(() =>
+      (window as unknown as FixtureWindow).harness.client.tables.rows!.list().then(() => "listed")
+    )
+  ).toBe("listed");
+});
+
 test("cross-site simple POST refusal, response CSP and one terminal stale public refresh", async ({
   page,
   context,

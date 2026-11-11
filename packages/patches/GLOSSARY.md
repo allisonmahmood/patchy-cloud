@@ -6,14 +6,14 @@ What the company holds and how it is published: patches and versions, user owner
 
 **Patch**:
 A built unit in a company's cloud, owned by one user and published as immutable versions. Shared with the company by default, with public sharing available below tier 2.
-_Avoid_: draft, page (how a patch is served, not what it is), app (one possible patch), document (the HTML a version holds)
+_Avoid_: draft, page or tool for every patch (its two kinds, by tier), app (one possible patch), project, document (the HTML a version holds)
 
 **Name**:
 The human-readable label unique within a company's patch namespace, forming the patch's address rather than its identity. Retire and delete reserve its names until reclamation; renaming keeps the former name as a redirect until another patch takes it.
 _Avoid_: id (the stable identity), title (the document's display text), slug
 
 **Tier**:
-Where a patch's code runs, counted from 1. Tier 1 runs in the reader's browser and reaches only its own patch; tier 2 adds request-scoped server handlers while a viewer has the patch open or their worker agent is calling it, and only tier 2 declares connections, shared sources or the member directory. It is not a pricing plan.
+Where a patch's code runs, counted from 1. Tier 1 runs in the reader's browser and reaches only its own patch; tier 2 adds request-scoped server handlers while a viewer has the patch open or their worker agent is calling it, and only tier 2 declares connections, shared sources or the member directory. It is not a pricing plan. In what a person reads, a tier 1 patch is a **page** and a tier 2 patch is a **tool**, the kinds All patches filters by.
 _Avoid_: runtime (the thing a tier names), level, plan (tiers are capability, not pricing)
 
 **Owner**:
@@ -121,8 +121,8 @@ One successful serving of a patch from the instance, at its latest or a version 
 _Avoid_: view, hit, page load (a visit is a serving that succeeded, not a request that arrived)
 
 **Open**:
-One member's record of opening a live patch's address while signed in: when they last opened it and a score where each open counts 1 and halves every week. Reopening it within ten minutes of the last open adds nothing to the score but still moves the last open, so flipping between two patches counts each about once. Only the current version counts, so reading an older version leaves a newer one unread. It exists to build that member's own Home; nobody else reads it, and owners and admins see only the visit count. The first one a member records for someone else's patch is also reported to Patchy's own analytics as `patch.first_opened`, by ids, to count [activation](../analytics/GLOSSARY.md), and is shown to nobody. A member signed in records one on their company's public patches too; a public page read signed out, or by anyone outside the company, records none.
-_Avoid_: view history, recently viewed, tracking (it records the member's own use for the member)
+One person's record of opening a live patch's address while signed in: when they last opened it and a score where each open counts 1 and halves every week. Reopening it within ten minutes of the last open adds nothing to the score but still moves the last open, so flipping between two patches counts each about once. Only the current version counts, so reading an older version leaves a newer one unread. It exists to build that person's own Home, where having none for a colleague's patch is what its dot says; nobody else reads it, and owners and admins see only the visit count. The first one a member records for someone else's patch is also reported to Patchy's own analytics as `patch.first_opened`, by ids, to count [activation](../analytics/GLOSSARY.md), and is shown to nobody. A member signed in records one on their company's public patches too, and a [guest](../companies/GLOSSARY.md) on a patch shared with them, which is never reported; a public page read signed out, or by anyone else outside the company, records none.
+_Avoid_: view history, recently viewed, tracking (it records a person's own use for that person)
 
 **Live patch**:
 A patch that has been neither retired nor deleted. A separate operator take-down can prevent it serving without changing its lifecycle state.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SWITCHER_RELAY_SOURCE, switcherRelay } from "@patchy/core";
+import { SWITCHER_RELAY_SOURCE, switcherRelay, uiScriptTag } from "@patchy/core";
 import { pageResponse } from "./page.js";
 
 const app = {
@@ -29,9 +29,9 @@ describe("pageResponse", () => {
       pageResponse({ title: "Sign in", body: "" }, { clerk }),
       ["'self'", "https://clerk.example.test"]
     ],
-    ["a door with no script of its own", pageResponse({ title: "Sign in", body: "" }), []]
+    ["a door with no session script", pageResponse({ title: "Sign in", body: "" }), ["'self'"]]
   ] as const)(
-    "admits the switcher relay it renders, and no other inline script, on %s",
+    "admits the switcher relay it renders, no other inline script, and the enhancer, on %s",
     (_, page, sources) => {
       const scriptSources = page.headers["content-security-policy"]
         ?.split("; ")
@@ -39,9 +39,10 @@ describe("pageResponse", () => {
         ?.split(" ")
         .slice(1);
       expect(scriptSources).toEqual([...sources, SWITCHER_RELAY_SOURCE]);
-      expect(page.body._tag === "Uint8Array" && new TextDecoder().decode(page.body.body)).toContain(
-        switcherRelay
-      );
+      const html = page.body._tag === "Uint8Array" && new TextDecoder().decode(page.body.body);
+      expect(html).toContain(switcherRelay);
+      // Every page loads the enhancer from this origin, which is why even a bare door admits 'self'.
+      expect(html).toContain(uiScriptTag);
     }
   );
 });

@@ -331,6 +331,12 @@ const page = (person: Person, path: string) =>
     assert.strictEqual(response.status, 200);
     return response.text;
   });
+/** The removal's confirmation: a dialog over Guests, which lists the same patches behind it. */
+const dialog = (html: string) => {
+  const start = html.indexOf('id="remove-guest" role="dialog"');
+  assert.isAtLeast(start, 0);
+  return html.slice(start);
+};
 
 it.layer(layer())("People All guests", (it) => {
   it.effect("includes guests once in All with search and live removal counts", () =>
@@ -370,16 +376,15 @@ it.layer(layer())("People's guests", (it) => {
   it.effect("lists each guest's patches here to every member, with Remove for admins only", () =>
     Effect.gen(function* () {
       const { grants, guest, notes, board, theirs, member } = yield* peopleWithGuests("fjord");
-      const removal = `/company/guests/${guest.user.id}/remove`;
-      const listed = yield* page(member, "/company?show=guests");
+      const removal = `/settings/people/guests/${guest.user.id}/remove`;
+      const listed = yield* page(member, "/settings/people?show=guests");
       const start = listed.indexOf(guest.user.email);
-      const row = listed.slice(start, listed.indexOf("</details>", start));
-      assert.include(row, "2 patches");
+      const row = listed.slice(start, listed.indexOf("</tr>", start));
       for (const title of ["fjord notes", "fjord board"]) assert.include(row, title);
       assert.include(row, `Shared by ${DEV_SEED.userName}`);
       assert.notInclude(row, "fjord rota");
       assert.notInclude(listed, removal);
-      assert.include(yield* page(admin, "/company?show=guests"), removal);
+      assert.include(yield* page(admin, "/settings/people?show=guests"), removal);
 
       assert.strictEqual((yield* people(member, removal)).status, 403);
       assert.strictEqual((yield* people(member, removal, "POST")).status, 403);
@@ -391,8 +396,8 @@ it.layer(layer())("People's guests", (it) => {
   it.effect("removes a guest from all of this company's patches once an admin confirms", () =>
     Effect.gen(function* () {
       const { grants, guest, notes, board, theirs } = yield* peopleWithGuests("tarn");
-      const removal = `/company/guests/${guest.user.id}/remove`;
-      const confirmation = yield* page(admin, removal);
+      const removal = `/settings/people/guests/${guest.user.id}/remove`;
+      const confirmation = dialog(yield* page(admin, removal));
       for (const title of ["tarn notes", "tarn board"]) assert.include(confirmation, title);
       assert.notInclude(confirmation, "tarn rota");
       assert.include(confirmation, "Remove from 2 patches");
@@ -422,14 +427,13 @@ it.layer(layer())("People's guests", (it) => {
       const { grants, guest, notes, board } = yield* peopleWithGuests("loch");
       yield* (yield* SqlClient.SqlClient)`UPDATE patches SET disabled_at = now()
         WHERE id IN (${notes.patchId}, ${board.patchId})`;
-      const listed = yield* page(admin, "/company?show=guests");
+      const listed = yield* page(admin, "/settings/people?show=guests");
       const start = listed.indexOf(guest.user.email);
       assert.isAtLeast(start, 0);
-      const row = listed.slice(start, listed.indexOf("</details>", start));
-      assert.include(row, "2 patches");
-      assert.include(row, "Unavailable");
+      const row = listed.slice(start, listed.indexOf("</tr>", start));
+      assert.lengthOf(row.match(/Unavailable/g) ?? [], 2);
 
-      yield* people(admin, `/company/guests/${guest.user.id}/remove`, "POST");
+      yield* people(admin, `/settings/people/guests/${guest.user.id}/remove`, "POST");
       // Re-enabling them would let the guest back in had their grants survived.
       for (const patch of [notes, board])
         assert.deepStrictEqual(yield* grants.guests(patch.patchId), []);
@@ -441,10 +445,10 @@ it.layer(layer())("People's guests", (it) => {
       const { guest, board } = yield* peopleWithGuests("fell");
       yield* (yield* SqlClient.SqlClient)`UPDATE patches SET disabled_at = now()
         WHERE id = ${board.patchId}`;
-      const confirmation = yield* page(admin, `/company/guests/${guest.user.id}/remove`);
-      assert.include(confirmation, "fell notes");
-      assert.notInclude(confirmation, "fell board");
-      assert.include(confirmation, "Restricted patch");
+      const confirmation = dialog(
+        yield* page(admin, `/settings/people/guests/${guest.user.id}/remove`)
+      );
+      for (const title of ["fell notes", "fell board"]) assert.include(confirmation, title);
       assert.include(confirmation, "Unavailable");
       assert.include(confirmation, "Remove from 2 patches");
     })
@@ -760,7 +764,7 @@ it.layer(layer({ NODE_ENV: "development" }), { excludeTestServices: true })(
           /** The admin's Block guests or Allow guests, landing back on the connection's page. */
           const set = (action: "block-guests" | "allow-guests") =>
             send(
-              HttpClientRequest.post(`/company/connections/${connectionId}/${action}`).pipe(
+              HttpClientRequest.post(`/settings/integrations/${connectionId}/${action}`).pipe(
                 HttpClientRequest.setHeaders({ origin, cookie: admin.cookie }),
                 HttpClientRequest.bodyUrlParams({})
               )

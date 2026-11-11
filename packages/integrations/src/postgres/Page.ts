@@ -1,19 +1,20 @@
 import type { Snapshot } from "@patchy/api/postgres-snapshot";
-import { escapeAttribute } from "@patchy/core";
 import * as Redacted from "effect/Redacted";
 import type * as ConnectionStore from "../ConnectionStore.js";
-import * as View from "../ConnectionsView.js";
+import type * as ConnectFrame from "../ConnectFrame.js";
+import type * as View from "../ConnectionsView.js";
+import * as Fields from "../Fields.js";
 
 /** What the connections pages say about Postgres; the layout around it is every integration's. */
 
 type Connection = Extract<ConnectionStore.Connection, { readonly integration: "postgres" }>;
 
-export const integration = { key: "postgres", label: "Postgres" } as const;
-export const offer = {
-  integration,
-  reads: "Queries against your own database, through a role you supply.",
-  mode: "Company-wide · read-only"
-};
+export const integration = {
+  key: "postgres",
+  label: "Postgres",
+  mark: { logo: "postgres" }
+} as const;
+export const offer = { integration, line: "Your own database, read-only" };
 /** What recent calls keep of a Postgres call. */
 export const logged =
   "Query text keeps its first 8 KiB; parameters and returned rows are never logged.";
@@ -21,6 +22,9 @@ export const actions = {
   refresh: "Refresh schema",
   rotate: "Replace credentials",
   retarget: "Point elsewhere"
+};
+export const results = {
+  reconnect: "Tested and resumed. Its schema revision is unchanged."
 };
 
 export const source = (connection: Connection) =>
@@ -30,6 +34,16 @@ export const facts = (connection: Connection): ReadonlyArray<readonly [string, s
   ["Database", connection.display.database],
   ["Role", connection.display.role]
 ];
+/** What it holds, as Settings names it: the connection string, never shown, and whose role. */
+export const credential = (connection: Connection) => ({
+  label: "Connection string",
+  detail: `Stored · as the role ${connection.display.role}`
+});
+/** Where it reads, which Point elsewhere changes. */
+export const target = (connection: Connection) => ({
+  label: "Database",
+  value: source(connection)
+});
 
 const plural = (count: number, one: string, many = `${one}s`) =>
   `${count} ${count === 1 ? one : many}`;
@@ -70,38 +84,6 @@ export const reads = (snapshot: typeof Snapshot.Type) => {
   };
 };
 
-export const connectIntro =
-  "Nothing is saved until Patchy has tested the connection and found its schema.";
-
-/** What to have in hand first, so the form is one paste for whoever holds the database's keys. */
-export const walkthrough: View.Walkthrough = {
-  before: [
-    {
-      title: "Get a read-only role",
-      text: "Ask whoever runs the database for a role that reads only what patches need. Superusers and roles with CREATEDB or CREATEROLE are refused."
-    }
-  ],
-  current: "Paste its connection string",
-  after: [
-    {
-      title: "Use it in a patch",
-      text: "Ask your agent to add it to a patch by its name, such as postgres/warehouse."
-    }
-  ]
-};
-
-/** The access note sits with the credentials field: it is about the role inside that string. */
-const promise = `<div class="note"><strong class="note-title">Company-wide access</strong><p>Every member can query this database through any patch that declares it, as the role you supply.</p><p>Reads are constrained, but a SELECT can still call functions and extensions, so arbitrary SQL isn't guaranteed harmless. Supply a dedicated, least-privileged role.</p></div>`;
-const credentialsField = (refusal: View.Notice | undefined, note = "") => {
-  const field = View.fieldNote(
-    "connection-credentials",
-    "credentials",
-    "With a password and sslmode=verify-full, for a database reachable from the internet. Patchy encrypts it and never shows it again.",
-    refusal
-  );
-  return `${note}<label class="field-label" for="connection-credentials">Connection string</label><input class="field" id="connection-credentials" type="password" name="credentials" required autocomplete="new-password" spellcheck="false"${field.attributes}>${field.note}`;
-};
-
 /** Refusals about the connection string itself, shown under it rather than atop the page. */
 export const credentialRefusals: ReadonlyMap<string, View.Field> = new Map(
   [
@@ -127,37 +109,48 @@ export const credentials = (
       }
     : Redacted.make(form.credentials);
 
-/** The connect form's fields; a refused submit keeps the handle and description, never credentials. */
-export const connectFields = (
-  submitted: Readonly<Record<string, string | undefined>>,
-  refusal?: View.Notice
-) => {
-  const handle = View.fieldNote(
-    "connection-handle",
-    "handle",
-    "3–32 lowercase letters, digits or hyphens. Patches use this name, which can't be changed later.",
-    refusal
-  );
-  const description = View.fieldNote(
-    "connection-description",
-    "description",
-    "One line on what this database is for, so builders pick the right one.",
-    refusal
-  );
-  return `<label class="field-label" for="connection-handle">Name</label><div class="field field-group"><label class="field-prefix" for="connection-handle">postgres/</label><input id="connection-handle" name="handle" value="${escapeAttribute(submitted.handle ?? "")}" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9\\-]{1,30}[a-z0-9]" autocomplete="off" autocapitalize="none" spellcheck="false"${handle.attributes}></div>${handle.note}<label class="field-label" for="connection-description">Description</label><input class="field" id="connection-description" name="description" maxlength="500" value="${escapeAttribute(submitted.description ?? "")}"${description.attributes}>${description.note}${credentialsField(refusal, promise)}`;
+/** The connection string, as Replace credentials and Point elsewhere ask for it. */
+const connectionString: Fields.Spec = {
+  kind: "secret",
+  name: "credentials",
+  field: "credentials",
+  label: "Connection string",
+  hint: "With a password and sslmode=verify-full, for a database reachable from the internet. Encrypted, and never shown again.",
+  autocomplete: "new-password"
+};
+
+/** What the connect page asks for, in the shared frame. */
+export const connect: ConnectFrame.ConnectSpec = {
+  getIt: {
+    title: "Get a read-only role",
+    steps: [
+      "Ask whoever runs the database for a role that reads only what patches need. Patchy refuses superusers and roles that can create databases or roles."
+    ]
+  },
+  paste: { title: "Paste its connection string", fields: [connectionString] },
+  name: { example: "warehouse", describe: "Finance warehouse: invoices, projects and hours" },
+  once: {
+    reads: "this database, as the role you gave",
+    devReads: false,
+    cannot: ["Nothing is written: every query runs read-only"],
+    caveat:
+      "A SELECT can still call functions and extensions, so give Patchy a dedicated, least-privileged role."
+  }
 };
 
 export const rotate = {
   title: (name: string) => `Replace credentials for ${name}`,
   consequence:
     "Patchy tests the new credentials against the same database before saving them. The connection keeps its identity and what patches can read, but a different role changes what every declaring patch can reach. To use another database, point it elsewhere instead.",
-  fields: (_submitted: Readonly<Record<string, string | undefined>>, refusal?: View.Notice) =>
-    credentialsField(refusal)
-};
+  fields: (submitted: Fields.Submitted, refusal?: View.Notice) =>
+    Fields.render(connectionString, submitted, refusal, true),
+  shows: ["credentials"]
+} as const;
 export const retarget = {
   title: (name: string) => `Point ${name} elsewhere`,
   consequence:
-    "Patchy tests the new destination and discovers its schema before switching. Every declaring patch then reads the new database through the schema it was published with, until it is refreshed and published again. A disconnected connection stays disconnected.",
-  fields: (_submitted: Readonly<Record<string, string | undefined>>, refusal?: View.Notice) =>
-    credentialsField(refusal, promise)
-};
+    "Patchy tests the new destination and discovers its schema before switching. Every declaring patch then reads the new database through the schema it was published with, until it is refreshed and published again. A paused connection stays paused.",
+  fields: (submitted: Fields.Submitted, refusal?: View.Notice) =>
+    Fields.render(connectionString, submitted, refusal, true),
+  shows: ["credentials"]
+} as const;

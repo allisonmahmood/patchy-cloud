@@ -9,15 +9,18 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as UrlParams from "effect/http/UrlParams";
 import type * as SqlClient from "effect/sql/SqlClient";
 import type { Analytics } from "@patchy/analytics";
-import { type Cryptography } from "@patchy/core";
+import * as WideEvents from "@patchy/analytics/wide-events";
+import type { AppShell, Cryptography } from "@patchy/core";
 import {
   CompanyPage,
   TeamsPage,
   Join,
+  Terms,
+  Users,
   type Companies,
-  type InviteMail,
-  type Users
+  type InviteMail
 } from "@patchy/companies";
+import { linkButton } from "@patchy/core";
 import type * as AgentConnections from "./AgentConnections.js";
 import * as BetaLinks from "./BetaLinks.js";
 import * as DevicePages from "./DevicePages.js";
@@ -27,7 +30,15 @@ import type * as MachineTokens from "./MachineTokens.js";
 import * as Receipt from "./Receipt.js";
 import * as RequireSession from "./RequireSession.js";
 import * as Session from "./Session.js";
-import { pageResponse, returnPath, signOutForm, withCookies } from "./page.js";
+import * as TermsPrompt from "./TermsPrompt.js";
+import {
+  accountFoot,
+  doorResponse,
+  pageResponse,
+  returnPath,
+  unavailableDoor,
+  withCookies
+} from "./page.js";
 
 const join = Effect.gen(function* () {
   const claims = yield* RequireSession.SignedIn;
@@ -53,18 +64,15 @@ const join = Effect.gen(function* () {
       name: claims.name
     },
     membership,
-    { returnTo: target, publicBaseUrl: session.publicBaseUrl },
+    { returnTo: target, publicBaseUrl: session.publicBaseUrl, foot: accountFoot(claims.email) },
     Option.getOrUndefined(suggested)
   );
   return page.redirect
     ? HttpServerResponse.redirect(page.redirect, { status: 303 })
-    : pageResponse(
-        { ...page, styles: Join.styles, body: `${page.body}${signOutForm(true)}` },
-        session
-      );
+    : pageResponse(page, session);
 });
 
-/** People at `/company` and Agent access at `/company/agent-access`, with their forms. */
+/** People at `/settings/people` and Agent access at `/settings/agent-access`, with their forms. */
 const company = Effect.fn("AuthPages.company")(function* (action: CompanyPage.Action) {
   const viewer = yield* RequireSession.Viewer;
   const session = yield* Session.Session;
@@ -82,11 +90,16 @@ const company = Effect.fn("AuthPages.company")(function* (action: CompanyPage.Ac
           publicBaseUrl: session.publicBaseUrl
         });
   }
-  const section =
+  const section: AppShell["section"] =
     action.kind === "view-agent-access" || action.kind === "agent-access"
       ? "agent-access"
       : "people";
-  return pageResponse({ ...page, styles: CompanyPage.styles, app: { viewer, section } }, session);
+  // A receipt waits under a dialog until a page shows it.
+  const app =
+    page.overlay === undefined
+      ? { viewer, section }
+      : { viewer: { ...viewer, receipt: undefined }, section, overlay: page.overlay };
+  return pageResponse({ ...page, app }, session);
 });
 
 /**
@@ -120,40 +133,78 @@ const logout = Effect.gen(function* () {
   );
 });
 
+/** The prompt's answer: four short fields, the return path at most a page address. */
+const MAX_TERMS_BYTES = 8_192;
+
+/**
+ * Accept on the terms prompt (`TermsPrompt`): records the revisions it showed, as the account it
+ * showed, then goes on to the page the prompt stood in for. An answer from a page left open
+ * across an account switch or a new revision records nothing and asks again, unless whoever is
+ * signed in has already accepted the current terms, who just goes on.
+ */
+const acceptTerms = Effect.gen(function* () {
+  const session = yield* Session.Session;
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const form = yield* request.urlParamsBody.pipe(
+    Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(MAX_TERMS_BYTES))
+  );
+  const field = (name: string) => Option.getOrNull(UrlParams.getFirst(form, name));
+  const returnTo = returnPath(field("return"), session.publicBaseUrl) ?? "/";
+  return yield* RequireSession.forTerms(
+    Effect.gen(function* () {
+      const viewer = yield* RequireSession.Viewer;
+      const users = yield* Users.Users;
+      const onward = HttpServerResponse.redirect(returnTo, {
+        status: 303,
+        headers: { "cache-control": "private, no-store" }
+      });
+      const changed: TermsPrompt.Changed | undefined =
+        field("userId") !== viewer.user.id
+          ? "account"
+          : field("terms") !== Terms.current.terms || field("privacy") !== Terms.current.privacy
+            ? "terms"
+            : undefined;
+      if (changed === undefined) {
+        yield* users.acceptTerms({ userId: viewer.user.id, revisions: Terms.current });
+        yield* WideEvents.enrich({ code: "terms_accepted" });
+        return onward;
+      }
+      if (yield* users.hasAcceptedTerms({ userId: viewer.user.id, revisions: Terms.current }))
+        return onward;
+      yield* WideEvents.enrich({ code: `terms_${changed}_changed` });
+      return TermsPrompt.page(session, { user: viewer.user, returnTo }, changed);
+    }),
+    returnTo
+  );
+});
+
 /** Typed infrastructure failures remain retryable pages, never a fake successful sign-out. */
 const errors = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) =>
   Effect.gen(function* () {
     const session = yield* Session.Session;
     return yield* app.pipe(
       Effect.catchTags({
-        SessionError: () =>
+        RoleForbidden: () =>
           Effect.succeed(
-            pageResponse(
+            doorResponse(
               {
-                title: "Sign-in service unavailable",
-                body: `<p>Please try again.</p>${signOutForm()}`,
-                status: 502
+                title: "Access refused",
+                body: "<p>You no longer have permission to do that. Nothing changed.</p>",
+                status: 403
               },
               session
             )
           ),
-        SqlError: () =>
-          Effect.succeed(
-            pageResponse(
-              {
-                title: "Company service unavailable",
-                body: `<p>Please try again.</p>${signOutForm()}`,
-                status: 503
-              },
-              session
-            )
-          ),
+        SessionError: () => Effect.succeed(unavailableDoor("sign-in", { signOut: true }, session)),
+        SqlError: () => Effect.succeed(unavailableDoor("patchy", { signOut: true }, session)),
         HttpServerError: () =>
           Effect.succeed(
-            pageResponse(
+            doorResponse(
               {
                 title: "Invalid form",
-                body: `<p>Return to <a href="/company">your company</a> and submit the form again.</p>${signOutForm()}`,
+                body: "<p>Go back and submit the form again.</p>",
+                actions: linkButton("Back to People", "/settings/people", { block: true }),
+                foot: accountFoot(undefined),
                 status: 400
               },
               session
@@ -193,7 +244,7 @@ export const layer: Layer.Layer<
           const request = yield* HttpServerRequest.HttpServerRequest;
           const url = new URL(request.url, session.publicBaseUrl);
           const path =
-            returnPath(url.searchParams.get("return"), session.publicBaseUrl) ?? "/machines";
+            returnPath(url.searchParams.get("return"), session.publicBaseUrl) ?? "/agents";
           return RequireSession.door(session, path, false, 200);
         })
       );
@@ -239,18 +290,23 @@ export const layer: Layer.Layer<
         errors(RequireSession.sameOrigin(RequireSession.forEnrollment(join)))
       );
       yield* router.add(
+        "POST",
+        TermsPrompt.ACCEPT_PATH,
+        errors(RequireSession.sameOrigin(acceptTerms))
+      );
+      yield* router.add(
         "GET",
-        "/company",
+        "/settings/people",
         errors(RequireSession.withViewer(company({ kind: "view" })))
       );
       yield* router.add(
         "GET",
-        "/company/agent-access",
+        "/settings/agent-access",
         errors(RequireSession.withViewer(company({ kind: "view-agent-access" })))
       );
       yield* router.add(
         "GET",
-        "/company/guests/:id/remove",
+        "/settings/people/guests/:id/remove",
         errors(
           RequireSession.withViewer(
             Effect.flatMap(HttpRouter.params, (params) =>
@@ -260,8 +316,8 @@ export const layer: Layer.Layer<
         )
       );
       for (const [path, kind] of [
-        ["/company/invites", "invite"],
-        ["/company/agent-access", "agent-access"]
+        ["/settings/people/invites", "invite"],
+        ["/settings/agent-access", "agent-access"]
       ] as const) {
         yield* router.add(
           "POST",
@@ -270,10 +326,10 @@ export const layer: Layer.Layer<
         );
       }
       for (const [path, kind] of [
-        ["/company/invites/:id/revoke", "revoke"],
-        ["/company/invites/:id/resend", "resend"],
-        ["/company/users/:id/role", "role"],
-        ["/company/guests/:id/remove", "remove-guest"]
+        ["/settings/people/invites/:id/revoke", "revoke"],
+        ["/settings/people/invites/:id/resend", "resend"],
+        ["/settings/people/users/:id/role", "role"],
+        ["/settings/people/guests/:id/remove", "remove-guest"]
       ] as const) {
         yield* router.add(
           "POST",
@@ -320,10 +376,7 @@ export const layer: Layer.Layer<
                 })
               : response;
           }
-          return pageResponse(
-            { ...page, styles: TeamsPage.styles, app: { viewer, section: "teams" } },
-            session
-          );
+          return pageResponse({ ...page, app: { viewer, section: "teams" } }, session);
         });
         yield* router.add(
           action === "view" ? "GET" : "POST",

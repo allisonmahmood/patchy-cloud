@@ -67,7 +67,7 @@ export class ConnectionNotConnected extends Schema.TaggedError<ConnectionNotConn
 ) {
   readonly code = "connection_not_connected" as const;
   override get message() {
-    return `${labels[this.integration]} connection ${this.handle} is not connected. Ask an administrator at /company/connections.`;
+    return `${labels[this.integration]} connection ${this.handle} is not connected. Ask an administrator at /settings/integrations.`;
   }
 }
 export class PatchNotOpenable extends Schema.TaggedError<PatchNotOpenable>()(
@@ -83,7 +83,7 @@ export class PatchNotOpenable extends Schema.TaggedError<PatchNotOpenable>()(
   override get message() {
     const resource = this.store ?? this.table;
     const kind = this.store === undefined ? "table" : "store";
-    return `Patch or shared ${kind} ${this.patchId}${resource === undefined ? "" : `/${resource}`} is not openable. Ask its owner or an administrator at /company.`;
+    return `Patch or shared ${kind} ${this.patchId}${resource === undefined ? "" : `/${resource}`} is not openable. Ask its owner or an administrator at /settings/people.`;
   }
 }
 /** Below tier 2 a patch declares no `uses`; generation resolves nothing for it. */

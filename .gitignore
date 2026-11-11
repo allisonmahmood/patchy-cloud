@@ -29,3 +29,6 @@ packages/patchy/artifacts/
 
 # CDK synth output.
 apps/infra/cdk.out/
+
+# The display font: a release takes it from its private bucket (docs/OPERATIONS.md › The display font).
+/packages/core/fonts/CabinetGrotesk-Extrabold.woff2

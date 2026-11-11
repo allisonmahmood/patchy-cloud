@@ -23,7 +23,8 @@ const list: SwitcherList = {
     {
       id: "sail",
       name: "sailings-today",
-      title: "Sailings Today",
+      // Rows leave out the company a patch's own HTML ends its title with.
+      title: "Sailings Today · Northsound",
       tier: 2,
       mine: false,
       openedAt: ago(4),
@@ -80,7 +81,7 @@ const list: SwitcherList = {
       id: "galley",
       company: { handle: "pine", name: "Pine Studio" },
       name: "galley-orders",
-      title: "Galley Orders",
+      title: "Galley Orders | Pine Studio",
       tier: 2
     }
   ]
@@ -116,7 +117,18 @@ describe("what the switcher lists", () => {
         ]
       ],
       ["This patch", ["Overview", "Versions", "Log", "Settings"]],
-      ["Patchy", ["Home", "All patches", "Your agents", "People", "Integrations", "What’s new"]]
+      [
+        "Patchy",
+        [
+          "Home",
+          "All patches",
+          "Your agents",
+          "People",
+          "Integrations",
+          "Agent access",
+          "What’s new"
+        ]
+      ]
     ]);
     const [first] = result[0]!.rows;
     expect(first).toMatchObject({ href: "/northsound/sailings-today", detail: "4 min" });
@@ -151,7 +163,7 @@ describe("what the switcher lists", () => {
     expect(result[0]!.rows[0]!.title).toBe("Fuel Log");
     expect(view(result).at(-1)).toEqual([
       "Patchy",
-      ["All patches", "Your agents", "People", "Integrations", "What’s new"]
+      ["All patches", "Your agents", "People", "Integrations", "Agent access", "What’s new"]
     ]);
     expect(result.some((section) => section.label === "This patch")).toBe(false);
   });
@@ -212,7 +224,10 @@ describe("what the switcher lists", () => {
       now
     );
     expect(view(result)).toEqual([
-      ["Patchy", ["All patches", "Your agents", "People", "Integrations", "What’s new"]]
+      [
+        "Patchy",
+        ["All patches", "Your agents", "People", "Integrations", "Agent access", "What’s new"]
+      ]
     ]);
     expect(result[0]!.rows.at(-1)!.dot).toBe(false);
   });
@@ -222,9 +237,17 @@ describe("what the switcher lists", () => {
     expect(view(sections(kept(), here, "sa", now))).toEqual([
       ["", ["Sales HQ", "Sailings Today", "Safety Drills"]]
     ]);
-    expect(view(sections(kept(), here, "set", now))).toEqual([["", ["Settings"]]]);
+    // A patch's own Settings leads; the sidebar's Settings opens People, which answers to it.
+    expect(view(sections(kept(), here, "set", now))).toEqual([["", ["Settings", "People"]]]);
+    expect(view(sections(kept(), { path: "/agents" }, "settings", now))).toEqual([
+      ["", ["People"]]
+    ]);
     expect(view(sections(kept(), here, "go", now))).toEqual([["", ["Galley Orders"]]]);
     expect(view(sections(kept(), here, "peo", now))).toEqual([["", ["People"]]]);
+    // Every place with a page is listed, Settings' by their own names.
+    expect(view(sections(kept(), here, "agent", now))).toEqual([
+      ["", ["Agent access", "Your agents"]]
+    ]);
     expect(sections(kept(), here, "payroll", now)).toEqual([]);
   });
 });

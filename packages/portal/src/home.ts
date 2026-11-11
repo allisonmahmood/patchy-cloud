@@ -1,331 +1,396 @@
+import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { guestReasonText } from "@patchy/api";
-import type { RequireSession } from "@patchy/auth";
+import type { EndedAccess, RequireSession } from "@patchy/auth";
 import {
-  copyLine,
+  ago,
+  attentionRow,
+  avatar,
+  copyButton,
   copyScriptPath,
+  dateLabel,
+  emptyState,
   escapeAttribute,
   escapeHtml,
+  indexPage,
   isPage,
   isWelcomePage,
+  linkButton,
   menuLink,
+  menuNewTab,
+  notice,
   patchMark,
+  patchTitle,
+  productMark,
+  region,
+  row,
   rowMenu,
-  searchField
+  rows,
+  table,
+  type Template,
+  unopenedName,
+  usualTiles
 } from "@patchy/core";
+import type { ConnectionAttention } from "@patchy/integrations";
 import type { GuestGrants, Patches } from "@patchy/patches";
-import { failedLog, isNew, manages, matches, openItems, patchAddress } from "./allPatches.js";
-import { firstClause, patchTitle } from "./render.js";
-
-/** Home's layout; components come from the shell. */
-export const homeStyles = `
-  .home-search { margin-top: 20px; }
-  /* From 900px the sidebar holds the search; below it the sidebar folds into Menu, so Home keeps its own. */
-  @media (min-width: 900px) {
-    .home-search { display: none; }
-  }
-  .home { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 330px); gap: 36px; align-items: start; margin-top: 28px; }
-  .home-solo { grid-template-columns: minmax(0, 1fr); }
-  /* The shelves fit the column they get, which the Pages panel narrows, rather than the window. */
-  .home-main { container-type: inline-size; }
-  .home-shelf + .home-shelf { margin-top: 32px; }
-  .home-usual { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
-  /* Rows sit flush with their heading; a plain row's padding is its hover frame. */
-  .home-rows { display: grid; gap: 2px; margin: 0 -8px 8px; }
-  /* home-row: a patch's row with its menu beside it rather than over its text. */
-  .home-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px; min-width: 0; }
-  .home-foot { margin: 28px 0 0; }
-  .home-matches { margin: 12px 0 0; }
-  .home-solo > .note .copy-line { margin: 12px 0; }
-  @media (max-width: 960px) {
-    .home { grid-template-columns: minmax(0, 1fr); }
-  }
-  @container (max-width: 620px) {
-    .home-usual { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  }
-  @container (max-width: 280px) {
-    .home-usual { grid-template-columns: minmax(0, 1fr); }
-  }
-`;
+import type { InvocationLog } from "@patchy/runtime";
+import {
+  byTitle as titled,
+  cardPath,
+  failedBadge,
+  failedLog,
+  failuresCell,
+  failuresColumn,
+  firstClause,
+  manages,
+  openItems,
+  patchAddress,
+  shareHref,
+  unopened
+} from "./shared/presentation.js";
 
 const DAY = 86_400_000;
 /** How far back an open still makes a patch someone's usual. */
 const USUAL_WINDOW = 30 * DAY;
-/** How long a newly published page stays new to someone who hasn't opened it. */
-const NEW_WINDOW = 7 * DAY;
 const USUAL = 4;
-const TOOLS = 12;
-const PAGES = 3;
+const NEW = 3;
+/** How long a colleague's patch the viewer hasn't opened stays in New. */
+const NEW_WINDOW = 7 * DAY;
+const COLLEAGUES = 12;
+/** Below this many live patches Home reads whole, so it leaves out Your usual and New. */
+const SHELVES_AT = 8;
 
 type Viewer = RequireSession.Viewer["Service"];
+type Row = Patches.ReadPatch;
 const epoch = (iso: string) => Date.parse(iso);
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
-
-/** `text` escaped, with each case-insensitive occurrence of `query` marked. */
-const highlight = (text: string, query: string) => {
-  if (query === "") return escapeHtml(text);
-  const lower = text.toLowerCase();
-  const needle = query.toLowerCase();
-  let out = "";
-  let from = 0;
-  for (let at = lower.indexOf(needle); at !== -1; at = lower.indexOf(needle, from)) {
-    out += `${escapeHtml(text.slice(from, at))}<mark>${escapeHtml(text.slice(at, at + needle.length))}</mark>`;
-    from = at + needle.length;
-  }
-  return out + escapeHtml(text.slice(from));
+const kind = (row: Row) => (isPage(row) ? "Page" : "Tool");
+const firstName = (name: string) => name.trim().split(/\s+/)[0] ?? name;
+/** When a list says something changed: "2 hours ago" for a week, then the date, its year only if another. */
+const when = (iso: string, now: number) => {
+  const year = ` ${DateTime.toPartsUtc(DateTime.makeUnsafe(now)).year}`;
+  const date = dateLabel(iso);
+  return `<time datetime="${escapeAttribute(iso)}">${escapeHtml(now - epoch(iso) < 7 * DAY ? ago(iso, now) : date.endsWith(year) ? date.slice(0, -year.length) : date)}</time>`;
 };
 
 /**
- * Home's one-line note after someone's first publication: "<title> is live", or "Your welcome
- * page is live", with Open and Copy link. Home shows it for the day after, and its watch script
- * puts it at the top when the publication lands while Home is open.
+ * Home's one-line notice after someone's first publication: "<title> is live", or "Your welcome
+ * page is live", with Open and Copy link. Home shows it for the day after, and the guide's watch
+ * puts it in Home's notices when the publication lands while Home is open.
  */
-export const renderPublishedNote = (row: Patches.ReadPatch, publicBaseUrl: string): string => {
+export const renderPublishedNote = (row: Row, company: string, publicBaseUrl: string): string => {
   const { patch } = row;
-  const title = patchTitle(patch);
+  const title = patchTitle(patch, company);
   const url = `${publicBaseUrl.replace(/\/+$/u, "")}${patchAddress(patch)}`;
-  const named = escapeAttribute(title);
-  return `<section class="note note-ok note-inline" role="status"><span class="note-title">${isWelcomePage({ name: patch.name, tier: row.tier }) ? "Your welcome page is live" : `${escapeHtml(title)} is live`}</span><div class="actions"><a class="btn btn-primary" href="${escapeAttribute(patchAddress(patch))}" aria-label="Open ${named}">Open</a><button type="button" class="btn" data-copy="${escapeAttribute(url)}" aria-label="Copy link to ${named}" aria-live="polite" hidden>Copy link</button></div></section>`;
+  return notice({
+    tone: "info",
+    title: isWelcomePage({ name: patch.name, tier: row.tier })
+      ? "Your welcome page is live"
+      : `${title} is live`,
+    action: `<div class="btn-group">${linkButton("Open", patchAddress(patch), { size: "sm", ariaLabel: `Open ${title}` })}${copyButton(url, { label: "Copy link", ariaLabel: `Copy link to ${title}`, size: "sm" })}</div>`
+  });
 };
 
 export interface HomeInput {
-  readonly rows: readonly Patches.ReadPatch[];
+  readonly rows: readonly Row[];
   readonly viewer: Viewer;
   readonly opens: ReadonlyMap<string, Patches.Open>;
   readonly now: number;
   readonly publicBaseUrl: string;
-  readonly query: string;
-  /** `renderPublishedNote`'s note, while it applies. */
+  /** Offer Connect your agent: the viewer has no live machine token and the Final step isn't up. */
+  readonly connect: boolean;
+  /** `renderPublishedNote`'s notice, while it applies. */
   readonly note?: string;
-  /** Whether the viewer has a live machine token; without one Home offers Connect your agent. */
-  readonly connected: boolean;
-  /** The last day's failed calls for each live tier 2 patch the viewer manages; absent with none. */
-  readonly failures?: ReadonlyMap<string, number>;
+  /** The call summary of each live tier 2 patch the viewer manages; absent when they manage none. */
+  readonly calls?: ReadonlyMap<string, InvocationLog.CallSummary>;
+  /** The company's connections that need an admin; empty for anyone else. */
+  readonly connections: ReadonlyArray<ConnectionAttention.Attention>;
+  /** The viewer's own apps and computers whose access ended on its own lately. */
+  readonly ended: ReadonlyArray<EndedAccess>;
+  /** How many guests each of the viewer's own patches has, by name. */
+  readonly guests: ReadonlyMap<string, number>;
+  /** The viewer's patches whose guests can't open them now, by id, so Yours never claims they can. */
+  readonly turnedAway: ReadonlySet<string>;
   /** Other companies' patches shared with the viewer. */
   readonly shared: readonly GuestGrants.Shared[];
 }
 
 /**
  * Other companies' patches shared with the viewer, each opening the patch, or saying why it can't
- * while its guests can't open it, with Remove… in its menu. Nothing when there are none.
+ * while its guests can't open it, with Remove… in its menu. Nothing when there are none. One they
+ * can open and never have carries the dot; a public one never does, since a guest reads its
+ * public page as anyone does and that records no open.
  */
-const sharedShelf = (shared: readonly GuestGrants.Shared[]) => {
+const sharedSection = (
+  shared: readonly GuestGrants.Shared[],
+  opens: ReadonlyMap<string, Patches.Open>
+) => {
   if (shared.length === 0) return "";
-  const row = (entry: GuestGrants.Shared) => {
-    const title = patchTitle(entry);
-    const address = `/${encodeURIComponent(entry.company.handle)}/${encodeURIComponent(entry.name)}`;
-    const body = `${patchMark(entry.name, entry.tier)}<span class="tile-body"><span class="tile-name">${escapeHtml(title)}</span><span class="tile-text">${escapeHtml(entry.company.name)}</span>${Option.match(entry.unavailable, { onNone: () => "", onSome: (reason) => `<span class="tile-meta">Can’t open it now. ${escapeHtml(guestReasonText(reason))}</span>` })}</span>`;
-    const open = Option.isNone(entry.unavailable);
-    const menu = rowMenu(`shared-${entry.patchId}`, title, [
-      ...(open
-        ? [
-            `<a class="menu-item" href="${escapeAttribute(address)}" target="_blank" rel="noopener" aria-label="${escapeAttribute(`Open in a new tab, ${title}`)}">Open in a new tab</a>`
-          ]
-        : []),
-      menuLink(`/shared/${encodeURIComponent(entry.patchId)}/remove`, "Remove…", true, title)
-    ]);
-    return `<li class="home-row">${open ? `<a class="tile-row tile-row-plain" href="${escapeAttribute(address)}">${body}</a>` : `<div class="tile-row tile-row-plain">${body}</div>`}${menu}</li>`;
+  const entry = (item: GuestGrants.Shared) => {
+    const title = patchTitle(item, item.company.name);
+    const address = `/${encodeURIComponent(item.company.handle)}/${encodeURIComponent(item.name)}`;
+    const open = Option.isNone(item.unavailable);
+    return row({
+      lead: patchMark(item.name, item.tier),
+      name: title,
+      ...(open ? { href: address } : {}),
+      unopened: open && item.scope !== "public" && !opens.has(item.patchId),
+      description: `${item.company.name} · shared by ${item.sharedBy}${Option.match(item.unavailable, { onNone: () => "", onSome: (reason) => ` · Can’t open it now. ${guestReasonText(reason)}` })}`,
+      end: rowMenu(`shared-${item.patchId}`, title, [
+        ...(open ? [menuNewTab(address, title)] : []),
+        menuLink(`/shared/${encodeURIComponent(item.patchId)}/remove`, "Remove…", true, title)
+      ])
+    });
   };
-  return `<section class="home-shelf" aria-labelledby="shared-heading"><h2 class="section-heading" id="shared-heading">Shared with you</h2><ul class="list home-rows">${shared.map(row).join("")}</ul></section>`;
+  return region({ id: "shared", title: "Shared with you", body: rows(shared.map(entry), true) });
 };
 
 /**
- * Home at `/`: the viewer's usual patches, the company's tools and its pages, each opening the
- * patch, with About this patch in its menu, and what other companies shared with them. Below
- * 900px it keeps its own search, which the sidebar holds wider. Until the viewer connects an
- * agent it offers Connect your agent, and the caller may lay the Final step panel over it.
+ * Home at `/`, in the order people come for: what needs them, Your usual, New, Yours, From
+ * colleagues, then what other companies shared with them. Needs attention shows only when
+ * something is wrong; below eight live patches Home reads whole, without Your usual and New.
+ * Until the viewer connects an agent its notices offer Connect, unless the Final step is up.
  */
-export const renderHome = (input: HomeInput): string => {
-  const { viewer, opens, now, query } = input;
+export const renderHome = (input: HomeInput): Template => {
+  const { viewer, opens, now, calls } = input;
   const company = viewer.company.name;
-  const live = input.rows.filter((row) => row.patch.state === "live");
-  const off = input.rows.length - live.length;
-  const score = (row: Patches.ReadPatch) => opens.get(row.patch.id)?.score ?? 0;
-  const byName = (a: Patches.ReadPatch, b: Patches.ReadPatch) =>
-    a.patch.name.localeCompare(b.patch.name);
-  const byVisits = (a: Patches.ReadPatch, b: Patches.ReadPatch) =>
-    b.visits - a.visits || byName(a, b);
-  const toolOrder = (a: Patches.ReadPatch, b: Patches.ReadPatch) =>
-    Number(b.owner.id === viewer.user.id) - Number(a.owner.id === viewer.user.id) ||
-    score(b) - score(a) ||
-    byVisits(a, b);
-  const newest = (a: Patches.ReadPatch, b: Patches.ReadPatch) =>
-    epoch(b.publishedAt) - epoch(a.publishedAt) || byName(a, b);
-
-  const fresh = (row: Patches.ReadPatch) =>
-    isNew(row, viewer, opens, now) ? '<span class="tag tag-new">New</span>' : "";
-  const clause = (row: Patches.ReadPatch) => firstClause(row.patch.description) || "No description";
-  // While searching, a row's line shows where it matched: the first clause, else the description
-  // around the match. A title match shows in the row's name, so the clause stands.
-  const line = (row: Patches.ReadPatch) => {
-    if (query === "") return escapeHtml(clause(row));
-    const needle = query.toLowerCase();
-    const { description } = row.patch;
-    const at = description.toLowerCase().indexOf(needle);
-    if (at === -1 || clause(row).toLowerCase().includes(needle))
-      return highlight(clause(row), query);
-    const from = Math.max(0, at - 30);
-    const to = Math.min(description.length, at + needle.length + 50);
-    return `${from > 0 ? "…" : ""}${highlight(description.slice(from, to), query)}${to < description.length ? "…" : ""}`;
-  };
-  // A match the row doesn't show otherwise: the name behind a title, or the owner.
-  const meta = (row: Patches.ReadPatch) => {
-    if (query === "") return "";
-    const needle = query.toLowerCase();
-    const title = patchTitle(row.patch);
-    const parts = [
-      ...(title !== row.patch.name &&
-      row.patch.name.includes(needle) &&
-      !title.toLowerCase().includes(needle)
-        ? [highlight(row.patch.name, query)]
-        : []),
-      ...(row.owner.name.toLowerCase().includes(needle) ? [highlight(row.owner.name, query)] : [])
-    ];
-    return parts.length ? `<span class="tile-meta">${parts.join(" · ")}</span>` : "";
-  };
-  // Shelves can hold the same patch twice, so each menu's id names its shelf.
-  const here = query === "" ? "/" : `/?q=${encodeURIComponent(query)}`;
-  const menu = (row: Patches.ReadPatch, shelf: string) =>
-    rowMenu(`${shelf}-${row.patch.id}`, patchTitle(row.patch), [
-      ...openItems(row, viewer, input.publicBaseUrl, here),
-      ...(manages(row, viewer)
-        ? [menuLink(`/patches/${encodeURIComponent(row.patch.name)}/settings`, "Settings")]
+  const title = (entry: Row) => patchTitle(entry.patch, company);
+  const byTitle = titled(company);
+  const live = input.rows.filter((entry) => entry.patch.state === "live");
+  const mine = (entry: Row) => entry.owner.id === viewer.user.id;
+  const owner = (entry: Row) => (mine(entry) ? "You" : firstName(entry.owner.name));
+  const dotted = (entry: Row) => unopened(entry, viewer, opens);
+  // New: made in the last week and not opened yet. A public page read signed out records no open,
+  // so New leaves public pages out.
+  const fresh = (entry: Row) =>
+    dotted(entry) &&
+    entry.patch.scope !== "public" &&
+    now - epoch(entry.patch.createdAt) < NEW_WINDOW;
+  const menu = (entry: Row, list: string) =>
+    rowMenu(`${list}-${entry.patch.id}`, title(entry), [
+      ...openItems(entry, viewer, input.publicBaseUrl, "/"),
+      ...(manages(entry, viewer)
+        ? [menuLink(cardPath(entry.patch, "settings"), "Settings", false, title(entry))]
         : [])
     ]);
-  const toolRow = (row: Patches.ReadPatch) =>
-    `<li class="home-row"><a class="tile-row tile-row-plain home-tool" href="${escapeAttribute(patchAddress(row.patch))}">${patchMark(row.patch.name, row.tier)}<span class="tile-body"><span class="tile-name">${highlight(patchTitle(row.patch), query)}${fresh(row)}</span><span class="tile-text">${line(row)}</span>${meta(row)}</span></a>${menu(row, "tools")}</li>`;
-  const pageRow = (row: Patches.ReadPatch, unread: boolean) =>
-    `<li class="home-row"><a class="tile-row tile-row-plain home-page" href="${escapeAttribute(patchAddress(row.patch))}">${patchMark(row.patch.name, row.tier)}<span class="tile-body"><span class="tile-name">${highlight(patchTitle(row.patch), query)}</span><span class="tile-text">${line(row)}</span>${meta(row)}</span>${unread ? '<span class="whats-new-dot" role="img" aria-label="New to you"></span>' : ""}</a>${menu(row, "pages")}</li>`;
-  // A usual tile is something the viewer already knows, so it has only its mark and title.
-  const tile = (row: Patches.ReadPatch) =>
-    `<div class="tile"><a class="tile-link" href="${escapeAttribute(patchAddress(row.patch))}">${patchMark(row.patch.name, row.tier)}<span class="tile-name">${escapeHtml(patchTitle(row.patch))}${fresh(row)}</span></a>${menu(row, "usual")}</div>`;
-  // A shelf's heading leads to the same list on All patches, when it has one.
-  const shelfHead = (title: string, count?: number, href?: string) => {
-    const label = `${escapeHtml(title)}${count === undefined ? "" : ` <span class="count">${count}</span>`}`;
-    return `<h2 class="section-heading">${href === undefined ? label : `<a href="${escapeAttribute(href)}">${label}</a>`}</h2>`;
+  const failed = (entry: Row) => calls?.get(entry.patch.id)?.failures ?? 0;
+  // A table row's patch: its mark, its title opening it, the dot until the viewer opens a
+  // colleague's, the description's first clause, and, on a phone, what the hidden columns would
+  // warn about.
+  const patchCell = (entry: Row) => {
+    const failures = mine(entry) ? failedBadge(entry.patch, calls?.get(entry.patch.id)) : "";
+    return `<div class="cell-name">${patchMark(entry.patch.name, entry.tier)}<div class="row-main"><span class="row-name"><a class="row-link" href="${escapeAttribute(patchAddress(entry.patch))}">${dotted(entry) ? unopenedName(title(entry)) : escapeHtml(title(entry))}</a></span><span class="row-desc">${escapeHtml(firstClause(entry.patch.description) || "No description")}</span>${failures === "" ? "" : `<span class="show-sm">${failures}</span>`}</div></div>`;
   };
-  const more = (count: number, shown: number, href: string, label: string) =>
-    count > shown ? `<p><a href="${escapeAttribute(href)}">${escapeHtml(label)}</a></p>` : "";
-  const placeholder = input.connected
-    ? ""
-    : '<li><a class="tile-row tile-row-placeholder" href="/guide"><span class="mono mono-placeholder" aria-hidden="true">+</span><span class="tile-body"><span class="tile-name">Connect your agent</span><span class="tile-text">One line to paste into your AI agent</span></span></a></li>';
 
-  const search = searchField({
-    action: "/",
-    id: "home-search",
-    query,
-    placeholder: "Search patches",
-    label: "Search patches",
-    className: "home-search"
-  });
-  const foot =
-    off > 0
-      ? `<p class="supporting-text home-foot">${plural(off, "patch is", "patches are")} retired or deleted · <a href="/patches?show=off">See them</a></p>`
-      : "";
-  // An owner hears about their own tools' failures here; admins see everyone's in All patches.
-  const failing = live.flatMap((row) => {
-    const failed = input.failures?.get(row.patch.id) ?? 0;
-    return row.owner.id === viewer.user.id && failed > 0 ? [{ row, failed }] : [];
-  });
-  const warning = failing.length
-    ? `<section class="note note-warn" role="status"><span class="note-title">${failing.length === 1 ? "One of your tools is failing" : "Some of your tools are failing"}</span><ul class="list list-compact">${failing
-        .map(
-          ({ row, failed }) =>
-            `<li class="list-row"><a href="${escapeAttribute(patchAddress(row.patch))}">${escapeHtml(patchTitle(row.patch))}</a>: <a href="${escapeAttribute(failedLog(row.patch))}">${plural(failed, "call", "calls")} failed in the last day</a></li>`
-        )
-        .join("")}</ul></section>`
+  // Needs attention: the viewer's own tools that failed in the last 24 hours, for admins the
+  // company's connections that need one, then the viewer's own apps and computers whose access
+  // ended. Each says what broke and has the one action that fixes it.
+  const failing = live.filter((entry) => mine(entry) && failed(entry) > 0).sort(byTitle);
+  const attention = [
+    ...failing.map((entry) =>
+      attentionRow({
+        lead: patchMark(entry.patch.name, entry.tier),
+        name: title(entry),
+        href: patchAddress(entry.patch),
+        problem: `${plural(failed(entry), "call", "calls")} failed in the last 24 hours`,
+        fix: linkButton("View log", failedLog(entry.patch), {
+          size: "sm",
+          ariaLabel: `View the failed calls of ${title(entry)}`
+        })
+      })
+    ),
+    ...input.connections.map((connection) =>
+      attentionRow({
+        lead: productMark(connection.mark),
+        name: connection.name,
+        href: connection.fix.href,
+        problem: connection.problem,
+        detail: connection.detail,
+        fix: linkButton(connection.fix.label, connection.fix.href, {
+          size: "sm",
+          ariaLabel: `${connection.fix.label.replace(/…$/u, "")} ${connection.name}`
+        })
+      })
+    ),
+    ...input.ended.map((access) =>
+      attentionRow({
+        lead: access.mark,
+        name: access.name,
+        href: "/agents",
+        problem: `Access ended ${dateLabel(access.endedAt)}`,
+        fix: linkButton("Reconnect", access.reconnect, {
+          size: "sm",
+          ariaLabel: `Reconnect ${access.name}`
+        })
+      })
+    )
+  ];
+  const needs = attention.length
+    ? region({ id: "attention", title: "Needs attention", body: rows(attention, true) })
     : "";
-  const page = (body: string, heading = '<h1 class="page-heading">Home</h1>') =>
-    `${heading}${input.note ?? ""}${warning}${search}${body}${foot}<script defer src="${copyScriptPath}"></script>`;
+  // At most two one-line notices: Connect, and the first publication's.
+  const notes = `<div data-home-notes>${
+    input.connect
+      ? notice({
+          tone: "info",
+          title: "Connect your agent to build patches",
+          action: linkButton("Connect", "/guide", { size: "sm" })
+        })
+      : ""
+  }${input.note ?? ""}</div>`;
+  const page = (content: string) =>
+    indexPage({
+      title: "Home",
+      content: `${notes}${needs}${content}${sharedSection(input.shared, opens)}<script defer src="${copyScriptPath}"></script>`
+    });
 
-  if (live.length === 0 && query === "")
+  if (live.length === 0)
     return page(
-      `<section class="home-shelf">${
-        input.rows.length === 0
-          ? `<h1 class="page-heading">Nothing here yet</h1><p>${escapeHtml(company)}’s tools and pages show up here as people publish them.</p>`
-          : `<h1 class="page-heading">Nothing is live</h1><p>None of ${escapeHtml(company)}’s patches is live right now.${off > 0 ? " Retired and deleted patches can be restored from All patches." : ""}</p>`
-      }${placeholder ? `<ul class="list home-rows">${placeholder}</ul>` : ""}</section>${sharedShelf(input.shared)}`,
-      ""
+      region({
+        id: "patches",
+        title: "Patches",
+        body: rows(
+          [
+            input.rows.length === 0
+              ? emptyState({
+                  title: "No patches yet",
+                  body: `What ${company} builds shows up here.`,
+                  ...(viewer.role === "admin"
+                    ? { action: linkButton("Invite people", "/settings/people", { size: "sm" }) }
+                    : {})
+                })
+              : emptyState({
+                  title: "Nothing is live",
+                  body: `None of ${company}’s patches is live right now.`,
+                  action: linkButton("See retired and deleted", "/patches?show=off", { size: "sm" })
+                })
+          ],
+          true
+        )
+      })
     );
 
-  const tools = live.filter((row) => !isPage(row));
-  const pages = live.filter(isPage);
-
-  if (query !== "") {
-    const foundTools = tools.filter((row) => matches(row, query)).sort(toolOrder);
-    const foundPages = pages.filter((row) => matches(row, query)).sort(newest);
-    const total = foundTools.length + foundPages.length;
-    const encoded = encodeURIComponent(query);
-    const summary = `<p class="supporting-text home-matches">${plural(total, "match", "matches")} for “${escapeHtml(query)}” · <a href="/">Clear search</a></p>`;
-    if (total === 0)
-      return page(
-        `${summary}<div class="home home-solo"><section class="note note-warn" aria-labelledby="miss-title"><span class="note-title" id="miss-title">Nothing at ${escapeHtml(company)} matches “${escapeHtml(query)}”</span><p>Hand this to your agent and it can build one:</p>${copyLine(`Build us a Patchy tool for ${query}`, "Request for your agent, select to copy", "the request for your agent")}<p class="supporting-text">${input.connected ? "" : 'No agent connected yet? <a href="/guide">Connect your agent</a> · '}<a href="${escapeAttribute(`/patches?show=off&q=${encoded}`)}">Search retired and deleted</a></p></section></div>`
-      );
-    const toolShelf = foundTools.length
-      ? `<section class="home-shelf">${shelfHead("Tools", foundTools.length, `/patches?show=tools&q=${encoded}`)}<ul class="list home-rows">${foundTools.slice(0, TOOLS).map(toolRow).join("")}</ul>${more(foundTools.length, TOOLS, `/patches?show=tools&q=${encoded}`, `All ${foundTools.length} matching tools`)}</section>`
-      : "";
-    const pageShelf = foundPages.length
-      ? `<aside class="side-panel home-pages" aria-label="Pages">${shelfHead("Pages", foundPages.length, `/patches?show=pages&q=${encoded}`)}<ul class="list home-rows">${foundPages
-          .slice(0, PAGES * 2)
-          .map((row) => pageRow(row, false))
-          .join(
-            ""
-          )}</ul>${more(foundPages.length, PAGES * 2, `/patches?show=pages&q=${encoded}`, `All ${foundPages.length} matching pages`)}</aside>`
-      : "";
-    return page(
-      `${summary}<div class="home${toolShelf && pageShelf ? "" : " home-solo"}">${toolShelf ? `<div class="home-main">${toolShelf}</div>` : ""}${pageShelf}</div>`
-    );
-  }
-
-  // Your usual: what the viewer opened in the last 30 days. Until they open anything, it is what
-  // the company visits most.
-  const usual = live
-    .filter((row) => {
-      const open = opens.get(row.patch.id);
+  const shelves = live.length >= SHELVES_AT;
+  // Your usual: what the viewer opened in the last 30 days, by how much. Until they open
+  // anything, it is what the company visits most.
+  const score = (entry: Row) => opens.get(entry.patch.id)?.score ?? 0;
+  const opened = live
+    .filter((entry) => {
+      const open = opens.get(entry.patch.id);
       return open !== undefined && now - epoch(open.lastOpenedAt) <= USUAL_WINDOW;
     })
-    .sort((a, b) => score(b) - score(a) || byName(a, b))
-    .slice(0, USUAL);
-  const usualShelf = `<section class="home-shelf">${shelfHead(
-    usual.length === 0 ? `Popular at ${company}` : "Your usual"
-  )}<div class="home-usual">${(usual.length === 0
-    ? [...live].sort(byVisits).slice(0, USUAL)
-    : usual
-  )
-    .map(tile)
-    .join("")}</div></section>`;
-
-  const toolShelf = `<section class="home-shelf">${shelfHead("Tools", tools.length, "/patches?show=tools")}${
-    tools.length || placeholder
-      ? `<ul class="list home-rows">${[...tools]
-          .sort(toolOrder)
-          .slice(0, TOOLS)
-          .map(toolRow)
-          .join("")}${placeholder}</ul>`
-      : ""
-  }${more(tools.length, TOOLS, "/patches?show=tools", `All ${tools.length} tools`)}</section>`;
-
-  // Pages new to the viewer lead, marked, then the latest of the rest.
-  const unread = (row: Patches.ReadPatch) => {
-    if (row.patch.scope !== "company" || row.owner.id === viewer.user.id) return false;
-    if (now - epoch(row.publishedAt) >= NEW_WINDOW) return false;
-    const open = opens.get(row.patch.id);
-    return open === undefined || epoch(open.lastOpenedAt) < epoch(row.publishedAt);
-  };
-  const unreadPages = pages.filter(unread).sort(newest).slice(0, PAGES);
-  const unreadIds = new Set(unreadPages.map((row) => row.patch.id));
-  const latest = pages
-    .filter((row) => !unreadIds.has(row.patch.id))
-    .sort(newest)
-    .slice(0, PAGES);
-  const pageShelf = pages.length
-    ? `<aside class="side-panel home-pages" aria-label="Pages">${shelfHead("Pages", pages.length, "/patches?show=pages")}<ul class="list home-rows">${[
-        ...unreadPages.map((row) => pageRow(row, true)),
-        ...latest.map((row) => pageRow(row, false))
-      ].join("")}</ul></aside>`
+    .sort((a, b) => score(b) - score(a) || byTitle(a, b));
+  const usual = (
+    opened.length > 0 ? opened : [...live].sort((a, b) => b.visits - a.visits || byTitle(a, b))
+  ).slice(0, USUAL);
+  const usualSection = shelves
+    ? region({
+        id: "usual",
+        title: opened.length > 0 ? "Your usual" : `Popular at ${company}`,
+        body: usualTiles(
+          usual.map((entry) => ({
+            mark: patchMark(entry.patch.name, entry.tier),
+            name: title(entry),
+            meta: `${kind(entry)} · ${owner(entry)}`,
+            href: patchAddress(entry.patch)
+          }))
+        )
+      })
     : "";
 
-  return page(
-    `<div class="home${pageShelf ? "" : " home-solo"}"><div class="home-main">${usualShelf}${toolShelf}${sharedShelf(input.shared)}</div>${pageShelf}</div>`
-  );
+  // New: colleagues' patches from the last week the viewer hasn't opened, newest first.
+  const newest = live
+    .filter(fresh)
+    .sort((a, b) => epoch(b.patch.createdAt) - epoch(a.patch.createdAt) || byTitle(a, b))
+    .slice(0, NEW);
+  const newSection =
+    shelves && newest.length > 0
+      ? region({
+          id: "new",
+          title: "New",
+          body: rows(
+            newest.map((entry) =>
+              row({
+                lead: patchMark(entry.patch.name, entry.tier),
+                name: title(entry),
+                href: patchAddress(entry.patch),
+                unopened: true,
+                description: `${kind(entry)} · ${entry.owner.name} · ${ago(entry.patch.createdAt, now)}`,
+                end: linkButton("Open", patchAddress(entry.patch), {
+                  size: "sm",
+                  icon: "external",
+                  newTab: true,
+                  ariaLabel: `Open ${title(entry)} in a new tab`
+                })
+              })
+            ),
+            true
+          )
+        })
+      : "";
+
+  // Yours: A–Z, never re-sorted, with who can open each, its failures and Share in view.
+  const yours = live.filter(mine).sort(byTitle);
+  const tools = yours.some((entry) => !isPage(entry));
+  const access = (entry: Row) => {
+    if (entry.patch.scope === "public") return "Public";
+    const guests = input.guests.get(entry.patch.name) ?? 0;
+    return guests === 0
+      ? "Company"
+      : input.turnedAway.has(entry.patch.id)
+        ? `Company · ${plural(guests, "guest can’t", "guests can’t")} open it`
+        : `Company + ${plural(guests, "guest", "guests")}`;
+  };
+  const yoursSection = yours.length
+    ? region({
+        id: "yours",
+        title: "Yours",
+        body: table({
+          label: "Your patches",
+          columns: [
+            { label: "Patch" },
+            { label: "Access", hideOnPhone: true },
+            ...(tools ? [failuresColumn] : []),
+            { label: "Actions", hidden: true, align: "end" as const }
+          ],
+          rows: yours.map((entry) => [
+            patchCell(entry),
+            escapeHtml(access(entry)),
+            ...(tools ? [failuresCell(entry.patch, calls?.get(entry.patch.id))] : []),
+            `<div class="btn-group btn-group-end"><span class="hide-sm">${linkButton("Share", shareHref("/", entry.patch.name), { kind: "quiet", size: "sm", icon: "share", ariaLabel: `Share ${title(entry)}` })}</span>${menu(entry, "yours")}</div>`
+          ])
+        })
+      })
+    : "";
+
+  // From colleagues: everyone else's, A–Z, the first twelve, and the rest on All patches.
+  const theirs = live.filter((entry) => !mine(entry)).sort(byTitle);
+  const colleaguesSection = theirs.length
+    ? region({
+        id: "colleagues",
+        title: "From colleagues",
+        ...(theirs.length > COLLEAGUES
+          ? { action: `<a href="/patches">See all ${theirs.length}</a>` }
+          : {}),
+        body: table({
+          label: "Colleagues’ patches",
+          columns: [
+            { label: "Patch" },
+            { label: "Owner", hideOnPhone: true },
+            { label: "Updated", hideOnPhone: true },
+            { label: "Actions", hidden: true, align: "end" }
+          ],
+          rows: theirs
+            .slice(0, COLLEAGUES)
+            .map((entry) => [
+              patchCell(entry),
+              `<div class="cluster">${avatar(entry.owner.id, entry.owner.name, entry.owner.deactivated ? "off" : undefined)}<span>${escapeHtml(firstName(entry.owner.name))}</span></div>`,
+              when(entry.publishedAt, now),
+              menu(entry, "colleagues")
+            ])
+        })
+      })
+    : "";
+
+  return page(`${usualSection}${newSection}${yoursSection}${colleaguesSection}`);
 };

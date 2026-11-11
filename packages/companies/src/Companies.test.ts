@@ -90,6 +90,19 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(da
       })
     );
 
+    it.effect("keeps Your agents' and Settings' pages off company handles", () =>
+      Effect.gen(function* () {
+        const companies = yield* Companies.Companies;
+        // `/agents/connect` would otherwise answer for a company `agents`' patch `connect`.
+        for (const handle of ["agents", "settings"]) {
+          assert.strictEqual(
+            (yield* companies.create(companyInput(handle)).pipe(Effect.flip))._tag,
+            "ReservedHandle"
+          );
+        }
+      })
+    );
+
     it.effect(
       "creates a company and its initial admin together, rolling back either user uniqueness conflict",
       () =>

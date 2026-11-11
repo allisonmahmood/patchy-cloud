@@ -22,7 +22,11 @@ pnpm dev up [scenario]   # an environment: a scenario's company, people and patc
 Use an environment for anything with more than one person (live sync,
 assignments, admin-only rules, invitations) and for demos. `guests` adds a
 person at a second company and shares both its patches with them, for anything
-a patch's guests see. The instance's server runs on Bun, as production's does;
+a patch's guests see. `dense` is for first-party pages: Brightline Studio with
+13 live patches and their history, retired and deleted ones, guests both ways,
+deactivated and invited people, people with and without agents, an empty
+company, and offline connections for every integration in every state;
+`scenarios/README.md` says who shows what. The instance's server runs on Bun, as production's does;
 the CLI, from source or in an environment, runs on Node, as on people's
 machines. Use the URL each
 start prints; ports can change between starts. A failed start names its log:
@@ -49,6 +53,9 @@ Done when `pnpm dev status` exits 0.
   writes a full-page PNG and prints the final URL, status and the browser's
   errors. Read the PNG to look at it. `<person>` is any email, or an
   environment person's key or first name.
+- **The terms prompt.** Seeded people start past it, except a scenario person
+  marked `termsPending`, such as `team`'s Cleo. A browser's page load shows it,
+  as `shot` does; `curl` sends no fetch metadata, so it gets the page instead.
 - **An agent connection's token.** `pnpm dev mcp-token <person> --client <name>`
   mints an agent connection straight into this instance's database and prints
   its access token, which lasts a year; `--json` adds the connection. `<person>`
@@ -60,7 +67,7 @@ Done when `pnpm dev status` exits 0.
 - **Consent.** `/oauth/authorize` with a real client's document, such as
   Claude Code's (`https://claude.ai/oauth/claude-code-client-metadata`, any
   `http://127.0.0.1:<port>/callback`), an S256 challenge and a state shows the
-  consent page; agent access must be on at Company. DEVELOPMENT's
+  consent page; agent access must be on in Settings. DEVELOPMENT's
   **Connecting through consent** has the details. The page allows 10 loads
   and answers a minute per address.
 - **The environment's agent.** `pnpm dev up` prints an `agent` launcher:
@@ -191,7 +198,7 @@ prerequisites; the `pr-evidence` skill says what each shows.
 - "Before" is where `HEAD` left `origin/main`; `--base <ref>` picks another
   commit, and `--pr <number>` the PR's base branch. Both sides run this
   worktree's scenario, or `team`; `--scenario brightline` has patches of every
-  tier.
+  tier, and `--scenario dense` every state of the first-party pages.
 - `--pr <number>` puts the section in the PR body and uploads its files. A
   re-run replaces its own section: compare's is keyed by the person (`--key`
   overrides), film's by the flow's file name. Without `--pr`, the section is

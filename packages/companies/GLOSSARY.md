@@ -32,6 +32,14 @@ _Avoid_: superadmin, company owner, sole admin
 A user of another company whom this company has shared one [patch](../patches/GLOSSARY.md) with, by a guest grant. They open it as themselves in this company, never its admin, and gain no membership or other patch. The company's directory names them as a guest while they hold any of its grants, ended ones included, but shows their email only in a patch whose grant is active, and shows them active there only while their account is too; that patch's pickers and member columns offer and accept them while their grant is active. People's Guests tab lists them, with what they hold, while any grant is active, and an admin can end all their grants in the company there at once. Not the [Runtime](../runtime/GLOSSARY.md)'s sandboxed patch code, which "guest time" and the guest wire name.
 _Avoid_: outside person, external member, visitor, collaborator
 
+**Terms revision**:
+The "Last updated" date the terms or the privacy notice prints, naming the dated page whose words never change. Each document has its own; a release holds the current pair, and later is greater, so a release on older revisions asks nobody again.
+_Avoid_: terms version, policy version, look revision
+
+**Terms acceptance**:
+A user's record of accepting a pair of terms revisions: who, which revisions, when and how. Sign-up records the pair in force when their user is created; the [terms prompt](../auth/GLOSSARY.md) records later ones. Each person accepts for themselves, guests included, and records are only ever added; one outlives the account it names.
+_Avoid_: consent (an agent's consent, in Auth), agreement (the terms themselves), signature
+
 **Directory revision**:
 The company's durable record that its directory has changed, advanced with each join, departure, reactivation or change to a user's name, email or role, and with each guest grant that starts, ends or goes with its patch. It lets readers detect changes to [candidates and resolved users](../primitives/GLOSSARY.md#language), including changes whose notification they missed.
 _Avoid_: roster version, membership timestamp

@@ -32,7 +32,20 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { Companies, Users } from "@patchy/companies";
-import { agentMark, avatar, escapeAttribute, escapeHtml, sentenceList } from "@patchy/core";
+import {
+  agentMark,
+  answerPair,
+  avatar,
+  button,
+  canList,
+  escapeAttribute,
+  escapeHtml,
+  linkButton,
+  meet,
+  notice,
+  refusal,
+  sentenceList
+} from "@patchy/core";
 import { DeploymentConfig, Limits } from "@patchy/limits";
 import * as AgentConnections from "./AgentConnections.js";
 import * as ClientDocuments from "./ClientDocuments.js";
@@ -40,7 +53,7 @@ import * as Consents from "./Consents.js";
 import * as OAuthMetadata from "./OAuthMetadata.js";
 import * as RequireSession from "./RequireSession.js";
 import * as Session from "./Session.js";
-import { pageResponse, returnPath, signOutForm, type Page } from "./page.js";
+import { accountFoot, doorResponse, returnPath, unavailableDoor, type DoorSpec } from "./page.js";
 
 const MAX_BODY_BYTES = 8_192;
 /** How long a consent page's answer counts once shown: as long as a device login's code. */
@@ -106,14 +119,24 @@ interface Shown {
 /** What changed since the page was shown, so the person is asked again. */
 type Changed = "account" | "client";
 
-const changedNote = (changed: Changed | undefined) =>
-  changed === undefined
-    ? ""
-    : `<div class="note note-warn" role="alert">${
-        changed === "account"
-          ? "You signed in as someone else while this page was open. Check who’s signed in, then answer again."
-          : "The agent changed its name while this page was open. Check who’s asking, then answer again."
-      }</div>`;
+/** Why the person is asked again, as a notice's title and body. */
+const changedCopy = (changed: Changed) =>
+  changed === "account"
+    ? {
+        title: "You signed in as someone else while this page was open.",
+        body: "<p>Check who’s signed in, then answer again.</p>"
+      }
+    : {
+        title: "The agent changed its name while this page was open.",
+        body: "<p>Check who’s asking, then answer again.</p>"
+      };
+
+/** The answer that wasn't taken, as the refusal the page's focus starts on; `extra` joins its body. */
+const changedNote = (changed: Changed | undefined, extra = "") => {
+  if (changed === undefined) return "";
+  const copy = changedCopy(changed);
+  return refusal(notice({ tone: "warning", title: copy.title, body: `${copy.body}${extra}` }));
+};
 
 /**
  * Where an answer to `redirectUri` lands, as a CSP source: its origin, or only its scheme when
@@ -126,41 +149,75 @@ const formActionSource = (redirectUri: string) => {
 
 /**
  * The answer's form, posting to the request's own address with the account, client name and time
- * the page was shown. Its redirect's site joins `form-action`, which browsers hold redirects to.
+ * the page was shown, and carrying no controls of its own: the door's buttons name it with `form`.
+ * Its redirect's site joins `form-action`, which browsers hold redirects to.
  */
-const answerForm = (shown: Shown, buttons: string, className?: string) =>
-  `<form${className === undefined ? "" : ` class="${className}"`} method="post" action="${escapeAttribute(`/oauth/authorize${shown.search}`)}"><input type="hidden" name="userId" value="${escapeAttribute(shown.viewer.user.id)}"><input type="hidden" name="client" value="${escapeAttribute(shown.request.client.name)}"><input type="hidden" name="shown" value="${shown.at}">${buttons}</form>`;
+const answerForm = (shown: Shown) =>
+  `<form id="answer" method="post" action="${escapeAttribute(`/oauth/authorize${shown.search}`)}"><input type="hidden" name="userId" value="${escapeAttribute(shown.viewer.user.id)}"><input type="hidden" name="client" value="${escapeAttribute(shown.request.client.name)}"><input type="hidden" name="shown" value="${shown.at}"></form>`;
 
-/** Use another account: signs out and signs in again back at this request. */
-const anotherAccount = (shown: Shown) => signOutForm(true, `/oauth/authorize${shown.search}`);
+const answer = (label: string, action: "allow" | "deny", primary = false) =>
+  button(label, {
+    ...(primary ? { kind: "primary" as const } : {}),
+    name: "action",
+    value: action,
+    form: "answer",
+    block: true
+  });
 
-const kicker = '<p class="auth-kicker">Connect an agent</p>';
-const styles = `
-    .consent-foot { margin-top: 18px; }
-`;
+/** Who's signed in, and Use another account: signs out and signs in again back at this request. */
+const signedIn = (shown: Shown) =>
+  accountFoot(shown.viewer.user.email, {
+    label: "Use another account",
+    returnTo: `/oauth/authorize${shown.search}`
+  });
+
+const kicker = "Agent access";
 
 /**
- * The consent page: who meets whom, what the client will and won't be able to do, and Allow or
- * Deny. The client's name and site come from a stranger's document; the name is already cleaned
- * and cut to 64 characters (`AgentConnections.clientName`) and the site is a host Patchy fetched
- * from, and both are escaped here like every other value.
+ * The consent page: who meets whom, what the client will and won't be able to do, and Deny or
+ * Allow at equal weight. The client's name and site come from a stranger's document; the name is
+ * already cleaned and cut to 64 characters (`AgentConnections.clientName`) and the site is a host
+ * Patchy fetched from, and both are escaped here like every other value.
  */
-const consentPage = (shown: Shown, changed: Changed | undefined): Page => {
+const consentPage = (shown: Shown, changed: Changed | undefined): DoorSpec => {
   const { request, viewer } = shown;
-  const agent = escapeHtml(request.client.name);
-  const company = escapeHtml(viewer.company.name);
+  const agent = request.client.name;
+  const company = viewer.company.name;
   const name = viewer.user.name.trim();
   const person = name === "" ? viewer.user.email : name;
   const host = escapeHtml(new URL(request.redirectUri).host);
-  const strip = `<div class="consent-strip"><div class="consent-strip-party">${agentMark}<div><strong>${agent}</strong><br><span class="supporting-text">${escapeHtml(request.client.site)}</span></div></div><span class="consent-strip-ask">wants to act as</span><div class="consent-strip-party">${avatar(viewer.user.id, person)}<div><strong>${escapeHtml(person)}</strong>${name === "" ? "" : `<br><span class="supporting-text">${escapeHtml(viewer.user.email)}</span>`}</div></div></div>`;
-  const local = ClientDocuments.returnsToThisComputer(request.redirectUri)
-    ? `<div class="note note-warn"><strong class="note-title">Your answer goes to a program on this computer</strong><p><code>${host}</code>. Allow only if you just started connecting it.</p></div>`
-    : "";
+  const local = ClientDocuments.returnsToThisComputer(request.redirectUri);
+  const allowOnly = `<code>${host}</code>. Allow only if you just started connecting it.`;
+  // One notice a page: asked again with a local answer, the warning joins the refusal.
+  const localNote =
+    !local || changed !== undefined
+      ? ""
+      : notice({
+          tone: "warning",
+          title: "Your answer goes to a program on this computer",
+          body: `<p>${allowOnly}</p>`
+        });
   return {
-    title: `Connect ${request.client.name} to ${viewer.company.name}?`,
-    heading: `${kicker}${changedNote(changed)}${strip}<h1 class="page-heading">Connect ${agent} to ${company}?</h1>`,
-    body: `<p class="can-head">${agent} will be able to</p><ul class="list list-compact can-list can-list-yes"><li class="list-row">Find ${company}’s patches you can open</li><li class="list-row">Use the agent tools their builders added, as you</li></ul><p class="can-head">${agent} won’t be able to</p><ul class="list list-compact can-list can-list-no"><li class="list-row">Do anything you can’t</li><li class="list-row">Publish</li></ul><p>Every change it makes is logged as ${escapeHtml(person)} via ${agent}.</p>${local}${answerForm(shown, '<div class="actions"><button class="btn btn-primary" type="submit" name="action" value="allow">Allow</button><button class="btn" type="submit" name="action" value="deny">Deny</button></div>')}<p class="supporting-text consent-foot">Your answer goes back to <strong>${host}</strong>. Disconnect it any time on <a href="/machines">Your agents</a>.</p>${anotherAccount(shown)}`,
-    styles,
+    kicker,
+    title: `Let ${agent} use ${company}’s patches as you?`,
+    body: `${changedNote(changed, local ? `<p>Your answer goes to a program on this computer: ${allowOnly}</p>` : "")}${meet(
+      { mark: agentMark, name: agent, meta: request.client.site },
+      "wants to act as",
+      {
+        mark: avatar(viewer.user.id, person),
+        name: person,
+        ...(name === "" ? {} : { meta: viewer.user.email })
+      }
+    )}${canList([
+      {
+        can: true,
+        text: "It can find the patches you can open and use the agent tools their builders added, as you"
+      },
+      { can: true, text: `Every change it makes is logged as ${person} via ${agent}` },
+      { can: false, text: "It can’t do anything you can’t, or publish" }
+    ])}${localNote}${answerForm(shown)}`,
+    actions: `${answerPair(answer("Deny", "deny"), answer("Allow", "allow", true))}<p class="meta">Your answer goes back to <strong>${host}</strong>. Disconnect it any time on <a href="/agents">Your agents</a>.</p>`,
+    foot: signedIn(shown),
     status: changed === undefined ? 200 : 409,
     formActions: [formActionSource(request.redirectUri)]
   };
@@ -173,27 +230,44 @@ const consentPage = (shown: Shown, changed: Changed | undefined): Page => {
 const accessOffPage = (
   shown: Shown,
   admins: ReadonlyArray<string>,
-  options: { readonly changed: Changed | undefined; readonly status: number }
-): Page => {
+  options: {
+    readonly changed: Changed | undefined;
+    readonly status: number;
+    /** An Allow that access turning off refused since the page was shown. */
+    readonly refused?: boolean;
+  }
+): DoorSpec => {
   const { request, viewer } = shown;
   const agent = escapeHtml(request.client.name);
   const company = escapeHtml(viewer.company.name);
   const admin = viewer.role === "super_admin";
   return {
+    kicker,
     title: `Agent access is off at ${viewer.company.name}`,
-    heading: `${kicker}${changedNote(options.changed)}<h1 class="page-heading">Agent access is off at ${company}</h1>`,
-    body: `<p>${agent} can’t connect until a super admin turns it on. ${admin ? `You’re a super admin: turn it on, then connect again from ${agent}.` : `At ${company} that’s ${sentenceList(admins)}.`}</p>${answerForm(shown, `${admin ? '<a class="btn btn-primary" href="/company/agent-access">Turn it on at Company</a>' : ""}<button class="btn" type="submit" name="action" value="deny">Back to ${agent}</button>`, "actions")}<p class="supporting-text consent-foot">Signed in as <span class="auth-email">${escapeHtml(viewer.user.email)}</span>. Back to ${agent} tells it no.</p>${anotherAccount(shown)}`,
-    styles,
+    body: `${
+      options.refused === true && options.changed === undefined
+        ? refusal(
+            notice({
+              tone: "warning",
+              title: "Agent access was turned off before that went through.",
+              body: "<p>Nothing was connected.</p>"
+            })
+          )
+        : changedNote(options.changed)
+    }<p>${agent} can’t connect until a super admin turns it on. ${admin ? `You’re a super admin: turn it on, then connect again from ${agent}.` : `At ${company} that’s ${sentenceList(admins)}.`}</p><p class="meta">Back to ${agent} tells it no.</p>${answerForm(shown)}`,
+    actions: `${admin ? linkButton("Turn it on", "/settings/agent-access", { kind: "primary", block: true }) : ""}${answer(`Back to ${request.client.name}`, "deny")}`,
+    foot: signedIn(shown),
     status: options.status,
     formActions: [formActionSource(request.redirectUri)]
   };
 };
 
 /** The page was answered after it ran out: nothing was connected or sent back. */
-const ranOutPage = (shown: Shown): Page => ({
+const ranOutPage = (shown: Shown): DoorSpec => ({
+  kicker,
   title: "This request has run out",
-  heading: `${kicker}<h1 class="page-heading">This request has run out</h1>`,
-  body: `<p>Nothing was connected. Start connecting again from ${escapeHtml(shown.request.client.name)}.</p><p class="supporting-text">Signed in as <span class="auth-email">${escapeHtml(shown.viewer.user.email)}</span></p>`,
+  body: `<p>Nothing was connected. Start connecting again from ${escapeHtml(shown.request.client.name)}.</p>`,
+  foot: signedIn(shown),
   status: 410
 });
 
@@ -222,9 +296,9 @@ const ask = Effect.fn("OAuthEndpoints.ask")(function* (shown: Shown, changed?: C
   const access = yield* (yield* Companies.Companies)
     .agentAccess(shown.viewer.company.id)
     .pipe(Effect.catchTags({ CompanyNotFound: Effect.die }));
-  if (access.on) return pageResponse(consentPage(shown, changed), session);
+  if (access.on) return doorResponse(consentPage(shown, changed), session);
   const admins = yield* adminNames(shown.viewer.company.id);
-  return pageResponse(
+  return doorResponse(
     accessOffPage(shown, admins, { changed, status: changed === undefined ? 200 : 409 }),
     session
   );
@@ -237,10 +311,11 @@ const unanswerable = (
   status: number,
   headers: Readonly<Record<string, string>> = {}
 ) =>
-  pageResponse(
+  doorResponse(
     {
-      title: "This agent can't connect",
-      body: `<p>${escapeHtml(reason)}</p><p>Nothing was connected. Start connecting again from your agent.</p>`,
+      kicker,
+      title: "This app can’t connect",
+      body: `<p>${escapeHtml(reason)}</p><p>Nothing was connected. Start connecting again from the app.</p>`,
       status
     },
     session
@@ -265,14 +340,10 @@ const bounded = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServerResponse,
 const pageErrors = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) =>
   Effect.gen(function* () {
     const session = yield* Session.Session;
-    const reply = (title: string, status: number) =>
-      Effect.succeed(
-        pageResponse({ title, body: `<p>Please try again.</p>${signOutForm()}`, status }, session)
-      );
     return yield* app.pipe(
       Effect.catchTags({
-        SessionError: () => reply("Sign-in service unavailable", 502),
-        SqlError: () => reply("Patchy is unavailable", 503)
+        SessionError: () => Effect.succeed(unavailableDoor("sign-in", { signOut: true }, session)),
+        SqlError: () => Effect.succeed(unavailableDoor("patchy", { signOut: true }, session))
       })
     );
   });
@@ -350,10 +421,11 @@ export const layer: Layer.Layer<
         });
         if (!admitted.allowed) {
           yield* WideEvents.enrich({ limitId: "oauth.consent.perMinute" });
-          return pageResponse(
+          return doorResponse(
             {
+              kicker,
               title: "Too many requests",
-              body: `<p>This address asked to connect agents too often. Try again in ${admitted.retryAfterSeconds} seconds.</p>`,
+              body: `<p>This address asked to connect apps too often. Try again in ${admitted.retryAfterSeconds} seconds.</p>`,
               status: 429
             },
             session
@@ -395,10 +467,11 @@ export const layer: Layer.Layer<
     const answer = Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
       const session = yield* Session.Session;
-      const unread = pageResponse(
+      const unread = doorResponse(
         {
-          title: "This answer couldn't be read",
-          body: "<p>Nothing was connected. Start connecting again from your agent.</p>",
+          kicker,
+          title: "This answer couldn’t be read",
+          body: "<p>Nothing was connected. Start connecting again from the app.</p>",
           status: 400
         },
         session
@@ -418,7 +491,7 @@ export const layer: Layer.Layer<
           Effect.gen(function* () {
             if (shown.at - shownAt > ANSWER_SECONDS) {
               yield* WideEvents.enrich({ code: "consent_ran_out" });
-              return pageResponse(ranOutPage(shown), session);
+              return doorResponse(ranOutPage(shown), session);
             }
             if (userId !== shown.viewer.user.id) {
               yield* WideEvents.enrich({ code: "consent_account_changed" });
@@ -446,8 +519,12 @@ export const layer: Layer.Layer<
                 Effect.catchTags({
                   AgentAccessOff: () =>
                     Effect.map(adminNames(shown.viewer.company.id), (admins) =>
-                      pageResponse(
-                        accessOffPage(shown, admins, { changed: undefined, status: 409 }),
+                      doorResponse(
+                        accessOffPage(shown, admins, {
+                          changed: undefined,
+                          status: 409,
+                          refused: true
+                        }),
                         session
                       )
                     ),

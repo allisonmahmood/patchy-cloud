@@ -168,6 +168,19 @@ export const stubInstance = async (
   return { url: `http://127.0.0.1:${port}`, requests };
 };
 
+/** An instance whose every answer stops partway through its body, after `status`'s headers. */
+export const cutInstance = async (status = 200) => {
+  const server = createServer((_request: IncomingMessage, response: ServerResponse) => {
+    // The headers promise more than arrives before the socket closes.
+    response.writeHead(status, { "content-type": "application/json", "content-length": "100" });
+    response.write('{"ok":', () => response.destroy());
+  });
+  servers.push(server);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  return `http://127.0.0.1:${port}`;
+};
+
 export const publish = (
   status: 200 | 201,
   patchId: string,
@@ -347,7 +360,7 @@ export const projectConnections = {
       description: "Historical sales database",
       status: "disconnected",
       reason: "not_connected",
-      hint: "Ask an admin to reconnect archive-db at /company/connections."
+      hint: "Ask an admin to reconnect archive-db at /settings/integrations."
     },
     {
       id: "conn-product",

@@ -26,7 +26,7 @@ import {
 } from "./handlers.js";
 
 /** The `patchy` package version, `0.<id>.0` for the newest What's new release. */
-export const CURRENT_RELEASE = "0.40.0";
+export const CURRENT_RELEASE = "0.41.0";
 export const MANIFEST_VERSION = 1;
 export const WIRE_VERSION = 1;
 
@@ -1462,3 +1462,123 @@ export const InvalidLook = failure(422, {
 export const LookRevisionUnavailable = failure(422, {
   code: Schema.Literal("revision_unavailable")
 });
+
+// --- requests and feedback ------------------------------------------------
+
+/** Where a request or feedback was sent from. */
+export const SubmissionSurface = Schema.Literals(["cli", "mcp", "dashboard"]);
+export type SubmissionSurface = typeof SubmissionSurface.Type;
+/** A request is something Patchy can't do yet; feedback is something it did wrong or made hard. */
+export const SubmissionKind = Schema.Literals(["request", "feedback"]);
+export type SubmissionKind = typeof SubmissionKind.Type;
+/** A request's title, in characters once whitespace runs collapse to one space and the ends are trimmed. */
+export const SUBMISSION_TITLE_MIN = 3;
+export const SUBMISSION_TITLE_MAX = 200;
+/** The most characters a request's why, a link's why or a feedback note holds, trimmed. */
+export const SUBMISSION_TEXT_MAX = 4_000;
+/**
+ * A request's or feedback's id as the store mints it: `req_` or `fbk_`, then 24 lowercase letters
+ * and digits. A general request's `gen_` id is Patchy's team's and takes no shape here.
+ */
+export const SubmissionId = Schema.String.check(Schema.isPattern(/^(?:req|fbk)_[a-z0-9]{24}$/));
+/** A general request's status, which a company request linked straight to it shares. */
+export const RequestStatus = Schema.Literals(["open", "planned", "shipped", "declined"]);
+export type RequestStatus = typeof RequestStatus.Type;
+
+/**
+ * A request someone may be shown: one of their company's, or a general request Patchy's team
+ * wrote, with its public `note` when it has one.
+ */
+export const RequestBrief = Schema.Struct({
+  id: Schema.String,
+  title: Schema.String,
+  status: RequestStatus,
+  note: Schema.optionalKey(Schema.String)
+});
+export type RequestBrief = typeof RequestBrief.Type;
+
+/** File a request: its title, why it is needed, and the patch whose repo the CLI ran in. */
+export class FileRequest extends Schema.Class<FileRequest>("FileRequest")({
+  text: Schema.String,
+  why: OptionalText,
+  patch: Schema.optionalKey(PatchId)
+}) {}
+
+/** The stored request's id and up to three similar requests. */
+export class RequestFiled extends Schema.Class<RequestFiled>("RequestFiled")(
+  { ok: Schema.Literal(true), id: Schema.String, similar: Schema.Array(RequestBrief) },
+  { httpApiStatus: 201 }
+) {}
+
+/** Send feedback: the note, and the patch whose repo the CLI ran in. */
+export class SendFeedback extends Schema.Class<SendFeedback>("SendFeedback")({
+  text: Schema.String,
+  patch: Schema.optionalKey(PatchId)
+}) {}
+
+export class FeedbackSent extends Schema.Class<FeedbackSent>("FeedbackSent")(
+  { ok: Schema.Literal(true), id: Schema.String },
+  { httpApiStatus: 201 }
+) {}
+
+/** Link a request to the same need: a request of the company's or a general request. */
+export class LinkRequest extends Schema.Class<LinkRequest>("LinkRequest")({
+  to: Schema.String,
+  why: OptionalText
+}) {}
+
+export class RequestLinked extends Schema.Class<RequestLinked>("RequestLinked")({
+  ok: Schema.Literal(true),
+  id: Schema.String,
+  link: RequestBrief
+}) {}
+
+export class RequestUnlinked extends Schema.Class<RequestUnlinked>("RequestUnlinked")({
+  ok: Schema.Literal(true),
+  id: Schema.String,
+  link: Schema.Null
+}) {}
+
+const sentFields = {
+  id: Schema.String,
+  createdAt: Schema.String,
+  surface: SubmissionSurface,
+  /** The coding agent or MCP client it came through; null from the dashboard. */
+  agent: Schema.NullOr(Schema.String)
+};
+/** One of a person's requests in their list: never its `why` or its link's. */
+export const SentRequest = Schema.Struct({
+  ...sentFields,
+  kind: Schema.Literal("request"),
+  title: Schema.String,
+  status: RequestStatus,
+  link: Schema.NullOr(RequestBrief)
+});
+/** One of a person's feedback in their list: never its note. */
+export const SentFeedback = Schema.Struct({ ...sentFields, kind: Schema.Literal("feedback") });
+
+/** A page of what a person sent, newest first, and the cursor of the next page. */
+export class Submissions extends Schema.Class<Submissions>("Submissions")({
+  submissions: Schema.Array(Schema.Union([SentRequest, SentFeedback])),
+  nextCursor: Schema.NullOr(Schema.String)
+}) {}
+
+export class Withdrawn extends Schema.Class<Withdrawn>("Withdrawn")({
+  ok: Schema.Literal(true),
+  id: Schema.String
+}) {}
+
+/** A field held a credential: each field and kind of credential, never the value. */
+export const ContainsSecret = failure(422, {
+  code: Schema.Literal("contains_secret"),
+  secrets: Schema.Array(Schema.Struct({ field: Schema.String, kind: Schema.String }))
+});
+/** A field is outside its bounds or holds control characters. */
+export const InvalidText = failure(422, {
+  code: Schema.Literal("invalid_text"),
+  field: Schema.String
+});
+/** Nothing the person sent has this id: a missing id and another person's answer alike. */
+export const SubmissionNotFound = failure(404, { code: Schema.Literal("not_found") });
+/** A link to something the person could not have been shown, or to the request itself. */
+export const InvalidLink = failure(422, { code: Schema.Literal("invalid_link") });

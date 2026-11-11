@@ -606,7 +606,9 @@ const shot = Command.make(
       Argument.withDescription("Any email, or an environment person's key, email or first name")
     ),
     target: Argument.String("path").pipe(
-      Argument.withDescription("The page to capture, such as /company or /acme/new-business"),
+      Argument.withDescription(
+        "The page to capture, such as /settings/people or /acme/new-business"
+      ),
       Argument.withDefault("/")
     ),
     out: Flag.String("out").pipe(

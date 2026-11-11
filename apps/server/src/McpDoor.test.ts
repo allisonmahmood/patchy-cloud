@@ -209,7 +209,7 @@ it.layer(server(env).pipe(Layer.provideMerge(stdout)))("the door in the server",
   it.effect("takes no authority from a signed-in person's cookie", () =>
     Effect.gen(function* () {
       const signIn = yield* raw(
-        `GET /dev/sign-in?as=${encodeURIComponent(DEV_SEED.email)}&return=%2Fmachines HTTP/1.1\nhost: ${HOST}`
+        `GET /dev/sign-in?as=${encodeURIComponent(DEV_SEED.email)}&return=%2Fagents HTTP/1.1\nhost: ${HOST}`
       );
       const cookie = (signIn.headers["set-cookie"] ?? "")
         .split("\n")
@@ -217,7 +217,7 @@ it.layer(server(env).pipe(Layer.provideMerge(stdout)))("the door in the server",
         .join("; ");
       assert.include(cookie, "=");
       // The cookie signs the person in everywhere a browser session counts.
-      const machines = yield* raw(`GET /machines HTTP/1.1\nhost: ${HOST}\ncookie: ${cookie}`);
+      const machines = yield* raw(`GET /agents HTTP/1.1\nhost: ${HOST}\ncookie: ${cookie}`);
       assert.strictEqual(machines.status, 200);
       const door = yield* post(`host: ${HOST}\norigin: ${BASE}\ncookie: ${cookie}`, initialize);
       assert.strictEqual(door.status, 401);
@@ -316,13 +316,15 @@ const toolCall = (token: string, name: string, args: Record<string, unknown>) =>
     )
   );
 
-/** The patch names on a portal page's list. */
+/** The patch names on a portal page's list, a not-opened-yet dot's markup left out. */
 const listed = (html: string) =>
   [
     ...(/<tbody>([\s\S]*)<\/tbody>/.exec(html)?.[1] ?? "").matchAll(
-      /<strong>([a-z0-9-]+)<\/strong><\/a>/g
+      /<a class="row-link" href="[^"]*">([\s\S]*?)<\/a>/g
     )
-  ].map((match) => match[1]!);
+  ]
+    .map((match) => match[1]!.replace(/<[^>]*>/g, ""))
+    .filter((name) => /^[a-z0-9-]+$/.test(name));
 
 it.layer(
   server(env).pipe(

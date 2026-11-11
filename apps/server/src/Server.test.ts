@@ -3,6 +3,7 @@
  * the API and comes out as a served page, with the headers a socket sees.
  * What each route does is its package's test; this proves the wiring.
  */
+import { readFile } from "node:fs/promises";
 import { assert, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -17,6 +18,15 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as SqlClient from "effect/sql/SqlClient";
 import { DEV_SEED } from "@patchy/auth/seed";
+import {
+  fontFile,
+  fontUrl,
+  fonts,
+  galleryPages,
+  galleryPath,
+  uiScript,
+  uiScriptPath
+} from "@patchy/core";
 import {
   FRONTEND_API_HOST,
   signedInCookies,
@@ -114,7 +124,7 @@ it.layer(
         const card = yield* send(signedRequest(restored.headers.location!, cookie));
         assert.strictEqual(card.status, 200);
         const open = [...(yield* card.text).matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/g)].find(
-          (match) => match[2]?.trim() === "Open"
+          (match) => match[2]?.replace(/<[^>]*>/g, "").trim() === "Open"
         );
         assert.isDefined(open, "the restored patch card offers Open");
         const href = attributes(open![1]!).href;
@@ -172,6 +182,53 @@ it.layer(
     })
   );
 
+  it.effect("serves the enhancer to anyone, and no /~ui gallery without dev personas", () =>
+    Effect.gen(function* () {
+      const script = yield* send(HttpClientRequest.get(uiScriptPath));
+      assert.strictEqual(script.status, 200);
+      assert.strictEqual(script.headers["content-type"], "text/javascript");
+      assert.isUndefined(script.headers["set-cookie"]);
+      assert.strictEqual(yield* script.text, uiScript);
+      // A production server has no personas, so it has no gallery either: its paths are the 404.
+      for (const page of galleryPages) {
+        const path = page === "" ? galleryPath : `${galleryPath}/${page}`;
+        assert.strictEqual((yield* send(HttpClientRequest.get(path))).status, 404, path);
+      }
+    })
+  );
+
+  it.effect("serves the app's fonts to anyone, for good, without a cookie", () =>
+    Effect.gen(function* () {
+      // A signed-out page names the text face and may load it.
+      const door = yield* send(HttpClientRequest.get("/nothing-here"));
+      assert.strictEqual(door.status, 404);
+      assert.include(door.headers["content-security-policy"]!, "font-src 'self'");
+      assert.include(
+        yield* door.text,
+        `<link rel="preload" href="${fontUrl(fonts[0])}" as="font" type="font/woff2" crossorigin>`
+      );
+      for (const font of fonts) {
+        const bytes = new Uint8Array(yield* Effect.promise(() => readFile(fontFile(font))));
+        const get = yield* send(HttpClientRequest.get(fontUrl(font)));
+        assert.strictEqual(get.status, 200, font.file);
+        assert.strictEqual(get.headers["content-type"], "font/woff2");
+        assert.strictEqual(get.headers["cache-control"], "public, max-age=31536000, immutable");
+        assert.strictEqual(get.headers["x-content-type-options"], "nosniff");
+        assert.isUndefined(get.headers["set-cookie"]);
+        assert.deepStrictEqual(new Uint8Array(yield* get.arrayBuffer), bytes);
+        const head = yield* send(HttpClientRequest.head(fontUrl(font)));
+        assert.strictEqual(head.status, 200);
+        assert.strictEqual(head.headers["content-type"], "font/woff2");
+        assert.strictEqual(head.headers["cache-control"], get.headers["cache-control"]);
+        assert.isUndefined(head.headers["set-cookie"]);
+        assert.strictEqual(yield* head.text, "");
+      }
+      // Only the release's own bytes have a URL.
+      const stale = fontUrl(fonts[0]).replace(/-[0-9a-f]{16}\.woff2$/, "-0000000000000000.woff2");
+      assert.strictEqual((yield* send(HttpClientRequest.get(stale))).status, 404);
+    })
+  );
+
   it.effect("serves the authorization metadata ahead of patch addresses, cacheable and open", () =>
     Effect.gen(function* () {
       for (const [path, field] of [
@@ -218,21 +275,21 @@ it.layer(
         assert.isUndefined(portal.headers["x-patchy-sign-in-url"]);
         const body = yield* portal.text;
         assert.include(body, `href="/patches/${name}"`);
-        assert.include(body, 'href="/company"');
+        assert.include(body, 'href="/settings/people"');
         assert.include(body, 'action="/logout"');
         assert.notInclude(body, "<iframe");
 
-        // The Company page counts the patch just published among its owner's live ones.
+        // People counts the patch just published among its owner's live ones.
         const sql = yield* SqlClient.SqlClient;
         const [live] = yield* sql<{ count: number }>`
           SELECT count(*)::int AS count FROM patches WHERE owner_user_id = ${DEV_SEED.userId}
             AND retired_at IS NULL AND deleted_at IS NULL AND disabled_at IS NULL`;
         assert.isAbove(live?.count ?? 0, 0);
-        const company = yield* send(signedRequest("/company"));
+        const company = yield* send(signedRequest("/settings/people"));
         assert.strictEqual(company.status, 200);
         const owned = (yield* company.text).match(
           new RegExp(
-            `${DEV_SEED.email}[\\s\\S]*?</td><td>(?:<strong>)?(?:Super admin|Admin|Member)(?:</strong>)?</td><td>(\\d+)</td>`
+            `${DEV_SEED.email}[\\s\\S]*?</td><td class="hide-sm">(?:Admin|Member)</td><td class="r hide-sm">(\\d+)</td>`
           )
         )?.[1];
         assert.strictEqual(Number(owned), live?.count);
@@ -820,5 +877,28 @@ it.layer(server())("runtime over the real server and Patches resolver", (it) => 
       const streams = yield* RuntimeStream.RuntimeStream;
       assert.strictEqual(yield* streams.connected(DEV_SEED.companyId, created.patchId), 0);
     }).pipe(Effect.scoped)
+  );
+});
+
+it.layer(
+  // Personas sign anyone in, so they run only on a loopback origin.
+  server({
+    PATCHY_PUBLIC_BASE_URL: "http://127.0.0.1:3000",
+    PATCHY_DEV_PERSONAS_SECRET: "gallery",
+    NODE_ENV: "test"
+  })
+)("the server with dev personas", (it) => {
+  it.effect(
+    "serves the /~ui gallery and its template pages, signed out, under the page policy",
+    () =>
+      Effect.gen(function* () {
+        for (const page of galleryPages) {
+          const path = page === "" ? galleryPath : `${galleryPath}/${page}`;
+          const response = yield* send(HttpClientRequest.get(path));
+          assert.strictEqual(response.status, 200, path);
+          assert.include(response.headers["content-security-policy"]!, "script-src 'self'");
+          assert.include(yield* response.text, `<script defer src="${uiScriptPath}"></script>`);
+        }
+      })
   );
 });

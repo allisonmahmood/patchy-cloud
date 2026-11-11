@@ -3,12 +3,14 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
 import { WhatsNew, NodeCryptography } from "@patchy/core";
 import { ddl } from "@patchy/sql";
 import * as Testing from "@patchy/sql/testing";
 import * as Companies from "./Companies.js";
+import * as Terms from "./Terms.js";
 import * as Users from "./Users.js";
 
 const companyWithMember = Effect.fn("companyWithMember")(function* (
@@ -106,6 +108,16 @@ const outcome = {
 it("keeps a given name exactly and falls back to the whole email when its local part is empty", () => {
   assert.strictEqual(Users.displayName({ name: " Ada ", email: "x@example.com" }), " Ada ");
   assert.strictEqual(Users.displayName({ name: "", email: "@Example.com" }), "@example.com");
+});
+
+it("names the current terms and privacy notice by plain dates, at their dated pages", () => {
+  assert.isTrue(Schema.is(Terms.Revision)(Terms.current.terms));
+  assert.isTrue(Schema.is(Terms.Revision)(Terms.current.privacy));
+  assert.isFalse(Schema.is(Terms.Revision)("2026-10-05-1"));
+  assert.strictEqual(
+    Terms.url("terms", Terms.current.terms),
+    `https://patchyhq.com/cloud/terms/${Terms.current.terms}`
+  );
 });
 
 const database = Testing.layer().pipe(Layer.provideMerge(NodeCryptography.layer));
@@ -714,6 +726,61 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(da
         assert.deepStrictEqual(
           yield* sql`SELECT revoked_at IS NULL AS live FROM machine_tokens WHERE id = 'tok_deactivation_atomic'`,
           [{ live: true }]
+        );
+      })
+    );
+
+    it.effect("records a new user's sign-up as accepting the current terms, made or invited", () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const users = yield* Users.Users;
+        const { admin, member } = yield* companyWithMember("terms-sign-up");
+        const recorded = (userId: string) => sql`
+          SELECT terms_revision AS terms, privacy_revision AS privacy, via
+          FROM terms_acceptances WHERE user_id = ${userId}`;
+        for (const user of [admin, member]) {
+          assert.deepStrictEqual(yield* recorded(user.id), [{ ...Terms.current, via: "sign-up" }]);
+          assert.isTrue(
+            yield* users.hasAcceptedTerms({ userId: user.id, revisions: Terms.current })
+          );
+        }
+      })
+    );
+
+    it.effect("counts acceptances of the current terms or later ones, each recorded once", () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const users = yield* Users.Users;
+        const { company } = yield* companyWithMember("terms-prompt");
+        // Someone already here when acceptances began has none.
+        yield* sql`
+          INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
+          VALUES ('usr_terms_before', 'clerk_terms_before', ${company.id},
+            'before@terms-prompt.example', 'Before', 'member')`;
+        const userId = "usr_terms_before";
+        const accepted = (revisions: Terms.Revisions) =>
+          users.hasAcceptedTerms({ userId, revisions });
+        assert.isFalse(yield* accepted(Terms.current));
+        yield* users.acceptTerms({
+          userId,
+          revisions: { terms: "2026-01-01", privacy: "2026-01-01" }
+        });
+        assert.isFalse(yield* accepted(Terms.current));
+        yield* users.acceptTerms({ userId, revisions: Terms.current });
+        yield* users.acceptTerms({ userId, revisions: Terms.current });
+        assert.isTrue(yield* accepted(Terms.current));
+        // A release on older terms, such as a rollback, never asks again.
+        assert.isTrue(yield* accepted({ terms: "2026-01-01", privacy: "2026-01-01" }));
+        assert.isFalse(yield* accepted({ ...Terms.current, terms: "2099-01-01" }));
+        assert.isFalse(yield* accepted({ ...Terms.current, privacy: "2099-01-01" }));
+        assert.deepStrictEqual(
+          yield* sql`
+            SELECT terms_revision AS terms, privacy_revision AS privacy, via
+            FROM terms_acceptances WHERE user_id = ${userId} ORDER BY terms_revision`,
+          [
+            { terms: "2026-01-01", privacy: "2026-01-01", via: "prompt" },
+            { ...Terms.current, via: "prompt" }
+          ]
         );
       })
     );

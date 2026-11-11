@@ -177,6 +177,9 @@ header that is not exactly three fields records none. A request without the
 header, from a browser or an older CLI, records none of the three. A request to
 Patchy MCP's door adds the fields [Patchy MCP › Bounds](./product.md#bounds)
 lists under Events.
+A request that sends, links, unlinks or withdraws a request or feedback adds its
+`submissionId`, never its text; a send past `feedback.sends.perMinute` adds the
+limit's `limitId`.
 
 No key is needed for stdout. `pnpm dev` captures these lines with the other
 server output; `pnpm dev logs` displays them.
@@ -392,6 +395,11 @@ The events, by area:
   the revision that is already current reports nothing.
 - Agent access: `agent_access.changed`, with `on`, after the change commits. Asking for the
   state it already has reports nothing.
+- Requests and feedback: `request.sent` with `matches`, `request.linked` with
+  `targetId` and `target` (`request` or `general`), and `feedback.sent`, each after
+  its change commits, whichever surface sent it. Each carries `submissionId`,
+  `surface` and `agent`, null from the dashboard; never the text, a why or a link's
+  why.
 - Opens: `patch.first_opened`, the one event serving reports, when a member's first
   recorded open of a colleague's patch has committed. Its distinct id is the member
   who opened it; it adds `tier` and `welcomePage`. The owner's own opens, an older
@@ -443,17 +451,30 @@ to the app's host and keeps the Clerk domain and keys.
   at `accounts.patchyhq.com/waitlist`, and approving someone sends them an
   invitation. Only an invitation's link gets a new person past the waitlist,
   because the Account Portal page it opens consumes the invitation's ticket.
-  Invitations a company sends from `/company` work the same way, so they
+  Invitations a company sends from `/settings/people` work the same way, so they
   carry no redirect to a Patchy page, which could not consume the ticket.
 - **Legal consent** is on
   ([#493](https://github.com/allisonmahmood/patchy-cloud/issues/493)). The
-  Account Portal's sign-up page requires a ticked box that links the beta terms,
+  Account Portal's sign-up page requires a ticked box that links the terms,
   `https://patchyhq.com/cloud/terms`, and the privacy notice,
   `https://patchyhq.com/cloud/privacy`. Clerk records the time on the user as
-  `legal_accepted_at`. The marketing site serves both pages, outside this
-  repository; moving either needs `compliance.legal_consent` changed with
-  `clerk config patch`. The development and CI instances leave it off, so no
-  test covers the checkbox.
+  `legal_accepted_at`, once, at sign-up. The marketing site serves both pages,
+  outside this repository; moving either needs `compliance.legal_consent`
+  changed with `clerk config patch`. The development and CI instances leave it
+  off, so no test covers the checkbox.
+- **Which terms each person accepted** is Patchy's record, not Clerk's
+  ([#976](https://github.com/allisonmahmood/patchy-cloud/issues/976)):
+  `terms_acceptances` holds one row per person and pair of revisions, from
+  sign-up or from the terms prompt (`docs/product.md` › Signing in). The
+  revisions in force are one line, `current` in
+  `packages/companies/src/Terms.ts`; each names the dated page
+  `https://patchyhq.com/cloud/terms/<revision>` or `…/privacy/<revision>`. A
+  change goes in this order: the website publishes the new dated page and
+  switches `/cloud/terms` or `/cloud/privacy` to it when its change merges; a
+  release then moves `current`, and everyone is asked on their next page in a
+  browser. A release never names a revision whose dated page doesn't answer
+  yet. Someone who signs up in between is recorded with the older revisions,
+  the ones the running release names, and is asked once after the release.
 - **Sign-in** is by email code. Clerk's shared OAuth credentials work only in
   development, so cloning carries social providers over without credentials.
   Production keeps them off until it has its own
@@ -488,9 +509,9 @@ to the app's host and keeps the Clerk domain and keys.
   `PATCHY_PUBLIC_BASE_URL`, for the address; resend and revoke read
   `CLERK_SECRET_KEY`. The script never migrates: the release that adds the
   table must be deployed first. The email a person enters keeps the link, and
-  Clerk invites it as `/company` invitations are invited, with no redirect, so
-  the Account Portal's sign-up takes the terms; create-or-join then marks the
-  link used. If Clerk fails, the page offers Try again for that address only,
+  Clerk invites it as `/settings/people` invitations are invited, with no
+  redirect, so the Account Portal's sign-up takes the terms; create-or-join then
+  marks the link used. If Clerk fails, the page offers Try again for that address only,
   five attempts in all, then tells the person to ask whoever sent the link. A
   reply Clerk sent but Patchy never received can leave an invitation Patchy
   doesn't know: revoking such a link reports `unconfirmed`, and only the Clerk
@@ -515,6 +536,92 @@ embedded Postgres of its own under its temp root. Object bytes use the separate
 content store below.
 
 Do not commit real database URLs or generated tokens.
+
+### The feedback read role
+
+Requests and feedback land in the platform database's `feedback` schema
+(`packages/feedback`). Patchy's team reads them through Patchy itself: Patchy AI
+connects the schema through the Postgres integration with a role that reads that
+schema's rows and nothing else. The integration runs whatever read-only SQL a
+patch sends (`packages/integrations/src/postgres/Operations.ts`), so the role's
+privileges are the boundary, not the connection's discovery snapshot.
+
+The role's SQL lives in one place, `packages/feedback/read-role.sql`, which
+`packages/feedback`'s tests run against a migrated database. Make the role with
+it, as the migration owner, from a checkout of the release that is live. On Neon,
+make it this way rather than in the console: a role made in Neon's console joins
+`neon_superuser`.
+
+```sh
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -v role=feedback_reader \
+  -v password="$FEEDBACK_READER_PASSWORD" -v owner="$MIGRATION_OWNER" \
+  -f packages/feedback/read-role.sql
+```
+
+It makes a login role with no superuser, `CREATEDB`, `CREATEROLE`, replication
+or row-security bypass, inheriting from nothing, and grants it `USAGE` on the
+schema, `SELECT` on its tables, and `SELECT` on tables the migration owner adds
+to the schema later. `$MIGRATION_OWNER` is the role the server migrates as, which
+owns the schema. Keep the password out of output, chat and git.
+
+Then audit it with `packages/feedback/read-role-audit.sql`, as the migration owner.
+The test that makes the role runs this file too, and shows that it catches a
+column granted to PUBLIC.
+
+```sh
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -v role=feedback_reader \
+  -f packages/feedback/read-role-audit.sql
+```
+
+Each numbered query says what it should answer. Anything else is a hole to close
+before the connection uses the role:
+
+1. The role's attributes: it can log in and nothing else.
+2. Roles it belongs to: none.
+3. Every relation it can read, whole or a single column, through its own grants
+   or PUBLIC's: the `feedback` schema's tables only.
+4. Table grants to PUBLIC: none.
+5. Column grants to PUBLIC: none.
+6. Schema grants: PUBLIC holds `USAGE` on `public` at most, and the role `USAGE`
+   on `feedback`.
+7. Functions it can execute, `SECURITY DEFINER` first. Such a function runs as
+   its owner, so each one listed needs a reason, or `REVOKE EXECUTE ... FROM PUBLIC`.
+
+Run the audit again after a release adds a schema, a function, an extension or a
+grant.
+
+To rotate the password, `ALTER ROLE feedback_reader PASSWORD '<new>'` and update
+the connection's credentials on Patchy AI's Connections page. To undo the role,
+disconnect it on that page first, then run its undo as the migration owner: it
+stops the role signing in, ends its sessions, revokes its grants and drops it.
+
+```sh
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -v role=feedback_reader \
+  -v owner="$MIGRATION_OWNER" -f packages/feedback/read-role-drop.sql
+```
+
+### General requests
+
+General requests have no API: Patchy's team writes them with an operator
+credential. A new one takes a generated `gen_…` id; a public `note`, such as how
+to use what shipped, is shown to every company whose request matches it. Set
+`updated_at` with every change.
+
+```sql
+INSERT INTO feedback.general_requests (title, status, note)
+VALUES ('Postgres encryption options', 'open', NULL)
+RETURNING id;
+
+UPDATE feedback.general_requests
+SET status = 'shipped',
+  note = 'Every Postgres connection is encrypted with TLS. Ask for anything more here.',
+  updated_at = now()
+WHERE id = 'gen_...';
+```
+
+`status` is `open`, `planned`, `shipped` or `declined`. A company's request linked
+straight to a general request shows its status in matches and in the person's
+list.
 
 ## Neon Object Storage
 
@@ -833,6 +940,80 @@ outside the deploy workflow:
    introduced verification keep receiving alerts unchanged. Check each budget's
    recipients in the Budgets console after a deploy adds one. The uptime alarm
    fires until the CNAME resolves.
+8. Make the display font's bucket and put the file in it, as
+   [The display font](#the-display-font) says. This came later, before the
+   first release whose commit pins the font.
+
+### The display font
+
+Titles on Patchy's own pages are set in Cabinet Grotesk Extrabold: the official
+`CabinetGrotesk-Extrabold.woff2` from Fontshare's Cabinet Grotesk package
+(`Fonts/WEB/fonts/`), served byte for byte. The file isn't in the repository.
+`packages/core/fonts/display-font.json` pins its name and SHA-256, and a private
+bucket in the account, `patchy-fonts-<account id>`, holds it under that digest,
+as `<sha256>/<file>`. A production release copies it into the server image, and
+`cloud.patchyhq.com` serves it from its own origin at its digest URL, as it
+serves Geist. Nothing else gets it: pull request images and CI never fetch it,
+and the deploy job saves no artifact and no dependency cache. A build without
+it, such as CI's or a local one, draws titles in Geist and declares no face.
+
+A deploy fetches the file before it records or deploys anything, and checks its
+bytes against the pin. A missing object, a run that can't read it or other bytes
+stop the run there, so no release quietly draws titles in Geist. The image build
+checks the bytes again, and the server refuses to start with a font file whose
+bytes aren't the ones its URL names. A commit from before the font pins none, so
+a rollback to one builds as it always did; a rollback to a later one fetches the
+bytes its commit pins, so its image matches the one in ECR. Never delete or
+replace an object: a rollback needs those bytes. A new version of the font goes
+in beside the old one, under its own digest.
+
+The bucket is made by hand, not by a stack. The image is built before the base
+stack deploys, and the base stack deploys from each release's own commit, so a
+bucket it made wouldn't exist for the first release that needs the font, and a
+rollback past it would take the bucket out of the stack. No stack owns it, so no
+stack update or deletion touches it. It blocks all public access, keeps every
+version of an object and refuses requests without TLS. Only the deploy role is
+granted anything, and only reading objects; administrators reach it through
+their own access.
+
+Set it up once, with administrator credentials, from a checkout whose commit
+pins the font, before deploying such a commit:
+
+```sh
+digest=$(jq -r .sha256 packages/core/fonts/display-font.json)
+account=$(aws sts get-caller-identity --query Account --output text)
+bucket=patchy-fonts-$account
+aws s3api create-bucket --bucket "$bucket" --region us-east-1
+aws s3api put-public-access-block --bucket "$bucket" --public-access-block-configuration \
+  BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+aws s3api put-bucket-versioning --bucket "$bucket" --versioning-configuration Status=Enabled
+aws s3api put-bucket-policy --bucket "$bucket" --policy "$(jq -n --arg bucket "$bucket" \
+  --arg role "arn:aws:iam::$account:role/patchy-production-deploy" '{
+    Version: "2012-10-17",
+    Statement: [
+      {Sid: "DeployReads", Effect: "Allow", Principal: {AWS: $role},
+       Action: "s3:GetObject", Resource: "arn:aws:s3:::\($bucket)/*"},
+      {Sid: "TlsOnly", Effect: "Deny", Principal: "*", Action: "s3:*",
+       Resource: ["arn:aws:s3:::\($bucket)", "arn:aws:s3:::\($bucket)/*"],
+       Condition: {Bool: {"aws:SecureTransport": "false"}}}
+    ]}')"
+```
+
+Then put the file in, from a scratch directory outside the checkout, uploading
+only when its bytes are the pinned ones:
+
+```sh
+cd "$(mktemp -d)"
+curl -fsSL -o cabinet-grotesk.zip https://api.fontshare.com/v2/fonts/download/cabinet-grotesk
+unzip -jq cabinet-grotesk.zip '*/Fonts/WEB/fonts/CabinetGrotesk-Extrabold.woff2'
+echo "$digest  CabinetGrotesk-Extrabold.woff2" | sha256sum --check &&
+  aws s3 cp CabinetGrotesk-Extrabold.woff2 "s3://$bucket/$digest/CabinetGrotesk-Extrabold.woff2"
+```
+
+A failed check means Fontshare's package has moved on: the pinned bytes are the
+ones already in the bucket, and a new version is a change to the pin with its
+own upload. [Development](DEVELOPMENT.md#titles-typeface) says how an administrator
+puts the file in a local checkout.
 
 ### Deploying
 
@@ -847,21 +1028,24 @@ One run goes at a time; a second waits. A run:
 
 1. assumes the deploy role through GitHub's OIDC provider;
 2. stops any promote task a cancelled run left behind;
-3. decides, from the release record below, the secret slot the release reads and
+3. fetches the [display font](#the-display-font) the commit pins and checks its
+   bytes, stopping the run before it records or deploys anything otherwise;
+4. decides, from the release record below, the secret slot the release reads and
    the release it rolls out beside, and records it as pending;
-4. builds the reproducible server image from the commit, as `server-image.yml` does;
-5. deploys the base stack;
-6. pushes the image to ECR with `crane`, tagged with the commit;
-7. deploys the app stack, pinned to the image digest, with the promoted release
+5. builds the reproducible server image from the commit, as `server-image.yml` does,
+   with the display font beside the committed fonts;
+6. deploys the base stack;
+7. pushes the image to ECR with `crane`, tagged with the commit;
+8. deploys the app stack, pinned to the image digest, with the promoted release
    as its previous revision. CloudFormation waits for ECS to settle. A host that
    cannot start trips the circuit breaker: the service rolls back and the stack
    update fails and rolls back, before any promotion;
-8. promotes the fleet with `bun dist/fleet.js promote <revision>`, run once as a
+9. promotes the fleet with `bun dist/fleet.js promote <revision>`, run once as a
    task from the host task definition, and records the release as promoted. The
    command is the `fleetCommand` the image build recorded, so a release from
    before the move to Bun promotes with its own `node`. The promotion waits up to
    five minutes for the new hosts to warm their spares;
-9. confirms the service's primary deployment is on the new task definition.
+10. confirms the service's primary deployment is on the new task definition.
 
 A release's deployment revision is its commit, and `/healthz/deep` names it.
 Promotion waits for ECS on purpose: promoting first would leave a staged revision

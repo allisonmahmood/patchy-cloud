@@ -1,7 +1,15 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { escapeHtml, htmlPage, SWITCHER_RELAY_SOURCE, switcherRelay, switcherTag } from "./html.js";
+import {
+  type AppShell,
+  escapeHtml,
+  htmlPage,
+  SWITCHER_RELAY_SOURCE,
+  switcherRelay,
+  switcherTag
+} from "./html.js";
 import { changesSince, latestRelease } from "./whatsNew.js";
+import { entriesSince, permalink } from "./whatsNewLinks.js";
 
 describe("htmlPage app body", () => {
   const viewer = {
@@ -10,9 +18,11 @@ describe("htmlPage app body", () => {
     whatsNewSeen: latestRelease
   };
   const places = (html: string) =>
-    [...html.matchAll(/<a class="app-place" href="([^"]+)"[^>]*>([^<]+)<\/a>/g)].map(
-      ([, href, label]) => [href, label]
-    );
+    [
+      ...html.matchAll(
+        /<a class="app-place[^"]*" href="([^"]+)"[^>]*>(?:<svg[\s\S]*?<\/svg>)?([^<]+)/g
+      )
+    ].map(([, href, label]) => [href, label]);
 
   it("keeps the sidebar of places and sign-out outside the page's main content", () => {
     const html = htmlPage({
@@ -23,43 +33,75 @@ describe("htmlPage app body", () => {
     const body = html.slice(html.indexOf("<body>"));
     expect(body).toMatch(/<aside class="app-side">[\s\S]*<\/aside><main\b/);
     expect(body).toContain('<nav class="app-nav" aria-label="Primary">');
+    // A Settings page opens Settings, with its pages under it and this one lit.
     expect(places(body)).toEqual([
       ["/", "Home"],
       ["/patches", "All patches"],
-      ["/machines", "Your agents"],
-      ["/settings/company", "Company"],
-      ["/settings/company/teams", "Teams"],
-      ["/company", "People"],
-      ["/company/connections", "Integrations"],
-      ["/company/agent-access", "Agent access"]
+      ["/agents", "Your agents"],
+      ["/settings/people", "Settings"],
+      ["/settings/people", "People"],
+      ["/settings/integrations", "Integrations"],
+      ["/settings/agent-access", "Agent access"]
     ]);
-    expect(body).toContain(
-      'aria-labelledby="app-group-settings"><p class="app-group-label" id="app-group-settings">Settings</p>'
-    );
+    expect(body).toContain('<a class="app-place app-place-open" href="/settings/people">');
+    expect(body).toContain('<div class="app-subnav" role="group" aria-label="Settings">');
     expect(body.match(/aria-current="page"/g)).toHaveLength(1);
-    expect(body).toContain('<a class="app-place" href="/company/connections" aria-current="page">');
+    expect(body).toContain(
+      '<a class="app-place" href="/settings/integrations" aria-current="page">'
+    );
     expect(body).toContain('id="account-menu" popover');
     expect(body).toContain("sam@northwind.example");
-    expect(body).toContain(
-      '<form method="post" action="/logout"><button class="menu-item" type="submit">Sign out</button>'
+    expect(body).toMatch(
+      /<form method="post" action="\/logout"><button class="menu-item" type="submit"><svg[^>]*>[\s\S]*?<\/svg>Sign out<\/button>/
     );
     expect(body.slice(body.indexOf("<main"))).not.toContain("/logout");
   });
 
-  it("searches patches from the sidebar and lights Home on Home", () => {
+  it("folds Settings away off its pages, and gives every role the same places", () => {
+    const html = htmlPage({ title: "Home", app: { viewer, section: "home" }, body: "" });
+    const body = html.slice(html.indexOf("<body>"));
+    expect(places(body)).toEqual([
+      ["/", "Home"],
+      ["/patches", "All patches"],
+      ["/agents", "Your agents"],
+      ["/settings/people", "Settings"]
+    ]);
+    expect(body).not.toContain("app-subnav");
+  });
+
+  it("searches patches from the sidebar, offers New patch under it, and lights Home on Home", () => {
     const html = htmlPage({ title: "Home", app: { viewer, section: "home" }, body: "<p>Home</p>" });
     const body = html.slice(html.indexOf("<body>"));
     expect(body).toContain('<a class="brand" href="/">');
-    expect(body).toContain('<a class="app-place" href="/" aria-current="page">Home</a>');
-    expect(body).toMatch(/<form class="app-search" method="get" action="\/" role="search">/);
+    expect(body).toMatch(/<a class="app-place" href="\/" aria-current="page"><svg[^>]*>/);
+    expect(body).toMatch(/<form class="app-search" method="get" action="\/patches" role="search">/);
     expect(body).toContain('aria-label="Search patches"');
+    expect(body).toMatch(
+      /<a class="btn btn-sm btn-block" href="\/\?new"><svg[^>]*>[\s\S]*?<\/svg>New patch<\/a>/
+    );
+    expect(body.indexOf("app-search")).toBeLessThan(body.indexOf("New patch"));
   });
 
-  it("opens the same places from a Menu button on a phone, with one nav in the markup", () => {
+  it("opens the same places and New patch from a Menu button on a phone, with one nav in the markup", () => {
     const html = htmlPage({ title: "Home", app: { viewer, section: "home" }, body: "<p>Home</p>" });
     expect(html).toContain('popovertarget="app-menu">');
-    expect(html).toContain('<div class="app-menu" id="app-menu" popover>');
+    expect(html).toMatch(/<div class="app-menu" id="app-menu" popover><a [^>]*href="\/\?new"/);
     expect(html.match(/<nav /g)).toHaveLength(1);
+    expect(html.match(/role="search"/g)).toHaveLength(1);
+  });
+
+  it("titles a page by its heading, its place and the company, naming each once", () => {
+    const title = (heading: string, section: AppShell["section"]) =>
+      htmlPage({ title: heading, app: { viewer, section }, body: "" }).match(
+        /<title>([^<]*)<\/title>/
+      )?.[1];
+    expect(title("Home", "home")).toBe("Home – Northwind");
+    expect(title("People", "people")).toBe("People – Northwind");
+    expect(title("Kudos", "patches")).toBe("Kudos – All patches – Northwind");
+    expect(title("attio/crm", "integrations")).toBe("attio/crm – Integrations – Northwind");
+    expect(title("What’s new in Patchy", "whats-new")).toBe("What’s new in Patchy – Northwind");
+    // A door has no frame, so its title is its own.
+    expect(htmlPage({ title: "Sign in", body: "" })).toContain("<title>Sign in</title>");
   });
 
   it("leads the page with the viewer's receipt, escaped", () => {
@@ -104,7 +146,7 @@ describe("htmlPage app body", () => {
         .replace(switcherRelay, "")
         .replace(/<script defer src="\/~shell\/switcher\.js[^>]*><\/script>/, "")
     ).not.toMatch(/<(img|script|b)\b/);
-    expect(html).toContain('<a class="app-place" href="/company" aria-current="page">');
+    expect(html).toContain('<a class="app-place" href="/settings/people" aria-current="page">');
   });
 
   it("rings the bell for what shipped since the viewer's marker, and loads its script only then", () => {
@@ -117,20 +159,46 @@ describe("htmlPage app body", () => {
         },
         body: "<p>Patches</p>"
       });
+    const headlines = (html: string) =>
+      [
+        ...html.matchAll(
+          /<li><a class="app-headline" href="([^"]+)"><span class="app-headline-kind">([^<]+)<\/span><span>([^<]*)/g
+        )
+      ].map(([, href, kind, title]) => [kind, title, href]);
     const unseen = changesSince(0);
     const behind = page(0);
     expect(behind).toContain('class="whats-new-dot"');
     expect(behind).toContain(
       `${unseen.length} ${unseen.length === 1 ? "change" : "changes"} since your last visit`
     );
-    for (const change of unseen.slice(0, 6)) expect(behind).toContain(escapeHtml(change.title));
+    // Five headlines at most, the newest first, each its change's permalink; See all changes has
+    // the rest. Opening the panel raises the marker, so its links carry the one it was drawn with.
+    expect(headlines(behind)).toEqual(
+      entriesSince(0)
+        .slice(0, 5)
+        .map(({ release, n, change }) => [
+          change.kind,
+          escapeHtml(change.title),
+          permalink(release, n, 0)
+        ])
+    );
+    expect(behind).toMatch(/<a class="menu-item" href="\/whats-new\?since=0">See all changes<svg/);
     expect(behind).toContain(`data-through="${latestRelease}"`);
     expect(behind).toContain('<script defer src="/whats-new/bell.js"></script>');
 
     const caughtUp = page(latestRelease);
     expect(caughtUp).not.toContain('class="whats-new-dot"');
-    expect(caughtUp).toContain("You’re all caught up.");
-    expect(caughtUp).toContain('href="/whats-new">See all changes</a>');
+    expect(caughtUp).toContain("You’re all caught up");
+    expect(headlines(caughtUp)).toEqual(
+      entriesSince(0)
+        .slice(0, 5)
+        .map(({ release, n, change }) => [
+          change.kind,
+          escapeHtml(change.title),
+          permalink(release, n)
+        ])
+    );
+    expect(caughtUp).toMatch(/<a class="menu-item" href="\/whats-new">See all changes<svg/);
     expect(
       [...caughtUp.replace(switcherRelay, "").matchAll(/<script\b[^>]*>/g)].map(([tag]) => tag)
     ).toEqual([expect.stringMatching(/^<script defer src="\/~shell\/switcher\.js\?v=/)]);
@@ -181,7 +249,7 @@ describe("htmlPage app body", () => {
   it("lights What's new, not a place, on the What's new page", () => {
     const html = htmlPage({ title: "What's new", app: { viewer, section: "whats-new" }, body: "" });
     expect(html).toContain(
-      'class="app-place whats-new-bell" popovertarget="whats-new" aria-label="What’s new" aria-current="page">'
+      'class="app-place whats-new-bell" popovertarget="whats-new" aria-label="What’s new" aria-current="page"><svg'
     );
     expect(html.slice(html.indexOf("<body>")).match(/aria-current="page"/g)).toHaveLength(1);
   });

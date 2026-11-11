@@ -31,7 +31,8 @@
  *
  * The exercise is the same at every step: the deep health check, the build's
  * own CLI (whoami, list, a publish), and in Chromium, as the scenario's admin,
- * the portal and every patch. Each page must answer with no server error or
+ * the portal and every patch, accepting the terms prompt first when a build
+ * whose terms are newer than the seed's asks. Each page must answer with no server error or
  * uncaught exception and settle; a patch whose page subscribes must have the
  * server deliver its live queries, every one step 1 saw; a patch with sample
  * data must not show its empty state. Meanwhile the server must log no failed request,
@@ -1028,6 +1029,7 @@ const exercisePages = async (
   const { apiUrl, scenario } = environment;
   const publisher = scenario.people.find((person) => person.key === scenario.publisher)!;
   const none: PageExpectation = { sampleData: false };
+  // People keeps its old address, `/company`, which releases before Settings serve and later ones redirect.
   const targets: Array<readonly [string, PageExpectation]> = [
     ...["/", "/patches", "/company"].map((page) => [`${apiUrl}${page}`, none] as const),
     ...scenario.patches.map((patch) => {
@@ -1055,13 +1057,19 @@ const exercisePages = async (
     const signedIn = await signIn.goto(
       `${apiUrl}/dev/sign-in?as=${encodeURIComponent(publisher.email)}&return=/`
     );
-    await signIn.close();
     // Every page after a failed sign-in would only answer 401.
-    if (signedIn?.status() !== 200)
+    if (signedIn?.status() !== 200) {
+      await signIn.close();
       return {
         problems: [`signing in as ${publisher.email} answered ${signedIn?.status() ?? "nothing"}`],
         delivered
       };
+    }
+    // A build whose terms are newer than the seed's asks once, as it asks everyone on release.
+    // Accept sits in the door's actions, outside its form, which it names.
+    if ((await signIn.locator('form#terms-accept[action="/auth/terms"]').count()) > 0)
+      await press(signIn, 'button[type="submit"][form="terms-accept"]', "Accepting the terms");
+    await signIn.close();
     for (const [url, expect] of targets) {
       const page = await context.newPage();
       try {
@@ -1233,8 +1241,10 @@ const endCredentials = async (
         `Collecting an approved device login answered ${collected.status ?? collected.code}.`
       );
     const deviceCode = await approveDeviceLogin(page, apiUrl, "Rehearsal server");
-    // Releases before Your agents hold the form on /machines; later ones on its confirm page.
-    const everything = 'form[action="/machines/revoke-all"]';
+    // Releases before Your agents hold the form on /machines; later ones on its confirm page,
+    // which moved to /agents/disconnect-all. The old addresses redirect on releases after the move.
+    const everything =
+      ':is(form[action="/machines/revoke-all"], form[action="/agents/disconnect-all"])';
     await page.goto(`${apiUrl}/machines`);
     if ((await page.locator(everything).count()) === 0)
       await page.goto(`${apiUrl}/machines/revoke-all`);
@@ -1252,15 +1262,25 @@ const endCredentials = async (
   const admin = await signedIn(browser, apiUrl, publisher);
   try {
     const { page } = admin;
-    const user = `/company/users/${encodeURIComponent(ids(scenario, connections.deactivated.person).userId)}`;
+    const id = encodeURIComponent(ids(scenario, connections.deactivated.person).userId);
+    // The live release may predate Settings: the old address serves both, and People links
+    // whichever its release has.
+    const users = [`/company/users/${id}`, `/settings/people/users/${id}`];
     // A member with no live patches goes straight to the confirmation, as one with none retired.
     for (const [act, after] of [
       ["deactivate", "reactivate"],
       ["reactivate", "deactivate"]
     ] as const) {
-      await page.goto(`${apiUrl}${user}/${act}`);
-      await press(page, 'form.confirmation-form button[type="submit"]', `Confirming ${act}`);
-      if (!(await page.content()).includes(`${user}/${after}`))
+      await page.goto(`${apiUrl}${users[0]}/${act}`);
+      // Every release's confirmation is the one form posting to the act's own address, whatever
+      // classes its release draws it with.
+      await press(
+        page,
+        `form[method="post"][action$="/${act}"] button[type="submit"]`,
+        `Confirming ${act}`
+      );
+      const people = await page.content();
+      if (!users.some((user) => people.includes(`${user}/${after}`)))
         throw new Error(`After confirming ${act}, Company offers no ${after} for that member.`);
     }
   } finally {
@@ -1316,11 +1336,11 @@ const checkEndings = async (environment: Environment, connections: Connections, 
 const CHANGE_KEY = "rehearsal-note";
 const CHANGE_TITLE = "Added by a worker agent";
 
-/** Turns the company's agent access on as `admin`, through Company's own form. */
+/** Turns the company's agent access on as `admin`, through Agent access's own form, at HEAD. */
 const turnOnAgentAccess = async (browser: Browser, apiUrl: string, admin: Person) => {
   const { context } = await signedIn(browser, apiUrl, admin);
   try {
-    const response = await context.request.post(`${apiUrl}/company/agent-access`, {
+    const response = await context.request.post(`${apiUrl}/settings/agent-access`, {
       form: { state: "on" },
       headers: { origin: apiUrl }
     });

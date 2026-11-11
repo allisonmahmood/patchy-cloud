@@ -107,6 +107,7 @@ const poll = Effect.fn("Login.poll")(function* (
               orElse: () =>
                 new UnreachableError({
                   instanceUrl: apiUrl,
+                  reason: "transport",
                   message:
                     `The instance did not answer within the login wait budget. ` +
                     `The outcome is unknown; the local login record was kept. Retry: ${next}`
@@ -275,7 +276,7 @@ export const login = Effect.fn("Login.login")(function* (options: {
 });
 
 const courtesyWarning =
-  "Logged out on this machine. The key could not be revoked; it expires on its own after 30 idle days, or revoke it now on Your agents.";
+  "Logged out on this machine, but Patchy couldn't disconnect it. It ends on its own after 30 idle days, or disconnect it now on Your agents.";
 
 export const logout = Effect.fn("Login.logout")(function* (cwd: string) {
   const instance = yield* Instance.Instance;

@@ -20,9 +20,11 @@
  * cookie are private, no-store.
  */
 import * as Effect from "effect/Effect";
+import * as HttpBody from "effect/http/HttpBody";
 import * as HttpMiddleware from "effect/http/HttpMiddleware";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { withoutAppAssets } from "@patchy/core";
 
 import {
   NO_STORE_CACHE_CONTROL,
@@ -31,6 +33,22 @@ import {
   PATCH_PERMISSIONS_POLICY
 } from "./shell-headers.js";
 export * from "./shell-headers.js";
+
+const decoder = new TextDecoder();
+
+/**
+ * A content URL's refusal is drawn in the frame's sandbox, whose policy admits no font of the
+ * app's, so its first-party document asks for none rather than being refused them.
+ */
+const fontFree = (response: HttpServerResponse.HttpServerResponse) => {
+  const { body } = response;
+  if (body._tag !== "Uint8Array" || !body.contentType.startsWith("text/html")) return response;
+  const html = body.text ?? decoder.decode(body.body);
+  const drawn = withoutAppAssets(html);
+  return drawn === html
+    ? response
+    : HttpServerResponse.setBody(response, HttpBody.text(drawn, body.contentType));
+};
 
 /**
  * Every response carries `nosniff`; CSP and `no-store` have safe fallbacks
@@ -53,13 +71,14 @@ export const servingHeaders = HttpMiddleware.make((httpEffect) =>
         )
       : httpEffect;
     const contentUrl = new URL(request.url, "http://localhost").pathname.startsWith("/~content/");
-    return HttpServerResponse.setHeaders(response, {
+    const refusedInFrame = contentUrl && response.status !== 200;
+    return HttpServerResponse.setHeaders(refusedInFrame ? fontFree(response) : response, {
       "x-content-type-options": "nosniff",
       // Redirects and errors cannot become an unsandboxed navigation escape.
       ...(response.headers["content-security-policy"] === undefined
         ? { "content-security-policy": SHELL_SECURITY_POLICY }
         : {}),
-      ...(contentUrl && response.status !== 200
+      ...(refusedInFrame
         ? {
             "content-security-policy": CONTENT_SECURITY_POLICY,
             "permissions-policy": PATCH_PERMISSIONS_POLICY

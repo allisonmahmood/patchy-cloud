@@ -9,22 +9,33 @@
  * launcher, the worker agent launchers with their folder and state, and
  * `environment.json`, the manifest the card is printed from.
  */
-import { PidgeonSource } from "@patchy/integrations";
+import { Users } from "@patchy/companies";
+import { NodeCryptography } from "@patchy/core";
+import { CredentialKeys, PidgeonSource } from "@patchy/integrations";
+import { InvocationLog, RuntimeLog } from "@patchy/runtime";
+import { layerFromUrl } from "@patchy/sql";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Random from "effect/Random";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { Page } from "@playwright/test";
-import { developerEnvFile, readAttioTestKey, readPidgeonTestKey } from "./developerEnv.js";
+import {
+  developerEnvFile,
+  readAttioTestKey,
+  readCredentialKeys,
+  readPidgeonTestKey
+} from "./developerEnv.js";
 import {
   decodeMail,
   deliverMail,
@@ -37,7 +48,19 @@ import { hostLabel, type Plan, worktreeHash } from "./plan.js";
 import { startMailbox, type Login } from "./mailbox.js";
 import { layout as instanceLayout } from "./state.js";
 import { realNode } from "./runtimes.js";
-import { Person, publisherToken, type Scenario, type ScenarioConnection } from "./scenario.js";
+import {
+  allowPublishing,
+  ids,
+  liveConnections,
+  type LiveConnection,
+  Person,
+  publisherToken,
+  type Scenario,
+  sourceOf,
+  tokenOf
+} from "./scenario.js";
+import { saveConnections } from "./connections.js";
+import { writeHistory } from "./history.js";
 
 /** A step's command ran and exited non-zero; its output was printed to stderr. */
 export class StepExited extends Schema.TaggedError<StepExited>()("StepExited", {
@@ -78,7 +101,7 @@ export class ConnectFailed extends Schema.TaggedError<ConnectFailed>()("ConnectF
   cause: Schema.Redacted(Schema.Unknown, { disallowJsonEncode: true })
 }) {
   override get message() {
-    return `Connecting ${this.connection} through its connect page failed while ${this.step}. If Playwright's browser is missing, run \`pnpm exec playwright install chromium\`; then run \`pnpm dev up\` again, or connect it yourself at /company/connections.`;
+    return `Connecting ${this.connection} through its connect page failed while ${this.step}. If Playwright's browser is missing, run \`pnpm exec playwright install chromium\`; then run \`pnpm dev up\` again, or connect it yourself at /settings/integrations.`;
   }
 }
 
@@ -120,7 +143,11 @@ const PublishedPatch = Schema.Struct({
   key: Schema.String,
   name: Schema.String,
   address: Schema.String,
-  sampled: Schema.Boolean
+  sampled: Schema.Boolean,
+  /** Shared with its guests: sharing again can be refused once a connection keeps guests off. */
+  shared: Schema.optionalKey(Schema.Boolean),
+  /** Retired or deleted, as its scenario says. */
+  ended: Schema.optionalKey(Schema.Boolean)
 });
 
 /**
@@ -259,7 +286,15 @@ const run = Effect.fn("Environment.run")(function* (
   args: ReadonlyArray<string>,
   options: { readonly cwd: string; readonly env: Record<string, string>; readonly input?: string }
 ) {
-  const result = yield* exec(step, command, args, options);
+  let result = yield* exec(step, command, args, options);
+  // A scenario with many patches can outrun the instance's per-address API limit, which refuses
+  // before anything changes; the command runs again once the minute has moved on.
+  for (let wait = 1; wait <= 3 && result.exitCode !== 0; wait++) {
+    if (!`${result.stdout}${result.stderr}`.includes('"code":"rate_limited"')) break;
+    yield* Console.error(`  ${step}: the instance's API limit refused it; trying again shortly`);
+    yield* Effect.sleep("20 seconds");
+    result = yield* exec(step, command, args, options);
+  }
   if (result.exitCode !== 0) {
     const output = result.stderr.trim() || result.stdout.trim();
     yield* Console.error(output.split("\n").slice(-12).join("\n"));
@@ -616,7 +651,7 @@ export const writeWorkers = Effect.fn("writeWorkers")(function* (
 const connectSource = Effect.fn("connectSource")(function* (
   apiUrl: string,
   email: string,
-  connection: Extract<ScenarioConnection, { readonly integration: "pidgeon" }>,
+  connection: Extract<LiveConnection, { readonly integration: "pidgeon" }>,
   adminKey: Redacted.Redacted<string>,
   localPart: string
 ) {
@@ -631,11 +666,11 @@ const connectSource = Effect.fn("connectSource")(function* (
         const page = await browser.newPage();
         step = "signing in";
         await page.goto(
-          `${apiUrl}/dev/sign-in?as=${encodeURIComponent(email)}&return=${encodeURIComponent("/company/connections")}`
+          `${apiUrl}/dev/sign-in?as=${encodeURIComponent(email)}&return=${encodeURIComponent("/settings/integrations")}`
         );
         if ((await page.getByRole("link", { name, exact: true }).count()) > 0) return;
         step = "pasting the admin key";
-        await page.goto(`${apiUrl}/company/connections/connect/${connection.integration}`);
+        await page.goto(`${apiUrl}/settings/integrations/connect/${connection.integration}`);
         await page.locator("#pidgeon-key").fill(Redacted.value(adminKey));
         step = "finding addresses";
         await page.getByRole("button", { name: "Find addresses" }).click();
@@ -657,8 +692,8 @@ const connectSource = Effect.fn("connectSource")(function* (
         await page.locator("#connection-description").fill(connection.description);
         step = "connecting";
         await Promise.all([
-          page.waitForURL(/\/company\/connections\/conn_/),
-          page.getByRole("button", { name: "Connect", exact: true }).click()
+          page.waitForURL(/\/settings\/integrations\/conn_/),
+          page.getByRole("button", { name: "Test and connect", exact: true }).click()
         ]);
       } finally {
         await browser.close();
@@ -676,7 +711,7 @@ const connectSource = Effect.fn("connectSource")(function* (
 const connectAttio = Effect.fn("connectAttio")(function* (
   apiUrl: string,
   email: string,
-  connection: Extract<ScenarioConnection, { readonly integration: "attio" }>,
+  connection: Extract<LiveConnection, { readonly integration: "attio" }>,
   key: Redacted.Redacted<string>
 ) {
   const name = `${connection.integration}/${connection.handle}`;
@@ -689,17 +724,17 @@ const connectAttio = Effect.fn("connectAttio")(function* (
         const page = await browser.newPage();
         step = "signing in";
         await page.goto(
-          `${apiUrl}/dev/sign-in?as=${encodeURIComponent(email)}&return=${encodeURIComponent("/company/connections")}`
+          `${apiUrl}/dev/sign-in?as=${encodeURIComponent(email)}&return=${encodeURIComponent("/settings/integrations")}`
         );
         if ((await page.getByRole("link", { name, exact: true }).count()) > 0) return false;
         step = "filling in the connect form";
-        await page.goto(`${apiUrl}/company/connections/connect/attio`);
+        await page.goto(`${apiUrl}/settings/integrations/connect/attio`);
         await page.locator("#connection-handle").fill(connection.handle);
         await page.locator("#connection-description").fill(connection.description);
         await page.locator("#connection-key").fill(Redacted.value(key));
         step = "checking the key and reading the workspace";
         await Promise.all([
-          page.waitForURL(/\/company\/connections\/conn_/, { timeout: 90_000 }),
+          page.waitForURL(/\/settings\/integrations\/conn_/, { timeout: 90_000 }),
           page.getByRole("button", { name: "Test and connect", exact: true }).click()
         ]);
         return true;
@@ -719,7 +754,7 @@ const connectAttio = Effect.fn("connectAttio")(function* (
 const connectImap = Effect.fn("connectImap")(function* (
   apiUrl: string,
   email: string,
-  connection: Extract<ScenarioConnection, { readonly integration: "imap" }>,
+  connection: Extract<LiveConnection, { readonly integration: "imap" }>,
   login: Login
 ) {
   const name = `${connection.integration}/${connection.handle}`;
@@ -732,11 +767,11 @@ const connectImap = Effect.fn("connectImap")(function* (
         const page = await browser.newPage();
         step = "signing in";
         await page.goto(
-          `${apiUrl}/dev/sign-in?as=${encodeURIComponent(email)}&return=${encodeURIComponent("/company/connections")}`
+          `${apiUrl}/dev/sign-in?as=${encodeURIComponent(email)}&return=${encodeURIComponent("/settings/integrations")}`
         );
         if ((await page.getByRole("link", { name, exact: true }).count()) > 0) return false;
         step = "filling in the connect form";
-        await page.goto(`${apiUrl}/company/connections/connect/imap`);
+        await page.goto(`${apiUrl}/settings/integrations/connect/imap`);
         await page.locator("#connection-handle").fill(connection.handle);
         await page.locator("#connection-description").fill(connection.description);
         await page.locator("#connection-host").fill(login.host);
@@ -746,7 +781,7 @@ const connectImap = Effect.fn("connectImap")(function* (
         await page.locator("#connection-password").fill(login.password);
         step = "testing the login and listing folders";
         await Promise.all([
-          page.waitForURL(/\/company\/connections\/conn_/, { timeout: 60_000 }),
+          page.waitForURL(/\/settings\/integrations\/conn_/, { timeout: 60_000 }),
           page.getByRole("button", { name: "Test and connect", exact: true }).click()
         ]);
         return true;
@@ -885,7 +920,7 @@ const mailboxFor = Effect.fn("mailboxFor")(function* (
   plan: Plan,
   scenarioDir: string,
   scenario: Scenario,
-  connection: Extract<ScenarioConnection, { readonly integration: "imap" }>
+  connection: Extract<LiveConnection, { readonly integration: "imap" }>
 ) {
   const path = yield* Path.Path;
   return yield* startMailbox({
@@ -899,10 +934,12 @@ const mailboxFor = Effect.fn("mailboxFor")(function* (
 });
 
 /**
- * Publishes each scenario patch as the publisher, then loads its sample data and shares it with
- * its guests, recording each step in the manifest. Steps already recorded are skipped, except
- * sharing, which changes nothing the second time; a repo left half-built by an earlier failure is
- * initialized again.
+ * Saves the scenario's offline connections and makes its live ones, then publishes each patch as
+ * its owner, as many times as it has versions, loads its sample data, shares it with its guests
+ * and retires or deletes it, recording each step in the manifest, and last writes the scenario's
+ * history. Steps already recorded are skipped, and so are sharing and ending a patch an interrupted
+ * run already retired or deleted; the history writes the same again. A repo left half-built by an
+ * earlier failure is initialized again.
  */
 const materialize = Effect.fn("materialize")(function* (
   layout: Layout,
@@ -915,6 +952,14 @@ const materialize = Effect.fn("materialize")(function* (
   const path = yield* Path.Path;
   const env = yield* childEnv(layout);
   const publisher = scenario.people.find((person) => person.key === scenario.publisher)!;
+  const sql = yield* SqlClient.SqlClient;
+  const ownerOf = (patch: Scenario["patches"][number]) =>
+    scenario.people.find((person) => person.key === (patch.owner ?? scenario.publisher))!;
+  /** A published patch's id, and whether it's live, as the instance's database has it. */
+  const stored = (owner: Person, name: string) =>
+    sql<{ readonly id: string; readonly live: boolean }>`
+      SELECT id, retired_at IS NULL AND deleted_at IS NULL AS live FROM patches
+      WHERE company_id = ${ids(scenario, owner).companyId} AND name = ${name}`;
   /** The people a patch is shared with, which the scenario checked are at its other companies. */
   const guestsOf = (patch: Scenario["patches"][number]) =>
     scenario.people.filter((person) => patch.guests?.includes(person.key) === true);
@@ -927,7 +972,7 @@ const materialize = Effect.fn("materialize")(function* (
       };
       yield* fs.writeFileString(layout.manifest, encodeManifest(current));
     });
-  const connections = scenario.connections ?? [];
+  const connections = liveConnections(scenario);
   const devEnv = yield* developerEnvFile(yield* Config.String("HOME"));
   const pidgeonKey = connections.some((connection) => connection.integration === "pidgeon")
     ? yield* readPidgeonTestKey(devEnv)
@@ -935,6 +980,8 @@ const materialize = Effect.fn("materialize")(function* (
   const attioKey = connections.some((connection) => connection.integration === "attio")
     ? yield* readAttioTestKey(devEnv)
     : Option.none();
+  // Offline connections first: they need nothing from outside.
+  yield* saveConnections(scenario);
   // Connections not made, so the patches declaring them can't publish either.
   const skipped = new Set<string>();
   for (const connection of connections) {
@@ -1045,14 +1092,31 @@ const materialize = Effect.fn("materialize")(function* (
       yield* Console.error(`  ${key}: skipped, because ${missing.join(" and ")} wasn't connected.`);
       continue;
     }
+    const owner = ownerOf(patch);
+    // Anyone but the publisher publishes with a token of their own, which ends once `up` is done.
+    if (owner.key !== scenario.publisher) yield* allowPublishing(scenario, owner);
+    const asOwner =
+      owner.key === scenario.publisher
+        ? env
+        : { ...env, PATCHY_API_URL: manifest.apiUrl, PATCHY_API_TOKEN: tokenOf(scenario, owner) };
+    const repo = path.join(layout.workspace, key);
+    // The repo's pinned CLI, run directly on the environment's Node: it finds the
+    // repo's workerd for tier 2 inspection, and pnpm's own output stays out of the JSON.
+    const pinned = path.join(repo, "node_modules", "patchy", "dist", "index.js");
+    const node = path.join(layout.bin, "node");
+    const file =
+      "repo" in patch ? "" : path.join(layout.workspace, "pages", path.basename(patch.file));
+    /** The CLI as the patch's owner: a repo's own in the repo, or the environment's with the page. */
+    const cli = (step: string, command: string, flags: ReadonlyArray<string> = []) =>
+      "repo" in patch
+        ? run(step, node, [pinned, command, ...flags, "--json"], { cwd: repo, env: asOwner })
+        : run(step, "patchy", [command, file, ...flags, "--json"], {
+            cwd: layout.workspace,
+            env: asOwner
+          });
     let entry = current.patches.find((done) => done.key === key);
-    if ("repo" in patch) {
-      const repo = path.join(layout.workspace, patch.repo);
-      // The repo's pinned CLI, run directly on the environment's Node: it finds the
-      // repo's workerd for tier 2 inspection, and pnpm's own output stays out of the JSON.
-      const pinned = path.join(repo, "node_modules", "patchy", "dist", "index.js");
-      const node = path.join(layout.bin, "node");
-      if (entry === undefined) {
+    if (entry === undefined) {
+      if ("repo" in patch) {
         yield* Console.error(`  ${patch.repo}: init, build and publish`);
         yield* fs.remove(repo, { recursive: true, force: true });
         yield* run(
@@ -1061,70 +1125,108 @@ const materialize = Effect.fn("materialize")(function* (
           ["init", repo, "--tier", String(patch.tier), "--purpose", patch.description, "--json"],
           { cwd: layout.workspace, env }
         );
-        yield* overlay(path.join(scenarioDir, "patches", patch.repo), repo);
+        yield* overlay(sourceOf(path, scenarioDir, patch), repo);
+        for (const read of patch.reads ?? []) {
+          const source = scenario.patches.find(
+            (each) => "repo" in each && each.repo === read.patch
+          )!;
+          const published = current.patches.find((done) => done.key === read.patch);
+          const [found] =
+            published === undefined ? [] : yield* stored(ownerOf(source), published.name);
+          if (found === undefined)
+            return yield* new StepExited({ step: `Finding ${read.patch} for ${key}`, exitCode: 1 });
+          yield* run(
+            `Reading ${read.patch}'s ${read.table} in ${key}`,
+            node,
+            [
+              pinned,
+              "add",
+              "shared-table",
+              `${found.id}/${read.table}`,
+              "--as",
+              read.table,
+              "--json"
+            ],
+            { cwd: repo, env }
+          );
+        }
         yield* run(`Refreshing ${patch.repo}`, node, [pinned, "refresh", "--json"], {
           cwd: repo,
           env
         });
-        const result = yield* decodePublish(
-          yield* run(`Publishing ${patch.repo}`, node, [pinned, "publish", "--json"], {
-            cwd: repo,
-            env
-          })
-        );
-        entry = { key, ...result, sampled: patch.sampleData !== true };
-        yield* record(entry);
-      }
-      if (!entry.sampled) {
-        yield* Console.error(`  ${patch.repo}: loading sample data as ${publisher.name}`);
-        yield* loadSampleData(manifest.apiUrl, publisher.email, entry.address);
-        yield* record({ ...entry, sampled: true });
-      }
-      // Sharing again changes nothing, so a resumed `up` shares each time.
-      for (const guest of guestsOf(patch))
-        yield* run(
-          `Sharing ${patch.repo} with ${guest.name}`,
-          node,
-          [pinned, "share", "--add", guest.email, "--json"],
-          { cwd: repo, env }
-        );
-    } else {
-      const file = path.join(layout.workspace, "pages", path.basename(patch.file));
-      if (entry === undefined) {
+      } else {
         yield* fs.makeDirectory(path.dirname(file), { recursive: true });
-        yield* fs.copyFile(path.join(scenarioDir, "files", patch.file), file);
+        yield* fs.copyFile(sourceOf(path, scenarioDir, patch), file);
         yield* Console.error(`  ${patch.name}: publish`);
-        const result = yield* decodePublish(
-          yield* run(
-            `Publishing ${patch.file}`,
-            "patchy",
-            [
-              "publish",
-              file,
-              "--name",
-              patch.name,
-              "--description",
-              patch.description,
-              "--share",
-              "company",
-              "--json"
-            ],
-            { cwd: layout.workspace, env }
-          )
-        );
-        yield* record({ key, ...result, sampled: true });
       }
+      const flags =
+        "repo" in patch ? [] : ["--name", patch.name, "--description", patch.description];
+      // Each publish is a new version, even of the same files.
+      let published = yield* decodePublish(yield* cli(`Publishing ${key}`, "publish", flags));
+      for (let version = 2; version <= (patch.versions ?? 1); version++)
+        published = yield* decodePublish(yield* cli(`Publishing ${key} again`, "publish", flags));
+      entry = { key, ...published, sampled: !("repo" in patch) || patch.sampleData !== true };
+      yield* record(entry);
+    }
+    if (!entry.sampled) {
+      yield* Console.error(`  ${key}: loading sample data as ${publisher.name}`);
+      yield* loadSampleData(manifest.apiUrl, publisher.email, entry.address);
+      entry = { ...entry, sampled: true };
+      yield* record(entry);
+    }
+    const ending =
+      patch.deleted !== undefined ? "delete" : patch.retired !== undefined ? "retire" : null;
+    // One an interrupted `up` already retired or deleted is past sharing and ending.
+    const [state] = yield* stored(owner, entry.name);
+    if (ending !== null && entry.ended !== true && state?.live === false) {
+      entry = { ...entry, ended: true };
+      yield* record(entry);
+    }
+    if (entry.ended !== true && entry.shared !== true && guestsOf(patch).length > 0) {
       for (const guest of guestsOf(patch))
-        yield* run(
-          `Sharing ${patch.name} with ${guest.name}`,
-          "patchy",
-          ["share", file, "--add", guest.email, "--json"],
-          { cwd: layout.workspace, env }
-        );
+        yield* cli(`Sharing ${key} with ${guest.name}`, "share", ["--add", guest.email]);
+      entry = { ...entry, shared: true };
+      yield* record(entry);
+    }
+    if (ending !== null && entry.ended !== true) {
+      yield* Console.error(
+        `  ${key}: ${ending === "delete" ? "deleting" : "retiring"} as ${owner.name}`
+      );
+      yield* cli(
+        `${ending === "delete" ? "Deleting" : "Retiring"} ${key}`,
+        ending,
+        ending === "delete" ? ["--yes"] : []
+      );
+      yield* record({ ...entry, ended: true });
     }
   }
+  yield* writeHistory(
+    scenario,
+    scenario.patches.flatMap((patch) => {
+      const done = current.patches.find(
+        (each) => each.key === ("repo" in patch ? patch.repo : patch.name)
+      );
+      return done === undefined ? [] : [{ patch, name: done.name }];
+    })
+  );
   return current;
 });
+
+/** The instance's database as `up` writes a scenario into it, sealing with the instance's own keys. */
+const scenarioDatabase = (plan: Plan) =>
+  Layer.mergeAll(Users.layer, InvocationLog.layer, RuntimeLog.layer).pipe(
+    Layer.provideMerge(
+      Layer.unwrap(
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const keys = yield* readCredentialKeys(path.join(plan.stateDir, "dev.env"));
+          return CredentialKeys.layerFromKeys(keys);
+        })
+      )
+    ),
+    Layer.provideMerge(layerFromUrl(Redacted.make(plan.databaseUrl))),
+    Layer.provideMerge(NodeCryptography.layer)
+  );
 
 /**
  * Builds everything outside the instance, resuming an `up` that stopped
@@ -1146,7 +1248,7 @@ export const setUp = Effect.fn("Environment.setUp")(function* (
     yield* writeAgent(layout, plan.apiUrl);
     yield* writeWorkers(layout, plan);
     // A dev mailbox a restart stopped starts again; its connection is already made.
-    for (const connection of loaded.scenario.connections ?? [])
+    for (const connection of liveConnections(loaded.scenario))
       if (connection.integration === "imap")
         yield* mailboxFor(layout, plan, loaded.dir, loaded.scenario, connection);
     if (existing.value.release === release) return existing.value;
@@ -1196,7 +1298,7 @@ export const setUp = Effect.fn("Environment.setUp")(function* (
   const published = yield* materialize(layout, plan, loaded.dir, scenario, {
     ...started,
     release
-  });
+  }).pipe(Effect.provide(scenarioDatabase(plan)));
   const manifest: Manifest = { ...published, release, complete: true };
   yield* fs.writeFileString(layout.manifest, encodeManifest(manifest));
   return manifest;
@@ -1206,7 +1308,7 @@ export const printCard = (manifest: Manifest, layout: Layout) => {
   const width = Math.max(...manifest.people.map((person) => person.key.length));
   const people = manifest.people.map(
     (person) =>
-      `    ${person.key.padEnd(width)}  ${person.name} · ${person.role}${person.company === undefined ? "" : ` at ${person.company}`}${person.key === manifest.publisher ? " · the CLI publishes as them" : ""}`
+      `    ${person.key.padEnd(width)}  ${person.name} · ${person.role}${person.company === undefined ? "" : ` at ${person.company}`}${person.deactivated === true ? " · deactivated" : ""}${person.key === manifest.publisher ? " · the CLI publishes as them" : ""}`
   );
   const patches = manifest.patches.map((patch) => `    ${patch.address}`);
   return Console.log(

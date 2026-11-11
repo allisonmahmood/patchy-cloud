@@ -318,11 +318,14 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         olderVersions: Schema.Int,
         retired: Schema.Int,
         deleted: Schema.Int,
-        disabled: Schema.Int
+        disabled: Schema.Int,
+        declaredBy: Schema.Array(Schema.String)
       }),
       execute: ({ companyId, patchIds }) => sql`SELECT declaration.value->>'id' AS "connectionId",
       COALESCE(array_agg(DISTINCT p.name ORDER BY p.name)
         FILTER (WHERE ${live} AND v.id = p.current_version_id), '{}') AS "usedBy",
+      COALESCE(array_agg(DISTINCT p.name ORDER BY p.name)
+        FILTER (WHERE NOT COALESCE(${live} AND v.id = p.current_version_id, false)), '{}') AS "declaredBy",
       (count(DISTINCT v.id)
         FILTER (WHERE ${live} AND v.id IS DISTINCT FROM p.current_version_id))::int AS "olderVersions",
       (count(DISTINCT p.id) FILTER (WHERE p.deleted_at IS NULL AND p.disabled_at IS NULL
@@ -368,9 +371,18 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
           companyId,
           ...(patchIds === undefined ? {} : { patchIds })
         });
+        // A live patch that also kept older declaring versions is named once, as a user.
         return new Map(
           rows.map(
-            ({ connectionId, ...usage }) => [connectionId, { ...usage, declared: true }] as const
+            ({ connectionId, declaredBy, ...usage }) =>
+              [
+                connectionId,
+                {
+                  ...usage,
+                  declaredBy: declaredBy.filter((name) => !usage.usedBy.includes(name)),
+                  declared: true
+                }
+              ] as const
           )
         );
       },

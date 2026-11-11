@@ -9,12 +9,12 @@ What a person's credential is for. `build` is a machine token's and opens the CL
 _Avoid_: scope (OAuth's word), token type
 
 **Machine token**:
-The `build` credential a machine holds to act as one user, shared by the agents on it and named for the machine. It expires 90 days after minting or after 30 idle days, whichever comes first; a version keeps the machine token that published it as provenance.
-_Avoid_: API key, personal access token, agent token (an agent has no identity of its own)
+The `build` credential a machine holds to act as one user, shared by the agents on it and named for the machine. It expires 90 days after minting or after 30 idle days, whichever comes first; a version keeps the machine token that published it as provenance. A person sees it as a **computer** on Your agents.
+_Avoid_: API key, personal access token, agent token (an agent has no identity of its own), machine or device in what a person reads
 
 **Agent connection**:
-One person's consent for one install of an MCP client, such as Claude or Codex, to use their company's patches as them through Patchy MCP: the `work` credential. Each consent makes a new one and replaces none. It lasts until its person disconnects it, 30 days pass without a call, a refresh token is reused, or the person is deactivated, and it works only while agent access is on.
-_Avoid_: connection on its own (Integrations' company source), integration, app (the client, not the connection), grant
+One person's consent for one install of an MCP client, such as Claude or Codex, to use their company's patches as them through Patchy MCP: the `work` credential. Each consent makes a new one and replaces none. It lasts until its person disconnects it, 30 days pass without a call, a refresh token is reused, or the person is deactivated, and it works only while agent access is on. A person sees it as an **app** on Your agents, named for its client, since that is what they connected; a reconnect lists the same app twice until the old one ends.
+_Avoid_: connection on its own (Integrations' company source), integration, app in code and docs (the client, not the connection), connector, grant
 
 **Consent**:
 The person's answer, in their signed-in browser, to a client asking to connect as them. It is asked every time and counts only for the account the page showed, for ten minutes after the page was shown. A yes records nothing but a code for that account, good for a minute and bound to the client, its redirect and its PKCE challenge; a no records nothing. Only the client's code exchange creates the agent connection, once: a replayed code ends the connection it made. Disconnect everything, deactivation and agent access off cancel a code not yet exchanged.
@@ -29,8 +29,8 @@ The user, their company and role, and the machine or agent connection acting for
 _Avoid_: account, principal (on the wire), permission set
 
 **Revocation**:
-Permanently ending a machine token's or agent connection's authority, whether by its user, replacement at login, a reused refresh token or the user's deactivation. Its provenance survives, its patches keep their lifecycle state, and reactivation never restores the token. Disconnect everything and deactivation also record when the person's credentials ended, and nothing made or approved at or before then works again, whichever release ended it.
-_Avoid_: ban, token deletion
+Permanently ending a machine token's or agent connection's authority, whether by its user, replacement at login, a reused refresh token or the user's deactivation. Its provenance survives, its patches keep their lifecycle state, and reactivation never restores the token. Disconnect everything and deactivation also record when the person's credentials ended, and nothing made or approved at or before then works again, whichever release ended it. A person's own revocation is **Disconnect** wherever they read it, on Your agents and in the CLI; revoke stays the word in code and on the wire.
+_Avoid_: ban, token deletion, Revoke in what a person reads
 
 **Bearer parsing**:
 The boundary that extracts a machine token or an agent connection's access token from a request's Authorization header. Missing and invalid credentials are indistinguishable to a protected API caller.
@@ -52,6 +52,10 @@ _Avoid_: invite code, invitation (Clerk's, which a beta link asks for), pass, de
 The signed-in user, their company and role on a first-party page or at a company patch's login door, without a machine credential. A viewer exists only after create-or-join and while the user is active; their email and name follow their current sign-in.
 _Avoid_: bearer, machine, principal
 
+**Terms prompt**:
+The card that stands in for a viewer's page, at the page's own address, while they haven't accepted the current [terms revisions](../companies/GLOSSARY.md#language): "We've updated our terms", Accept and Sign out. It appears only for a top-level page load in a browser, at the two page boundaries, a first-party page and a company patch's door, and never to a fetch, frame, stream, form post, public patch or client without a browser's fetch metadata. Accept records the revisions it showed, as the account it showed, then goes on to that page. A guest is asked for themselves.
+_Avoid_: terms gate, consent screen (an agent's consent page), terms wall
+
 **Setup link**:
 The `?s=` on the Final step panel's setup line: 128 random bits as 26 base32 characters, one live per person for 30 minutes, which `/llms.txt` carries into its login command as `--setup`. Its fetch marks the line picked up; the first device login it starts binds to it, and a second contests it. It keeps how its login ended (pending, denied, expired, contested, connected or confirmed by another account), because device logins are deleted when they finish. It is no credential: it only lets a login show on its owner's own panel. Events carry a separate setup id.
 _Avoid_: setup token, setup code (the device login's code is the code), attempt
@@ -61,5 +65,5 @@ The authorization of a machine through a short-lived URL and code that the perso
 _Avoid_: device flow (the protocol), OAuth (how agent connections are made), paste your token
 
 **Your agents**:
-The user's page of what acts as them, at `/machines`. Build patches lists their machine tokens, the computers that publish as them, each with Revoke; Use patches lists their agent connections, each with Disconnect. Each section ends with how to add one: the setup line for a computer, each app's steps for an agent connection. Disconnect everything, confirmed on its own page, ends both kinds and cancels approvals not yet collected.
+The user's page of what acts as them, at `/agents` (once `/machines`, which redirects there). Its header says whether agent access is on at their company. Use patches lists their agent connections as apps and Build patches their machine tokens as computers, each with when it was last used, Expires soon in its last week, and its ⋯ Disconnect…, a dialog at its own address naming what stops. One that ended on its own in the last 30 days, unused or expired, stays listed as Access ended with Reconnect. Connect an app at `/agents/connect` is a flow: choose the app (`?app=`), then only its steps, then what it can and can't do once connected. Add a computer at `/agents/computer` gives the setup line and the code to confirm, and answers No agent yet? at `/agents/computer/no-agent` with the words the Final step opens in place (`getAnAgent`). Disconnect everything, a dialog at `/agents/disconnect-all` with today's counts, ends both kinds and cancels approvals not yet collected.
 _Avoid_: Your machines (its old name), sessions (a browser's), API keys

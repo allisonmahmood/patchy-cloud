@@ -11,9 +11,18 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as SqlClient from "effect/sql/SqlClient";
 import { Users } from "@patchy/companies";
-import { Cryptography, escapeAttribute, escapeHtml } from "@patchy/core";
+import {
+  button,
+  Cryptography,
+  escapeAttribute,
+  field,
+  input,
+  row,
+  rows,
+  section
+} from "@patchy/core";
 import * as Session from "./Session.js";
-import { pageResponse, returnPath, withCookies } from "./page.js";
+import { doorResponse, returnPath, withCookies } from "./page.js";
 
 /**
  * Dev personas: anyone signs in as any email, no Clerk. The dev runner's
@@ -131,12 +140,16 @@ const Person = Schema.Struct({
   company: Schema.String
 });
 
-/** `key` is the door's, when it has one: every link and the form carry it on. */
+/**
+ * The people to pick from, by company, then any email, which accepts an invitation. `key` is the
+ * door's, when it has one: every link and the form carry it on. `refusal` is why the email was
+ * refused, under its field, which keeps what was typed.
+ */
 const picker = (
   people: ReadonlyArray<typeof Person.Type>,
   target: string,
   key: string | undefined,
-  notice?: string
+  refusal?: { readonly message: string; readonly email: string }
 ) => {
   const keyed = key === undefined ? "" : `&key=${encodeURIComponent(key)}`;
   const link = (email: string) =>
@@ -145,26 +158,48 @@ const picker = (
   for (const person of people)
     groups.set(person.company, [...(groups.get(person.company) ?? []), person]);
   const lists = [...groups]
-    .map(
-      ([company, members]) =>
-        `<h2>${escapeHtml(company)}</h2><ul class="list">${members
-          .map(
-            (person) =>
-              `<li class="list-row"><a class="list-link" href="${escapeAttribute(link(person.email))}"><strong>${escapeHtml(person.name || person.email)}</strong><br>${escapeHtml(person.email)} · ${escapeHtml(person.role)}</a></li>`
-          )
-          .join("")}</ul>`
+    .map(([company, members]) =>
+      section({
+        title: company,
+        body: rows(
+          members.map((person) =>
+            row({
+              name: person.name || person.email,
+              href: link(person.email),
+              description: `${person.email} · ${person.role}`
+            })
+          ),
+          true
+        )
+      })
     )
     .join("");
-  return pageResponse({
+  return doorResponse({
     title: "Sign in as someone",
-    status: notice === undefined ? 200 : 400,
-    body: `<p>This is a local environment. Pick a person, or sign in as any email to accept an invitation.</p>${notice === undefined ? "" : `<p class="field-error">${escapeHtml(notice)}</p>`}${lists}<form method="get" action="/dev/sign-in"><label class="field-label" for="as">Email</label><input class="field" id="as" name="as" type="email" required autocomplete="off"><input type="hidden" name="return" value="${escapeAttribute(target)}">${key === undefined ? "" : `<input type="hidden" name="key" value="${escapeAttribute(key)}">`}<div class="actions"><button class="btn btn-primary" type="submit">Sign in</button></div></form>`
+    status: refusal === undefined ? 200 : 400,
+    body: `<p>This is a local environment. Pick a person, or sign in as any email to accept an invitation.</p>${lists}<form id="persona" method="get" action="/dev/sign-in"><input type="hidden" name="return" value="${escapeAttribute(target)}">${key === undefined ? "" : `<input type="hidden" name="key" value="${escapeAttribute(key)}">`}${field(
+      {
+        id: "as",
+        label: "Email",
+        ...(refusal === undefined ? {} : { error: refusal.message }),
+        control: (aria) =>
+          input(aria, {
+            name: "as",
+            type: "email",
+            value: refusal?.email,
+            required: true,
+            autocomplete: "off",
+            autofocus: refusal !== undefined
+          })
+      }
+    )}</form>`,
+    actions: button("Sign in", { kind: "primary", block: true, form: "persona" })
   });
 };
 
 /** The answer to a request without the door's key: nothing about who is on the instance. */
 const closed = () =>
-  pageResponse({
+  doorResponse({
     title: "Sign-in is closed",
     status: 403,
     body: "<p>This instance signs people in only for the tools that set it up.</p>"
@@ -203,21 +238,22 @@ const signIn = Effect.fn("DevPersonas.signIn")(function* (
   // persona open this URL directly, so their browsers send `none` or no header at all.
   const from = request.headers["sec-fetch-site"];
   if (from === "cross-site" || from === "same-site")
-    return pageResponse({
+    return doorResponse({
       title: "Sign in from this instance",
       status: 403,
       body: `<p>Another site asked to sign you in as someone else, so nothing changed. To switch, open <a href="${escapeAttribute(`/dev/sign-in?return=${encodeURIComponent(target)}${keyed === undefined ? "" : `&key=${encodeURIComponent(keyed)}`}`)}">the people on this instance</a> and pick one.</p>`
     });
   if (!/^[^@\s]+@[^@\s]+$/.test(as))
-    return picker(yield* people, target, keyed, `${as} is not an email address.`);
+    return picker(yield* people, target, keyed, {
+      message: `${as} is not an email address.`,
+      email: as
+    });
   const user = yield* (yield* Users.Users).findByEmail(as);
   if (user?.deactivatedAt)
-    return picker(
-      yield* people,
-      target,
-      keyed,
-      `${as} is deactivated; reactivate them from /company.`
-    );
+    return picker(yield* people, target, keyed, {
+      message: `${as} is deactivated; reactivate them from /settings/people.`,
+      email: as
+    });
   const now = yield* Clock.currentTimeMillis;
   // A new email gets a stable stand-in Clerk id, so accepting an invitation creates its user.
   const claims = {
