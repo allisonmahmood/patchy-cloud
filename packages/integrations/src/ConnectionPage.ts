@@ -371,9 +371,9 @@ const connectionView = Effect.fn("ConnectionPage.connectionView")(function* (
   const selected = yield* store.audience(viewer.company.id, id);
   const teams =
     selected.kind === "teams"
-      ? yield* Teams.list({ companyId: viewer.company.id, actorId: viewer.user.id }).pipe(
-          Effect.catchTags({ RoleForbidden: Effect.die })
-        )
+      ? yield* (yield* Teams.Teams)
+          .list({ companyId: viewer.company.id, actorId: viewer.user.id })
+          .pipe(Effect.catchTags({ RoleForbidden: Effect.die }))
       : [];
   const page = pages[connection.integration];
   const usage =
@@ -544,9 +544,9 @@ const confirmationPage = Effect.fn("ConnectionPage.confirmationPage")(function* 
       viewer.company.id,
       id
     );
-    const teams = yield* Teams.list({ companyId: viewer.company.id, actorId: viewer.user.id }).pipe(
-      Effect.catchTags({ RoleForbidden: Effect.die })
-    );
+    const teams = yield* (yield* Teams.Teams)
+      .list({ companyId: viewer.company.id, actorId: viewer.user.id })
+      .pipe(Effect.catchTags({ RoleForbidden: Effect.die }));
     const fields = `<fieldset><legend class="field-label">Who can use this connection?</legend><label class="field-choice"><input class="field-radio" type="radio" name="audience" value="company" ${selected.kind === "company" ? "checked" : ""}> Company</label><label class="field-choice"><input class="field-radio" type="radio" name="audience" value="teams" ${selected.kind === "teams" ? "checked" : ""}> Selected teams</label>${teams.map((team) => `<label class="field-choice"><input class="field-checkbox" type="checkbox" name="team-${escapeAttribute(team.id)}" value="yes" ${selected.kind === "teams" && selected.teamIds.includes(team.id) ? "checked" : ""}> ${escapeHtml(team.name)}</label>`).join("")}</fieldset>`;
     return {
       title: "Connection audience",

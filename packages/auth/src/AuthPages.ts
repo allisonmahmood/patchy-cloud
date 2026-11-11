@@ -1,3 +1,4 @@
+import { Teams } from "@patchy/companies";
 import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -291,22 +292,7 @@ export const layer: Layer.Layer<
       yield* router.add(
         "GET",
         "/settings/company",
-        errors(
-          RequireSession.withViewer(
-            Effect.gen(function* () {
-              const viewer = yield* RequireSession.Viewer;
-              const session = yield* Session.Session;
-              return pageResponse(
-                {
-                  title: "Company",
-                  body: `<div class="list"><a class="list-row list-link" href="/company">People</a><a class="list-row list-link" href="${TeamsPage.path}">Teams</a></div>`,
-                  app: { viewer, section: "company-settings" }
-                },
-                session
-              );
-            })
-          )
-        )
+        Effect.succeed(HttpServerResponse.redirect("/company"))
       );
       for (const action of [
         "view",
@@ -320,7 +306,7 @@ export const layer: Layer.Layer<
         const show = Effect.gen(function* () {
           const viewer = yield* RequireSession.Viewer;
           const session = yield* Session.Session;
-          const page = yield* TeamsPage.handle(viewer, action);
+          const page = yield* TeamsPage.handle(viewer, action).pipe(Effect.provide(Teams.layer));
           if ("redirect" in page && page.redirect) {
             const response = HttpServerResponse.redirect(page.redirect, {
               status: 303,

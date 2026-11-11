@@ -328,6 +328,7 @@ const services = Layer.mergeAll(
       // Sharing checks who may manage the patch, and who the email is, as every patch act does.
       GuestGrants.layer.pipe(Layer.provideMerge(Layer.mergeAll(Patches.layer, Users.layer))),
       Companies.layer,
+      Teams.layer,
       Looks.layer,
       identity
     ).pipe(

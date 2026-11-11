@@ -1,3 +1,4 @@
+import { Teams } from "@patchy/companies";
 import { PatchVisibility } from "@patchy/integrations";
 import { SharingScope } from "@patchy/api";
 import * as Effect from "effect/Effect";
@@ -10,6 +11,7 @@ import * as Audiences from "./Audiences.js";
 /** Batched patch metadata admission, using the same decision as patch reads. */
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const teams = yield* Teams.Teams;
   const rows = SqlSchema.findAll({
     Request: Schema.Struct({ companyId: Schema.String, patchIds: Schema.Array(Schema.String) }),
     Result: Schema.Struct({
@@ -28,7 +30,8 @@ export const make = Effect.gen(function* () {
       function* (companyId, userId, patchIds) {
         if (patchIds.length === 0) return new Set<string>();
         const admitted = yield* Audiences.forPatches(companyId, userId).pipe(
-          Effect.provideService(SqlClient.SqlClient, sql)
+          Effect.provideService(SqlClient.SqlClient, sql),
+          Effect.provideService(Teams.Teams, teams)
         );
         const patches = yield* rows({ companyId, patchIds });
         return new Set(
@@ -51,4 +54,6 @@ export const make = Effect.gen(function* () {
     )
   });
 });
-export const layer = Layer.effect(PatchVisibility.PatchVisibility, make);
+export const layer = Layer.effect(PatchVisibility.PatchVisibility, make).pipe(
+  Layer.provide(Teams.layer)
+);

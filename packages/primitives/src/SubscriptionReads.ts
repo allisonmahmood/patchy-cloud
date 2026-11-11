@@ -78,11 +78,7 @@ const makeReader = Effect.fn("SubscriptionReads.makeReader")(function* (lifecycl
     yield* decoded.pipe(Effect.mapError((cause) => new Runtime.InvalidRequest({ cause })));
     const name = input.args.table;
     if (typeof name !== "string") return yield* new Runtime.InvalidRequest({});
-    const keys = [
-      `table:${input.binding.patchId}:${name}`,
-      `patch:${input.binding.patchId}`,
-      `members:${input.binding.companyId}`
-    ];
+    const keys = [`table:${input.binding.patchId}:${name}`, `patch:${input.binding.patchId}`];
     for (const key of keys) input.onDependency?.(key);
     return { keys, name, op: input.op };
   });

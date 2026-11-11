@@ -270,3 +270,5 @@ template or CLI messages helps builders. `--calibrate` checks the judges
 against labelled builds after a change to their prompts or rubrics. It needs bubblewrap, both harnesses signed
 in on this machine and Playwright's Chromium; DEVELOPMENT's **Measuring how agents build** has
 the rest. Results land in `.local/evals/<suite>/`, `scorecard.md` first.
+
+Brightline includes all three company roles and seeded Design and Engineering teams; Robin is its regular admin.

@@ -449,13 +449,47 @@ const failureSource = Effect.fn("sdk.failureSource")(function* (patchId: string)
 });
 
 it.layer(layer)("SDK company generation", (it) => {
+  it.effect("refuses restricted and missing patch ids identically during generation", () =>
+    Effect.gen(function* () {
+      const admin = Fixtures.identities.admin;
+      const team = yield* (yield* Teams.Teams).create({
+        companyId: identity.company.id,
+        actorId: admin.user.id,
+        name: "SDK private id"
+      });
+      yield* (yield* Teams.Teams).setMemberships({
+        companyId: identity.company.id,
+        actorId: admin.user.id,
+        teamId: team.id,
+        userIds: [admin.user.id],
+        added: true
+      });
+      const input = Fixtures.recordInput(admin, {
+        audience: { members: { kind: "teams", teamIds: [team.id] } }
+      });
+      yield* Fixtures.record(input);
+      for (const patchId of [input.patchId, "sdkmissing01"]) {
+        const error = yield* Generation.generate(
+          identity.company.id,
+          { ...generateRequest(), patchId },
+          identity.user.id
+        ).pipe(Effect.flip);
+        assert.instanceOf(error, Generation.PatchNotOpenable);
+      }
+      yield* Generation.generate(
+        identity.company.id,
+        { ...generateRequest(), patchId: input.patchId },
+        admin.user.id
+      );
+    })
+  );
   it.effect(
     "direct generation uses its required viewer and follows connection membership changes",
     () =>
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient;
         const admin = Fixtures.identities.admin;
-        const team = yield* Teams.create({
+        const team = yield* (yield* Teams.Teams).create({
           companyId: identity.company.id,
           actorId: admin.user.id,
           name: "Generation access"
@@ -479,7 +513,7 @@ it.layer(layer)("SDK company generation", (it) => {
         });
         const generate = Generation.generate(identity.company.id, payload, identity.user.id);
         assert.instanceOf(yield* generate.pipe(Effect.flip), Generation.ConnectionNotConnected);
-        yield* Teams.setMemberships({
+        yield* (yield* Teams.Teams).setMemberships({
           companyId: identity.company.id,
           actorId: admin.user.id,
           teamId: team.id,
@@ -487,7 +521,7 @@ it.layer(layer)("SDK company generation", (it) => {
           added: true
         });
         assert.deepEqual((yield* generate).uses, [{ alias: "limited", id, revision: 1 }]);
-        yield* Teams.setMemberships({
+        yield* (yield* Teams.Teams).setMemberships({
           companyId: identity.company.id,
           actorId: admin.user.id,
           teamId: team.id,
@@ -1534,7 +1568,7 @@ it.layer(layer)("SDK company generation", (it) => {
         });
         const dependencies = Layer.succeed(Patches.Patches, {
           ...patches,
-          find: () => Effect.fail(sqlError),
+          findForViewer: () => Effect.fail(sqlError),
           sharedTable: () => Effect.fail(sqlError)
         });
         for (const operation of [

@@ -266,7 +266,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
   else skills.delete("patchy-members");
   if (request.patchId !== undefined) {
     const existing = yield* patches
-      .find(request.patchId)
+      .findForViewer(request.patchId, { companyId, userId: viewerId })
       .pipe(Effect.catchTags({ SqlError: Effect.die }));
     if (Option.isNone(existing) || existing.value.patch.companyId !== companyId)
       return yield* new PatchNotOpenable({ patchId: request.patchId });

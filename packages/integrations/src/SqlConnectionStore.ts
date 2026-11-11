@@ -219,6 +219,7 @@ export const make = Effect.suspend(() => knowing(integrations));
  */
 export const knowing = (known: ReadonlyArray<Integration>) =>
   Effect.gen(function* () {
+    const teamService = yield* Teams.Teams;
     const cryptography = yield* Cryptography.Cryptography;
     const sql = yield* SqlClient.SqlClient;
     const keys = yield* CredentialKeys.CredentialKeys;
@@ -1641,9 +1642,10 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       const needsTeams = rows.some((row) => row.kind === "teams");
       const teams = new Set(
         needsTeams
-          ? yield* Teams.memberships(companyId, userId).pipe(
-              Effect.provideService(SqlClient.SqlClient, sql)
-            )
+          ? yield* teamService
+              .memberships(companyId, [userId])
+              .pipe(Effect.map((rows) => rows.get(userId) ?? []))
+              .pipe(Effect.provideService(SqlClient.SqlClient, sql))
           : []
       );
       return new Set(
@@ -1696,21 +1698,23 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
             if (selected.kind === "teams") {
               if (selected.teamIds.length === 0)
                 return yield* new ConnectionStore.InvalidConnectionAudience();
-              const teams = yield* Teams.list({
-                companyId: input.companyId,
-                actorId: input.userId
-              }).pipe(
-                Effect.catchTags({
-                  RoleForbidden: () =>
-                    Effect.fail(new ConnectionStore.ConnectionAdministrationDenied())
+              const teams = yield* teamService
+                .list({
+                  companyId: input.companyId,
+                  actorId: input.userId
                 })
-              );
+                .pipe(
+                  Effect.catchTags({
+                    RoleForbidden: () =>
+                      Effect.fail(new ConnectionStore.ConnectionAdministrationDenied())
+                  })
+                );
               if (selected.teamIds.some((id) => !teams.some((team) => team.id === id)))
                 return yield* new ConnectionStore.InvalidConnectionAudience();
             }
             if (
               selected.kind === "teams" &&
-              !(yield* Teams.lockActive(input.companyId, selected.teamIds))
+              !(yield* teamService.lockActive(input.companyId, selected.teamIds))
             )
               return yield* new ConnectionStore.InvalidConnectionAudience();
             const previous = yield* audience(input.companyId, input.id);
@@ -1939,9 +1943,11 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       sends,
       pauseLogin
     });
-  });
+  }).pipe(Effect.provide(Teams.layer));
 
-export const layer = Layer.effect(ConnectionStore.ConnectionStore, make);
+export const layer = Layer.effect(ConnectionStore.ConnectionStore, make).pipe(
+  Layer.provide(Teams.layer)
+);
 
 /** Lifecycle guards use complete references, independently of presentation visibility. */
 export const referencesTeam = Effect.fn("ConnectionStore.referencesTeam")(function* (

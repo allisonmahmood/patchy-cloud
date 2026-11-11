@@ -108,8 +108,6 @@ _Avoid_: freeze, lock, deactivate (an admin's act on a user)
 Patchy, running the platform, rather than a role inside a company or the driver of the CLI. Its future surfaces are its own login and dashboards, outside the company product and the `patchy` CLI.
 _Avoid_: admin (a company role), superuser, staff, the CLI's user
 
-Company-space guests are existing outside accounts kept by Patches separately from these
-company roles and team memberships. Their pool membership alone grants no patch access;
-Patches' audience selects specific guests or all current/future guests minus exclusions.
+Outside guests hold named grants on individual patches. Companies' roles and team memberships apply to people inside the company.
 
 A **deleted team** retains its identity and recorded memberships for restoration by an administrator. Deletion is refused while any patch or connection audience refers to it. Deleted teams grant no access and accept no new audience grants; restoration does not recreate explicitly removed memberships. Team lifecycle records attribute each deletion and restoration.

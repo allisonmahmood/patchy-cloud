@@ -30,8 +30,8 @@ it.layer(server().pipe(Layer.provideMerge(NodeCryptography.layer)))(
     it.effect("serializes a first publish racing team deletion without a dangling audience", () =>
       Effect.gen(function* () {
         const ref = { companyId: DEV_SEED.companyId, actorId: DEV_SEED.userId };
-        const team = yield* Teams.create({ ...ref, name: "Concurrent publication" });
-        yield* Teams.setMemberships({
+        const team = yield* (yield* Teams.Teams).create({ ...ref, name: "Concurrent publication" });
+        yield* (yield* Teams.Teams).setMemberships({
           ...ref,
           teamId: team.id,
           userIds: [ref.actorId],
@@ -77,10 +77,16 @@ it.layer(server().pipe(Layer.provideMerge(NodeCryptography.layer)))(
       () =>
         Effect.gen(function* () {
           const actor = { companyId: DEV_SEED.companyId, actorId: DEV_SEED.userId };
-          const design = yield* Teams.create({ ...actor, name: "Design integration" });
-          const engineering = yield* Teams.create({ ...actor, name: "Engineering integration" });
+          const design = yield* (yield* Teams.Teams).create({
+            ...actor,
+            name: "Design integration"
+          });
+          const engineering = yield* (yield* Teams.Teams).create({
+            ...actor,
+            name: "Engineering integration"
+          });
           for (const team of [design, engineering])
-            yield* Teams.setMemberships({
+            yield* (yield* Teams.Teams).setMemberships({
               ...actor,
               teamId: team.id,
               userIds: [DEV_SEED.userId],
@@ -122,9 +128,12 @@ it.layer(server().pipe(Layer.provideMerge(NodeCryptography.layer)))(
           yield* sql`DELETE FROM connection_team_grants WHERE connection_id = 'conn_team_recovery'`;
           yield* sql`UPDATE connections SET audience_kind = 'company' WHERE id = 'conn_team_recovery'`;
           assert.equal((yield* transition(design.id, "delete")).status, 200);
-          assert.deepEqual(yield* Teams.memberships(actor.companyId, actor.actorId), [
-            engineering.id
-          ]);
+          assert.deepEqual(
+            yield* (yield* Teams.Teams)
+              .memberships(actor.companyId, [actor.actorId])
+              .pipe(Effect.map((rows) => rows.get(actor.actorId) ?? [])),
+            [engineering.id]
+          );
           assert.equal(
             (yield* publish(DEV_SEED.token, {
               html: html("Deleted target"),
@@ -133,10 +142,14 @@ it.layer(server().pipe(Layer.provideMerge(NodeCryptography.layer)))(
             400
           );
           assert.equal((yield* transition(design.id, "restore")).status, 200);
-          assert.sameMembers(yield* Teams.memberships(actor.companyId, actor.actorId), [
-            design.id,
-            engineering.id
-          ]);
+          assert.sameMembers(
+            [
+              ...(yield* (yield* Teams.Teams)
+                .memberships(actor.companyId, [actor.actorId])
+                .pipe(Effect.map((rows) => rows.get(actor.actorId) ?? [])))
+            ],
+            [design.id, engineering.id]
+          );
           assert.deepEqual(yield* sql`SELECT scope FROM patches WHERE id = ${created.patchId}`, [
             { scope: "teams" }
           ]);
@@ -155,8 +168,8 @@ it.layer(server().pipe(Layer.provideMerge(NodeCryptography.layer)))(
           };
           yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role) VALUES (${member.id}, ${member.clerkId}, ${DEV_SEED.companyId}, ${member.email}, 'Reader', 'member')`;
           const actor = { companyId: DEV_SEED.companyId, actorId: DEV_SEED.userId };
-          const team = yield* Teams.create({ ...actor, name: "Only granting team" });
-          yield* Teams.setMemberships({
+          const team = yield* (yield* Teams.Teams).create({ ...actor, name: "Only granting team" });
+          yield* (yield* Teams.Teams).setMemberships({
             ...actor,
             teamId: team.id,
             userIds: [DEV_SEED.userId, member.id],
@@ -244,7 +257,7 @@ it.layer(server().pipe(Layer.provideMerge(NodeCryptography.layer)))(
           assert.strictEqual(subscribed.status, 200);
           assert.strictEqual((yield* Queue.take(frames)).type, "admitted");
           assert.strictEqual((yield* Queue.take(frames)).type, "snapshot");
-          yield* Teams.setMemberships({
+          yield* (yield* Teams.Teams).setMemberships({
             ...actor,
             teamId: team.id,
             userIds: [member.id],
@@ -256,7 +269,7 @@ it.layer(server().pipe(Layer.provideMerge(NodeCryptography.layer)))(
           const denied = yield* open;
           assert.strictEqual(denied.status, 403);
           yield* denied.text;
-          yield* Teams.setMemberships({
+          yield* (yield* Teams.Teams).setMemberships({
             ...actor,
             teamId: team.id,
             userIds: [member.id],

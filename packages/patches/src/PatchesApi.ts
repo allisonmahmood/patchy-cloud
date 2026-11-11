@@ -1,3 +1,4 @@
+import * as Layer from "effect/Layer";
 /**
  * The `patches` group of the Patchy API, implemented over `Content`,
  * `Patches` and `Limits`: discovery, publish, owner lifecycle actions and the
@@ -461,6 +462,7 @@ const requestOrigin = Effect.map(HttpServerRequest.HttpServerRequest, (request) 
 
 export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
   Effect.gen(function* () {
+    const teamService = yield* Teams.Teams;
     const cryptography = yield* Cryptography.Cryptography;
     const content = yield* Content.Content;
     const sql = yield* SqlClient.SqlClient;
@@ -1192,10 +1194,12 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
       .handleRaw("audienceOptions", () =>
         Effect.gen(function* () {
           const identity = yield* CurrentIdentity;
-          const teams = yield* Teams.list({
-            companyId: identity.company.id,
-            actorId: identity.user.id
-          }).pipe(Effect.catchTags({ RoleForbidden: Effect.die }));
+          const teams = yield* teamService
+            .list({
+              companyId: identity.company.id,
+              actorId: identity.user.id
+            })
+            .pipe(Effect.catchTags({ RoleForbidden: Effect.die }));
           return HttpServerResponse.jsonUnsafe(
             encodeAudienceOptions(
               new AudienceOptions({
@@ -1411,4 +1415,4 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
         })
       );
   })
-);
+).pipe(Layer.provide(Teams.layer));

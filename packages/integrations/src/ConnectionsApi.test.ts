@@ -103,7 +103,12 @@ const layer = Layer.mergeAll(ConnectionsApi.layer, HttpServer.layerServices).pip
       ])
     )
   ),
-  Layer.provideMerge(Layer.effectDiscard(seed).pipe(Layer.provideMerge(Testing.layer()))),
+  Layer.provideMerge(
+    Layer.effectDiscard(seed).pipe(
+      Layer.provideMerge(Teams.layer),
+      Layer.provideMerge(Testing.layer())
+    )
+  ),
   Layer.provideMerge(NodeCryptography.layer)
 );
 const client = (token: string) =>
@@ -124,7 +129,7 @@ it.layer(layer)("connections group", (it) => {
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
         const store = yield* ConnectionStore.ConnectionStore;
-        const team = yield* Teams.create({
+        const team = yield* (yield* Teams.Teams).create({
           companyId: DEV_SEED.companyId,
           actorId: DEV_SEED.userId,
           name: "API connection audience"
@@ -150,7 +155,7 @@ it.layer(layer)("connections group", (it) => {
         });
         assert.equal(denied.status, 404);
         assert.notInclude(yield* denied.text, "private-db");
-        yield* Teams.setMemberships({
+        yield* (yield* Teams.Teams).setMemberships({
           companyId: DEV_SEED.companyId,
           actorId: DEV_SEED.userId,
           teamId: team.id,
@@ -163,7 +168,7 @@ it.layer(layer)("connections group", (it) => {
           ),
           true
         );
-        yield* Teams.setMemberships({
+        yield* (yield* Teams.Teams).setMemberships({
           companyId: DEV_SEED.companyId,
           actorId: DEV_SEED.userId,
           teamId: team.id,

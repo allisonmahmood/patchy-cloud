@@ -1,3 +1,4 @@
+import { Teams } from "@patchy/companies";
 import { Audiences } from "@patchy/patches";
 /**
  * The routes a reader hits: the health checks, patch addresses
@@ -595,6 +596,7 @@ export const layer: Layer.Layer<
   | Session.Session
   | Companies.Companies
   | Users.Users
+  | Teams.Teams
   | SqlClient.SqlClient
   | Content.Content
   | Cryptography.Cryptography
@@ -606,6 +608,7 @@ export const layer: Layer.Layer<
       | GuestGrants.GuestGrants
       | Session.Session
       | Users.Users
+      | Teams.Teams
       | Analytics.Analytics
       | SqlClient.SqlClient
     >

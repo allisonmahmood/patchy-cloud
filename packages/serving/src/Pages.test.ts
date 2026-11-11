@@ -162,7 +162,9 @@ const session = Layer.unwrap(
 const services = Layer.mergeAll(Content.layer, DeviceLogins.layer).pipe(
   Layer.provideMerge(
     Layer.mergeAll(
-      GuestGrants.layer.pipe(Layer.provideMerge(Layer.mergeAll(Patches.layer, Users.layer))),
+      GuestGrants.layer.pipe(
+        Layer.provideMerge(Layer.mergeAll(Patches.layer, Layer.merge(Users.layer, Teams.layer)))
+      ),
       memoryStore,
       session,
       Companies.layer,
@@ -249,8 +251,8 @@ it.layer(layer)("pages", (it) => {
           yield* sql`INSERT INTO users(id, clerk_user_id, company_id, email, name, role) VALUES (${id}, ${id}, ${DEV_SEED.companyId}, ${`${id}@example.test`}, ${id}, ${role})`;
         }
         const manager = { companyId: DEV_SEED.companyId, actorId: DEV_SEED.userId };
-        const team = yield* Teams.create({ ...manager, name: "Serving audience" });
-        yield* Teams.setMemberships({
+        const team = yield* (yield* Teams.Teams).create({ ...manager, name: "Serving audience" });
+        yield* (yield* Teams.Teams).setMemberships({
           ...manager,
           teamId: team.id,
           userIds: [DEV_SEED.userId, "usr_audience_inside"],
@@ -288,7 +290,7 @@ it.layer(layer)("pages", (it) => {
           assert.equal(outside.status, 404, url);
           assert.notInclude(yield* outside.text, "Restricted");
         }
-        yield* Teams.setMemberships({
+        yield* (yield* Teams.Teams).setMemberships({
           ...manager,
           teamId: team.id,
           userIds: ["usr_audience_inside"],

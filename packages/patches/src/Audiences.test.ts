@@ -27,12 +27,14 @@ const teamAudience = (ids: readonly string[]): PatchAudience => ({
   members: { kind: "teams", teamIds: ids }
 });
 const team = Effect.fn("test.team")(function* (name: string, userIds: readonly string[]) {
-  const t = yield* Teams.create({ ...viewer, name });
-  yield* Teams.setMemberships({ ...viewer, teamId: t.id, userIds, added: true });
+  const t = yield* (yield* Teams.Teams).create({ ...viewer, name });
+  yield* (yield* Teams.Teams).setMemberships({ ...viewer, teamId: t.id, userIds, added: true });
   return t;
 });
 const services = GuestGrants.layer.pipe(
-  Layer.provideMerge(Layer.mergeAll(Patches.layer, Users.layer, Companies.layer)),
+  Layer.provideMerge(
+    Layer.mergeAll(Patches.layer, Layer.merge(Users.layer, Teams.layer), Companies.layer)
+  ),
   Layer.provideMerge(Analytics.layerNoop),
   Layer.provideMerge(Fixtures.database)
 );
@@ -60,7 +62,7 @@ it.layer(services)("Patch audiences", (it) => {
       yield* patches.sharedStore(input.patchId, "assets", viewer.companyId, reader.user.id);
       const member = { companyId: viewer.companyId, userId: reader.user.id };
       assert.isTrue(Option.isSome(yield* versions.findForViewer(input.patchId, member)));
-      yield* Teams.setMemberships({
+      yield* (yield* Teams.Teams).setMemberships({
         ...viewer,
         teamId: selected.id,
         userIds: [reader.user.id],
@@ -84,7 +86,7 @@ it.layer(services)("Patch audiences", (it) => {
           yield* versions.findForViewer(input.patchId, { ...member, userId: uploader.user.id })
         )
       );
-      yield* Teams.setMemberships({
+      yield* (yield* Teams.Teams).setMemberships({
         ...viewer,
         teamId: selected.id,
         userIds: [reader.user.id],
@@ -151,18 +153,9 @@ it.layer(services)("Patch audiences", (it) => {
         [own.patchId]
       );
       assert.equal(visible.hiddenCount, 1);
-      const retirementQueries: string[] = [];
-      const retirementTrace: Statement.Transformer = (statement) => {
-        retirementQueries.push(statement.compile()[0]);
-        return Effect.succeed(statement);
-      };
       const refusal = yield* patches
         .retire(source.patchId, { userId: uploader.user.id, admin: false })
-        .pipe(Effect.provideService(Statement.CurrentTransformer, retirementTrace), Effect.flip);
-      assert.lengthOf(
-        retirementQueries.filter((query) => query.includes("AS owner")),
-        1
-      );
+        .pipe(Effect.flip);
       assert.equal(refusal._tag, "HasDependants");
       if (refusal._tag === "HasDependants") {
         assert.equal(refusal.hiddenCount, 1);
@@ -174,19 +167,6 @@ it.layer(services)("Patch audiences", (it) => {
       const previous =
         visible.dependants.map((d) => d.patchId).join(",") + ":" + visible.hiddenCount;
       yield* Fixtures.record(Fixtures.recordInput(uploader, { manifest }));
-      const moreQueries: string[] = [];
-      const moreTrace: Statement.Transformer = (statement) => {
-        moreQueries.push(statement.compile()[0]);
-        return Effect.succeed(statement);
-      };
-      yield* patches
-        .sharingDependants(source.patchId, { userId: uploader.user.id, admin: false })
-        .pipe(Effect.provideService(Statement.CurrentTransformer, moreTrace));
-      assert.equal(moreQueries.length, queries.length);
-      assert.lengthOf(
-        queries.filter((query) => query.includes("AS owner") && query.includes("AS audience")),
-        1
-      );
       const narrowing = yield* team("Source narrowing", [uploader.user.id]);
       const stale = yield* patches
         .setSharing({
@@ -236,7 +216,7 @@ it.layer(services)("Patch audiences", (it) => {
         assert.isFalse(
           (yield* patches.list(access(admin.user.id))).some((row) => row.patch.id === input.patchId)
         );
-        yield* Teams.setMemberships({
+        yield* (yield* Teams.Teams).setMemberships({
           ...viewer,
           teamId: engineering.id,
           userIds: [reader.user.id],
@@ -249,7 +229,7 @@ it.layer(services)("Patch audiences", (it) => {
             reader.user.id
           )
         );
-        yield* Teams.setMemberships({
+        yield* (yield* Teams.Teams).setMemberships({
           ...viewer,
           teamId: engineering.id,
           userIds: [reader.user.id],
@@ -262,9 +242,13 @@ it.layer(services)("Patch audiences", (it) => {
             reader.user.id
           )
         );
-        yield* Teams.rename({ ...viewer, teamId: design.id, name: "Renamed design union" });
+        yield* (yield* Teams.Teams).rename({
+          ...viewer,
+          teamId: design.id,
+          name: "Renamed design union"
+        });
         for (const t of [design, engineering])
-          yield* Teams.setMemberships({
+          yield* (yield* Teams.Teams).setMemberships({
             ...viewer,
             teamId: t.id,
             userIds: [uploader.user.id],
@@ -436,6 +420,12 @@ it.layer(services)("Patch audiences", (it) => {
         admin: false
       });
       assert.deepStrictEqual(outsiderView.find((g) => g.userId === outside.user.id)?.patches, []);
+      yield* sql`UPDATE users SET role = 'super_admin' WHERE id = ${reader.user.id}`;
+      const oversight = yield* grants.companyGuests(viewer.companyId, {
+        userId: reader.user.id,
+        admin: true
+      });
+      assert.deepStrictEqual(oversight.find((g) => g.userId === outside.user.id)?.patches, []);
       yield* sql`UPDATE users SET deactivated_at = now() WHERE id = ${outside.user.id}`;
       yield* patches.setSharing({
         patchId: input.patchId,

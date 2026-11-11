@@ -172,7 +172,9 @@ const layer = Layer.mergeAll(PatchesApi.layer, HttpServer.layerServices).pipe(
     Layer.mergeAll(GuestGrants.layer.pipe(Layer.provideMerge(Patches.layer)), looks, memoryStore)
   ),
   Layer.provideMerge(recordingAnalytics),
-  Layer.provideMerge(Layer.mergeAll(InvocationLog.layer, Users.layer, Companies.layer)),
+  Layer.provideMerge(
+    Layer.mergeAll(InvocationLog.layer, Layer.merge(Users.layer, Teams.layer), Companies.layer)
+  ),
   Layer.provideMerge(Fixtures.database),
   Layer.provide(
     ConfigProvider.layer(
@@ -296,8 +298,8 @@ it.layer(layer)("patches group", (it) => {
       const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
       const outsider = yield* client.pipe(Effect.provide(Fixtures.as(reader)));
       const viewer = { companyId: uploader.company.id, actorId: admin.user.id };
-      const t = yield* Teams.create({ ...viewer, name: "API audience recovery" });
-      yield* Teams.setMemberships({
+      const t = yield* (yield* Teams.Teams).create({ ...viewer, name: "API audience recovery" });
+      yield* (yield* Teams.Teams).setMemberships({
         ...viewer,
         teamId: t.id,
         userIds: [uploader.user.id],
@@ -311,7 +313,7 @@ it.layer(layer)("patches group", (it) => {
         })
       });
       assert.equal(restrictedAudience.scope, "teams");
-      yield* Teams.setMemberships({
+      yield* (yield* Teams.Teams).setMemberships({
         ...viewer,
         teamId: t.id,
         userIds: [uploader.user.id],
@@ -330,7 +332,7 @@ it.layer(layer)("patches group", (it) => {
         responseMode: "response-only"
       });
       assert.equal(hidden.status, 404);
-      yield* Teams.setMemberships({
+      yield* (yield* Teams.Teams).setMemberships({
         ...viewer,
         teamId: t.id,
         userIds: [uploader.user.id],
@@ -505,7 +507,9 @@ const publishLayer = Layer.mergeAll(PatchesApi.layer, HttpServer.layerServices).
     Layer.mergeAll(GuestGrants.layer.pipe(Layer.provideMerge(Patches.layer)), looks, memoryStore)
   ),
   Layer.provideMerge(recordingAnalytics),
-  Layer.provideMerge(Layer.mergeAll(InvocationLog.layer, Users.layer, Companies.layer)),
+  Layer.provideMerge(
+    Layer.mergeAll(InvocationLog.layer, Layer.merge(Users.layer, Teams.layer), Companies.layer)
+  ),
   Layer.provideMerge(Fixtures.database),
   Layer.provide(publishConfig())
 );
@@ -961,12 +965,12 @@ it.layer(Layer.fresh(publishLayer))("owner lifecycle over machine tokens", (it) 
   it.effect("warns before narrowing shared sources and applies only an acknowledged retry", () =>
     Effect.gen(function* () {
       yield* (yield* CompanyDatabases.CompanyDatabases).ensureReady(uploader.company.id);
-      const team = yield* Teams.create({
+      const team = yield* (yield* Teams.Teams).create({
         companyId: uploader.company.id,
         actorId: Fixtures.identities.admin.user.id,
         name: "Source sharing"
       });
-      yield* Teams.setMemberships({
+      yield* (yield* Teams.Teams).setMemberships({
         companyId: uploader.company.id,
         actorId: Fixtures.identities.admin.user.id,
         teamId: team.id,
@@ -2830,7 +2834,7 @@ it.layer(Layer.fresh(publishLayer))("Postgres declaration publishing", (it) => {
   it.effect("publish requires the owner's current connection build access", () =>
     Effect.gen(function* () {
       const { connections, identity, declaration } = yield* sourceConnection("owner-build-access");
-      const team = yield* Teams.create({
+      const team = yield* (yield* Teams.Teams).create({
         companyId: admin.company.id,
         actorId: admin.user.id,
         name: "Connection builders"
@@ -2847,7 +2851,7 @@ it.layer(Layer.fresh(publishLayer))("Postgres declaration publishing", (it) => {
       const denied = yield* api.publish({ payload: request, responseMode: "response-only" });
       assert.equal(denied.status, 422);
       assert.include(yield* denied.json, { code: "connection_access_denied" });
-      yield* Teams.setMemberships({
+      yield* (yield* Teams.Teams).setMemberships({
         companyId: admin.company.id,
         actorId: admin.user.id,
         teamId: team.id,

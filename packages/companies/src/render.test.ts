@@ -9,7 +9,7 @@ import * as Users from "./Users.js";
 import * as Teams from "./Teams.js";
 import * as TeamsPage from "./TeamsPage.js";
 
-const services = Layer.mergeAll(Companies.layer, Users.layer).pipe(
+const services = Layer.mergeAll(Companies.layer, Layer.merge(Users.layer, Teams.layer)).pipe(
   Layer.provideMerge(Testing.layer()),
   Layer.provideMerge(NodeCryptography.layer)
 );
@@ -32,14 +32,14 @@ it.layer(services)("team lifecycle rendering", (it) => {
       });
       const viewer = { ...company, role: "super_admin" as const };
       const ref = { companyId: company.company.id, actorId: company.user.id };
-      const team = yield* Teams.create({ ...ref, name: "Research <script>" });
+      const team = yield* (yield* Teams.Teams).create({ ...ref, name: "Research <script>" });
       const confirmation = yield* view(viewer, `?team=${team.id}&confirm=delete`);
       assert.include(confirmation.body, "Research &lt;script&gt;");
       assert.notInclude(confirmation.body, "<script>");
       assert.include(confirmation.body, `action="${TeamsPage.path}/delete?team=${team.id}"`);
-      yield* Teams.setDeleted({ ...ref, teamId: team.id, deleted: true }).pipe(
-        Effect.provideService(Teams.References, () => Effect.succeed(false))
-      );
+      yield* (yield* Teams.Teams)
+        .setDeleted({ ...ref, teamId: team.id, deleted: true })
+        .pipe(Effect.provideService(Teams.References, () => Effect.succeed(false)));
       const active = yield* view(viewer, "");
       assert.notInclude(active.body, "Research &lt;script&gt;");
       const deleted = yield* view(viewer, `?team=${team.id}&deleted=1&confirm=restore`);

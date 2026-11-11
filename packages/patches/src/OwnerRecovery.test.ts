@@ -20,12 +20,14 @@ const teamAudience = (ids: readonly string[]): PatchAudience => ({
   members: { kind: "teams", teamIds: ids }
 });
 const team = Effect.fn("test.team")(function* (name: string, userIds: readonly string[]) {
-  const t = yield* Teams.create({ ...viewer, name });
-  yield* Teams.setMemberships({ ...viewer, teamId: t.id, userIds, added: true });
+  const t = yield* (yield* Teams.Teams).create({ ...viewer, name });
+  yield* (yield* Teams.Teams).setMemberships({ ...viewer, teamId: t.id, userIds, added: true });
   return t;
 });
 const services = GuestGrants.layer.pipe(
-  Layer.provideMerge(Layer.mergeAll(Patches.layer, Users.layer, Companies.layer)),
+  Layer.provideMerge(
+    Layer.mergeAll(Patches.layer, Layer.merge(Users.layer, Teams.layer), Companies.layer)
+  ),
   Layer.provideMerge(Analytics.layerNoop),
   Layer.provideMerge(Fixtures.database)
 );
@@ -39,7 +41,7 @@ it.layer(services)("Owner recovery", (it) => {
         const t = yield* team("Recovery", [uploader.user.id, reader.user.id]);
         const input = Fixtures.recordInput(uploader, { audience: teamAudience([t.id]) });
         yield* Fixtures.record(input);
-        yield* Teams.setMemberships({
+        yield* (yield* Teams.Teams).setMemberships({
           ...viewer,
           teamId: t.id,
           userIds: [uploader.user.id],
@@ -142,7 +144,7 @@ it.layer(services)("Owner recovery", (it) => {
         assert.equal(versions[0]!.publisherName, uploader.user.name);
         yield* patches.retire(input.patchId, actor);
         yield* patches.restore(input.patchId, actor);
-        yield* Teams.setMemberships({
+        yield* (yield* Teams.Teams).setMemberships({
           ...viewer,
           teamId: t.id,
           userIds: [reader.user.id],
@@ -165,7 +167,7 @@ it.layer(services)("Owner recovery", (it) => {
       const t = yield* team("Super owner recovery", [uploader.user.id]);
       const input = Fixtures.recordInput(uploader, { audience: teamAudience([t.id]) });
       yield* Fixtures.record(input);
-      yield* Teams.setMemberships({
+      yield* (yield* Teams.Teams).setMemberships({
         ...viewer,
         actorId: uploader.user.id,
         teamId: t.id,
@@ -195,8 +197,13 @@ it.layer(services)("Owner recovery", (it) => {
         const input = Fixtures.recordInput(uploader, { audience: teamAudience([t.id]) });
         yield* Fixtures.record(input);
         for (const teamId of [t.id, unrelated.id])
-          yield* Teams.setMemberships({ ...viewer, teamId, userIds: [admin.user.id], added: true });
-        yield* Teams.setMemberships({
+          yield* (yield* Teams.Teams).setMemberships({
+            ...viewer,
+            teamId,
+            userIds: [admin.user.id],
+            added: true
+          });
+        yield* (yield* Teams.Teams).setMemberships({
           ...viewer,
           teamId: t.id,
           userIds: [uploader.user.id],
@@ -208,7 +215,7 @@ it.layer(services)("Owner recovery", (it) => {
           (yield* Effect.flip(patches.managementHistory(input.patchId, reader.user.id)))._tag,
           "PatchUnavailable"
         );
-        yield* Teams.setMemberships({
+        yield* (yield* Teams.Teams).setMemberships({
           ...viewer,
           teamId: t.id,
           userIds: [uploader.user.id],

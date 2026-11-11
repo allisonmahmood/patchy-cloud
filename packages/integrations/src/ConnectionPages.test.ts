@@ -122,7 +122,7 @@ const events: Analytics.AnalyticsEvent[] = [];
 const services = Layer.mergeAll(
   Session.layer,
   Companies.layer,
-  Users.layer,
+  Layer.merge(Users.layer, Teams.layer),
   HttpServer.layerServices,
   SqlConnectionStore.layer,
   Layer.succeed(
@@ -294,7 +294,7 @@ it.layer(services)("company connection pages", (it) => {
       const admin = yield* addUser(owner, "regular", "admin");
       const member = yield* addUser(owner, "reader");
       const { connection, path } = yield* connect(owner.user, "audience-page");
-      const team = yield* Teams.create({
+      const team = yield* (yield* Teams.Teams).create({
         companyId: owner.company.id,
         actorId: owner.user.id,
         name: "Design & Engineering"
@@ -316,7 +316,7 @@ it.layer(services)("company connection pages", (it) => {
       assert.equal((yield* send(path, { headers: { cookie: cookie(member) } })).status, 404);
       const listed = yield* send("/company/connections", { headers: { cookie: cookie(member) } });
       assert.notInclude(yield* Effect.promise(() => listed.text()), "postgres/audience-page");
-      yield* Teams.setMemberships({
+      yield* (yield* Teams.Teams).setMemberships({
         companyId: owner.company.id,
         actorId: owner.user.id,
         teamId: team.id,

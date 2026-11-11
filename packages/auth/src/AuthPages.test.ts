@@ -65,7 +65,7 @@ const recordedAnalytics = Layer.succeed(
 const services = Layer.mergeAll(
   Session.layer,
   Companies.layer,
-  Users.layer,
+  Layer.merge(Users.layer, Teams.layer),
   InviteMail.layerRecording
 ).pipe(
   Layer.provideMerge(DeviceLogins.layer),
@@ -464,7 +464,12 @@ const localRevocation = Layer.effect(
   }))
 );
 it.layer(
-  Layer.mergeAll(localRevocation, Companies.layer, Users.layer, InviteMail.layerRecording).pipe(
+  Layer.mergeAll(
+    localRevocation,
+    Companies.layer,
+    Layer.merge(Users.layer, Teams.layer),
+    InviteMail.layerRecording
+  ).pipe(
     Layer.provideMerge(DeviceLogins.layer),
     Layer.provideMerge(MachineTokens.layer),
     Layer.provideMerge(AgentConnections.layer),
@@ -643,14 +648,14 @@ it.layer(services)("team membership policy through real page handlers", (it) => 
       const users = yield* Users.Users;
       const ref = { companyId: workspace.id, actorId: workspace.admin.id };
       yield* users.setRole({ ...ref, userId: workspace.owner.id, role: "admin" });
-      const team = yield* Teams.create({ ...ref, name: "Finance" });
+      const team = yield* (yield* Teams.Teams).create({ ...ref, name: "Finance" });
       const input = {
         ...ref,
         teamId: team.id,
         userIds: [workspace.owner.id, workspace.member.id],
         added: true
       };
-      yield* Teams.setMemberships(input);
+      yield* (yield* Teams.Teams).setMemberships(input);
       assert.equal(
         (yield* submit(`${TeamsPage.path}/remove?team=${team.id}`, workspace.owner, {
           userId: workspace.admin.id

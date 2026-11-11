@@ -38,7 +38,9 @@ export const forAuthenticatedMember = Effect.fn("Audiences.forAuthenticatedMembe
 ) {
   const teamIds = new Set(
     audiences.some((a) => a.members.kind === "teams")
-      ? yield* Teams.memberships(companyId, userId)
+      ? yield* (yield* Teams.Teams)
+          .memberships(companyId, [userId])
+          .pipe(Effect.map((rows) => rows.get(userId) ?? []))
       : []
   );
   return (audience: PatchAudience) => admits(audience, teamIds);
@@ -47,7 +49,7 @@ export const forPeople = Effect.fn("Audiences.forPeople")(function* (
   companyId: string,
   userIds: readonly string[]
 ) {
-  const facts = yield* Teams.people(companyId, userIds);
+  const facts = yield* (yield* Teams.Teams).people(companyId, userIds);
   const people = new Map(facts.map((person) => [person.id, person]));
   return (userId: string, audience: PatchAudience) => {
     const person = people.get(userId);
@@ -58,7 +60,7 @@ export const forMember = Effect.fn("Audiences.forMember")(function* (
   companyId: string,
   userId: string
 ) {
-  const facts = yield* Teams.people(companyId, [userId]);
+  const facts = yield* (yield* Teams.Teams).people(companyId, [userId]);
   const viewer = facts[0];
   const teamIds = new Set(viewer?.teamIds ?? []);
   return (audience: PatchAudience) =>
@@ -89,7 +91,7 @@ export const validate = Effect.fn("Audiences.validate")(function* (input: {
   readonly previous?: PatchAudience;
 }) {
   const { audience, companyId, actorId, ownerId } = input;
-  const people = yield* Teams.people(companyId, [actorId, ownerId]);
+  const people = yield* (yield* Teams.Teams).people(companyId, [actorId, ownerId]);
   const actor = people.find((p) => p.id === actorId);
   const owner = people.find((p) => p.id === ownerId);
   if (!actor?.active || !owner) return yield* new AudienceExcludesOwner();
@@ -98,9 +100,11 @@ export const validate = Effect.fn("Audiences.validate")(function* (input: {
   const previous = input.previous?.members.kind === "teams" ? input.previous.members.teamIds : [];
   const newTeams = audience.members.teamIds.filter((id) => !previous.includes(id));
   const existing = new Set(
-    (yield* Teams.list({ companyId, actorId }).pipe(
-      Effect.catchTags({ RoleForbidden: () => Effect.fail(new AudienceExcludesOwner()) })
-    )).map((t) => t.id)
+    (yield* (yield* Teams.Teams)
+      .list({ companyId, actorId })
+      .pipe(
+        Effect.catchTags({ RoleForbidden: () => Effect.fail(new AudienceExcludesOwner()) })
+      )).map((t) => t.id)
   );
   if (
     newTeams.some(
@@ -119,7 +123,7 @@ export const save = Effect.fn("Audiences.save")(function* (
   const sql = yield* SqlClient.SqlClient;
   if (
     audience.members.kind === "teams" &&
-    !(yield* Teams.lockActive(companyId, audience.members.teamIds))
+    !(yield* (yield* Teams.Teams).lockActive(companyId, audience.members.teamIds))
   )
     return yield* new InvalidAudienceTeams();
   yield* sql`UPDATE patches SET scope = ${scopeOf(audience)} WHERE id = ${patchId}`;

@@ -52,7 +52,7 @@ export const connectionRecheck: (
   id: string
 ) => Effect.Effect<void, typeof ViewerRefusal.Type, ConnectionStore.ConnectionStore> = Effect.fn(
   "Integrations.connectionRecheck"
-)(function* (binding: Binding.Binding["Service"], id: string) {
+)(function* (binding, id) {
   yield* viewerRecheck(binding);
   const store = yield* ConnectionStore.ConnectionStore;
   if (

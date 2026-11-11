@@ -328,9 +328,9 @@ const shareOverlay = Effect.fn("PortalPages.shareOverlay")(function* (
     back: pagePath(sharing.at),
     guests: yield* grants.guests(row.patch.id),
     suggestions: yield* grants.sharedBefore(viewer.company.id),
-    teams: yield* Teams.list({ companyId: viewer.company.id, actorId: viewer.user.id }).pipe(
-      Effect.catchTags({ RoleForbidden: Effect.die })
-    ),
+    teams: yield* (yield* Teams.Teams)
+      .list({ companyId: viewer.company.id, actorId: viewer.user.id })
+      .pipe(Effect.catchTags({ RoleForbidden: Effect.die })),
     ...(viewer.receipt === undefined ? {} : { receipt: viewer.receipt }),
     ...(sharing.notice === undefined ? {} : { notice: sharing.notice }),
     ...(sharing.refused === undefined ? {} : { refused: sharing.refused }),
@@ -435,9 +435,9 @@ const recoveryPage = Effect.fn("PortalPages.recoveryPage")(function* (
           back: path,
           guests: yield* grants.guests(r.id),
           suggestions: yield* grants.sharedBefore(viewer.company.id),
-          teams: yield* Teams.list({ companyId: viewer.company.id, actorId: viewer.user.id }).pipe(
-            Effect.catchTags({ RoleForbidden: Effect.die })
-          ),
+          teams: yield* (yield* Teams.Teams)
+            .list({ companyId: viewer.company.id, actorId: viewer.user.id })
+            .pipe(Effect.catchTags({ RoleForbidden: Effect.die })),
           ...(showSharing.notice ? { notice: showSharing.notice } : {}),
           ...(showSharing.confirmPublic ? { confirmPublic: true } : {}),
           ...(showSharing.refused ? { refused: showSharing.refused } : {})
@@ -1653,6 +1653,7 @@ export const layer: Layer.Layer<
       | Session.Session
       | Companies.Companies
       | Users.Users
+      | Teams.Teams
       | Patches.Patches
       | GuestGrants.GuestGrants
       | MachineTokens.MachineTokens

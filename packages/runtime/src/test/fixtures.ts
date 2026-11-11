@@ -1,3 +1,4 @@
+import { Teams } from "@patchy/companies";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -131,7 +132,7 @@ export const layer = (
         OperatingLimits.layer,
         RuntimeLog.layer,
         Session.layer,
-        Users.layer,
+        Layer.merge(Users.layer, Teams.layer),
         Companies.layer
       )
     ),

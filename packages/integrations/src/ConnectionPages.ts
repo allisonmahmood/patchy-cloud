@@ -1,3 +1,4 @@
+import { Teams } from "@patchy/companies";
 import * as Effect from "effect/Effect";
 import type * as Layer from "effect/Layer";
 import type * as SqlClient from "effect/sql/SqlClient";
@@ -132,6 +133,7 @@ export const layer: Layer.Layer<
       | Session.Session
       | Companies.Companies
       | Users.Users
+      | Teams.Teams
       | SqlClient.SqlClient
       | ConnectionStore.ConnectionStore
       | PatchVisibility.PatchVisibility

@@ -1326,15 +1326,28 @@ export const backfillNames = Effect.fn("Patches.backfillNames")(function* () {
 });
 
 export const make = Effect.gen(function* () {
+  const teamService = yield* Teams.Teams;
   const sql = yield* SqlClient.SqlClient;
   const memberAudience = (...args: Parameters<typeof Audiences.forMember>) =>
-    Audiences.forMember(...args).pipe(Effect.provideService(SqlClient.SqlClient, sql));
+    Audiences.forMember(...args).pipe(
+      Effect.provideService(SqlClient.SqlClient, sql),
+      Effect.provideService(Teams.Teams, teamService)
+    );
   const audienceOpen = (...args: Parameters<typeof Audiences.canOpen>) =>
-    Audiences.canOpen(...args).pipe(Effect.provideService(SqlClient.SqlClient, sql));
+    Audiences.canOpen(...args).pipe(
+      Effect.provideService(SqlClient.SqlClient, sql),
+      Effect.provideService(Teams.Teams, teamService)
+    );
   const validateAudience = (...args: Parameters<typeof Audiences.validate>) =>
-    Audiences.validate(...args).pipe(Effect.provideService(SqlClient.SqlClient, sql));
+    Audiences.validate(...args).pipe(
+      Effect.provideService(SqlClient.SqlClient, sql),
+      Effect.provideService(Teams.Teams, teamService)
+    );
   const saveAudience = (...args: Parameters<typeof Audiences.save>) =>
-    Audiences.save(...args).pipe(Effect.provideService(SqlClient.SqlClient, sql));
+    Audiences.save(...args).pipe(
+      Effect.provideService(SqlClient.SqlClient, sql),
+      Effect.provideService(Teams.Teams, teamService)
+    );
   const databases = yield* CompanyDatabases.CompanyDatabases;
   const inventoryStore = yield* Inventory.Inventory;
   const tables = yield* Tables.Tables;
@@ -1615,9 +1628,12 @@ export const make = Effect.gen(function* () {
   const actorRole = Effect.fn("Patches.actorRole")(function* (userId: string) {
     const rows = yield* actorCompany(userId).pipe(Effect.catchTags(dieOnSchemaError));
     if (Option.isNone(rows)) return Option.none();
-    const people = yield* Teams.people(rows.value.companyId, [userId]).pipe(
-      Effect.provideService(SqlClient.SqlClient, sql)
-    );
+    const people = yield* teamService
+      .people(rows.value.companyId, [userId])
+      .pipe(
+        Effect.provideService(SqlClient.SqlClient, sql),
+        Effect.provideService(Teams.Teams, teamService)
+      );
     const person = people[0];
     return person?.active
       ? Option.some({ ...person, companyId: rows.value.companyId })
@@ -2759,7 +2775,10 @@ export const make = Effect.gen(function* () {
     const admitted = yield* memberAudience(companyId, userId);
     const ownerAdmission = yield* Audiences.forPeople(companyId, [
       ...new Set(rows.map((row) => row.ownerId))
-    ]).pipe(Effect.provideService(SqlClient.SqlClient, sql));
+    ]).pipe(
+      Effect.provideService(SqlClient.SqlClient, sql),
+      Effect.provideService(Teams.Teams, teamService)
+    );
     const result: ManagementView[] = [];
     for (const record of rows) {
       const canOpen = admitted(record.audience);
@@ -2820,18 +2839,24 @@ export const make = Effect.gen(function* () {
     if (!record || record.ownerId !== userId) return yield* new PatchUnavailable({ patchId });
     const audience = record.audience.members;
     if (audience.kind !== "teams") return [];
-    const teams = yield* Teams.list({ companyId, actorId: userId }).pipe(
-      Effect.provideService(SqlClient.SqlClient, sql),
-      Effect.catchTags({ RoleForbidden: Effect.die })
-    );
+    const teams = yield* teamService
+      .list({ companyId, actorId: userId })
+      .pipe(
+        Effect.provideService(SqlClient.SqlClient, sql),
+        Effect.provideService(Teams.Teams, teamService),
+        Effect.catchTags({ RoleForbidden: Effect.die })
+      );
     const visible = audience.teamIds.filter(
       (id) =>
         teams.some((team) => team.id === id) &&
         (person.value.role !== "member" || person.value.teamIds.includes(id))
     );
-    return yield* Teams.selfJoins(companyId, visible).pipe(
-      Effect.provideService(SqlClient.SqlClient, sql)
-    );
+    return yield* teamService
+      .selfJoins(companyId, visible)
+      .pipe(
+        Effect.provideService(SqlClient.SqlClient, sql),
+        Effect.provideService(Teams.Teams, teamService)
+      );
   });
   const eligibleOwnerRows = SqlSchema.findAll({
     Request: Schema.String,
@@ -2895,7 +2920,10 @@ export const make = Effect.gen(function* () {
     const admitted = yield* Audiences.forPeople(
       patch.companyId,
       people.map((person) => person.id)
-    ).pipe(Effect.provideService(SqlClient.SqlClient, sql));
+    ).pipe(
+      Effect.provideService(SqlClient.SqlClient, sql),
+      Effect.provideService(Teams.Teams, teamService)
+    );
     return people.filter((person) => admitted(person.id, patch.audience));
   }, withLifecycleTransaction);
   const manage = Effect.fn("Patches.manage")((patchId: string, actor: Actor, readOnly = false) =>
@@ -2934,9 +2962,13 @@ export const make = Effect.gen(function* () {
         : Audiences.company(input.scope));
     if (!actor.admin && chosen.members.kind === "teams" && row.audience.members.kind === "teams") {
       const visible = new Set(
-        yield* Teams.memberships(row.companyId, actor.userId).pipe(
-          Effect.provideService(SqlClient.SqlClient, sql)
-        )
+        yield* teamService
+          .memberships(row.companyId, [actor.userId])
+          .pipe(Effect.map((rows) => rows.get(actor.userId) ?? []))
+          .pipe(
+            Effect.provideService(SqlClient.SqlClient, sql),
+            Effect.provideService(Teams.Teams, teamService)
+          )
       );
       chosen = {
         ...chosen,
@@ -3425,4 +3457,4 @@ export const make = Effect.gen(function* () {
 });
 
 /** Over the Postgres client. */
-export const layer = Layer.effect(Patches, make);
+export const layer = Layer.effect(Patches, make).pipe(Layer.provide(Teams.layer));

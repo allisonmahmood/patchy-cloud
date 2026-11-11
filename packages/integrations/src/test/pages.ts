@@ -1,3 +1,4 @@
+import { Teams } from "@patchy/companies";
 import * as ConnectionVisibility from "../../../patches/src/ConnectionVisibility.js";
 import { assert } from "@effect/vitest";
 import { Analytics } from "@patchy/analytics";
@@ -47,6 +48,7 @@ export const services = (
     Session.layer,
     Companies.layer,
     Users.layer,
+    Teams.layer,
     HttpServer.layerServices,
     SqlConnectionStore.layer,
     Layer.succeed(

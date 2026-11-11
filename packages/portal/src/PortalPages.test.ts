@@ -105,7 +105,9 @@ const session = Layer.unwrap(
   })
 ).pipe(Layer.provide(clerkBackend));
 const services = Layer.mergeAll(
-  GuestGrants.layer.pipe(Layer.provideMerge(Layer.mergeAll(Patches.layer, Users.layer))),
+  GuestGrants.layer.pipe(
+    Layer.provideMerge(Layer.mergeAll(Patches.layer, Layer.merge(Users.layer, Teams.layer)))
+  ),
   session,
   Companies.layer,
   InvocationLog.layer,
@@ -4832,8 +4834,8 @@ it.layer(layer)("owner recovery on a socket", (it) => {
       Effect.gen(function* () {
         const workspace = yield* company();
         const viewer = { companyId: workspace.id, actorId: workspace.admin.id };
-        const team = yield* Teams.create({ ...viewer, name: "Design" });
-        yield* Teams.setMemberships({
+        const team = yield* (yield* Teams.Teams).create({ ...viewer, name: "Design" });
+        yield* (yield* Teams.Teams).setMemberships({
           ...viewer,
           teamId: team.id,
           userIds: [workspace.owner.id, workspace.member.id],
@@ -4846,7 +4848,7 @@ it.layer(layer)("owner recovery on a socket", (it) => {
             members: { kind: "teams", teamIds: [team.id] }
           }
         });
-        yield* Teams.setMemberships({
+        yield* (yield* Teams.Teams).setMemberships({
           ...viewer,
           teamId: team.id,
           userIds: [workspace.owner.id],
@@ -4926,8 +4928,8 @@ it.layer(layer)("owner recovery on a socket", (it) => {
         const workspace = yield* company();
         const patches = yield* Patches.Patches;
         const viewer = { companyId: workspace.id, actorId: workspace.admin.id };
-        const team = yield* Teams.create({ ...viewer, name: "Restricted recovery" });
-        yield* Teams.setMemberships({
+        const team = yield* (yield* Teams.Teams).create({ ...viewer, name: "Restricted recovery" });
+        yield* (yield* Teams.Teams).setMemberships({
           ...viewer,
           teamId: team.id,
           userIds: [workspace.owner.id],
@@ -4949,7 +4951,7 @@ it.layer(layer)("owner recovery on a socket", (it) => {
             audience,
             force: true
           });
-        yield* Teams.setMemberships({
+        yield* (yield* Teams.Teams).setMemberships({
           ...viewer,
           teamId: team.id,
           userIds: [workspace.owner.id],

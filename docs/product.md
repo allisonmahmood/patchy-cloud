@@ -2080,35 +2080,20 @@ Work admitted before a removal commits may finish, including an atomic mutation.
 
 ### Connection audiences
 
-Each connection starts with the Company audience. A super admin may select one or
-more existing company teams; membership uses Companies' effective membership model,
-including required super-admin membership. The patch's declaration or audience grants
-no connection access. Ordinary discovery, schema generation and connection details
-omit inaccessible connections; super-admin browser management remains separate.
+Connections are Company-wide or limited to selected teams. Super admins manage them.
+A patch's current owner must be entitled to build with every declared connection, at
+publish and on connection calls, including after queueing. Any admitted patch reader
+may use its handlers, including guests; Block guests remains a separate restriction.
+Discovery and SDK generation show only connections the builder can use. Connections
+run only in actions and do not participate in live-query revision fences.
 
-Runtime callbacks (including MCP and nested handlers) and cloud-backed dev reads
-check the real viewer on each call, then again after queueing. Outside guests keep
-the separate Block guests control and existing handler/resource restrictions.
-Publish and share warn when a connection's selected teams may not cover the patch's
-audience; warnings grant nothing and conceal restricted metadata from other viewers.
-
-Connection audiences and team references commit atomically under the company
-administration lock and connection lock. Credential replacement, retargeting and
-reconnection preserve the audience. A team cannot be deleted while any patch or connection refers to it, including retained
+A team cannot be deleted while any patch or connection refers to it, including retained
 patches that can be restored. Change those audiences first. Administrators can reversibly
 delete an unreferenced team and restore it from Deleted teams. Identity and recorded
 memberships survive deletion; explicitly removed memberships do not return. Deleted teams
 are unavailable for discovery, membership edits and new audience grants. Access never
 widens to Company as a consequence of team deletion. Team lifecycle changes record the
 actor and advance the existing membership authority.
-Connection authority revisions feed the existing live dependency traces, wakes and
-delivery fences. Integrations owns their lookup; Hosting composes its adapter at
-Runtime's subscription-reader seam, keeping connection SQL out of Primitives.
-Ordinary discovery batches current-viewer admission, and SDK generation always
-requires the viewer. Already admitted work may finish; subsequent admission and protected
-delivery use current authority. The common internal audience activation barrier
-remains off until the full stack is assembled. Rolling back to a server that ignores
-connection grants after activating team audiences would widen access.
 
 ### Shared-source access
 
@@ -2121,4 +2106,4 @@ The sharing dialog warns about declared dependants within the acting manager’s
 an audience change. CLI/API team narrowing returns `has_dependants` before changing anything;
 an explicit `--force` / `force: true` retry acknowledges that impact. This is a warning about declared reads, not a complete map of copied data:
 data deliberately copied into a destination follows that destination’s permissions. Revoking
-source access does not retract old copies. The team-audience activation barrier remains off.
+source access does not retract old copies.

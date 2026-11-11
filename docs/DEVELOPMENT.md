@@ -920,3 +920,5 @@ workerd executor; production refuses it.
 Scenario publication exercises the Company first-publish default without a scope flag.
 The audience stack lands together after the complete enforcement checks; there is no
 runtime activation switch. Use isolated instances for access testing.
+
+The Brightline scenario includes a regular admin and Design and Engineering teams.

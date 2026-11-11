@@ -90,6 +90,7 @@ const fixture = SqlConnectionStore.layer.pipe(
       ImapTest.offline
     )
   ),
+  Layer.provideMerge(Teams.layer),
   Layer.provideMerge(Testing.layer()),
   Layer.provideMerge(NodeCryptography.layer)
 );
@@ -103,8 +104,11 @@ it.layer(fixture)("ConnectionStore", (it) => {
         const sql = yield* SqlClient.SqlClient;
         const connection = yield* store.connect(input("team-audience"));
         const actor = { companyId: who.companyId, actorId: who.userId };
-        const design = yield* Teams.create({ ...actor, name: "Connection Design" });
-        const engineering = yield* Teams.create({ ...actor, name: "Connection Engineering" });
+        const design = yield* (yield* Teams.Teams).create({ ...actor, name: "Connection Design" });
+        const engineering = yield* (yield* Teams.Teams).create({
+          ...actor,
+          name: "Connection Engineering"
+        });
         const member = "connection-audience-member";
         const admin = "connection-audience-admin";
         yield* sql`INSERT INTO users(id, clerk_user_id, company_id, email, name, role) VALUES
@@ -141,7 +145,7 @@ it.layer(fixture)("ConnectionStore", (it) => {
         );
         assert.equal(yield* canUse(who.userId), false);
         assert.equal(yield* canUse(admin), false);
-        yield* Teams.setMemberships({
+        yield* (yield* Teams.Teams).setMemberships({
           ...actor,
           teamId: design.id,
           userIds: [member],
@@ -153,13 +157,13 @@ it.layer(fixture)("ConnectionStore", (it) => {
           (yield* store.list(who.companyId, member)).map((row) => row.id),
           connection.id
         );
-        yield* Teams.setMemberships({
+        yield* (yield* Teams.Teams).setMemberships({
           ...actor,
           teamId: engineering.id,
           userIds: [member],
           added: true
         });
-        yield* Teams.setMemberships({
+        yield* (yield* Teams.Teams).setMemberships({
           ...actor,
           teamId: design.id,
           userIds: [member],
@@ -171,7 +175,7 @@ it.layer(fixture)("ConnectionStore", (it) => {
           (yield* store.list(who.companyId, member)).map((row) => row.id),
           connection.id
         );
-        yield* Teams.setMemberships({
+        yield* (yield* Teams.Teams).setMemberships({
           ...actor,
           teamId: engineering.id,
           userIds: [member],
@@ -183,7 +187,7 @@ it.layer(fixture)("ConnectionStore", (it) => {
           (yield* store.list(who.companyId, member)).map((row) => row.id),
           connection.id
         );
-        yield* Teams.setMemberships({
+        yield* (yield* Teams.Teams).setMemberships({
           ...actor,
           teamId: design.id,
           userIds: [member],
