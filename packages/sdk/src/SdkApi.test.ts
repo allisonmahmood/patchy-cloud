@@ -449,6 +449,40 @@ const failureSource = Effect.fn("sdk.failureSource")(function* (patchId: string)
 });
 
 it.layer(layer)("SDK company generation", (it) => {
+  it.effect("refuses restricted and missing patch ids identically during generation", () =>
+    Effect.gen(function* () {
+      const admin = Fixtures.identities.admin;
+      const team = yield* Teams.create({
+        companyId: identity.company.id,
+        actorId: admin.user.id,
+        name: "SDK private id"
+      });
+      yield* Teams.setMemberships({
+        companyId: identity.company.id,
+        actorId: admin.user.id,
+        teamId: team.id,
+        userIds: [admin.user.id],
+        added: true
+      });
+      const input = Fixtures.recordInput(admin, {
+        audience: { members: { kind: "teams", teamIds: [team.id] } }
+      });
+      yield* Fixtures.record(input);
+      for (const patchId of [input.patchId, "sdkmissing01"]) {
+        const error = yield* Generation.generate(
+          identity.company.id,
+          { ...generateRequest(), patchId },
+          identity.user.id
+        ).pipe(Effect.flip);
+        assert.instanceOf(error, Generation.PatchNotOpenable);
+      }
+      yield* Generation.generate(
+        identity.company.id,
+        { ...generateRequest(), patchId: input.patchId },
+        admin.user.id
+      );
+    })
+  );
   it.effect("refuses module paths and invalid stems before generating imports", () =>
     Effect.gen(function* () {
       const client = yield* HttpClient.HttpClient;
