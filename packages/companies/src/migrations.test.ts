@@ -57,7 +57,7 @@ it.layer(Testing.emptyLayer(before("0015_user_name_never_blank")))(
   }
 );
 
-it.layer(Testing.emptyLayer(before("0036_company_roles")))("the company roles upgrade", (it) => {
+it.layer(Testing.emptyLayer(before("0037_company_roles")))("the company roles upgrade", (it) => {
   it.effect(
     "preserves every existing admin as a super admin, including inactive accounts and pending invitations",
     () =>
@@ -83,7 +83,7 @@ it.layer(Testing.emptyLayer(before("0036_company_roles")))("the company roles up
   );
 });
 
-it.layer(Testing.emptyLayer(before("0040_team_lifecycle")))("team lifecycle upgrade", (it) => {
+it.layer(Testing.emptyLayer(before("0041_team_lifecycle")))("team lifecycle upgrade", (it) => {
   it.effect("preserves team identities, memberships and historical attribution", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

@@ -10,7 +10,7 @@ import {
   SqlConnectionStore
 } from "@patchy/integrations";
 import { RuntimeLog } from "@patchy/runtime";
-import { migrate } from "@patchy/sql";
+import { ddl, migrate } from "@patchy/sql";
 import * as Testing from "@patchy/sql/testing";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -458,7 +458,7 @@ it.layer(Testing.emptyLayer(before("0029_tier_zero_is_tier_one")))("the tier 0 f
   );
 });
 
-it.layer(Testing.emptyLayer(before("0038_patch_audiences")))("audience upgrade", (it) => {
+it.layer(Testing.emptyLayer(before("0039_patch_audiences")))("audience upgrade", (it) => {
   it.effect("preserves Company/Public and named guest grants without copying their state", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -496,5 +496,39 @@ it.layer(Testing.emptyLayer(before("0038_patch_audiences")))("audience upgrade",
         [{ scope: "company" }, { scope: "public" }]
       );
     })
+  );
+});
+
+// The released migration ledger reserves 36 for terms, before the unshipped access stack.
+const termsRelease = {
+  ...before("0036"),
+  "0036_terms_acceptances": ddl(
+    `CREATE TABLE terms_acceptances (
+      user_id TEXT NOT NULL,
+      terms_revision TEXT NOT NULL CHECK (terms_revision ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'),
+      privacy_revision TEXT NOT NULL CHECK (privacy_revision ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'),
+      via TEXT NOT NULL CHECK (via IN ('sign-up', 'prompt')),
+      accepted_at TIMESTAMPTZ NOT NULL,
+      PRIMARY KEY (user_id, terms_revision, privacy_revision)
+    )`
+  )
+};
+it.layer(Testing.emptyLayer(termsRelease))("upgrade from the released terms schema", (it) => {
+  it.effect(
+    "preserves recorded acceptances while applying roles and team lifecycle after the landed id",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`INSERT INTO companies(id, handle, name) VALUES ('cmp_terms_upgrade', 'terms-upgrade', 'Upgrade')`;
+        yield* sql`INSERT INTO users(id, clerk_user_id, company_id, email, name, role) VALUES ('usr_terms_upgrade', 'clerk_terms_upgrade', 'cmp_terms_upgrade', 'terms@example.test', 'Owner', 'admin')`;
+        yield* sql`INSERT INTO terms_acceptances(user_id, terms_revision, privacy_revision, via, accepted_at) VALUES ('usr_terms_upgrade', '2026-11-01', '2026-11-01', 'prompt', '2026-11-01T00:00:00Z')`;
+        const acceptances = yield* sql`SELECT * FROM terms_acceptances`;
+        yield* migrate(migrations);
+        assert.deepEqual(yield* sql`SELECT * FROM terms_acceptances`, acceptances);
+        assert.deepEqual(yield* sql`SELECT role FROM users WHERE id = 'usr_terms_upgrade'`, [
+          { role: "super_admin" }
+        ]);
+        yield* sql`SELECT deleted_at FROM company_teams`;
+      })
   );
 });
