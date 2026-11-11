@@ -226,46 +226,84 @@ it.layer(
     }).pipe(TestClock.withLive)
   );
 
-  it.effect("gives people their computers, apps and invitations, and deactivates who it says", () =>
-    Effect.gen(function* () {
-      const { scenario } = yield* loadScenario(repo, "dense");
-      const person = (key: string) =>
-        ids(
-          scenario,
-          scenario.people.find((someone) => someone.key === key)!
+  it.effect(
+    "gives people their computers, apps, invitations and what they sent Patchy, and deactivates who it says",
+    () =>
+      Effect.gen(function* () {
+        const { scenario } = yield* loadScenario(repo, "dense");
+        const person = (key: string) =>
+          ids(
+            scenario,
+            scenario.people.find((someone) => someone.key === key)!
+          );
+        yield* seedScenario(scenario);
+        yield* writeHistory(scenario, []);
+
+        // What still acts as Allison: a computer and apps used within 30 days, not older ones.
+        const allison = person("allison");
+        const computers = yield* (yield* MachineTokens.MachineTokens).list(allison.userId);
+        expect(computers.map((computer) => computer.name)).toEqual([
+          "Dev environment",
+          "Studio Mac mini"
+        ]);
+        const apps = yield* (yield* AgentConnections.AgentConnections).list(allison.userId);
+        expect(apps.map((app) => app.clientName).sort()).toEqual([
+          "Claude",
+          "Claude Code (patchy)",
+          "Codex"
+        ]);
+        expect(yield* (yield* MachineTokens.MachineTokens).list(person("priya").userId)).toEqual(
+          []
         );
-      yield* seedScenario(scenario);
-      yield* writeHistory(scenario, []);
 
-      // What still acts as Allison: a computer and apps used within 30 days, not older ones.
-      const allison = person("allison");
-      const computers = yield* (yield* MachineTokens.MachineTokens).list(allison.userId);
-      expect(computers.map((computer) => computer.name)).toEqual([
-        "Dev environment",
-        "Studio Mac mini"
-      ]);
-      const apps = yield* (yield* AgentConnections.AgentConnections).list(allison.userId);
-      expect(apps.map((app) => app.clientName).sort()).toEqual([
-        "Claude",
-        "Claude Code (patchy)",
-        "Codex"
-      ]);
-      expect(yield* (yield* MachineTokens.MachineTokens).list(person("priya").userId)).toEqual([]);
+        const invites = yield* (yield* Companies.Companies).listInvites(allison.companyId);
+        const now = yield* Clock.currentTimeMillis;
+        expect(invites.map((invite) => [invite.email, invite.expiresAt.getTime() > now])).toEqual([
+          ["lee@brightline.example", false],
+          ["noah@brightline.example", true],
+          ["ines@brightline.example", true]
+        ]);
 
-      const invites = yield* (yield* Companies.Companies).listInvites(allison.companyId);
-      const now = yield* Clock.currentTimeMillis;
-      expect(invites.map((invite) => [invite.email, invite.expiresAt.getTime() > now])).toEqual([
-        ["lee@brightline.example", false],
-        ["noah@brightline.example", true],
-        ["ines@brightline.example", true]
-      ]);
+        // What Allison and her agents sent Patchy, newest first, in ids the store pages by, and the
+        // general requests three of them are the same need as. A resumed history adds none.
+        yield* writeHistory(scenario, []);
+        const sql = yield* SqlClient.SqlClient;
+        const sent = yield* sql<{
+          readonly id: string;
+          readonly kind: string;
+          readonly from: string;
+          readonly sameAs: string | null;
+        }>`
+        SELECT s.id, s.kind, s.surface || ' ' || coalesce(s.agent, '') AS "from", g.title AS "sameAs"
+        FROM feedback.submissions s
+        LEFT JOIN feedback.general_requests g ON g.id = s.link_general_id
+        WHERE s.user_id = ${allison.userId} ORDER BY s.created_at DESC`;
+        expect(sent.map(({ kind, from, sameAs }) => [kind, from.trim(), sameAs])).toEqual([
+          ["request", "dashboard", "Postgres encryption options"],
+          ["feedback", "cli claude-code", null],
+          ["request", "cli claude-code", "Gmail integration"],
+          ["request", "mcp ChatGPT", null],
+          ["feedback", "dashboard", null],
+          ["request", "cli codex", null],
+          ["request", "cli unknown", "Self-hosted Patchy"]
+        ]);
+        for (const { id } of sent) expect(id).toMatch(/^(req|fbk)_[a-z0-9]{24}$/);
+        const statuses = yield* sql<{ readonly status: string }>`
+        SELECT status FROM feedback.general_requests ORDER BY id`;
+        expect(statuses.map(({ status }) => status)).toEqual([
+          "shipped",
+          "open",
+          "planned",
+          "planned",
+          "declined"
+        ]);
 
-      const rowan = yield* (yield* Users.Users).findByClerkId(person("rowan").clerkUserId);
-      expect(rowan?.deactivatedAt).not.toBeNull();
-      // Every start seeds again, and leaves a deactivated person deactivated.
-      yield* seedScenario(scenario);
-      const again = yield* (yield* Users.Users).findByClerkId(person("rowan").clerkUserId);
-      expect(again?.deactivatedAt).not.toBeNull();
-    }).pipe(TestClock.withLive)
+        const rowan = yield* (yield* Users.Users).findByClerkId(person("rowan").clerkUserId);
+        expect(rowan?.deactivatedAt).not.toBeNull();
+        // Every start seeds again, and leaves a deactivated person deactivated.
+        yield* seedScenario(scenario);
+        const again = yield* (yield* Users.Users).findByClerkId(person("rowan").clerkUserId);
+        expect(again?.deactivatedAt).not.toBeNull();
+      }).pipe(TestClock.withLive)
   );
 });
