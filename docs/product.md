@@ -782,7 +782,7 @@ Later, an admin may verify the company's **domain** — proven by email, never a
 
 ### Roles
 
-Three roles, **member**, **admin** and **super admin**, with the [company powers above](#users-admins-teams). Every company member may build and publish. Only super admins change roles, manage admin account lifecycle, administer connections and operate agent access. The last active super admin can neither be demoted nor deactivated. Team audiences, domains and SSO remain future work; there is no separate builder or viewer role.
+Three roles, **member**, **admin** and **super admin**, with the [company powers above](#users-admins-teams). Every company member may build and publish. Only super admins change roles, manage admin account lifecycle, administer connections and operate agent access. The last active super admin can neither be demoted nor deactivated. Domains and SSO remain future work; there is no separate builder or viewer role.
 
 ### Access to a patch
 
