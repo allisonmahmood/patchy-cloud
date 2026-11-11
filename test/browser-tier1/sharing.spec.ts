@@ -45,7 +45,7 @@ test("an owner shares a page from its menu, and the guest opens it from Home and
   expect((await page.goto(patch.address))?.status()).toBe(404);
 });
 
-test("a row of All patches opens its patch from anywhere on it, while its Share and menu stay pressable", async ({
+test("a row of All patches opens its patch from anywhere on it, while its menu actions stay pressable", async ({
   page,
   instance
 }) => {
@@ -54,7 +54,8 @@ test("a row of All patches opens its patch from anywhere on it, while its Share 
 
   await page.goto(`${instance.origin}/patches`);
   const row = page.getByRole("row").filter({ hasText: title });
-  await row.getByRole("link", { name: `Share ${title}` }).click();
+  await row.getByRole("button", { name: `Actions for ${title}` }).click();
+  await page.getByRole("link", { name: `Share…, ${title}` }).click();
   await expect(page.getByRole("dialog", { name: `Share ${title}` })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page).toHaveURL(`${instance.origin}/patches`);
