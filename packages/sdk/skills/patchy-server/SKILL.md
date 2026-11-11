@@ -24,7 +24,8 @@ Failed builds retain the last good binding. `src/` saves still reload the shell.
 Fill `fixtures/shared-<alias>.sql` and `fixtures/postgres-<handle>.sql` with invented
 rows for `ctx.shared` tables and Postgres `ctx.connections`, and put invented shared
 files in `fixtures/shared-<alias>/`; restart after fixture or config edits. PostHog,
-Pidgeon, Attio and IMAP have no fixture: `patchy-loop` says what dev reads and simulates.
+Pidgeon, Attio and IMAP have no fixture: `patchy-loop` says what dev reads, and
+`../patchy-pidgeon/SKILL.md` that dev simulates Pidgeon's writes.
 Read `dev.log` for each call's viewer, handler, outcome and milliseconds, `ctx.log`
 output, each thrown error's message and stack, which browsers never receive, and
 each simulated Pidgeon write with its recipients and subject.
@@ -446,9 +447,9 @@ Descriptions and schemas are all an agent knows about a tool: what it does, what
 it changes, and when and why it refuses. `t.enum(values)` puts its values in the
 schema; a `t.text()` argument tells the agent nothing about which strings the
 handler accepts. A refusal reaches the agent with its
-code and details only as a `HandlerError` whose code is in `errors`; anything
-else a tool throws is `handler_failed`, with its message left in the patch's
-log. The ids it holds come from earlier results or from the person. The agent
+code and details only as a `HandlerError` whose code is in `errors`. Patchy's
+own refusals keep their codes; anything else a tool throws is `handler_failed`,
+with its message left in the patch's log. The ids it holds come from earlier results or from the person. The agent
 reads every result in full; a row result carries `id`, `createdAt` and
 `updatedAt` besides its columns. A read result over 100,000 characters is
 refused, counting every row's text in full: 50 rows holding 2,000 characters of
