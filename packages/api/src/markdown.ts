@@ -64,7 +64,13 @@ export function renderApiMarkdown(): string {
         if (operation.description) lines.push(operation.description, "");
 
         const body = operation.requestBody?.content?.["application/json"]?.schema;
+        const form = operation.requestBody?.content?.["application/x-www-form-urlencoded"]?.schema;
         if (body) lines.push(`Request body: ${renderType(body)}`, "");
+        else if (form)
+          lines.push(
+            `Request body (\`application/x-www-form-urlencoded\`): ${renderType(form)}`,
+            ""
+          );
         else if (operation.requestBody?.content?.["application/octet-stream"])
           lines.push("Request body: raw bytes (`application/octet-stream`)", "");
 
@@ -77,7 +83,9 @@ export function renderApiMarkdown(): string {
               ? "raw bytes (`application/octet-stream`)"
               : response.content?.["text/event-stream"]
                 ? `SSE (\`text/event-stream\`), JSON data: ${renderType(streamFrameDocument.schema as JsonSchema)}`
-                : "no body";
+                : response.content?.["text/html"]
+                  ? "HTML page (`text/html`)"
+                  : "no body";
           lines.push(`- \`${status}\` ${body}`);
         }
         lines.push("");

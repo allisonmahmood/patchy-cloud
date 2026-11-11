@@ -18,6 +18,8 @@ export class Viewer extends Context.Service<
     readonly role: Users.Role;
     /** The newest What's new release this person has seen; not part of who they are. */
     readonly whatsNewSeen: number;
+    /** Their own choice whether patches' single-key shortcuts fire; a guest carries theirs. */
+    readonly singleKeyShortcuts: boolean;
     /** What their last form did, shown once on this page; see `Receipt`. */
     readonly receipt?: string | undefined;
   }
@@ -188,7 +190,8 @@ export const resolveViewer = Effect.gen(function* () {
     user: { id: user.id, email: user.email, name: user.name },
     company: { id: company.id, handle: company.handle, name: company.name },
     role: user.role,
-    whatsNewSeen: user.whatsNewSeen
+    whatsNewSeen: user.whatsNewSeen,
+    singleKeyShortcuts: user.singleKeyShortcuts
   });
 });
 
