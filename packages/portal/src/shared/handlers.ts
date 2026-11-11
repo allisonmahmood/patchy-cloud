@@ -21,6 +21,7 @@ import {
 } from "@patchy/auth";
 import { ago, type Cryptography, escapeHtml } from "@patchy/core";
 import { Teams, type Companies, type Users } from "@patchy/companies";
+import type { Feedback } from "@patchy/feedback";
 import type { ConnectionStore, PatchVisibility } from "@patchy/integrations";
 import type { Limits } from "@patchy/limits";
 import { GuestGrants, Patches } from "@patchy/patches";
@@ -40,6 +41,7 @@ export type PortalServices =
   | AgentConnections.AgentConnections
   | InvocationLog.InvocationLog
   | ConnectionStore.ConnectionStore
+  | Feedback.Feedback
   | Analytics.Analytics
   | Limits.Limits
   | SqlClient.SqlClient

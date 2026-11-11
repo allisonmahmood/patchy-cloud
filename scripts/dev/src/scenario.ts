@@ -29,6 +29,21 @@ const App = Schema.Struct({
   used: Schema.optionalKey(Ago)
 });
 
+/**
+ * A request or feedback the person, or their agent, sent Patchy that long ago: through the CLI or
+ * Patchy MCP with the agent's name, or from the dashboard with none. `sameAs` links a request to
+ * the scenario's general request at that place in `generalRequests`.
+ */
+const Sent = Schema.Struct({
+  kind: Schema.Literals(["request", "feedback"]),
+  text: Schema.NonEmptyString,
+  why: Schema.optionalKey(Schema.NonEmptyString),
+  surface: Schema.Literals(["cli", "mcp", "dashboard"]),
+  agent: Schema.optionalKey(Schema.NonEmptyString),
+  sameAs: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  ago: Ago
+});
+
 export const Person = Schema.Struct({
   key: Slug,
   name: Schema.NonEmptyString,
@@ -40,6 +55,7 @@ export const Person = Schema.Struct({
   deactivated: Schema.optionalKey(Schema.Literal(true)),
   computers: Schema.optionalKey(Schema.Array(Computer)),
   apps: Schema.optionalKey(Schema.Array(App)),
+  sent: Schema.optionalKey(Schema.Array(Sent)),
   /** Hasn't accepted the current terms, so their first page in a browser is the terms prompt. */
   termsPending: Schema.optionalKey(Schema.Literal(true))
 });
@@ -228,6 +244,19 @@ export const Scenario = Schema.Struct({
     )
   ),
   connections: Schema.optionalKey(Schema.Array(ScenarioConnection)),
+  /**
+   * General requests, which Patchy's team writes and every company's matching sees, each with its
+   * status and an optional public note, such as how to use what shipped.
+   */
+  generalRequests: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        title: Schema.NonEmptyString,
+        status: Schema.Literals(["open", "planned", "shipped", "declined"]),
+        note: Schema.optionalKey(Schema.NonEmptyString)
+      })
+    )
+  ),
   patches: Schema.Array(Schema.Union([RepoPatch, FilePatch]))
 });
 export type Scenario = typeof Scenario.Type;

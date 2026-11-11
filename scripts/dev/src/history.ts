@@ -2,7 +2,8 @@
  * A scenario's history: what its company did before `up`, made true once its patches are
  * published. Patches get the dates of their first and latest versions, who opened them, the calls
  * in their logs and when they were retired or deleted; people their computers and apps, and
- * deactivation; the company its invitations; offline connections their states. Publishing tokens
+ * deactivation and what they sent Patchy; the company its invitations; Patchy's team its general
+ * requests; offline connections their states. Publishing tokens
  * `up` lent people other than the publisher end. Rows have stable ids, so a resumed `up` writes
  * the same history again, measured from its own now.
  */
@@ -38,6 +39,17 @@ const settled = {
   }
 } as const;
 const HOUR = 3_600_000;
+
+/**
+ * A stable id in the feedback store's shape, a prefix and 24 lowercase letters and digits: what
+ * names it, cut to 21, then its place in its list, so a resumed `up` writes the same rows.
+ */
+const feedbackId = (prefix: "gen" | "req" | "fbk", name: string, index: number) =>
+  `${prefix}_${`env${name}`
+    .toLowerCase()
+    .replace(/[^a-z0-9]/gu, "")
+    .slice(0, 21)
+    .padEnd(21, "0")}${String(index).padStart(3, "0")}`;
 
 export const writeHistory = Effect.fn("writeHistory")(
   function* (scenario: Scenario, published: ReadonlyArray<Published>) {
@@ -219,6 +231,26 @@ export const writeHistory = Effect.fn("writeHistory")(
         ${invitation.unsent === true ? null : `clerk_inv_env_${scenario.company.handle}_${index}`},
         ${before(sent)}, ${before(sent - Companies.INVITATION_LIFETIME_MS)})
       ON CONFLICT DO NOTHING`;
+    }
+
+    for (const [index, general] of (scenario.generalRequests ?? []).entries())
+      yield* sql`
+      INSERT INTO feedback.general_requests (id, title, status, note)
+      VALUES (${feedbackId("gen", scenario.company.handle, index)}, ${general.title},
+        ${general.status}, ${general.note ?? null})
+      ON CONFLICT (id) DO NOTHING`;
+    for (const someone of scenario.people) {
+      const { companyId: theirs, userId: them } = ids(scenario, someone);
+      for (const [index, sent] of (someone.sent ?? []).entries())
+        yield* sql`
+        INSERT INTO feedback.submissions
+          (id, kind, text, why, company_id, user_id, surface, agent, link_general_id, created_at)
+        VALUES (${feedbackId(sent.kind === "request" ? "req" : "fbk", `${scenario.company.handle}${someone.key}`, index)},
+          ${sent.kind}, ${sent.text}, ${sent.why ?? null}, ${theirs}, ${them}, ${sent.surface},
+          ${sent.agent ?? null},
+          ${sent.sameAs === undefined ? null : feedbackId("gen", scenario.company.handle, sent.sameAs)},
+          ${at(sent.ago)})
+        ON CONFLICT (id) DO NOTHING`;
     }
 
     // The tokens `up` lent owners to publish with end, as a computer left unused would.

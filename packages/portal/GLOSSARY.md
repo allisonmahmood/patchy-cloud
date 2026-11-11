@@ -93,7 +93,7 @@ An act posted from a page whose patch has since changed in the way the act depen
 _Avoid_: conflict, optimistic lock, revision mismatch
 
 **App shell**:
-The shared frame for the portal, People, Integrations, Agent access and Your agents: a sidebar with the patch search, New patch, the places (Home, All patches, Your agents and Settings, which holds People, Integrations and Agent access), What's new and the account menu, beside the page; below 1024px, a top bar whose Menu opens the same. Sign-in, create-or-join, device confirmation and error doors keep the card shell; portal not-found pages keep the app shell.
+The shared frame for the portal, People, Integrations, Agent access and Your agents: a sidebar with the patch search, New patch, the places (Home, All patches, Your agents and Settings, which holds People, Integrations and Agent access), What's new, Tell Patchy and the account menu, beside the page; below 1024px, a top bar whose Menu opens the same. Sign-in, create-or-join, device confirmation and error doors keep the card shell; portal not-found pages keep the app shell.
 _Avoid_: layout, template, theme
 
 **Component set**:
@@ -103,3 +103,11 @@ _Avoid_: design system (there is one theme and no library), component library, u
 **What's new**:
 Patchy's changelog for the people using it, a page per month at `/whats-new/YYYY-MM` with the newest at `/whats-new`, and behind What's new at the foot of the sidebar: one **release** per deploy, written before it from the PRs merged since the last, each holding **changes** tagged New, Improved or Fixed and a few behind-the-scenes lines. A person's **seen marker** is the newest release they have looked at; opening its panel or the newest month raises it, and a new member starts at the newest. A change's **permalink** is its month's page opened at it, named by its release and its place there. The list ships with the server in `@patchy/core`, so a rollback shows the older one. Its New and Improved changes are public at `/whats-new.json`, which patchyhq.com reads; Fixed changes and behind-the-scenes lines stay in the app. A release's **patch changes**, written for agents, say how it can make a patch built before it build or behave differently; refresh lists them to the agent moving a patch repo across it, and they appear nowhere else.
 _Avoid_: notifications (nothing is addressed to one person), release notes (the notes are what the deploying agent writes, not the page), updates
+
+**Tell Patchy**:
+The sidebar foot's panel, between What's new and the account and in What's new's frame, for sending Patchy a [request or feedback](../feedback/GLOSSARY.md) from the dashboard: Request or Feedback, one text field, then the receipt and, for a request, its similar requests with **Same need** and Unlink. A long request's first line or opening words are its title and the whole text its why. A page's link to the composer's own address, `/feedback/new?kind=…`, opens it beside itself, as Integrations' Ask for an integration does with Request picked; without script the link opens the composer as a dialog over What you sent.
+_Avoid_: feedback form, contact, support
+
+**What you sent**:
+The table at `/feedback` of everything the person and their agents sent Patchy, newest first and paged: when, what, from whom through which surface, and a request's status, with Unlink and Withdraw… in each row's menu. It is how a person sees and takes back what an agent sent, and where Patchy MCP's answers point. It lights no place: Tell Patchy opens its panel, not this page.
+_Avoid_: inbox, history, my requests, submissions (the store's word)

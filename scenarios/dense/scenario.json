@@ -59,6 +59,61 @@
           "connected": "60 days",
           "used": "35 days"
         }
+      ],
+      "sent": [
+        {
+          "kind": "request",
+          "text": "Postgres connection encrypted with RSA",
+          "surface": "dashboard",
+          "sameAs": 0,
+          "ago": "2 hours"
+        },
+        {
+          "kind": "feedback",
+          "text": "The publish refusal said my page wasn't self-contained but didn't name the file or tag that broke the rule.",
+          "surface": "cli",
+          "agent": "claude-code",
+          "ago": "5 hours"
+        },
+        {
+          "kind": "request",
+          "text": "Gmail integration for the sales inbox",
+          "why": "New leads arrive in the shared sales inbox and someone copies each one into New Business by hand.",
+          "surface": "cli",
+          "agent": "claude-code",
+          "sameAs": 3,
+          "ago": "26 hours"
+        },
+        {
+          "kind": "request",
+          "text": "Post to a Slack channel from a patch",
+          "why": "Spend Requests should tell #finance when something needs approving.",
+          "surface": "mcp",
+          "agent": "ChatGPT",
+          "ago": "3 days"
+        },
+        {
+          "kind": "feedback",
+          "text": "Moving a deal on the board takes a few seconds to show up for colleagues.",
+          "surface": "dashboard",
+          "ago": "4 days"
+        },
+        {
+          "kind": "request",
+          "text": "Run a patch every morning at 8",
+          "why": "A daily digest of overdue spend requests.",
+          "surface": "cli",
+          "agent": "codex",
+          "ago": "6 days"
+        },
+        {
+          "kind": "request",
+          "text": "Host patches on our own servers",
+          "surface": "cli",
+          "agent": "unknown",
+          "sameAs": 4,
+          "ago": "12 days"
+        }
       ]
     },
     {
@@ -252,6 +307,31 @@
       "description": "The studio's Google Workspace mailbox.",
       "state": "connected",
       "host": "imap.gmail.com"
+    }
+  ],
+  "generalRequests": [
+    {
+      "title": "Postgres encryption options",
+      "status": "shipped",
+      "note": "Every Postgres connection is encrypted with TLS and AES-256. To check your server's certificate as well, pick Verify full on the connect page."
+    },
+    {
+      "title": "Postgres over an SSH tunnel",
+      "status": "open"
+    },
+    {
+      "title": "Bring your own encryption keys",
+      "status": "planned"
+    },
+    {
+      "title": "Gmail integration",
+      "status": "planned",
+      "note": "Reading a shared inbox from a patch, through a Google Workspace connection."
+    },
+    {
+      "title": "Self-hosted Patchy",
+      "status": "declined",
+      "note": "Patchy runs as a cloud. A company's own database connects through the Postgres integration."
     }
   ],
   "patches": [
