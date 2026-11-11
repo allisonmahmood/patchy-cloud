@@ -49,8 +49,12 @@ export interface AppShell {
     readonly company: { readonly id: string; readonly name: string };
     /** The newest What's new release the person has seen. */
     readonly whatsNewSeen: number;
+    /** Whether patches' single-key shortcuts fire for them; the account menu switches it. */
+    readonly singleKeyShortcuts: boolean;
     /** One line naming what their last form did, shown once at the top of the page it lands on. */
     readonly receipt?: string | undefined;
+    /** This page's local path, when opening it again shows it: the account menu's forms come back here. */
+    readonly page?: string | undefined;
   };
   /**
    * The place the page belongs to, which the sidebar lights and the page's `<title>` names; a
@@ -178,9 +182,20 @@ const tellPatchyButton = `<button type="button" class="app-place tell-patchy-but
 const tellPatchy = () =>
   `<div id="${tellPatchyPanel}" class="menu app-foot-menu app-tell-patchy" popover role="dialog" aria-labelledby="tell-patchy-heading"><p class="menu-head"><strong id="tell-patchy-heading">Tell Patchy</strong></p><div class="app-tell-body">${tellPatchyForm()}<div class="app-tell-answer" data-tell="answer" tabindex="-1" hidden></div><div data-tell="unsure" aria-live="assertive"></div><template data-tell="unsure-note">${notice({ tone: "warning", title: "Patchy couldn’t confirm that", body: '<p>It may have gone through. Check <a href="/feedback">What you sent</a> before you try again.</p>' })}</template></div><hr class="menu-rule"><a class="menu-item" href="/feedback">What you sent${icon("chevronRight")}</a></div><script defer src="${tellPatchyScriptPath}"></script>`;
 
-/** The signed-in person: their name opens a menu with who they are, Your agents and Sign out. */
-function account(user: AppShell["viewer"]["user"]): string {
-  return `<button type="button" class="app-place app-account" popovertarget="account-menu">${avatar(user.email, user.name)}<span class="app-account-name">${escapeHtml(user.name)}</span>${icon("chevronUpDown")}</button><div class="menu app-foot-menu app-account-menu" id="account-menu" popover aria-label="Account"><p class="menu-head"><strong>${escapeHtml(user.name)}</strong>${escapeHtml(user.email)}</p><hr class="menu-rule"><a class="menu-item" href="/agents">${icon("bot")}Your agents</a><hr class="menu-rule"><form method="post" action="/logout"><button class="menu-item" type="submit">${icon("logout")}Sign out</button></form></div>`;
+/**
+ * The signed-in person: their name opens a menu with who they are, Your agents, the single-key
+ * shortcut switch and Sign out. The switch is a form, so it needs no script. It posts the value it
+ * switches to, never a flip, to `POST /api/me/shortcuts`, which brings the person back here with a
+ * receipt.
+ */
+function account(viewer: AppShell["viewer"]): string {
+  const { user, singleKeyShortcuts: on } = viewer;
+  const back =
+    viewer.page === undefined
+      ? ""
+      : `<input type="hidden" name="return" value="${escapeAttribute(viewer.page)}">`;
+  const shortcuts = `<form method="post" action="/api/me/shortcuts"><input type="hidden" name="value" value="${on ? "off" : "on"}">${back}<button class="menu-item" type="submit" role="switch" aria-checked="${on}">${icon("keyboard")}Single-key shortcuts<span class="switch" aria-hidden="true"></span></button></form>`;
+  return `<button type="button" class="app-place app-account" popovertarget="account-menu">${avatar(user.email, user.name)}<span class="app-account-name">${escapeHtml(user.name)}</span>${icon("chevronUpDown")}</button><div class="menu app-foot-menu app-account-menu" id="account-menu" popover aria-label="Account"><p class="menu-head"><strong>${escapeHtml(user.name)}</strong>${escapeHtml(user.email)}</p><hr class="menu-rule"><a class="menu-item" href="/agents">${icon("bot")}Your agents</a>${shortcuts}<hr class="menu-rule"><form method="post" action="/logout"><button class="menu-item" type="submit">${icon("logout")}Sign out</button></form></div>`;
 }
 
 /** The icon each of the sidebar's places wears. */
@@ -230,7 +245,7 @@ function appBody(app: AppShell, body: string): string {
   // New patch's dialog is Home's, at `/?new`.
   const newPatch = linkButton("New patch", "/?new", { icon: "plus", size: "sm", block: true });
   const menuButton = `<button type="button" class="btn btn-quiet btn-sm app-menu-button" popovertarget="app-menu"><span class="app-menu-closed">${icon("menu")}Menu</span><span class="app-menu-opened">${icon("close")}Close</span></button>`;
-  const foot = `<div class="app-foot">${whatsNew(app.viewer.whatsNewSeen, app.section === "whats-new")}${tellPatchyButton}${account(app.viewer.user)}</div>`;
+  const foot = `<div class="app-foot">${whatsNew(app.viewer.whatsNewSeen, app.section === "whats-new")}${tellPatchyButton}${account(app.viewer)}</div>`;
   const receipt =
     app.viewer.receipt === undefined
       ? ""

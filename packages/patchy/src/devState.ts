@@ -116,3 +116,21 @@ export const lock = (stateDir: string) =>
   );
 
 export const logPath = (stateDir: string) => path.join(stateDir, "dev.log");
+
+/**
+ * Each dev person's single-key shortcut setting, by user id, kept beside the daemon's record so
+ * it outlives a restart. Someone not listed has them on, as everyone starts.
+ */
+const decodeShortcuts = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Boolean))
+);
+
+export async function readShortcuts(stateDir: string): Promise<Record<string, boolean>> {
+  const file = await safePath(stateDir, "shortcuts.json");
+  try {
+    return decodeShortcuts(await fs.readFile(file, "utf8"));
+  } catch (error) {
+    if (missing(error)) return {};
+    throw error;
+  }
+}

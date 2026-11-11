@@ -72,7 +72,8 @@ export const fields = `
     .secret > .btn:active { transform: translateY(-50%); }
     .secret > [hidden] { display: none; }
 
-    /* switch: a one-button form in a setting row, its state in aria-checked. */
+    /* switch: a one-button form in a setting row, its state in aria-checked. A menu item that is
+       the switch draws one at its end, hidden from screen readers, in the item's state. */
     .switch {
       position: relative; display: inline-flex; align-items: center; flex: none;
       width: 40px; height: 24px; margin: 0; padding: 2px;
@@ -80,8 +81,8 @@ export const fields = `
       background: var(--sunken); cursor: pointer;
     }
     .switch::after { content: ""; width: 17px; height: 17px; border: 1.5px solid var(--ink); border-radius: 50%; background: var(--surface); }
-    .switch[aria-checked="true"] { background: var(--ink); }
-    .switch[aria-checked="true"]::after { margin-left: auto; border-color: var(--yellow); background: var(--yellow); }
+    .switch[aria-checked="true"], [aria-checked="true"] > .switch { background: var(--ink); }
+    .switch[aria-checked="true"]::after, [aria-checked="true"] > .switch::after { margin-left: auto; border-color: var(--yellow); background: var(--yellow); }
     @media (pointer: coarse) { .switch::before { content: ""; position: absolute; inset: -10px; } }
 
     /* copy-line: one line to hand to an agent, selectable whole. Its Copy button starts hidden and

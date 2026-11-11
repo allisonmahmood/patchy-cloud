@@ -135,6 +135,8 @@ export const servedStyles = `
       overflow-wrap: anywhere;
     }
     .note-float .note-title { display: flex; align-items: center; gap: 8px; }
+    /* A tag in a floating note's title, such as a setting's On or Off, keeps its word whole at the end. */
+    .note-float .note-title > .tag { flex: none; margin-left: auto; }
     .note-float p { margin: 0; }
     .note-float p + p { margin-top: 6px; }
     /* note-info: Patchy offers something, such as a new version. */

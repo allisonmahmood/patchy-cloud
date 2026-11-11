@@ -47,6 +47,7 @@ import { renderAddressNotice } from "./address-notice.js";
 import { compress, negotiate, type Precompressed } from "./compression.js";
 import {
   renderPatchWrapper,
+  ignoresShortcutSetting,
   renderShellNotice,
   isShellNotice,
   type ShellNotice,
@@ -334,7 +335,13 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
         pageResponse(
           {
             ...renderAddressNotice({ ...notice.value, viewer: admission, now }),
-            app: { viewer: admission, section: "patches" }
+            app: {
+              viewer: {
+                ...admission,
+                page: returnPath(request.url, session.publicBaseUrl) ?? undefined
+              },
+              section: "patches"
+            }
           },
           session
         ).pipe(HttpServerResponse.setHeader("x-robots-tag", PATCH_ROBOTS_TAG)),
@@ -479,6 +486,16 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
           viewerId,
           // The viewer's own company, a guest's too, keys the switcher's list.
           companyId: viewer?.company.id,
+          // A company shell is rendered for its viewer alone, and a guest's setting is their own,
+          // as their account is. A public shell is everyone's document, a member's included.
+          ...(isPublic || viewer === undefined
+            ? {}
+            : {
+                shortcuts: {
+                  on: viewer.singleKeyShortcuts,
+                  note: !viewer.singleKeyShortcuts && ignoresShortcutSetting(version)
+                }
+              }),
           head: viewer && sessionScripts(session),
           // Only an address renders a shell, so its route selection is always there.
           nonce: yield* cryptography.internalId("boot"),

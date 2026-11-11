@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  MANIFEST_CAPABILITIES,
   DefinitionName,
   GenerationManifest,
   Manifest,
@@ -61,6 +62,8 @@ export interface ExecutedManifest {
   readonly tier: 1 | 2 | 3;
   readonly handlers?: Readonly<Record<string, HandlerDescriptor>>;
   readonly sdkImports?: readonly string[];
+  /** This CLI's `patchy/hotkeys` obeys the viewer's single-key shortcut setting. */
+  readonly shortcutSetting?: 1;
   readonly tables: Readonly<
     Record<
       string,
@@ -327,6 +330,7 @@ export async function executeConfig(
   try {
     config = decodeGenerationManifest({
       ...input,
+      ...MANIFEST_CAPABILITIES,
       manifestVersion: MANIFEST_VERSION,
       release: RELEASE
     });

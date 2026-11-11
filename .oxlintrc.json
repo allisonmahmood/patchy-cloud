@@ -103,7 +103,8 @@
         "**/test/**",
         "**/testing.ts",
         "packages/serving/src/stream-status.ts",
-        "packages/serving/src/downloads.ts"
+        "packages/serving/src/downloads.ts",
+        "packages/serving/src/shortcuts.ts"
       ],
       "rules": {
         "patchy/no-hand-drawn-components": "error",

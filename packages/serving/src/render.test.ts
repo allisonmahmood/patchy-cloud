@@ -4,7 +4,12 @@ import { DEV_SEED } from "@patchy/auth/seed";
 import type { Patches } from "@patchy/patches";
 import { sessionScripts } from "@patchy/auth";
 import { appStyles, servedStyles, switcherRelay, switcherTag } from "@patchy/core/html";
-import { renderPatchWrapper, renderShellNotice, withSwitcherRelay } from "./shell.js";
+import {
+  ignoresShortcutSetting,
+  renderPatchWrapper,
+  renderShellNotice,
+  withSwitcherRelay
+} from "./shell.js";
 import { renderAddressNotice } from "./address-notice.js";
 import { renderNotFound } from "./render.js";
 
@@ -403,6 +408,58 @@ describe("patch pages", () => {
       expect(html.includes("/~shell/switcher.js")).toBe(scope === "company");
     }
   );
+
+  it("names a viewer's frame with their shortcut setting in the static markup every broker mounts", () => {
+    const options = {
+      patch,
+      version: { ...version, tier: 1 },
+      scope: "company" as const,
+      viewerId: "viewer-1",
+      companyId: "company-1",
+      nonce: "document-nonce",
+      base: "/acme/report"
+    };
+    const frame = (html: string) => html.match(/<iframe\b[^>]*><\/iframe>/)?.[0];
+    const off = renderPatchWrapper({ ...options, shortcuts: { on: false, note: true } });
+    const on = renderPatchWrapper({ ...options, shortcuts: { on: true, note: false } });
+    // The parser names it as it creates it, before a broker of either release sets its src.
+    expect(frame(off)).toMatch(
+      /^<iframe id="patch" class="patch-frame" title="[^"]*" data-waiting name="patchy:shortcuts=off" data-shortcuts-note\s+sandbox=/
+    );
+    expect(frame(on)).toContain(' name="patchy:shortcuts=on"\n');
+    expect(frame(on)).not.toContain("data-shortcuts-note");
+    // Everything else on the frame is what it was, so an older broker mounts it unchanged.
+    expect(frame(on)?.replace(' name="patchy:shortcuts=on"', "")).toBe(
+      frame(renderPatchWrapper(options))
+    );
+    expect(withoutRelay(off)).not.toMatch(/<script\b[^>]*>[^<]+<\/script>/);
+    // A public shell is everyone's document, so it can't carry one viewer's setting.
+    expect(() =>
+      renderPatchWrapper({ ...options, scope: "public", shortcuts: { on: false, note: false } })
+    ).toThrow();
+    expect(renderPatchWrapper({ ...options, scope: "public" })).not.toContain("patchy:shortcuts");
+  });
+
+  it("says a version may ignore the shortcut setting from 0.33.0 on, unless its build says it obeys or has no patchy/hotkeys", () => {
+    const ignores = (
+      release: string,
+      manifest: Parameters<typeof ignoresShortcutSetting>[0]["manifest"]
+    ) => ignoresShortcutSetting({ release, manifest });
+    const hotkeys = { sdkImports: ["patchy/preact", "patchy/hotkeys"] };
+    expect(ignores("0.33.0", hotkeys)).toBe(true);
+    expect(ignores("0.38.0", hotkeys)).toBe(true);
+    expect(ignores("1.0.0", hotkeys)).toBe(true);
+    // A CLI that records the setting built it.
+    expect(ignores("0.39.0", { ...hotkeys, shortcutSetting: 1 })).toBe(false);
+    // patchy/hotkeys first shipped in 0.33.0, so nothing older has its shortcuts.
+    expect(ignores("0.32.0", hotkeys)).toBe(false);
+    expect(ignores("0.0.0", hotkeys)).toBe(false);
+    // A repo build that recorded its imports without patchy/hotkeys has nothing to stand down.
+    expect(ignores("0.38.0", { sdkImports: ["patchy/preact"] })).toBe(false);
+    // A single file records no imports and may carry an older SDK inline, so its release decides.
+    expect(ignores("0.38.0", {})).toBe(true);
+    expect(ignores("0.32.0", {})).toBe(false);
+  });
 
   it("keeps a scripted public shell anonymous even when the host knows the viewer", () => {
     const html = renderPatchWrapper({

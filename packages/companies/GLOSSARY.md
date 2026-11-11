@@ -17,7 +17,7 @@ One individual's Patchy account in exactly one company, carrying the member, adm
 _Avoid_: account, person (a user is the account, not the human), builder (every user is one)
 
 **Single-key shortcuts**:
-A user's own setting for whether patches' page-wide single-character [hotkeys](../patchy/GLOSSARY.md) fire for them, so speech input can't set one off by accident. It is on until they turn it off, follows them to every device, and a guest's is their own. Only the person changes it, from their signed-in browser, and the same switch turns it back on.
+A user's own setting for whether patches' page-wide single-character [hotkeys](../patchy/GLOSSARY.md) fire for them, so speech input can't set one off by accident. It is on until they turn it off, follows them to every device, and a guest's is their own. Only the person changes it, from their signed-in browser: the account menu's switch, or the [shell](../serving/GLOSSARY.md)'s own dialog that a patch's shortcuts sheet asks for. The same switch turns it back on. The shell carries it into each patch it opens for them; a public patch's shell has no viewer, so its shortcuts stay on.
 _Avoid_: hotkeys setting, keyboard mode, accessibility mode
 
 **Member**:

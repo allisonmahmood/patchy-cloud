@@ -252,9 +252,11 @@ export class ViewerGroup extends HttpApiGroup.make("viewer", { topLevel: true })
           "them: `value=on` or `value=off`, form-encoded, never a flip. A guest's choice is their " +
           "own, as their account is. The browser session is the only credential. A POST from " +
           "another origin, or one with neither `Origin` nor `Sec-Fetch-Site: same-origin`, is " +
-          "refused 403 before the session is read. Signed out, the answer is the sign-in door " +
-          "(401) or Clerk's redirect to refresh the session; someone without a company is sent " +
-          "to `/join`, and a deactivated account is refused 403. A request whose `Accept` names " +
+          "refused 403 before the session is read. Signed out, or with a session to refresh, a " +
+          "request naming `return` is sent back there, where that page signs in; one without, " +
+          "such as the shell's, gets the sign-in door (401) or Clerk's redirect to refresh the " +
+          "session. Someone without a company is sent to `/join`, and a deactivated account is " +
+          "refused 403. A request whose `Accept` names " +
           "`application/json` gets the stored `{ value }`. Any other, such as a form post, is " +
           "sent with a receipt to `return`, a path on this instance, or else to `/`. A missing " +
           "or unknown value is 400 and changes nothing. The form is limited to 4096 bytes: a " +

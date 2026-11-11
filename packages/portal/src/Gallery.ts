@@ -14,7 +14,8 @@ import { type GalleryPage, galleryPage, galleryPages, galleryPath, WhatsNew } fr
 const viewer = {
   user: { id: "usr_gallery", name: "Ada Lovelace", email: "ada@example.com" },
   company: { id: "co_gallery", name: "Acme Co" },
-  whatsNewSeen: WhatsNew.latestRelease
+  whatsNewSeen: WhatsNew.latestRelease,
+  singleKeyShortcuts: true
 };
 
 export const layer: Layer.Layer<never, never, HttpRouter.HttpRouter> = HttpRouter.use((router) =>

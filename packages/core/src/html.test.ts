@@ -9,6 +9,7 @@ import {
   switcherTag,
   tellPatchyForm
 } from "./html.js";
+import { icon } from "./ui/icons.js";
 import { changesSince, latestRelease } from "./whatsNew.js";
 import { entriesSince, permalink } from "./whatsNewLinks.js";
 
@@ -16,7 +17,8 @@ describe("htmlPage app body", () => {
   const viewer = {
     user: { id: "usr_sam", name: "Sam", email: "sam@northwind.example" },
     company: { id: "cmp_northwind", name: "Northwind" },
-    whatsNewSeen: latestRelease
+    whatsNewSeen: latestRelease,
+    singleKeyShortcuts: true
   };
   const places = (html: string) =>
     [
@@ -70,6 +72,25 @@ describe("htmlPage app body", () => {
       ["/settings/people", "Settings"]
     ]);
     expect(body).not.toContain("app-subnav");
+  });
+
+  it("switches single-key shortcuts from the account menu without script, back to the page", () => {
+    const menu = (shell: Partial<typeof viewer> & { page?: string }) => {
+      const html = htmlPage({
+        title: "Home",
+        app: { viewer: { ...viewer, ...shell }, section: "home" },
+        body: ""
+      });
+      return html.slice(html.indexOf('id="account-menu"'), html.indexOf("/logout"));
+    };
+    // It posts the value it switches to, never a flip, with the page to come back to.
+    expect(menu({ page: '/patches?q="a"&tab=tools' })).toContain(
+      `<form method="post" action="/api/me/shortcuts"><input type="hidden" name="value" value="off"><input type="hidden" name="return" value="/patches?q=&quot;a&quot;&amp;tab=tools"><button class="menu-item" type="submit" role="switch" aria-checked="true">${icon("keyboard")}Single-key shortcuts<span class="switch" aria-hidden="true"></span></button></form>`
+    );
+    // A page that can't be opened again, such as a form's answer, lands the switch on Home.
+    expect(menu({ singleKeyShortcuts: false })).toContain(
+      `<form method="post" action="/api/me/shortcuts"><input type="hidden" name="value" value="on"><button class="menu-item" type="submit" role="switch" aria-checked="false">${icon("keyboard")}Single-key shortcuts<span class="switch" aria-hidden="true"></span></button></form>`
+    );
   });
 
   it("searches patches from the sidebar, offers New patch under it, and lights Home on Home", () => {
@@ -131,7 +152,8 @@ describe("htmlPage app body", () => {
             email: "<b>x</b>@example.com"
           },
           company: { id: "cmp_'<b>", name: "R&D <script>alert(2)</script>" },
-          whatsNewSeen: latestRelease
+          whatsNewSeen: latestRelease,
+          singleKeyShortcuts: true
         },
         section: "people"
       },

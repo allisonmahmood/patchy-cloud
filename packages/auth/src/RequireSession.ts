@@ -22,6 +22,8 @@ export class Viewer extends Context.Service<
     readonly singleKeyShortcuts: boolean;
     /** What their last form did, shown once on this page; see `Receipt`. */
     readonly receipt?: string | undefined;
+    /** This page's local path, for a GET: the account menu's forms come back to it. */
+    readonly page?: string | undefined;
   }
 >()("@patchy/auth/RequireSession/Viewer") {}
 
@@ -227,7 +229,11 @@ const viewerPage = <E, R>(
       });
       const response = yield* Effect.provideService(app, Viewer, {
         ...viewer,
-        receipt: receipt.text
+        receipt: receipt.text,
+        page:
+          request.method === "GET"
+            ? (returnPath(request.url, session.publicBaseUrl) ?? undefined)
+            : undefined
       });
       // A receipt waits through redirects and fragments for the page that shows it; one that
       // isn't this person's is cleared at once.
