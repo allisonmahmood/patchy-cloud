@@ -10,7 +10,8 @@ import type {
 } from "./config.js";
 import type { RuntimeSubscription } from "@patchy/api";
 import {
-  createPostMessageTransport,
+  createClientTransport,
+  getDocumentTransport,
   type Call,
   type Me,
   type Transport
@@ -223,7 +224,7 @@ export function createClient<C extends Config>(
   manifest: ClientManifest,
   options: { readonly transport?: Transport } = {}
 ): Client<C> {
-  const transport = options.transport ?? createPostMessageTransport();
+  const transport = createClientTransport(options.transport ?? getDocumentTransport());
   const call = transport.call;
   const queries = createQueryRegistry(transport.queries);
   let identity: Promise<Me | null> | undefined;

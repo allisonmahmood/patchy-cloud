@@ -10,10 +10,11 @@ import {
   PatchyError,
   isHandlerError,
   isPatchyError,
+  type Client,
   type MutationUnknownOutcome,
   type QuerySnapshot
 } from "./client.js";
-import { defineConfig, files, table, t, type Id } from "./config.js";
+import { defineConfig, files, table, t, type Id, type Upload } from "./config.js";
 import type { Port } from "./clientTransport.js";
 import type { Handler } from "./server.js";
 
@@ -33,6 +34,11 @@ class FakePort extends EventTarget implements Port {
   }
 }
 afterEach(() => vi.useRealTimers());
+// Lets every queued microtask run, so a call waiting on its client's transport is sent.
+const flush = () =>
+  vi.isFakeTimers()
+    ? vi.advanceTimersByTimeAsync(0)
+    : new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 it("refuses oversized staged Blobs before reading their bytes", async () => {
   class OversizedFile extends Blob {
@@ -141,13 +147,13 @@ it("keeps lazy handler names and business errors distinct from similarly shaped 
     details: { reason: "approval" }
   };
   const call = client.server.leads.renamed({ search: undefined, filter: { stage: undefined } });
-  await Promise.resolve();
+  await flush();
   expect(port.sent[0]!.args).toEqual({ handler: "leads.renamed", args: { filter: {} } });
   port.reply({ v: 1, id: port.sent[0]!.id, kind: "result", value: business });
   await expect(call).resolves.toEqual(business);
   const refused = client.server.leads.renamed({});
   const failure = refused.catch((error: unknown) => error);
-  await Promise.resolve();
+  await flush();
   port.reply({ v: 1, id: port.sent[1]!.id, kind: "error", error: business });
   const error = await failure;
   expect(isHandlerError(error, "access_denied")).toBe(true);
@@ -245,7 +251,7 @@ it.each([
     transport: createPortTransport(port, { handlerKinds: { "leads.find": "query" } })
   });
   const rejected = expect(client.server.leads.find({})).rejects.toMatchObject(error);
-  await Promise.resolve();
+  await flush();
   port.reply({
     v: 1,
     kind: "error",
@@ -266,6 +272,18 @@ it("keeps a server call pending through startup, the action deadline and settlem
   port.reply({ v: 1, kind: "result", id: port.sent[0]!.id, value: "imported" });
   await expect(result).resolves.toBe("imported");
   expect(port.sent).toHaveLength(1);
+  transport.close();
+});
+
+it("waits on the shell's shortcut setting past the reply deadline, as it waits on the person", async () => {
+  vi.useFakeTimers();
+  const port = new FakePort();
+  const transport = createPortTransport(port);
+  const setting = transport.call("shortcuts.setting", {});
+  await vi.advanceTimersByTimeAsync(40_000);
+  expect(port.sent).toEqual([{ v: 1, id: "1", op: "shortcuts.setting", args: {} }]);
+  port.reply({ v: 1, kind: "result", id: "1", value: false });
+  await expect(setting).resolves.toBe(false);
   transport.close();
 });
 
@@ -338,7 +356,7 @@ it("updates cached server callables from trusted live handler kinds without relo
     data: { type: "hello", generation: "live", serverTime: 50_000 }
   });
   const before = change({});
-  await Promise.resolve();
+  await flush();
   expect(port.sent[0]!.args).toEqual({ handler: "leads.change", args: {} });
   port.reply({ v: 1, kind: "result", id: port.sent[0]!.id, value: "old query" });
   await expect(before).resolves.toBe("old query");
@@ -351,7 +369,7 @@ it("updates cached server callables from trusted live handler kinds without relo
   });
   const changed = change({});
   const added = client.server.added.save({});
-  await Promise.resolve();
+  await flush();
   expect(port.sent[1]!.args).toMatchObject({
     handler: "leads.change",
     args: {},
@@ -375,7 +393,7 @@ it("updates cached server callables from trusted live handler kinds without relo
     data: { type: "handlers", kinds: { "leads.change": "query" } }
   });
   const reverted = change({});
-  await Promise.resolve();
+  await flush();
   expect(port.sent[3]!.args).toEqual({ handler: "leads.change", args: {} });
   port.reply({ v: 1, kind: "result", id: port.sent[3]!.id, value: "query again" });
   await expect(reverted).resolves.toBe("query again");
@@ -400,7 +418,7 @@ it("mints distinct 128-bit mutation keys from the advancing server clock, not th
   await vi.advanceTimersByTimeAsync(125);
   const first = client.server.leads.save({ name: "Ada" });
   const second = client.server.leads.save({ name: "Ada" });
-  await Promise.resolve();
+  await flush();
   const keys = port.sent.map(({ args }) => {
     if (
       args === null ||
@@ -451,7 +469,7 @@ it.each(["timeout", "broker", "runtime"] as const)(
     const args = { names: [{ name: "Ada" }], note: undefined };
     const result = client.server.leads.save(args).catch((error: unknown) => error);
     args.names[0]!.name = "Grace";
-    await Promise.resolve();
+    await flush();
     const original = structuredClone(port.sent[0]!.args);
     if (failure !== "timeout")
       port.reply({
@@ -611,6 +629,299 @@ it.each(["timeout", "close"] as const)(
   }
 );
 
+// A frame waiting for its bootstrap, a transport shared by the clients made over it, and the
+// bootstrap that hands it `port`.
+const unbootstrapped = () => {
+  const parent = {};
+  const frame = Object.assign(new EventTarget(), {
+    parent,
+    location: { href: "https://instance/~content/p/v?n=document-one" }
+  });
+  const shared = createPostMessageTransport({ window: frame as unknown as Window });
+  const bootstrap = (port: Port, handlerKinds: Readonly<Record<string, string>> = {}) => {
+    const event = new Event("message");
+    Object.assign(event, {
+      source: parent,
+      data: { v: 1, kind: "bootstrap", nonce: "document-one", route: "/", handlerKinds },
+      ports: [port]
+    });
+    frame.dispatchEvent(event);
+  };
+  return { shared, bootstrap };
+};
+
+type Arrived = { readonly id: string; readonly op: string; readonly args: Record<string, unknown> };
+
+/**
+ * The shell's end of a real channel. It records each call as it arrives and answers it with what
+ * `reply` returns, or leaves it unanswered when that is `undefined`.
+ */
+const shellEnd = (reply: (call: Arrived) => unknown = () => null) => {
+  const channel = new MessageChannel();
+  const arrived: Arrived[] = [];
+  const answer = (id: string, value: unknown) =>
+    channel.port2.postMessage({ v: 1, id, kind: "result", value });
+  channel.port2.onmessage = ({ data }: MessageEvent<Arrived & { readonly kind?: string }>) => {
+    if (data.kind === "ready") return;
+    arrived.push(data);
+    const value = reply(data);
+    if (value !== undefined) answer(data.id, value);
+  };
+  return {
+    port: channel.port1,
+    arrived,
+    answer,
+    /** Each call as it arrived: its op, and a route's path or a handler's name. */
+    labels: () =>
+      arrived.map(({ op, args }) =>
+        op === "route.set"
+          ? `route.set ${String(args.path)}`
+          : op === "server.call"
+            ? `server.call ${String(args.handler)}`
+            : op
+      ),
+    /** A stream event from the server, such as its hello with the clock. */
+    stream: (data: unknown) =>
+      channel.port2.postMessage({ v: 1, kind: "event", event: "stream", data }),
+    close: () => channel.port2.close()
+  };
+};
+
+it("never sends what a tier 1 client queued before the bootstrap once it has closed", async () => {
+  const { shared, bootstrap } = unbootstrapped();
+  const config = defineConfig({
+    name: "notes",
+    tier: 1,
+    tables: { notes: table("Notes.", { title: t.text() }) }
+  });
+  const closing = createClient<typeof config>(config, { transport: shared });
+  const staying = createClient<typeof config>(config, { transport: shared });
+  const queued = [closing.tables.notes.insert({ title: "queued" }), closing.route.set("/queued")];
+  const settled = Promise.allSettled(queued);
+  closing.close();
+  const port = new FakePort();
+  bootstrap(port);
+  await flush();
+  // Only the transport's ready went out.
+  expect(port.sent.map(({ op }) => op)).toEqual([undefined]);
+  expect((await settled).map((result) => result.status === "rejected" && result.reason)).toEqual([
+    expect.objectContaining({ code: "unknown_outcome" }),
+    expect.objectContaining({ code: "unknown_outcome" })
+  ]);
+  const listed = staying.tables.notes.list();
+  await flush();
+  expect(port.sent.map(({ op }) => op)).toEqual([undefined, "tables.list"]);
+  port.reply({ v: 1, kind: "result", id: port.sent[1]!.id, value: { rows: [], cursor: null } });
+  await expect(listed).resolves.toEqual({ rows: [], cursor: null });
+  staying.close();
+  shared.close();
+});
+
+it("never sends what a tier 2 client queued before the bootstrap once it has closed", async () => {
+  const { shared, bootstrap } = unbootstrapped();
+  const closing = createServerClient({ transport: shared });
+  const staying = createServerClient({ transport: shared });
+  const upload = { token: "staged", size: 1, contentType: "text/plain" } as Upload;
+  const queued = [
+    closing.files.discard(upload),
+    closing.route.set("/queued"),
+    closing.download("notes.txt", new Uint8Array([1]))
+  ];
+  const settled = Promise.allSettled(queued);
+  closing.close();
+  const port = new FakePort();
+  bootstrap(port);
+  await flush();
+  expect(port.sent.map(({ op }) => op)).toEqual([undefined]);
+  expect((await settled).map((result) => result.status === "rejected" && result.reason)).toEqual([
+    expect.objectContaining({ code: "unknown_outcome" }),
+    expect.objectContaining({ code: "unknown_outcome" }),
+    expect.objectContaining({ code: "unknown_outcome" })
+  ]);
+  const moved = staying.route.set("/stayed");
+  await flush();
+  expect(port.sent.map(({ op }) => op)).toEqual([undefined, "route.set"]);
+  port.reply({ v: 1, kind: "result", id: port.sent[1]!.id, value: null });
+  await expect(moved).resolves.toBeNull();
+  staying.close();
+  shared.close();
+});
+
+it("sends every client's calls in call order across the bootstrap, none overtaken by a later one", async () => {
+  const { shared, bootstrap } = unbootstrapped();
+  const config = defineConfig({
+    name: "notes",
+    tier: 1,
+    tables: { notes: table("Notes.", { title: t.text() }) }
+  });
+  const page = createClient<typeof config>(config, { transport: shared });
+  const server = createServerClient({ transport: shared });
+  const closing = createClient<typeof config>(config, { transport: shared });
+  // The shell's end of a real channel, answering each call in the order it arrives.
+  const channel = new MessageChannel();
+  const received: string[] = [];
+  channel.port2.onmessage = ({ data }: MessageEvent) => {
+    if (data.kind === "ready") return;
+    received.push(data.op === "route.set" ? `route.set ${data.args.path}` : data.op);
+    const value = data.op === "tables.insert" ? { id: "note", ...data.args.row } : null;
+    channel.port2.postMessage({ v: 1, id: data.id, kind: "result", value });
+  };
+  try {
+    const upload = { token: "staged", size: 1, contentType: "text/plain" } as Upload;
+    const first = page.route.set("/first");
+    page.tables.notes.list.subscribe(undefined, () => {});
+    const queued = [
+      first,
+      server.files.discard(upload),
+      closing.tables.notes.insert({ title: "never" }),
+      page.tables.notes.insert({ title: "after" })
+    ];
+    closing.close();
+    // The route's first callback comes as the bootstrap lands, and sets a later path.
+    const later = new Promise<unknown>((resolve) => {
+      let first = true;
+      page.route.subscribe(() => {
+        if (first) resolve(server.route.set("/second"));
+        first = false;
+      });
+    });
+    bootstrap(channel.port1);
+    const settled = await Promise.allSettled([...queued, later]);
+    expect(settled.map((result) => result.status)).toEqual([
+      "fulfilled",
+      "fulfilled",
+      "rejected",
+      "fulfilled",
+      "fulfilled"
+    ]);
+    expect(received).toEqual([
+      "route.set /first",
+      "subscriptions.subscribe",
+      "files.discard",
+      "tables.insert",
+      "route.set /second"
+    ]);
+    await expect(page.route.get()).resolves.toBe("/second");
+  } finally {
+    page.close();
+    server.close();
+    shared.close();
+    channel.port2.close();
+  }
+});
+
+it("settles a queued call with its reply once it has gone out, though its client then closes", async () => {
+  const { shared, bootstrap } = unbootstrapped();
+  const config = defineConfig({
+    name: "notes",
+    tier: 1,
+    tables: { notes: table("Notes.", { title: t.text() }) }
+  });
+  const page = createClient<typeof config>(config, { transport: shared });
+  const server = createServerClient<{
+    notes: { count: Handler<"query", Record<string, never>, number> };
+  }>({ transport: shared });
+  const shell = shellEnd(() => undefined);
+  try {
+    const inserted = page.tables.notes.insert({ title: "kept" });
+    const counted = server.server.notes.count({});
+    bootstrap(shell.port, { "notes.count": "query" });
+    await vi.waitFor(() =>
+      expect(shell.labels()).toEqual(["tables.insert", "server.call notes.count"])
+    );
+    page.close();
+    server.close();
+    shell.answer(shell.arrived[0]!.id, { id: "note", title: "kept" });
+    shell.answer(shell.arrived[1]!.id, 3);
+    await expect(inserted).resolves.toEqual({ id: "note", title: "kept" });
+    await expect(counted).resolves.toBe(3);
+  } finally {
+    shared.close();
+    shell.close();
+  }
+});
+
+it("sends a call made while another is going out behind every call still queued", async () => {
+  const { shared, bootstrap } = unbootstrapped();
+  const config = defineConfig({
+    name: "notes",
+    tier: 1,
+    tables: { notes: table("Notes.", { title: t.text() }) }
+  });
+  const page = createClient<typeof config>(config, { transport: shared });
+  const shell = shellEnd(({ op }) =>
+    op === "tables.insert" ? { id: "note", title: "read" } : null
+  );
+  let nested: Client<typeof config> | undefined;
+  let second: Promise<null> | undefined;
+  // Read as the insert is serialized for the port, while the queue drains.
+  const row = {
+    get title() {
+      if (nested === undefined) {
+        nested = createClient<typeof config>(config, { transport: shared });
+        second = nested.route.set("/second");
+      }
+      return "read";
+    }
+  };
+  try {
+    const inserted = page.tables.notes.insert(row);
+    const first = page.route.set("/first");
+    bootstrap(shell.port);
+    await Promise.all([inserted, first, vi.waitFor(() => expect(second).toBeDefined())]);
+    await second;
+    expect(shell.labels()).toEqual(["tables.insert", "route.set /first", "route.set /second"]);
+    await expect(page.route.get()).resolves.toBe("/second");
+  } finally {
+    page.close();
+    nested?.close();
+    shared.close();
+    shell.close();
+  }
+});
+
+it("sends tier 2 handler calls queued before the bootstrap in turn, and a mutation once the server's clock is known", async () => {
+  const { shared, bootstrap } = unbootstrapped();
+  const server = createServerClient<{
+    notes: {
+      count: Handler<"query", Record<string, never>, string>;
+      save: Handler<"mutation", Record<string, never>, string>;
+    };
+  }>({ transport: shared });
+  const shell = shellEnd(({ op, args }) => (op === "server.call" ? args.handler : null));
+  try {
+    const saved = server.server.notes.save({});
+    const counted = server.server.notes.count({});
+    // The route's first callback comes as the bootstrap lands, and sets a path.
+    const later = new Promise<unknown>((resolve) => {
+      let first = true;
+      server.route.subscribe(() => {
+        if (first) resolve(server.route.set("/second"));
+        first = false;
+      });
+    });
+    bootstrap(shell.port, { "notes.count": "query", "notes.save": "mutation" });
+    await expect(Promise.all([counted, later])).resolves.toEqual(["notes.count", null]);
+    expect(shell.labels()).toEqual(["server.call notes.count", "route.set /second"]);
+    // The mutation's key needs the server's clock, which the stream's hello brings; it waited for
+    // that without holding back the calls behind it.
+    shell.stream({ type: "hello", generation: "first", serverTime: 50_000 });
+    await expect(saved).resolves.toBe("notes.save");
+    expect(shell.labels()).toEqual([
+      "server.call notes.count",
+      "route.set /second",
+      "server.call notes.save"
+    ]);
+    expect(shell.arrived[2]!.args).toMatchObject({
+      mutationKey: expect.stringMatching(/^50000-[A-Za-z0-9_-]{22}$/)
+    });
+  } finally {
+    server.close();
+    shared.close();
+    shell.close();
+  }
+});
+
 it.each([
   { source: "handler", code: "unknown_outcome" },
   { source: "patchy", code: "write_conflict" }
@@ -628,7 +939,7 @@ it.each([
     data: { type: "hello", generation: "first", serverTime: 50_000 }
   });
   const result = client.server.leads.save({}).catch((error: unknown) => error);
-  await Promise.resolve();
+  await flush();
   port.reply({
     v: 1,
     kind: "error",

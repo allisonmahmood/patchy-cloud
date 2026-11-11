@@ -197,8 +197,9 @@ same keys, under their `group` option, and its own openers last. Each command
 is a button, and its keys run it too, unless a step of them is the sheet's own
 Escape or Tab: the sheet closes, focus and the text selection go back, then the
 command runs, and a polite live region announces it, inside a modal dialog
-where focus is in one. `title` and `hotkey` change its heading and the key that opens it, and
-`group` the heading its own rows list under. `openHotkeySheet()` opens the
+where focus is in one. `title` and `hotkey` change its heading and the key that opens it in
+place of `?`, and `group` the heading its own rows list under. Mod+/ always opens it, ahead of
+the page's hotkeys, however narrow. `openHotkeySheet()` opens the
 mounted one from a control of the page's own, such as a menu item or a dialog's
 button. While it is open, its `HotkeyScope` holds every other hotkey back;
 Escape, its close button or a click outside closes it alone, and focus
