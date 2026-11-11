@@ -47,8 +47,8 @@ const filed =
 
 - `similar` and `link` are `RequestBrief`s from `@patchy/api`: `{ id, title, status, note? }`. At most `SIMILAR_MAX` (3) matches, from the company's own requests and general requests; feedback has none.
 - `list` pages hold `PAGE_SIZE` (50), newest first. A `SentRequest` is `{ kind: "request", id, createdAt, surface, agent, title, status, link }`, a `SentFeedback` `{ kind: "feedback", id, createdAt, surface, agent }`; `createdAt` is a `Date`. No item carries a feedback note or any why.
-- Request ids are `req_…`, feedback ids `fbk_…`, general request ids `gen_…`.
-- Bounds: a title is `TITLE_MIN`–`TITLE_MAX` (3–200) characters on one line, whitespace collapsed; a why, a link's why and a feedback note at most `TEXT_MAX` (4,000). Blank whys are none. Control characters other than tab and line breaks are refused.
+- Request ids are `req_…`, feedback ids `fbk_…`, both of the shape `SubmissionId` in `@patchy/api` names; general request ids are `gen_…`.
+- Bounds, from `@patchy/api` so the CLI checks them before sending: a title is `SUBMISSION_TITLE_MIN`–`SUBMISSION_TITLE_MAX` (3–200) characters on one line, whitespace collapsed; a why, a link's why and a feedback note at most `SUBMISSION_TEXT_MAX` (4,000). Blank whys are none. Control characters other than tab and line breaks are refused.
 - Every error's `message` is written for the agent or person reading it; each says whether anything was stored or changed.
 
 ### Refusals and their wire codes

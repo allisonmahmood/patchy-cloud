@@ -3,11 +3,13 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import { Analytics } from "@patchy/analytics";
 import * as WideEvents from "@patchy/analytics/wide-events";
+import { SubmissionId } from "@patchy/api";
 import { NodeCryptography } from "@patchy/core";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import * as Testing from "@patchy/sql/testing";
@@ -80,6 +82,8 @@ const stored = (id: string) =>
       link_request_id AS "linkRequestId", link_general_id AS "linkGeneralId", link_why AS "linkWhy"
     FROM feedback.submissions WHERE id = ${id}`
   );
+
+const isSubmissionId = Schema.is(SubmissionId);
 
 const send = Effect.fn("send")(function* (sender: Feedback.Sender, text: string, why?: string) {
   return yield* (yield* Feedback.Feedback).sendRequest({ sender, text, ...(why ? { why } : {}) });
@@ -174,6 +178,20 @@ it.layer(layer)("requests and feedback", (it) => {
           [chained.id]: "open"
         });
       })
+  );
+
+  it.effect("mints request and feedback ids of the shape the CLI checks before calling", () =>
+    Effect.gen(function* () {
+      const c = yield* company("ids");
+      const filed = yield* send(c.ada.cli, "Gmail integration");
+      const sent = yield* (yield* Feedback.Feedback).sendFeedback({
+        sender: c.ada.cli,
+        text: "Publish was slow"
+      });
+      assert.match(filed.id, /^req_/);
+      assert.match(sent.id, /^fbk_/);
+      assert.isTrue(isSubmissionId(filed.id) && isSubmissionId(sent.id));
+    })
   );
 
   it.effect("records who sent it and through what, and only a patch of the sender's company", () =>

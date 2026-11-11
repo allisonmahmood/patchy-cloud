@@ -3,7 +3,7 @@
 - **Status**: Accepted
 - **Date**: 2026-08-29
 - **Contexts**: Publishing (`packages/patchy`). System-wide because every agent driving the CLI and the cloud worktree's dev runner depend on this contract.
-- **Source**: Effect v4 port spec (#68) §5; [CLI contract on Effect cli](https://github.com/allisonmahmood/patchy-cloud/issues/60#issuecomment-5456839739); [Local dev environment](https://github.com/allisonmahmood/patchy-cloud/issues/15); [auth spec §10](https://github.com/allisonmahmood/patchy-cloud/issues/135); [SDK map decisions](https://github.com/allisonmahmood/patchy-cloud/issues/164) and [SDK spec §§7–8, 13–14](https://github.com/allisonmahmood/patchy-cloud/issues/193); [agent discovery #252](https://github.com/allisonmahmood/patchy-cloud/issues/252), [portal spec §§7–8](https://github.com/allisonmahmood/patchy-cloud/issues/247) and [the company look #547](https://github.com/allisonmahmood/patchy-cloud/issues/547).
+- **Source**: Effect v4 port spec (#68) §5; [CLI contract on Effect cli](https://github.com/allisonmahmood/patchy-cloud/issues/60#issuecomment-5456839739); [Local dev environment](https://github.com/allisonmahmood/patchy-cloud/issues/15); [auth spec §10](https://github.com/allisonmahmood/patchy-cloud/issues/135); [SDK map decisions](https://github.com/allisonmahmood/patchy-cloud/issues/164) and [SDK spec §§7–8, 13–14](https://github.com/allisonmahmood/patchy-cloud/issues/193); [agent discovery #252](https://github.com/allisonmahmood/patchy-cloud/issues/252), [portal spec §§7–8](https://github.com/allisonmahmood/patchy-cloud/issues/247), [the company look #547](https://github.com/allisonmahmood/patchy-cloud/issues/547) and [requests and feedback #1210](https://github.com/allisonmahmood/patchy-cloud/issues/1210).
 
 ## Context
 
@@ -67,7 +67,7 @@ lists of validation failures; their line count is not the branching contract.
   it on stdout. Built-ins such as help and the bare `--version` retain their own
   output, not success envelopes.
 
-`whoami`, `publish`, `share` (with `--add`, `--remove` and `--list` too), `retire`, `delete`, `restore`, `rollback`, `describe`, `logs`, `look publish` and `look restore` expose their API success shapes;
+`whoami`, `publish`, `share` (with `--add`, `--remove` and `--list` too), `retire`, `delete`, `restore`, `rollback`, `describe`, `logs`, `look publish`, `look restore` and [requests and feedback](#requests-and-feedback) other than `request` itself expose their API success shapes;
 [API reference](../API.md) owns those fields. `publicUrl` on publish/share is an
 address, not a promise of anonymous access: `scope` decides who can open it.
 
@@ -805,6 +805,52 @@ company's place, labelled "The Patchy look" and noting the company has none.
 `--compare` without a folder is local exit 1; a folder missing `look.css` or
 `LOOK.md` is local exit 1 as for publish, and other files are `warnings`.
 
+### Requests and feedback
+
+| command                                                          | behaviour                                                                                                    | `--json` success                                                  |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
+| `patchy request "<what Patchy should do>" [--why "<need>"]`      | Stores a request for Patchy's team, then lists up to three similar requests. Exit 0 with or without matches. | `{ ok, id, similar: [{ id, title, status, note?, link }], next }` |
+| `patchy request link <id> <match-id> [--why "<reason>"]`         | Links the person's request to a match that is the same need.                                                 | Wire body `{ ok, id, link }`                                      |
+| `patchy request unlink <id>`                                     | Clears the link and its reason.                                                                              | Wire body `{ ok, id, link: null }`                                |
+| `patchy feedback "<what was run, expected, happened>"`           | Stores feedback for Patchy's team.                                                                           | Wire body `{ ok, id }`                                            |
+| `patchy request list` / `patchy feedback list`                   | One page of the person's own of that kind, newest first; `--cursor <c>` continues. Never a note or a why.    | Wire body `{ submissions, nextCursor }`                           |
+| `patchy request withdraw <id>` / `patchy feedback withdraw <id>` | Deletes one of the person's own.                                                                             | Wire body `{ ok, id }`                                            |
+
+A filed request exits 0 even when it has matches: a failure exit would invite a
+retry, and a retry stores a real duplicate. Each match's `link` is the exact
+`patchy request link` command with both ids, each a single POSIX shell word
+(quoted when it holds anything but safe characters, since a general request's id
+is written by Patchy's team), and `next` says nothing else is required, to link
+only a match that fully meets the need, and, when one has shipped, to tell the
+person using its note. Text prints the id, then the matches.
+A text argument or `--why` of `-` reads stdin, one per call. Inside a patch repo
+the send names `patchy.json`'s patch; a missing or unreadable `patchy.json`
+names none and never stops it. The `Patchy-Cli` command is `request` or
+`feedback` for every subcommand.
+
+Before anything is sent, these are `local`, exit 1, saying nothing was sent:
+a text outside the store's bounds (`SUBMISSION_TITLE_MIN`–`SUBMISSION_TITLE_MAX`
+characters for a request once whitespace runs collapse, at most
+`SUBMISSION_TEXT_MAX` for a why or feedback, from `@patchy/api`); stdin that
+isn't UTF-8, or that passes the bound, where reading stops at once; and an id
+that isn't one the store mints for that kind (`SubmissionId`, `req_` or `fbk_`
+and 24 lowercase letters and digits). A match id goes in the body, so a general
+request's `gen_` id is the instance's to judge.
+
+Refusals are `rejected`, exit 2, with the instance's message and `code`:
+`contains_secret` (the message names each field and kind of credential, never
+the value), `invalid_text`, `rate_limited`, `not_found` and `invalid_link`; a
+bad cursor is a 400 without a code. A refusal status whose body doesn't decode
+is no answer, `unreachable`, exit 3. Sends never retry: a lost or unreadable
+answer stays exit 3, and its message says the submission may have been stored
+and to check `list` before sending again.
+
+These commands are never gated on an exact release. An older CLI has none of
+them. A newer CLI against an instance without them gets the API's catch-all 404,
+`{ ok: false, error: "Not found." }` with no code. The routes' own 404 always
+carries `not_found`, and ids are checked first, so that is reported as
+`rejected`, exit 2: "<instance> doesn't take requests yet." (or feedback).
+
 ### Publish recovery
 
 Each successful invocation publishes or recovers exactly one version. Before
@@ -890,8 +936,9 @@ Every request a command sends to the instance carries
 The command comes from `CliCommand` in `packages/api`; every command that
 reaches the instance is in it. The agent is the first coding agent whose
 harness variable is set, from `CodingAgent`, or `unknown`. No environment value
-or free text is sent. The header feeds usage records only: no route requires
-or answers it, so an instance that ignores it behaves the same. The
+or free text is sent. The header feeds usage records, and the agent and release
+stored with each request or feedback, only: no route requires or answers it, so
+an instance that ignores it behaves the same. The
 [README](../../packages/patchy/README.md#the-patchy-cli-header) lists the
 variables.
 
