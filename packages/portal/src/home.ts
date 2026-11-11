@@ -45,7 +45,6 @@ import {
   manages,
   openItems,
   patchAddress,
-  shareHref,
   unopened
 } from "./shared/presentation.js";
 
@@ -329,7 +328,7 @@ export const renderHome = (input: HomeInput): Template => {
         })
       : "";
 
-  // Yours: A–Z, never re-sorted, with who can open each, its failures and Share in view.
+  // Yours: A–Z, never re-sorted, with who can open each, its failures and the action menu.
   const yours = live.filter(mine).sort(byTitle);
   const tools = yours.some((entry) => !isPage(entry));
   const access = (entry: Row) => {
@@ -357,7 +356,7 @@ export const renderHome = (input: HomeInput): Template => {
             patchCell(entry),
             escapeHtml(access(entry)),
             ...(tools ? [failuresCell(entry.patch, calls?.get(entry.patch.id))] : []),
-            `<div class="btn-group btn-group-end"><span class="hide-sm">${linkButton("Share", shareHref("/", entry.patch.name), { kind: "quiet", size: "sm", icon: "share", ariaLabel: `Share ${title(entry)}` })}</span>${menu(entry, "yours")}</div>`
+            menu(entry, "yours")
           ])
         })
       })

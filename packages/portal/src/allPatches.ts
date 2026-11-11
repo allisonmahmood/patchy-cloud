@@ -45,7 +45,6 @@ import {
   matches,
   openItems,
   patchAddress,
-  shareHref,
   turnedAwayTitle,
   unopened
 } from "./shared/presentation.js";
@@ -195,7 +194,7 @@ export const listPath = ({ show, query, owner }: Listing, page = 1) => {
  * All patches at `/patches`: every patch the viewer can open, A–Z, filtered by `?show=`, searched
  * by the sidebar's `?q=` and narrowed to one person's by `?owner=` (People's See their patches),
  * each of those two shown as a chip that clears it, and paged by `?page=`. Its title opens a live
- * patch; Share sits on the rows the viewer owns, and each row's other acts in its menu.
+ * patch; each row keeps its available actions in its menu.
  */
 export const renderAllPatches = (input: {
   readonly rows: readonly Patches.ReadPatch[];
@@ -360,9 +359,6 @@ export const renderAllPatches = (input: {
       });
     // Failures show beside the tier 2 patches the viewer manages, never on Pages.
     const failures = input.calls !== undefined && show !== "pages";
-    const shares = shown.some(
-      (row) => row.patch.state === "live" && row.owner.id === viewer.user.id
-    );
     const access = ({ patch }: Patches.ReadPatch) => {
       if (patch.scope === "public") return "Public";
       const members = patch.audience.members;
@@ -371,15 +367,6 @@ export const renderAllPatches = (input: {
       const count = input.guests.get(patch.name) ?? 0;
       return count === 0 ? audience : `${audience} + ${plural(count, "guest", "guests")}`;
     };
-    const shareCell = (row: Patches.ReadPatch) =>
-      row.owner.id === viewer.user.id
-        ? linkButton("Share", shareHref(here, row.patch.name), {
-            kind: "quiet",
-            size: "sm",
-            icon: "share",
-            ariaLabel: `Share ${patchTitle(row.patch, viewer.company.name)}`
-          })
-        : "";
     return table({
       label: "Patches",
       columns: [
@@ -389,17 +376,6 @@ export const renderAllPatches = (input: {
         { label: "Visits", align: "end", hideOnPhone: true, nowrap: true },
         { label: "Access", hideOnPhone: true, nowrap: true },
         ...(failures ? [failuresColumn] : []),
-        ...(shares
-          ? [
-              {
-                label: "Share",
-                hidden: true,
-                hideOnPhone: true,
-                align: "end",
-                nowrap: true
-              } as const
-            ]
-          : []),
         actionsColumn
       ],
       rows: shown.map((row) => [
@@ -409,7 +385,6 @@ export const renderAllPatches = (input: {
         escapeHtml(row.visits),
         access(row),
         ...(failures ? [failuresCell(row.patch, input.calls?.get(row.patch.id))] : []),
-        ...(shares ? [shareCell(row)] : []),
         menuCell(row)
       ])
     });

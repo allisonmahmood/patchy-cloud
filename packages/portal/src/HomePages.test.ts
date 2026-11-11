@@ -532,10 +532,10 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
         assert.include(text(yours), "busy-tool Find the right person Company None");
         assert.include(text(yours), "quiet-tool Find the right person Company No calls yet");
         assert.include(text(yours), "site-notes Find the right person Company + 1 guest —");
-        // Share on every row, over Home; the menu has it too.
+        // Each owned patch keeps Share in its menu over Home.
         for (const name of ["about-us", "busy-tool", "quiet-tool", "site-notes"])
           assert.isTrue(
-            links(yours).some((link) => link.href === `/?share=${name}` && link.text === "Share"),
+            links(yours).some((link) => link.href === `/?share=${name}` && link.text === "Share…"),
             name
           );
         assert.include(menuItems(html, `yours-${quiet.patchId}`), "Share…");
