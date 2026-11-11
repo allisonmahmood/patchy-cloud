@@ -123,7 +123,7 @@ const render = Effect.fn("TeamsPage.render")(function* (
   const matches = (value: string) => value.toLocaleLowerCase().includes(query);
   const directoryHref = view.deleted ? `${path}?deleted=1` : path;
   const status = draft?.status ?? refused?.status;
-  if (!selected) {
+  if (!selected || view.deleted) {
     // One batched read supplies recorded counts, including inactive members, without one query per team.
     const people = all.length && !view.deleted ? yield* users.list(ref.companyId) : [];
     const memberships = people.length
@@ -219,29 +219,21 @@ const render = Effect.fn("TeamsPage.render")(function* (
           foot: cancel(path) + button("Create team", { kind: "primary" })
         })
       };
+    if (view.deleted && selected)
+      return {
+        ...page,
+        overlay: dialog({
+          id: "restore-team",
+          title: `Restore ${selected.name}?`,
+          closeHref: directoryHref,
+          form: { action: operation(selected.id, "restore") },
+          body: `${problem(refused)}<p class="prose">The team and its recorded memberships will return.</p>`,
+          foot: cancel(directoryHref, true) + button("Restore team", { kind: "primary" })
+        })
+      };
     return page;
   }
   const teamHref = address(selected.id);
-  if (view.deleted) {
-    const behind = yield* render(
-      viewer,
-      { ...view, teamId: "", screen: undefined },
-      undefined,
-      undefined
-    );
-    return {
-      ...behind,
-      status,
-      overlay: dialog({
-        id: "restore-team",
-        title: `Restore ${selected.name}?`,
-        closeHref: directoryHref,
-        form: { action: operation(selected.id, "restore") },
-        body: `${problem(refused)}<p class="prose">The team and its recorded memberships will return.</p>`,
-        foot: cancel(directoryHref, true) + button("Restore team", { kind: "primary" })
-      })
-    };
-  }
   const people = [...(yield* users.list(ref.companyId))].sort(
     (a, b) => a.name.localeCompare(b.name) || a.email.localeCompare(b.email)
   );
@@ -317,16 +309,7 @@ const render = Effect.fn("TeamsPage.render")(function* (
     : "";
   const rosterHtml =
     members.length === 0
-      ? emptyState({
-          title: "No people in this team",
-          ...(editable
-            ? {
-                action: linkButton("Add people", screenHref(selected.id, "add"), {
-                  kind: "primary"
-                })
-              }
-            : {})
-        })
+      ? emptyState({ title: "No people in this team" })
       : roster.length === 0
         ? emptyState({
             title: "No people match your search",
@@ -411,7 +394,7 @@ const render = Effect.fn("TeamsPage.render")(function* (
 export const handle = Effect.fn("TeamsPage.handle")(function* (viewer: Viewer, action: Action) {
   const request = yield* HttpServerRequest.HttpServerRequest;
   const url = new URL(request.url, "http://page.local");
-  const asked = url.searchParams.get("view") ?? url.searchParams.get("confirm");
+  const asked = url.searchParams.get("view");
   const view: View = {
     teamId: url.searchParams.get("team") ?? "",
     deleted: url.searchParams.get("deleted") === "1",

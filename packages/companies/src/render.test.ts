@@ -33,7 +33,7 @@ it.layer(services)("team lifecycle rendering", (it) => {
       const viewer = { ...company, role: "super_admin" as const };
       const ref = { companyId: company.company.id, actorId: company.user.id };
       const team = yield* (yield* Teams.Teams).create({ ...ref, name: "Research <script>" });
-      const confirmation = yield* view(viewer, `?team=${team.id}&confirm=delete`);
+      const confirmation = yield* view(viewer, `?team=${team.id}&view=delete`);
       const confirmationOverlay = "overlay" in confirmation ? (confirmation.overlay ?? "") : "";
       assert.include(confirmation.body, "Research &lt;script&gt;");
       assert.notInclude(confirmation.body + confirmationOverlay, "<script>");
@@ -43,7 +43,7 @@ it.layer(services)("team lifecycle rendering", (it) => {
         .pipe(Effect.provideService(Teams.References, () => Effect.succeed(false)));
       const active = yield* view(viewer, "");
       assert.notInclude(active.body, "Research &lt;script&gt;");
-      const deleted = yield* view(viewer, `?team=${team.id}&deleted=1&confirm=restore`);
+      const deleted = yield* view(viewer, `?team=${team.id}&deleted=1&view=restore`);
       const restoreOverlay = "overlay" in deleted ? (deleted.overlay ?? "") : "";
       assert.include(deleted.body, "Research &lt;script&gt;");
       assert.notInclude(deleted.body + restoreOverlay, "<script>");
