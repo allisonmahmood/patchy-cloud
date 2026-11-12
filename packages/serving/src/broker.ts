@@ -838,6 +838,46 @@ function mount(frame: HTMLIFrameElement): void {
   const handOffKeys = () => {
     if (document.activeElement === null || document.activeElement === document.body) frame.focus();
   };
+  // Desktop Chrome keeps the frame's document in its own process, and can leave the keys on the
+  // shell's document instead: when the frame's new document settles its focus with the browser just
+  // as the shell hands it the keys, or when a press meant for the frame reaches the shell. The
+  // shell's window then takes focus holding nothing of its own. Its active element is still the
+  // frame, where `frame.focus()` does nothing since the frame already is, or the body once the
+  // frame has had the keys back this way before. Once that move has settled, give the frame the
+  // keys for real; a move to shell UI, such as the switcher or the starting cover, has its own
+  // active element by then.
+  //
+  // Only for focus the person didn't ask the shell for. A press on the shell's own content, such
+  // as a download card's text, brings its focus within that press's own task, so it is skipped;
+  // a press on the frame element is the one meant for the frame. So is a window that comes back
+  // to text the person selected in the shell, as when they select it and switch tabs: only when
+  // the shell held the keys as its window last lost focus, not once they went into the patch, by
+  // a click or the shell's own hand-off. And only text they can see and copy: a selection left in
+  // content since hidden, such as a folded-away download card, copies nothing and holds nothing.
+  let pressedShell = false;
+  let keysLeftForFrame = false;
+  window.addEventListener(
+    "mousedown",
+    (event) => {
+      if (event.target === frame) return;
+      pressedShell = true;
+      setTimeout(() => (pressedShell = false));
+    },
+    true
+  );
+  window.addEventListener("blur", (event) => {
+    if (event.target === window) keysLeftForFrame = document.activeElement === frame;
+  });
+  window.addEventListener("focus", (event) => {
+    if (event.target !== window || pressedShell) return;
+    setTimeout(() => {
+      const active = document.activeElement;
+      const shellHolds = active !== null && active !== document.body && active !== frame;
+      const selected = !keysLeftForFrame && (getSelection()?.toString() ?? "") !== "";
+      if (closed || shellHolds || selected || frame.hasAttribute("data-waiting")) return;
+      frame.contentWindow?.focus();
+    });
+  });
   // The relay's window messages, apart from the port. They carry no authority: a document that
   // fakes one only takes focus it could take by being clicked, or asks for Patchy's own switcher.
   let explained = false;

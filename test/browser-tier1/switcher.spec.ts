@@ -1,6 +1,7 @@
 import { build } from "esbuild";
 import { fileURLToPath } from "node:url";
-import type { Frame, Page } from "@playwright/test";
+import type { Frame, Locator, Page } from "@playwright/test";
+import { frameDrawn } from "./drawn.js";
 import { test, expect, installSessionRefreshBoundary } from "./fixtures.js";
 import type { Instance } from "./instance.js";
 
@@ -65,17 +66,49 @@ const savedAt = (page: Page) =>
       return undefined;
     }
   });
-/** Goes to `path` and waits for its switcher to keep the list it asked for. */
-const listedAt = async (page: Page, path: string) => {
-  const before = (await savedAt(page)) ?? 0;
-  await page.goto(path);
-  await expect.poll(() => savedAt(page)).toBeGreaterThan(before);
+/** What each page of the test's tab noted as it began: when the tab's copy was saved then. */
+type Listed = Window & { listedBefore?: number };
+test.beforeEach(async ({ page }) => {
+  // Ahead of any script of the page's own, so before its switcher asks for anything.
+  await page.addInitScript(() => {
+    try {
+      (window as Listed).listedBefore = JSON.parse(
+        sessionStorage.getItem("patchy.switcher") ?? "{}"
+      ).savedAt;
+    } catch {
+      // A sandboxed frame has no storage, and lists nothing.
+    }
+  });
+});
+/**
+ * Does `go`, which ends on its new page, then waits for that page's own switcher to keep the list
+ * it asked for. Only a copy saved since the page began counts: the page before it can still have
+ * an ask on its way, and one that lands after `go` starts is that page's, not this one's.
+ */
+const listedAfter = async (page: Page, go: () => Promise<unknown>) => {
+  await go();
+  await expect
+    .poll(async () => {
+      const [kept, before] = await Promise.all([
+        savedAt(page),
+        page.evaluate(() => (window as Listed).listedBefore)
+      ]);
+      return (kept ?? 0) > (before ?? 0);
+    })
+    .toBe(true);
 };
-/** Opens `patch` and waits for its frame to take focus from the shell. */
-const visit = async (page: Page, patch: { address: string }) => {
-  await page.goto(patch.address);
+/** Goes to `path` and waits for its switcher to keep the list it asked for. */
+const listedAt = (page: Page, path: string) => listedAfter(page, () => page.goto(path));
+/** Waits for the patch on screen to take focus from the shell, and for the shell to draw it. */
+const shown = async (page: Page) => {
   await expect(field(page)).toBeVisible();
   await expect.poll(() => page.evaluate(() => window.document.activeElement?.id)).toBe("patch");
+  await frameDrawn(page);
+};
+/** Opens `patch` and waits until it is on screen with the keyboard. */
+const visit = async (page: Page, patch: { address: string }) => {
+  await page.goto(patch.address);
+  await shown(page);
 };
 
 test("over a patch, ⌘⇧K ↵ flips back, typing filters, and Escape puts the cursor back", async ({
@@ -165,7 +198,7 @@ test("⌘⇧K ↵ flips back three times running, and an ↵ before the menu has
     await expect(search(page)).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(page).toHaveURL(to.address);
-    await expect(field(page)).toBeVisible();
+    await shown(page);
   }
   // The two presses back to back, as fast as the browser takes them: an Enter that comes before
   // the menu has the keyboard is dropped, never the patch's, and one that comes after flips.
@@ -244,6 +277,168 @@ addEventListener("blur", () => setTimeout(() => { window.focus(); document.getEl
     await expect(search(page)).toHaveValue("private");
     await expect(field(page)).toHaveValue("");
   } else await expect(field(page)).toHaveValue("private");
+});
+
+test("keys that fall out of the frame onto the shell go back to the frame, and ⌘⇧K ↵ still flips", async ({
+  page,
+  instance
+}) => {
+  const lines = patchLines(page);
+  const crew = await publish(instance, "Crew rota");
+  const sales = await publish(instance, "Sales HQ");
+  await visit(page, crew);
+  await visit(page, sales);
+  await field(page).click();
+  // Desktop Chrome can leave the keys on the shell's own document while the shell still names the
+  // frame as focused, as when the frame's new document settles its focus with the browser just as
+  // the shell hands it the keys. The frame giving its focus to the shell leaves the shell as the
+  // broker finds it then: keys on its document while the frame is still its active element. The
+  // frame knows it lost focus, so this shows the keys come back, not the race itself. The second
+  // time, after the frame has had them back once, the shell's body is its active element instead.
+  for (let fall = 0; fall < 2; fall++) {
+    await patchFrame(page).evaluate(() => parent.focus());
+    await expect.poll(() => patchFrame(page).evaluate(() => window.document.hasFocus())).toBe(true);
+  }
+  await page.keyboard.press("a");
+  await expect.poll(() => lines).toContain("patch heard keydown a");
+  await page.keyboard.press(chord);
+  await expect(search(page)).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(crew.address);
+});
+
+type Offering = Window & { heard: string[]; offer(name: string): Promise<void> };
+/**
+ * Opens a patch that offers four files, with the keys in its field: the shell shows the three
+ * newest as cards and folds the oldest away under "1 more file". The patch notes each key and Copy
+ * it hears, and the shell what it copies.
+ */
+const openOffering = async (page: Page, instance: Instance) => {
+  const offering = await build({
+    stdin: {
+      contents: `import { createClient } from "patchy/client";
+const client = createClient({ tables: {}, files: {}, uses: {} }, { shared: {}, connections: {} });
+window.heard = [];
+for (const type of ["keydown", "copy"]) addEventListener(type, (event) => heard.push(type + " " + (event.key ?? "")), true);
+window.offer = (name) => client.download(name, new Blob(["a,b"], { type: "text/csv" }));`,
+      resolveDir: fileURLToPath(new URL("../../packages/patchy", import.meta.url))
+    },
+    bundle: true,
+    write: false,
+    platform: "browser",
+    format: "iife"
+  });
+  const patch = await instance.publish(
+    "company",
+    `<!doctype html><html lang="en"><head><title>Reports</title></head><body><input id="field" aria-label="Field"><script>${offering.outputFiles[0]!.text.replaceAll("</script", "<\\/script")}</script></body></html>`,
+    undefined,
+    tier1
+  );
+  await visit(page, patch);
+  await field(page).click();
+  // Each offer stays open while its card is up; only asking for it is awaited.
+  for (const file of ["older.csv", "b.csv", "c.csv", "report.csv"])
+    await patchFrame(page).evaluate((file) => {
+      void (window as unknown as Offering).offer(file);
+    }, file);
+  await expect(page.locator(".shell-corner summary")).toHaveText("1 more file");
+  // Before a press on them: until the shell draws the cards, a press there reaches the patch.
+  await frameDrawn(page);
+  await page.evaluate(() => {
+    const shell = window as unknown as { copied?: string };
+    addEventListener("copy", () => (shell.copied = String(getSelection())), true);
+  });
+  return {
+    names: page.locator(".shell-corner code"),
+    heard: () => patchFrame(page).evaluate(() => (window as unknown as Offering).heard)
+  };
+};
+/** The shell's selection, as it would copy. */
+const selection = (page: Page) => page.evaluate(() => String(getSelection()));
+/** The person drags across `text` in the shell. */
+const dragAcross = async (page: Page, text: Locator) => {
+  const box = (await text.boundingBox())!;
+  await page.mouse.move(box.x + 1, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width - 1, box.y + box.height / 2, { steps: 4 });
+  await page.mouse.up();
+};
+/** Presses Copy, and waits for the shell to copy `text`. */
+const copies = async (page: Page, text: string) => {
+  await page.evaluate(() => delete (window as unknown as { copied?: string }).copied);
+  await page.keyboard.press("ControlOrMeta+c");
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { copied?: string }).copied))
+    .toBe(text);
+};
+
+test("text selected in the shell's own content is what Copy copies, until the keys go back to the patch", async ({
+  page,
+  instance
+}) => {
+  const { names, heard } = await openOffering(page, instance);
+  await dragAcross(page, names.filter({ hasText: "report.csv" }));
+  await expect.poll(() => selection(page)).toBe("report.csv");
+  await copies(page, "report.csv");
+  expect(await heard()).toEqual([]);
+  // Clicking back into the patch takes the keys there, so the selection still showing in the shell
+  // holds them no longer: each fall gives them back.
+  await field(page).click();
+  expect(await selection(page)).toBe("report.csv");
+  for (const typed of [1, 2]) {
+    await patchFrame(page).evaluate(() => parent.focus());
+    await expect.poll(() => patchFrame(page).evaluate(() => window.document.hasFocus())).toBe(true);
+    await page.keyboard.press("x");
+    await expect.poll(heard).toEqual(Array<string>(typed).fill("keydown x"));
+  }
+});
+
+test("across a tab and back, the shell keeps the keys for text it shows selected, and only that", async ({
+  page,
+  context,
+  instance
+}) => {
+  test.skip(
+    test.info().project.use.channel !== "chromium",
+    "Playwright's headless shell keeps every tab focused, so it has no tab to come back from."
+  );
+  /** The person switches to another tab and back, with the browser's own focus, not the test's. */
+  const switchTabs = async () => {
+    const other = await context.newPage();
+    await other.bringToFront();
+    await expect.poll(() => page.evaluate(() => window.document.hasFocus())).toBe(false);
+    await page.bringToFront();
+    await expect.poll(() => page.evaluate(() => window.document.hasFocus())).toBe(true);
+    await other.close();
+    // What the shell does on the way back is due a task after it; let that run.
+    await page.evaluate(() => new Promise((resolve) => setTimeout(resolve)));
+  };
+  const { names, heard } = await openOffering(page, instance);
+  await (
+    await context.newCDPSession(page)
+  ).send("Emulation.setFocusEmulationEnabled", {
+    enabled: false
+  });
+  await dragAcross(page, names.filter({ hasText: "report.csv" }));
+  await expect.poll(() => selection(page)).toBe("report.csv");
+  await switchTabs();
+  await copies(page, "report.csv");
+  expect(await heard()).toEqual([]);
+  // A selection the person can't see, as in a card folded away under "1 more file", copies
+  // nothing, so it holds no keys. The test leaves one there directly, with the keys on the shell
+  // from a press on a card: folding the card over it by hand leaves it only some of the time.
+  await names.filter({ hasText: "b.csv" }).click();
+  const older = names.filter({ hasText: "older.csv" });
+  await expect(older).toBeHidden();
+  await older.evaluate((name) => getSelection()!.selectAllChildren(name));
+  expect(await page.evaluate(() => [getSelection()?.isCollapsed, String(getSelection())])).toEqual([
+    false,
+    ""
+  ]);
+  await switchTabs();
+  await expect.poll(() => patchFrame(page).evaluate(() => window.document.hasFocus())).toBe(true);
+  await page.keyboard.press("x");
+  await expect.poll(heard).toEqual(["keydown x"]);
 });
 
 test("a list that lands once the menu is open lights the flip, unless the person moved first", async ({
@@ -554,8 +749,12 @@ test("a signed-in person opens the switcher on a notice and leaves; signed out, 
   // A notice is none of Patchy's places, and no patch is on screen.
   await expect(group(page, "Patchy")).toHaveText(places);
   await expect(menu(page).getByRole("group", { name: "This patch" })).toHaveCount(0);
-  await page.keyboard.press("Enter");
-  await expect(page).toHaveURL(crew.address);
+  // The patch's own switcher asks for its list as it loads; that ask is the patch's, so it lands
+  // before the notice below is watched.
+  await listedAfter(page, async () => {
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(crew.address);
+  });
   expect(blocked).toEqual([]);
 
   await instance.session(context, "none");
@@ -613,8 +812,11 @@ test("a member leaves their company's public patch with the key; anyone else's s
   await visit(page, open);
   await openAt(page, "Crew rota");
   await expect(group(page, "This patch")).toHaveText(["Overview", "Versions", "Log", "Settings"]);
-  await page.keyboard.press("Enter");
-  await expect(page).toHaveURL(crew.address);
+  // Crew rota's own ask for its list lands before the requests below are watched.
+  await listedAfter(page, async () => {
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(crew.address);
+  });
 
   // Signed out, or its guest from another company: no switcher, so the patch keeps every key.
   for (const user of ["none", "guest"] as const) {
