@@ -89,9 +89,9 @@ Rows are bounded to 1 MiB, batches to 1,000 items and 8 MiB, list/getMany result
 
 ## Indexed pages
 
-`list({ index?, eq?, range?, order?, limit?, cursor? })` returns `{ rows, cursor }`, one page of at most `limit` rows: 100 by default, 1,000 at most. With an index, equality must cover its leading columns; at most one trailing column can have a range, such as `range: { column: "createdAt", gte: "2026-01-01T00:00:00.000Z" }` on the built-in index.
+`list({ index?, eq?, range?, order?, limit?, cursor? })` returns `{ rows, cursor }`, one page of at most `limit` rows: 100 by default, 1,000 at most. With an index, equality must cover its leading columns; at most one trailing column can have a range. Without one, rows are listed by `createdAt`, which takes a range such as `range: { column: "createdAt", gte: "2026-01-01T00:00:00.000Z" }`.
 
-`order` is `"asc"` or `"desc"`; id breaks ties, and ids are time-ordered. Its default depends on the index: newest first without an index or on the built-in `createdAt` index, ascending by the columns of a declared index or a ref. So `list({ index: "byDone", eq: { done: false }, limit: 20 })` returns the 20 oldest matches, and sorting them afterwards brings in no newer row; `order: "desc"` returns the newest.
+`order` is `"asc"` or `"desc"`; id breaks ties, and ids are time-ordered. Its default depends on the index: newest first without an index, ascending by the columns of a declared index or a ref. So `list({ index: "byDone", eq: { done: false }, limit: 20 })` returns the 20 oldest matches, and sorting them afterwards brings in no newer row; `order: "desc"` returns the newest.
 
 Rows past `limit` are reached only through the cursor: pass a non-null returned cursor to the same query for the next page, and stop on null. Cursors are opaque and bound to index/order, not snapshots; a changed query starts a fresh page. A filter applied after `list` sees only that page, so put the filtered column in a declared index and filter with `eq`. Index definitions may use `["column"]` or `{ columns: ["column"], unique: true }`.
 
