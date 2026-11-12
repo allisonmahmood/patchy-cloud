@@ -302,6 +302,42 @@ it.layer(layer)("data from a release with team audiences", (it) => {
   );
 
   it.effect(
+    "removing a guest from every patch leaves their grant on a team patch as it was",
+    () =>
+      Effect.gen(function* () {
+        const hidden = yield* teamPatch("Board pack", yield* team("board"));
+        const open = decodeCreated(
+          yield* (yield* publish(DEV_SEED.token, { html: html("Board notes") })).json
+        );
+        const guest = yield* outsider("fairway");
+        const grants = yield* GuestGrants.GuestGrants;
+        for (const patch of [hidden, open])
+          yield* grants.grant({
+            patchId: patch.patchId,
+            userId: guest.user.id,
+            grantedBy: DEV_SEED.userId
+          });
+
+        const removed = yield* page(
+          admin,
+          `/settings/people/guests/${guest.user.id}/remove`,
+          "POST"
+        );
+        assert.strictEqual(removed.status, 200);
+        const sql = yield* SqlClient.SqlClient;
+        assert.deepStrictEqual(
+          yield* sql`SELECT patch_id AS "patchId", revoked_at IS NULL AS active
+            FROM patch_guest_grants WHERE user_id = ${guest.user.id} ORDER BY active`,
+          [
+            { patchId: open.patchId, active: false },
+            { patchId: hidden.patchId, active: true }
+          ]
+        );
+      }),
+    60_000
+  );
+
+  it.effect(
     "lets nobody build with a connection restricted to teams, and shows it only to admins",
     () =>
       Effect.gen(function* () {
