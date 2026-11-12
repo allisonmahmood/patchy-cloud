@@ -292,6 +292,17 @@ const storeVersion = Effect.fn(function* (
   if (options.retired) yield* sql`UPDATE patches SET retired_at = now() WHERE id = ${patchId}`;
 });
 
+/** A patch of the owner's company with no version, for calls recorded from it. */
+const storePatch = Effect.fn(function* (
+  owner: { readonly company: Companies.Company; readonly user: Users.User },
+  id: string,
+  name: string
+) {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`INSERT INTO patches (id, company_id, owner_user_id, title, name)
+    VALUES (${id}, ${owner.company.id}, ${owner.user.id}, ${name}, ${name})`;
+});
+
 it.layer(services)("company connection pages", (it) => {
   it.effect("lets only an admin block guests from a connection, and shows everyone which", () =>
     Effect.gen(function* () {
@@ -351,6 +362,7 @@ it.layer(services)("company connection pages", (it) => {
           connectionId: connection.id,
           deadlineMs: 15_000
         };
+        yield* storePatch(owner, begin.patchId, "audited");
         yield* audit.begin({ ...begin, correlationId: "visible-query", sql });
         yield* audit.finish({
           correlationId: "visible-query",
@@ -1107,6 +1119,7 @@ it.layer(services)("company connection pages", (it) => {
       const guest = yield* createCompany("connections-guests-home");
       const { connection, path } = yield* connect(owner.user, "warehouse");
       const audit = yield* RuntimeLog.RuntimeLog;
+      yield* storePatch(owner, "guest-patch", "guested");
       yield* audit.begin({
         companyId: owner.company.id,
         patchId: "guest-patch",
@@ -1325,6 +1338,7 @@ it.layer(services)("company connection pages", (it) => {
 
         // A query's name labels its call; its text is kept, its values are not.
         const audit = yield* RuntimeLog.RuntimeLog;
+        yield* storePatch(owner, "posthog-patch", "visits");
         yield* audit.begin({
           companyId: owner.company.id,
           patchId: "posthog-patch",

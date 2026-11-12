@@ -117,8 +117,9 @@ export class RuntimeLog extends Context.Service<
       readonly correlationId: string;
     }) => Effect.Effect<Call | null, SqlError>;
     /**
-     * A connection's latest calls, without those from patches open to teams: a later release's
-     * audience, which this one opens for nobody.
+     * A connection's latest calls made from no patch or from a patch this release can open. A
+     * patch open to teams is a later release's audience, which this one opens for nobody, and a
+     * reclaimed patch can't say whether it was one, so calls from either are left out.
      */
     readonly recent: (input: {
       readonly companyId: string;
@@ -175,7 +176,8 @@ export const make = Effect.gen(function* () {
       SELECT ${columns(now)}
       FROM runtime_calls
       WHERE company_id = ${companyId} AND connection_id = ${connectionId} AND ${known}
-        AND NOT EXISTS (SELECT 1 FROM patches p WHERE p.id = runtime_calls.patch_id AND p.scope = 'teams')
+        AND (patch_id IS NULL OR EXISTS (SELECT 1 FROM patches p
+          WHERE p.id = runtime_calls.patch_id AND p.scope <> 'teams'))
       ORDER BY at DESC, id DESC LIMIT ${limit}`
   });
 

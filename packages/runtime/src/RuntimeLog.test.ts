@@ -32,8 +32,17 @@ const rolledBack = <A, E, R>(body: Effect.Effect<A, E, R>) =>
       .pipe(Effect.catch((error) => (error === "rolled back" ? Effect.void : Effect.fail(error))));
   });
 
+/** The patch `mutation`'s calls come from, since a connection's calls show only a patch's that exists. */
+const runtimePatch = Layer.effectDiscard(
+  Effect.flatMap(
+    SqlClient.SqlClient,
+    (sql) => sql`INSERT INTO patches (id, company_id, owner_user_id, title, name)
+      VALUES ('runtimepatch', ${DEV_SEED.companyId}, ${DEV_SEED.userId}, 'Runtime', 'runtimepatch')`
+  )
+);
+
 it.layer(
-  RuntimeLog.layer.pipe(
+  Layer.merge(RuntimeLog.layer, runtimePatch).pipe(
     Layer.provideMerge(Testing.layer()),
     Layer.provideMerge(NodeCryptography.layer)
   )
@@ -126,34 +135,38 @@ it.layer(
     })
   );
 
-  it.effect("leaves out the calls of a patch open to teams, before the limit", () =>
-    rolledBack(
-      Effect.gen(function* () {
-        yield* TestClock.setTime(NOW);
-        const log = yield* RuntimeLog.RuntimeLog;
-        const sql = yield* SqlClient.SqlClient;
-        // A later release opens a patch to selected teams; this one opens it for nobody.
-        yield* sql`INSERT INTO patches (id, company_id, owner_user_id, scope, title, name)
+  it.effect(
+    "leaves out the calls of a patch open to teams or since reclaimed, before the limit",
+    () =>
+      rolledBack(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(NOW);
+          const log = yield* RuntimeLog.RuntimeLog;
+          const sql = yield* SqlClient.SqlClient;
+          // A later release opens a patch to selected teams; this one opens it for nobody.
+          yield* sql`INSERT INTO patches (id, company_id, owner_user_id, scope, title, name)
           VALUES ('runtime-open', ${DEV_SEED.companyId}, ${DEV_SEED.userId}, 'company', 'Open', 'runtime-open'),
             ('runtime-team', ${DEV_SEED.companyId}, ${DEV_SEED.userId}, 'teams', 'Team', 'runtime-team')`;
-        const connectionId = "teams-connection";
-        const call = (correlationId: string, patchId: string | null) =>
-          Effect.andThen(
-            log.begin({ ...mutation(correlationId), op: "postgres.list", connectionId, patchId }),
-            TestClock.adjust(1)
+          const connectionId = "teams-connection";
+          const call = (correlationId: string, patchId: string | null) =>
+            Effect.andThen(
+              log.begin({ ...mutation(correlationId), op: "postgres.list", connectionId, patchId }),
+              TestClock.adjust(1)
+            );
+          yield* call("from-open", "runtime-open");
+          yield* call("from-admin", null);
+          yield* call("from-team-1", "runtime-team");
+          yield* call("from-team-2", "runtime-team");
+          // Its row is gone, so nothing says whether it was open to teams.
+          yield* call("from-reclaimed", "runtime-reclaimed");
+          assert.deepStrictEqual(
+            (yield* log.recent({ companyId: DEV_SEED.companyId, connectionId, limit: 2 })).map(
+              (found) => found.correlationId
+            ),
+            ["from-admin", "from-open"]
           );
-        yield* call("from-open", "runtime-open");
-        yield* call("from-admin", null);
-        yield* call("from-team-1", "runtime-team");
-        yield* call("from-team-2", "runtime-team");
-        assert.deepStrictEqual(
-          (yield* log.recent({ companyId: DEV_SEED.companyId, connectionId, limit: 2 })).map(
-            (found) => found.correlationId
-          ),
-          ["from-admin", "from-open"]
-        );
-      })
-    )
+        })
+      )
   );
 
   it.effect("hides calls recorded under a credential kind this release does not know", () =>

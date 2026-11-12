@@ -25,6 +25,7 @@ import * as FiberSet from "effect/FiberSet";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 import { build } from "esbuild";
 import * as Local from "../../../execution/src/local.js";
 import type { PidgeonReader, PidgeonSender } from "../../../patchy/src/pidgeon.js";
@@ -54,6 +55,16 @@ export const bundle = (contents: string, sourcefile: string) =>
       target: "es2022"
     })
   ).pipe(Effect.map((result) => result.outputFiles[0]!.text));
+
+/** The seeded viewer's patch `patchId`, which a connection's calls must come from to be shown. */
+export const storedPatch = (patchId: string) =>
+  Layer.effectDiscard(
+    Effect.flatMap(
+      SqlClient.SqlClient,
+      (sql) => sql`INSERT INTO patches (id, company_id, owner_user_id, title, name)
+        VALUES (${patchId}, ${DEV_SEED.companyId}, ${DEV_SEED.userId}, ${patchId}, ${patchId})`
+    )
+  );
 
 /** The loaded versions: one tier 2 patch's version, declaring `uses` as they stand when it loads. */
 export const versions = (

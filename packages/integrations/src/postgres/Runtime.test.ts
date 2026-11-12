@@ -20,6 +20,7 @@ import {
   RuntimeLog
 } from "@patchy/runtime";
 import * as Callbacks from "../../../runtime/src/test/callbacks.js";
+import * as RuntimeTest from "../test/runtime.js";
 import * as Testing from "@patchy/sql/testing";
 import * as ConnectionStore from "../ConnectionStore.js";
 import * as ConnectionStoreDev from "../ConnectionStoreDev.js";
@@ -121,7 +122,8 @@ const services = Layer.mergeAll(
   Limits.layer,
   OperatingLimits.layer,
   RuntimeLog.layer,
-  versions
+  versions,
+  RuntimeTest.storedPatch(patchId)
 )
   .pipe(
     Layer.provideMerge(Testing.layer()),
