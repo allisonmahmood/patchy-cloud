@@ -991,7 +991,3 @@ with a closed environment: the plan, `NODE_ENV=development`, a keyring generated
 once per worktree in `.local/dev/dev.env`, and either the personas secret or
 Clerk's keys. Development instances execute tier 2 handlers with the local
 workerd executor; production refuses it.
-
-Scenario publication exercises the Company first-publish default without a scope flag.
-The audience stack lands together after the complete enforcement checks; there is no
-runtime activation switch. Use isolated instances for access testing.
