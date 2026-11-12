@@ -82,7 +82,13 @@ use `patchy/preact`, its two JSX runtimes, `patchy/csv`, `patchy/hotkeys` and th
 relative generated client. `patchy/csv` is a shipped Helper on both page and server
 graphs; `patchy/hotkeys` is a page-only Helper.
 The generated client uses `patchy/client` internally and re-exports
-`isPatchyError` for pages.
+`isPatchyError` for pages. It and `patchy/preact` keep Tab and Shift+Tab inside
+the page's topmost modal dialog when the dialog is plain: ordinary containers
+and text, with buttons, links, selects, checkboxes, summaries, one-line inputs
+and elements with `tabindex="0"`, and nothing that scrolls, pops over, or adds,
+hides or reorders stops, while no popover is open in the page. A richer dialog
+keeps the browser's own Tab, which can leave the patch's frame, as `showModal()`
+alone lets it.
 Tooling and type-only imports do not enter the page graph. An off-SDK import,
 including one hidden by an alias or removed by tree shaking, is local exit 1,
 `import_refused`. Its message names the package, importer and allowed entries,
