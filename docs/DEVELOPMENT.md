@@ -480,7 +480,13 @@ line runs and after it (so a login code a later `patchy logout` clears is still
 known), anything shaped like a machine token (`pp_…`) or a login code, any
 email address outside the reserved domains the scenarios use (`.example`,
 `patchy.local`), written with `@` or `%40`, and secret-named variables the
-runner passes. The section says which matched. Redaction is a backstop, not a guarantee; read the section before publishing.
+runner passes. A headers variable, any named `…_HEADERS` such as
+`ANTHROPIC_CUSTOM_HEADERS`, is redacted whole and header by header: one
+`Name: value` a line, as Claude Code reads them, each value everything after
+its line's first colon. The model provider's address, `ANTHROPIC_BASE_URL`, is
+redacted whole, with any credentials in it, and by its host with and without
+its port, unless that host is this machine's own; a bare name with no dot,
+like `gpubox`, only with its port. The section says which matched. Redaction is a backstop, not a guarantee; read the section before publishing.
 
 `pnpm dev trial "<task>"` gives a task, in a person's words, to a fresh agent
 on each side: the `agent` launcher, run without a person. The task goes
@@ -488,9 +494,14 @@ in on stdin to Claude Code's `-p`, with its stream-json events, `--max-turns`
 (30), `--no-session-persistence` and auto memory off, and the run is stopped
 after `--minutes` (10). Both sides run at once. `--model` passes through to
 Claude Code; the default is `sonnet`. Its environment is the runner's closed
-one, plus only what Claude Code needs to stay signed in: your HOME, which
-holds its login, is already there, and `CLAUDE_CONFIG_DIR`, `ANTHROPIC_API_KEY`
-and `CLAUDE_CODE_OAUTH_TOKEN` pass when set. The launcher's limits hold: its
+one, plus only what Claude Code needs to reach its models. Your model
+provider, when you use one, comes as an eval's builders get it
+(`ANTHROPIC_BASE_URL`, with `ANTHROPIC_AUTH_TOKEN` or
+`ANTHROPIC_CUSTOM_HEADERS`, from the environment, `dev.env` or the `env` of
+Claude Code's `settings.json`), since the launcher loads none of your
+settings. It signs in as your own Claude Code does: your HOME, which holds
+its login, is already there, and `CLAUDE_CONFIG_DIR`, `ANTHROPIC_API_KEY` and
+`CLAUDE_CODE_OAUTH_TOKEN` pass when set. The launcher's limits hold: its
 commands run as you, so a task that mentions `patchy setup` or the portal's
 setup line is refused, and `patchy setup` and global `pnpm add`s are denied to
 the agent. The launcher pre-approves only some commands, and with no one there

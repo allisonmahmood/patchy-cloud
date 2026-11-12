@@ -22,12 +22,13 @@ import { describe, expect } from "vitest";
 import { Terms, Users } from "@patchy/companies";
 import { NodeCryptography } from "@patchy/core";
 import * as Testing from "@patchy/sql/testing";
+import { claudeEnv } from "../claudeSignIn.js";
 import { realNode } from "../runtimes.js";
 import { loadScenario } from "../scenario.js";
 import { BUILDERS, makeClaudeTally, makeCodexTally, refusalsIn, unwrapShell } from "./builders.js";
 import { namespaceScenario, retireRun, runHandle, seedRun } from "./fixtures.js";
 import { pickTarget } from "./grade.js";
-import { claudeEnv, codexConfig, readSignIns } from "./home.js";
+import { codexConfig, readSignIns } from "./home.js";
 import { metricsOf } from "./metrics.js";
 import { among, isPublic, openNetwork, serverNameOf } from "./network.js";
 import { bwrapArgs, HOME, versionOf } from "./sandbox.js";
@@ -1102,7 +1103,13 @@ describe("what a run is", () => {
       );
       expect(signIns.claude).toEqual({ env, binds: [] });
       expect(signIns.privateEndpoints).toEqual(["hub.example.ts.net:8317"]);
-      expect(signIns.secrets).toEqual(["tok"]);
+      // The provider's address is the developer's own, so a section redacts it as it does the token.
+      expect(signIns.secrets).toEqual([
+        "https://hub.example.ts.net:8317",
+        "hub.example.ts.net:8317",
+        "hub.example.ts.net",
+        "tok"
+      ]);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)))
   );
 });

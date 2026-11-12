@@ -17,7 +17,11 @@
  *   scenarios and the seed use, `@` or `%40`, as a backstop for an address
  *   no source names.
  * - **Variables**: the values of variables the runner passes whose names mark
- *   them secret, such as `PATCHY_API_TOKEN` or `ANTHROPIC_API_KEY`.
+ *   them secret, such as `PATCHY_API_TOKEN` or `ANTHROPIC_API_KEY`. A variable
+ *   of headers, named `…_HEADERS` such as `ANTHROPIC_CUSTOM_HEADERS`, gives its
+ *   whole value and each header's, one a line as Claude Code reads them. The
+ *   model provider's address, `ANTHROPIC_BASE_URL`, gives itself, any
+ *   credentials in it, and its host (`providerSecrets`).
  * - **Identities**: values the caller passes for who a run acts as beyond
  *   the scenario, such as the Claude account `trial`'s agent is signed in as,
  *   which Claude Code tells the agent, and git's author email.
@@ -121,6 +125,77 @@ export const secretsInJson = (value: unknown, secret = false): ReadonlyArray<str
     );
   return [];
 };
+
+/** A variable that holds HTTP headers, one `Name: value` a line, such as `ANTHROPIC_CUSTOM_HEADERS`. */
+const HEADERS_VARIABLE = /(?:^|_)HEADERS$/;
+
+/** What follows a header line's first colon, trimmed; nothing when it has none. */
+const headerValue = (line: string) => {
+  const colon = line.indexOf(":");
+  return colon === -1 ? [] : [line.slice(colon + 1).trim()];
+};
+
+/**
+ * The secrets in a headers variable: its whole value and each line's header
+ * value. A line is one header, as Claude Code reads them, so a value with
+ * commas or colons in it is redacted whole.
+ */
+const headerSecrets = (headers: string) => [headers, ...headers.split("\n").flatMap(headerValue)];
+
+/** A variable that names the developer's model provider, whose address is theirs to keep. */
+const PROVIDER_VARIABLE = "ANTHROPIC_BASE_URL";
+
+/** This machine's own host, which says nothing about anyone and appears in every local URL. */
+const LOOPBACK = /^(?:localhost|127\.\d+\.\d+\.\d+|\[::1\])$/;
+
+/** A URL's authority as written, `user:pass@host:port`, case and all. */
+const AUTHORITY = /^[a-z][a-z\d+.-]*:\/\/([^/?#]*)/i;
+
+/**
+ * The secrets in a provider's address: the address whole, any credentials in
+ * it, and its host, with and without its port, as written, since an error can
+ * name the host alone. The host is left out when it is this machine's own. A
+ * bare name, with no dot or bracket like `gpubox`, is kept only with its port,
+ * since alone it could match inside ordinary words.
+ */
+const providerSecrets = (address: string) => {
+  const url = URL.parse(address);
+  const authority = AUTHORITY.exec(address)?.[1];
+  if (url === null || authority === undefined) return [address];
+  const at = authority.lastIndexOf("@");
+  const userinfo = authority.slice(0, Math.max(at, 0));
+  const password = userinfo.includes(":") ? userinfo.slice(userinfo.indexOf(":") + 1) : "";
+  const host = authority.slice(at + 1);
+  const hostname = host.startsWith("[")
+    ? host.slice(0, host.indexOf("]") + 1)
+    : (host.split(":")[0] ?? host);
+  const local = LOOPBACK.test(url.hostname.replace(/\.$/, ""));
+  // As written and as a URL spells it, lowercased and without a default port, as errors print it.
+  const spellings = [host, hostname, url.host, url.hostname];
+  const hosts = local
+    ? []
+    : /[.[]/.test(hostname)
+      ? spellings
+      : spellings.filter((spelling) => spelling.includes(":"));
+  return [...new Set([address, userinfo, password, ...hosts])].filter((secret) => secret !== "");
+};
+
+/**
+ * The secrets among an environment's values: the model provider's address
+ * (`providerSecrets`), a headers variable's (`headerSecrets`), since a
+ * header's name, such as `X-Api-Key`, needn't mark it, and each other
+ * secret-named variable's whole value.
+ */
+export const secretsInEnv = (env: Readonly<Record<string, string>>) =>
+  Object.entries(env).flatMap(([name, value]) =>
+    name === PROVIDER_VARIABLE
+      ? providerSecrets(value)
+      : HEADERS_VARIABLE.test(name)
+        ? headerSecrets(value)
+        : marksSecret(name)
+          ? [value]
+          : []
+  );
 
 /** A collected value, and the forms it takes inside a URL or a JSON string. */
 const forms = (value: string) => [
@@ -245,19 +320,20 @@ const SOURCE_NAMES: Record<SecretSource, string> = {
   "login-code": "strings shaped like login codes",
   credential: "strings shaped like API keys and access tokens",
   email: "email addresses outside the scenarios' example domains",
-  variable: "secret-named variables the runner passed",
+  variable:
+    "secret-named variables, header values and the model provider's address the runner passed",
   identity: "the accounts the run acts as"
 };
 
 /** The sentence a section carries about what was redacted. */
 export const redactionLine = (matched: ReadonlyArray<SecretSource>) =>
   matched.length === 0
-    ? "Nothing in it matched a collected secret (each side's CLI state, machine-token, login-code, API-key and access-token shapes, email addresses outside the scenarios' example domains, secret-named variables, and any accounts the run acts as)."
+    ? "Nothing in it matched a collected secret (each side's CLI state, machine-token, login-code, API-key and access-token shapes, email addresses outside the scenarios' example domains, secret-named variables, header values, the model provider's address, and any accounts the run acts as)."
     : `Redacted before writing: ${matched.map((source) => SOURCE_NAMES[source]).join("; ")}.`;
 
 /**
- * A sanitizer for one run: it reads `stateDirs` and the secret-named values in
- * `envs` (each environment the runner passes) at once and takes `identities`
+ * A sanitizer for one run: it reads `stateDirs` and the secrets in `envs`
+ * (each environment the runner passes, `secretsInEnv`) at once and takes `identities`
  * whole, `collect` reads the state dirs again, and `redact` uses every value
  * seen so far. `matched` lists
  * the sources `redact` has replaced something from, in a stable order.
@@ -276,12 +352,7 @@ export const makeSanitizer = Effect.fn("Sanitize.makeSanitizer")(function* (inpu
       for (const value of values) if (value !== "" && !next.has(value)) next.set(value, source);
       return next;
     });
-  yield* add(
-    input.envs.flatMap((env) =>
-      Object.entries(env).flatMap(([name, value]) => (marksSecret(name) ? [value] : []))
-    ),
-    "variable"
-  );
+  yield* add(input.envs.flatMap(secretsInEnv), "variable");
   yield* add(input.identities ?? [], "identity");
   const collect = Effect.forEach(input.stateDirs, (dir) =>
     secretsInStateDir(dir).pipe(Effect.flatMap((values) => add(values, "cli-state")))

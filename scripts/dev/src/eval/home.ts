@@ -16,10 +16,10 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { developerEnvFile } from "../developerEnv.js";
+import { claudeEnv, readClaudeVariables } from "../claudeSignIn.js";
 import { stepOutput } from "../steps.js";
 import type { Builder } from "./builders.js";
-import { secretsInJson } from "../sanitize.js";
+import { secretsInEnv, secretsInJson } from "../sanitize.js";
 import { endpoint, type Network } from "./network.js";
 import {
   type Bind,
@@ -69,40 +69,6 @@ export interface SignIns {
   /** Every secret in the above, credential files' tokens included, for the sanitizer. */
   readonly secrets: ReadonlyArray<string>;
 }
-
-const TOKEN_NAMES = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"] as const;
-
-/** What points Claude Code at a model provider, and the provider's own ways in. */
-const PROVIDER_NAMES = [
-  "ANTHROPIC_BASE_URL",
-  "ANTHROPIC_AUTH_TOKEN",
-  "ANTHROPIC_CUSTOM_HEADERS"
-] as const;
-
-/**
- * Claude Code's environment for a sandbox, from the developer's own variables:
- * their model provider when `ANTHROPIC_BASE_URL` names one, with the variables
- * that reach it, and the first of their tokens. `signedIn` is false when
- * neither a token nor the provider's `ANTHROPIC_AUTH_TOKEN` signs Claude Code
- * in, so its credentials file has to.
- */
-export const claudeEnv = (variables: Readonly<Partial<Record<string, string>>>) => {
-  const pick = (names: ReadonlyArray<string>) =>
-    Object.fromEntries(names.flatMap((name) => (variables[name] ? [[name, variables[name]]] : [])));
-  const provider = variables.ANTHROPIC_BASE_URL ? pick(PROVIDER_NAMES) : {};
-  const token = pick(TOKEN_NAMES.filter((name) => variables[name]).slice(0, 1));
-  const env: Readonly<Record<string, string>> = { ...provider, ...token };
-  return {
-    env,
-    signedIn: Object.keys(token).length > 0 || "ANTHROPIC_AUTH_TOKEN" in provider
-  };
-};
-
-/** The `env` Claude Code's `settings.json` sets, which is where a model provider usually lives. */
-const ClaudeSettings = Schema.Struct({
-  env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String))
-});
-const decodeClaudeSettings = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeSettings));
 
 /**
  * Codex's own settings for a run: no daemon outliving it, none of the
@@ -181,36 +147,10 @@ export const readSignIns = Effect.fn("Eval.readSignIns")(function* (
   const privateEndpoints: Array<string> = [];
   let claude: SignIns["claude"] = { env: {}, binds: [] };
   if (builders.some((builder) => builder.harness === "claude-code")) {
-    const configDir = Option.getOrElse(
-      yield* Config.option(Config.String("CLAUDE_CONFIG_DIR")),
-      () => path.join(home, ".claude")
-    );
-    const devEnv = yield* developerEnvFile(home);
-    const devEnvText = (yield* fs.exists(devEnv)) ? yield* fs.readFileString(devEnv) : "";
-    const fromFile = (name: string) =>
-      new RegExp(String.raw`^${name}=(.+)$`, "m").exec(devEnvText)?.[1]?.trim();
-    const settings = yield* fs.readFileString(path.join(configDir, "settings.json")).pipe(
-      Effect.flatMap(decodeClaudeSettings),
-      Effect.map((decoded) => decoded.env ?? {}),
-      Effect.orElseSucceed((): Partial<Record<string, string>> => ({}))
-    );
-    const variables: Record<string, string> = {};
-    for (const name of [...TOKEN_NAMES, ...PROVIDER_NAMES]) {
-      const value =
-        Option.getOrUndefined(yield* Config.option(Config.String(name))) ??
-        fromFile(name) ??
-        settings[name];
-      if (value) variables[name] = value;
-    }
+    const { configDir, variables } = yield* readClaudeVariables();
     const { env, signedIn } = claudeEnv(variables);
-    const { ANTHROPIC_BASE_URL: baseUrl, ANTHROPIC_CUSTOM_HEADERS: headers, ...tokens } = env;
-    secrets.push(...Object.values(tokens));
-    if (headers !== undefined)
-      secrets.push(
-        headers,
-        ...headers.split("\n").map((line) => line.split(":").slice(1).join(":").trim())
-      );
-    const provider = urlEndpoint(baseUrl);
+    secrets.push(...secretsInEnv(env));
+    const provider = urlEndpoint(env.ANTHROPIC_BASE_URL);
     if (provider !== undefined) privateEndpoints.push(provider);
     if (signedIn) claude = { env, binds: [] };
     else {

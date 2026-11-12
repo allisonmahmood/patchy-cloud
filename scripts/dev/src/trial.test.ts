@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -8,6 +9,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { makeSanitizer } from "./sanitize.js";
 import {
+  agentEnv,
   type AgentShell,
   type Attempt,
   cleanAttempt,
@@ -389,6 +391,52 @@ describe("trialMarkdown", () => {
 });
 
 // A stand-in launcher on the real clock: the test clock would never fire the time budget.
+describe("agentEnv", () => {
+  it.effect(
+    "adds the model provider from Claude Code's settings to the closed environment, and its headers are redacted",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped();
+        const provider = {
+          ANTHROPIC_BASE_URL: "https://models.example:8317",
+          ANTHROPIC_CUSTOM_HEADERS: "X-Api-Key: dummy-header-key"
+        };
+        yield* fs.makeDirectory(path.join(home, ".claude"));
+        yield* fs.writeFileString(
+          path.join(home, ".claude", "settings.json"),
+          `{"env":{"ANTHROPIC_BASE_URL":"${provider.ANTHROPIC_BASE_URL}","ANTHROPIC_CUSTOM_HEADERS":"${provider.ANTHROPIC_CUSTOM_HEADERS}"},"theme":"dark"}`
+        );
+        const closed = { PATH: "/usr/bin:/bin", HOME: home, PATCHY_STATE_DIR: "/env/cli-state" };
+        const env = yield* agentEnv(closed).pipe(
+          Effect.provide(
+            ConfigProvider.layer(
+              ConfigProvider.fromUnknown({
+                HOME: home,
+                ANTHROPIC_API_KEY: "dummy-api-key",
+                CLAUDE_CODE_OAUTH_TOKEN: "dummy-oauth-token",
+                GITHUB_TOKEN: "dummy-github-token"
+              })
+            )
+          )
+        );
+        // Both tokens pass, for Claude Code to choose between; nothing else of the environment does.
+        assert.deepStrictEqual(env, {
+          ...closed,
+          ...provider,
+          ANTHROPIC_API_KEY: "dummy-api-key",
+          CLAUDE_CODE_OAUTH_TOKEN: "dummy-oauth-token"
+        });
+        const sanitizer = yield* makeSanitizer({ stateDirs: [], envs: [env] });
+        assert.strictEqual(
+          yield* sanitizer.redact("sent X-Api-Key: dummy-header-key; 401 for dummy-header-key"),
+          "sent [redacted]; 401 for [redacted]"
+        );
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer))
+  );
+});
+
 describe("runAgent", () => {
   const launcher = Effect.fn(function* (dir: string, body: string) {
     const fs = yield* FileSystem.FileSystem;

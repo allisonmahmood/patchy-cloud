@@ -27,6 +27,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { providerEnv, readClaudeVariables } from "./claudeSignIn.js";
 import { layoutFor, StepUnavailable, writeAgent } from "./environment.js";
 import type { Side } from "./evidence.js";
 import { sectionKey } from "./publish.js";
@@ -71,26 +72,43 @@ export const checkClaude = Effect.fn("Trial.checkClaude")(function* (root: strin
   }).pipe(Effect.mapError(() => new NoClaude()));
 });
 
-/** What Claude Code needs to stay signed in, passed when set. HOME, which holds its login, already is. */
+/** Claude Code's own sign-in, passed from the environment when set. HOME, which holds its login, already is. */
 const SIGN_IN = ["CLAUDE_CONFIG_DIR", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"] as const;
+
+/**
+ * A side's agent's environment: the side's closed one, plus how Claude Code
+ * reaches its models. The developer's model provider comes as an eval
+ * builder's does (`providerEnv`), from the environment, `dev.env` or Claude
+ * Code's settings, which the launcher doesn't load. Claude Code signs in as it
+ * does for the developer: with `SIGN_IN` when set and the login in HOME, its
+ * own precedence choosing among them. The sanitizer finds the provider's token
+ * and custom headers in the result.
+ */
+export const agentEnv = Effect.fn("Trial.agentEnv")(function* (
+  closed: Readonly<Record<string, string>>
+) {
+  const { variables } = yield* readClaudeVariables();
+  const env: Record<string, string> = { ...closed, ...providerEnv(variables) };
+  for (const name of SIGN_IN) {
+    const value = yield* Config.option(Config.String(name));
+    if (Option.isSome(value) && value.value !== "") env[name] = value.value;
+  }
+  return env;
+});
 
 /**
  * Where a side's agent runs: the side's shell (its workspace and the runner's
  * closed environment, as transcript lines get) and its launcher, plus only
- * Claude Code's sign-in. This checkout's agent is written over the side's
- * own, so both sides run with the same limits, the guard aimed at their own
- * instance and the workspace's `CLAUDE.md`, whatever commit built them.
+ * what Claude Code needs to reach its models (`agentEnv`). This checkout's
+ * agent is written over the side's own, so both sides run with the same
+ * limits, the guard aimed at their own instance and the workspace's
+ * `CLAUDE.md`, whatever commit built them.
  */
 export const agentShell = Effect.fn("Trial.agentShell")(function* (root: string, side: Side) {
   const shell = yield* sideShell(root, side);
   const layout = yield* layoutFor(side.clone);
   yield* writeAgent(layout, side.served.apiUrl);
-  const env: Record<string, string> = { ...shell.env };
-  for (const name of SIGN_IN) {
-    const value = yield* Config.option(Config.String(name));
-    if (Option.isSome(value) && value.value !== "") env[name] = value.value;
-  }
-  return { ...shell, env, launcher: layout.agent };
+  return { ...shell, env: yield* agentEnv(shell.env), launcher: layout.agent };
 });
 export type AgentShell = Effect.Success<ReturnType<typeof agentShell>>;
 
