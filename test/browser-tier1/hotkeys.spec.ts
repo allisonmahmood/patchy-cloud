@@ -1051,7 +1051,9 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
       childIds?: string[];
     };
     type Tree = { frame: { id: string; url: string }; childFrames?: Tree[] };
-    const session = await context.newCDPSession(page);
+    // Desktop Chromium runs the sandboxed frame in its own process, a target with its own session
+    // whose tree it roots; the headless shell keeps it in the page's, which has no session for it.
+    const session = await context.newCDPSession(frame).catch(() => context.newCDPSession(page));
     const { frameTree } = (await session.send("Page.getFrameTree")) as { frameTree: Tree };
     const content = (tree: Tree): Tree | undefined =>
       tree.frame.url.includes("/~content/")
