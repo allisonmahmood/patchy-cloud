@@ -116,6 +116,10 @@ export class RuntimeLog extends Context.Service<
       readonly companyId: string;
       readonly correlationId: string;
     }) => Effect.Effect<Call | null, SqlError>;
+    /**
+     * A connection's latest calls, without those from patches open to teams: a later release's
+     * audience, which this one opens for nobody.
+     */
     readonly recent: (input: {
       readonly companyId: string;
       readonly connectionId: string;
@@ -171,6 +175,7 @@ export const make = Effect.gen(function* () {
       SELECT ${columns(now)}
       FROM runtime_calls
       WHERE company_id = ${companyId} AND connection_id = ${connectionId} AND ${known}
+        AND NOT EXISTS (SELECT 1 FROM patches p WHERE p.id = runtime_calls.patch_id AND p.scope = 'teams')
       ORDER BY at DESC, id DESC LIMIT ${limit}`
   });
 
