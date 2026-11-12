@@ -39,6 +39,8 @@ runs:
     # that go missing when it launches. The rest of `--with-deps` is xvfb and
     # extra fonts, which the headless suites don't need, and fetching them from a
     # slow apt mirror pushed jobs past their time limit.
+    # No `--only-shell` either: the browser job runs desktop Chromium, the other
+    # suites Playwright's headless shell, and Chromium's one cache entry holds both.
     - name: Download Chromium
       if: inputs.browser == 'chromium' && steps.restore.outputs.cache-hit != 'true'
       shell: bash
