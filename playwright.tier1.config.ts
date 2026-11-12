@@ -21,5 +21,18 @@ export default defineConfig({
     screenshot: "off",
     video: "off"
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }]
+  projects: [
+    { name: "chromium", use: { ...devices["Desktop Chrome"] } },
+    // Firefox runs focus.spec.ts alone. It won't hand a patch's frame focus during the key event
+    // that pressed a shell button, so the shell tries again once that is over; Chromium never
+    // needs the second try. Fission isolation is on, as in Firefox, though Playwright's is off.
+    {
+      name: "firefox",
+      testMatch: "focus.spec.ts",
+      use: {
+        ...devices["Desktop Firefox"],
+        launchOptions: { firefoxUserPrefs: { "fission.webContentIsolationStrategy": 1 } }
+      }
+    }
+  ]
 });

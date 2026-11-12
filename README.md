@@ -94,7 +94,7 @@ A Turborepo monorepo managed with pnpm. [AGENTS.md](AGENTS.md) is the guide to w
 - `examples/plan.html` — a Patchy-styled starter patch.
 - `scenarios/` — companies, people and patches that `pnpm dev up` builds local environments from (`scripts/dev`).
 
-`pnpm check` runs format, lint, typecheck, the infrastructure synth and the offline tests. `pnpm verify` adds every acceptance suite CI runs except live Clerk; install Chromium first with `pnpm exec playwright install --with-deps chromium`. [`pnpm test:clerk`](docs/DEVELOPMENT.md#live-tiers) runs the live Clerk tiers with development keys.
+`pnpm check` runs format, lint, typecheck, the infrastructure synth and the offline tests. `pnpm verify` adds every acceptance suite CI runs except live Clerk; install Chromium and Firefox first with `pnpm exec playwright install --with-deps chromium firefox`. [`pnpm test:clerk`](docs/DEVELOPMENT.md#live-tiers) runs the live Clerk tiers with development keys.
 
 ## Security
 

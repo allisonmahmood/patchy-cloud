@@ -49,7 +49,7 @@ const acceptance: ReadonlyArray<Suite> = [
   // CI runs it on Linux, macOS and Windows; verify runs it on this machine's.
   { name: "install", commands: [pnpm("test:packed-install-e2e")] },
   { name: "tier2-smoke", commands: [pnpm("test:packed-tier2-e2e")] },
-  { name: "browser", commands: [pnpm("test:browser")] }
+  { name: "browser", commands: [pnpm("test:browser"), pnpm("test:browser:firefox")] }
 ];
 
 /**

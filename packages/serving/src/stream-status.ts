@@ -3,6 +3,7 @@
 // The served shell owns browser timers, the starting cover's elapsed clock and DOM elements, without an Effect runtime.
 import { registry } from "@patchy/limits/registry";
 import { SWITCHER_CLOSED, switcherOpen } from "@patchy/core/switcher";
+import { handBackFocus } from "./hand-back-focus.js";
 
 /**
  * The page's one bottom-centre stack for its state, made on first use. Its height is measured into
@@ -193,15 +194,15 @@ export function createStreamStatus(
     url.pathname = currentBase + url.pathname.slice(base.length);
     location.assign(url.href);
   };
-  const focusFrame = () => frame.focus();
   // S-C from #385: the bar folds into a chip that keeps Reload; only the new-version bar can be dismissed.
-  const renderVersion = () => {
+  // pressed: the person pressed the bar's own Not now or Hide.
+  const renderVersion = (pressed = false) => {
     const visible = served !== undefined && served.versionId !== versionId && !dismissed;
-    const focused = version.contains(document.activeElement);
+    const handBack = handBackFocus(frame, version, { pressed });
     version.hidden = !visible;
     version.replaceChildren();
     if (!visible) {
-      if (focused) focusFrame();
+      handBack();
       return;
     }
     const required = served!.tier === 2 && tier < 2;
@@ -236,18 +237,16 @@ export function createStreamStatus(
         actions.append(
           button("Not now", "btn-quiet", () => {
             dismissed = true;
-            renderVersion();
-            focusFrame();
+            renderVersion(true);
           })
         );
       const hide = button("Hide", "btn-quiet note-collapse", () => {
         collapsed = true;
-        renderVersion();
-        focusFrame();
+        renderVersion(true);
       });
       version.append(content, actions, hide);
     }
-    if (focused) focusFrame();
+    handBack();
   };
 
   return {
