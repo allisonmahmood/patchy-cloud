@@ -611,6 +611,13 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             })
           );
           if (HttpServerResponse.isHttpServerResponse(json)) return json;
+          // Before any replay, too: a publish a later release stored with its audience is that
+          // release's to answer, and its stored response names a patch this one opens for nobody.
+          const audience = audienceRefused(
+            json,
+            "Publish without --share or --team, or with the patchy CLI from this release."
+          );
+          if (audience !== undefined) return audience;
           const key = yield* decodeKey(json).pipe(
             Effect.catchTags({
               MalformedBody: (error) => Effect.succeed(malformedPublish(error))
@@ -633,11 +640,6 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           });
           const previous = yield* replay();
           if (previous !== undefined) return previous;
-          const audience = audienceRefused(
-            json,
-            "Publish without --share or --team, or with the patchy CLI from this release."
-          );
-          if (audience !== undefined) return audience;
           if (isPatchId(key.patchId)) {
             yield* WideEvents.enrich({ patchId: key.patchId });
             const admission = yield* patches

@@ -16,9 +16,9 @@ import { MANIFEST_VERSION, CURRENT_RELEASE, PublishCreated } from "@patchy/api";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { signedInCookies, signSession } from "@patchy/auth/testing";
 import { Companies } from "@patchy/companies";
-import { NodeCryptography } from "@patchy/core";
+import { Cryptography, NodeCryptography } from "@patchy/core";
 import { GuestGrants } from "@patchy/patches";
-import { answer, html, publish, send, server } from "./test/server.js";
+import { answer, html, publish, publishBody, send, server } from "./test/server.js";
 
 const origin = "https://patchy.example";
 const decodeCreated = Schema.decodeUnknownSync(PublishCreated);
@@ -112,6 +112,20 @@ const teamPatch = Effect.fn("TeamAudiencesTest.teamPatch")(function* (
     VALUES (${created.patchId}, ${DEV_SEED.companyId}, ${teamId})`;
   return created;
 });
+
+/** A publish payload's identity as the server hashes it: its keys sorted at every depth. */
+const payloadDigest = (json: unknown) =>
+  Effect.flatMap(Cryptography.Cryptography, (cryptography) =>
+    cryptography.contentHash(
+      JSON.stringify(json, (_key, value: unknown) =>
+        value !== null && typeof value === "object" && !Array.isArray(value)
+          ? Object.fromEntries(
+              Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+            )
+          : value
+      )
+    )
+  );
 
 const stored = (patchId: string) =>
   Effect.flatMap(
@@ -229,6 +243,34 @@ it.layer(layer)("data from a release with team audiences", (it) => {
         assert.strictEqual(shared.status, 400);
         assert.deepInclude(shared.body, { code: "upgrade_required" });
         assert.deepStrictEqual(yield* stored(open.patchId), [{ scope: "company", teams: 0 }]);
+      }),
+    60_000
+  );
+
+  it.effect(
+    "refuses a retried publish that a later release stored with its audience",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        // A later CLI's first publish of a team patch, which committed but lost its answer.
+        const retried = publishBody({
+          html: html("Forecast"),
+          audience: { kind: "teams", teamIds: ["forecast"] }
+        });
+        const created = decodeCreated(
+          yield* (yield* publish(DEV_SEED.token, {
+            html: html("Forecast"),
+            publishKey: retried.publishKey
+          })).json
+        );
+        yield* sql`UPDATE patches SET scope = 'teams' WHERE id = ${created.patchId}`;
+        yield* sql`UPDATE patch_versions SET payload_digest = ${yield* payloadDigest(retried)}
+          WHERE id = ${created.versionId}`;
+
+        const replayed = yield* answer(yield* publish(DEV_SEED.token, retried));
+        assert.strictEqual(replayed.status, 400);
+        assert.deepInclude(replayed.body, { code: "upgrade_required" });
+        assert.notInclude(JSON.stringify(replayed.body), created.patchId);
       }),
     60_000
   );
