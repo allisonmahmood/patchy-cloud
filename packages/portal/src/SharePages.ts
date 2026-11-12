@@ -180,6 +180,13 @@ export const layer = (pages: PagesBehind): Routes => {
           );
         }
         case "scope": {
+          // A form naming an audience is a later release's, which sets teams this one can't;
+          // applying only its scope could open the patch to the whole company.
+          if (form.audience !== undefined || form.teamIds !== undefined)
+            return yield* again({
+              status: 422,
+              notice: nothing("This Patchy release can't set a patch's audience yet.")
+            });
           const fields = yield* decodeScope(form);
           // Going public asks first, at its own address, and only its answer applies it,
           // re-running every check.

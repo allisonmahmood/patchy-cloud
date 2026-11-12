@@ -36,14 +36,19 @@ const layer = Companies.layer.pipe(
 const cookieOf = (user: { readonly clerkUserId: string; readonly email: string }) =>
   signedInCookies(signSession({ sub: user.clerkUserId, email: user.email, azp: origin }));
 const admin = cookieOf({ clerkUserId: DEV_SEED.clerkUserId, email: DEV_SEED.email });
-/** A page as the person with this cookie sees it, or an empty form they post. */
-const page = (cookie: string, path: string, method: "GET" | "POST" = "GET") =>
+/** A page as the person with this cookie sees it, or a form they post. */
+const page = (
+  cookie: string,
+  path: string,
+  method: "GET" | "POST" = "GET",
+  fields: Record<string, string> = {}
+) =>
   send(
     method === "GET"
       ? HttpClientRequest.get(path).pipe(HttpClientRequest.setHeaders({ cookie, origin }))
       : HttpClientRequest.post(path).pipe(
           HttpClientRequest.setHeaders({ cookie, origin }),
-          HttpClientRequest.bodyUrlParams({})
+          HttpClientRequest.bodyUrlParams(fields)
         )
   ).pipe(
     Effect.flatMap((response) =>
@@ -271,6 +276,27 @@ it.layer(layer)("data from a release with team audiences", (it) => {
         assert.strictEqual(replayed.status, 400);
         assert.deepInclude(replayed.body, { code: "upgrade_required" });
         assert.notInclude(JSON.stringify(replayed.body), created.patchId);
+      }),
+    60_000
+  );
+
+  it.effect(
+    "changes nothing for a sharing form that names an audience",
+    () =>
+      Effect.gen(function* () {
+        const open = decodeCreated(
+          yield* (yield* publish(DEV_SEED.token, { html: html("Hiring plan") })).json
+        );
+        const name = new URL(open.address).pathname.split("/").at(-1)!;
+        const posted = yield* page(admin, `/patches/${name}/scope`, "POST", {
+          expectedPatchId: open.patchId,
+          expectedScope: "company",
+          scope: "public",
+          confirm: "public",
+          audience: "teams"
+        });
+        assert.strictEqual(posted.status, 422);
+        assert.deepStrictEqual(yield* stored(open.patchId), [{ scope: "company", teams: 0 }]);
       }),
     60_000
   );
