@@ -353,7 +353,8 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "(10 MiB), with oversized artifacts refused as 413. Creates spend the per-token create limit " +
           "and live-patch quota; updates do not. Omitted scope defaults to company on creates " +
           "and remains unchanged on updates. A body naming `audience`, as clients released with team audiences send, " +
-          "answers 400 `upgrade_required` before any replay: this release sets sharing only by `scope`. `manifest.name` is an exact company-scoped name " +
+          "answers 400 `upgrade_required` before any replay: this release sets sharing only by `scope`. " +
+          "A replay whose patch that release has since opened to teams answers 404, as the patch does, and publishes nothing. `manifest.name` is an exact company-scoped name " +
           "(3–32 lowercase letters, digits or hyphens, starting and ending with a letter or digit); " +
           "another patch's current name, or any name of a retired or deleted patch, answers 409 `name_taken` on create or rename. " +
           "`patches` and `connections` are reserved names and answer 422 `reserved_name` on create. " +

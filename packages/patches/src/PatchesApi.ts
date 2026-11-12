@@ -630,6 +630,9 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               .replay(identity.user.id, key.publishKey)
               .pipe(Effect.catchTags({ SqlError: Effect.die }));
             if (Option.isNone(stored)) return undefined;
+            // Its answer names a patch this release opens for nobody. A retry of it, a create's
+            // included, answers as if that patch weren't there, and publishes nothing.
+            if (stored.value.hidden) return notFound();
             if (stored.value.payloadDigest !== digest) return keyConflict();
             const published = decodeReplayIds(stored.value.response);
             if (Option.isSome(published)) yield* WideEvents.enrich(published.value);

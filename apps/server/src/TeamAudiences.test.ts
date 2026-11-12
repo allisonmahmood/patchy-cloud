@@ -29,7 +29,8 @@ const decodeConnections = Schema.decodeUnknownSync(
   Schema.Struct({ connections: Schema.Array(Schema.Struct({ handle: Schema.String })) })
 );
 const layer = Companies.layer.pipe(
-  Layer.provideMerge(server()),
+  // Every case creates its own patches through one token, more than a minute's default allows.
+  Layer.provideMerge(server({ PATCHY_PATCH_CREATE_RATE_LIMIT_PER_MINUTE: "100" })),
   Layer.provideMerge(NodeCryptography.layer)
 );
 
@@ -276,6 +277,60 @@ it.layer(layer)("data from a release with team audiences", (it) => {
         assert.strictEqual(replayed.status, 400);
         assert.deepInclude(replayed.body, { code: "upgrade_required" });
         assert.notInclude(JSON.stringify(replayed.body), created.patchId);
+      }),
+    60_000
+  );
+
+  it.effect(
+    "answers a retried update of a team patch as if the patch weren't there",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const created = decodeCreated(
+          yield* (yield* publish(DEV_SEED.token, { html: html("Forecast") })).json
+        );
+        // An older CLI's update, with neither scope nor audience, that a later release took while
+        // the patch was open to teams and stored with its audience, then lost its answer.
+        const retried = publishBody({ patchId: created.patchId, html: html("Forecast, revised") });
+        assert.strictEqual((yield* publish(DEV_SEED.token, retried)).status, 200);
+        yield* sql`UPDATE patches SET scope = 'teams' WHERE id = ${created.patchId}`;
+        yield* sql`UPDATE patch_versions SET publish_response = publish_response ||
+          '{"audience":{"kind":"teams","teams":[{"id":"forecast","name":"Forecasting"}]}}'::jsonb
+          WHERE owner_user_id = ${DEV_SEED.userId} AND publish_key = ${retried.publishKey}`;
+
+        const replayed = yield* answer(yield* publish(DEV_SEED.token, retried));
+        assert.deepStrictEqual(replayed, {
+          status: 404,
+          body: { ok: false, error: "Patch not found." }
+        });
+        assert.deepStrictEqual(
+          yield* sql`SELECT count(*)::int AS versions FROM patch_versions
+            WHERE patch_id = ${created.patchId}`,
+          [{ versions: 2 }]
+        );
+      }),
+    60_000
+  );
+
+  it.effect(
+    "answers a retried create as if its patch weren't there once it is open to teams",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const owned = sql`SELECT count(*)::int AS patches FROM patches
+          WHERE owner_user_id = ${DEV_SEED.userId}`;
+        // Published company-wide; a later release then opened it to teams.
+        const retried = publishBody({ html: html("Headcount") });
+        const created = decodeCreated(yield* (yield* publish(DEV_SEED.token, retried)).json);
+        yield* sql`UPDATE patches SET scope = 'teams' WHERE id = ${created.patchId}`;
+        const before = yield* owned;
+
+        const replayed = yield* answer(yield* publish(DEV_SEED.token, retried));
+        assert.deepStrictEqual(replayed, {
+          status: 404,
+          body: { ok: false, error: "Patch not found." }
+        });
+        assert.deepStrictEqual(yield* owned, before);
       }),
     60_000
   );

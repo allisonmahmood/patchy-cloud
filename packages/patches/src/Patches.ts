@@ -611,7 +611,9 @@ const Replay = Schema.Struct({
   payloadDigest: Schema.String,
   response: Schema.JsonObject,
   body: Schema.String,
-  status: Schema.Literals([200, 201])
+  status: Schema.Literals([200, 201]),
+  /** Its patch is open to teams now, a later release's audience that this one opens for nobody. */
+  hidden: Schema.Boolean
 });
 
 // Today's client hands back a Date; when it becomes epoch ms only these lines move.
@@ -778,6 +780,7 @@ export class Patches extends Context.Service<
       void,
       PatchUnavailable | PatchConflict | NotOwner | PatchRetired | PatchDeleted | SqlError
     >;
+    /** The publish this owner stored under this key, with its patch as it stands now. */
     readonly replay: (
       ownerUserId: string,
       publishKey: string
@@ -1507,9 +1510,10 @@ export const make = Effect.gen(function* () {
     Request: Schema.Struct({ ownerUserId: Schema.String, publishKey: Schema.String }),
     Result: Replay,
     execute: ({ ownerUserId, publishKey }) => sql`
-      SELECT payload_digest AS "payloadDigest", publish_response AS response,
-        publish_response::text AS body, publish_status AS status
-      FROM patch_versions WHERE owner_user_id = ${ownerUserId} AND publish_key = ${publishKey}`
+      SELECT v.payload_digest AS "payloadDigest", v.publish_response AS response,
+        v.publish_response::text AS body, v.publish_status AS status, p.scope = 'teams' AS hidden
+      FROM patch_versions v JOIN patches p ON p.id = v.patch_id
+      WHERE v.owner_user_id = ${ownerUserId} AND v.publish_key = ${publishKey}`
   });
   const replay = Effect.fn("Patches.replay")((ownerUserId: string, publishKey: string) =>
     replayRow({ ownerUserId, publishKey }).pipe(Effect.catchTags(dieOnSchemaError))
