@@ -618,7 +618,11 @@ it as "<key>'s email". The suite: `cheers` (one shared count),
 (agent tools on `brightline`'s Kudos) and `war-room`, the reference for the
 hardest builds: a live incident room on `brightline` where only the commander
 or an admin resolves, Taylor at Cedar Works works incidents as a guest, and
-agents never resolve a SEV1.
+agents never resolve a SEV1. Held out, so it runs only when `--tasks` names
+it: `recipe-book`, a team recipe book where each recipe's own link, opened
+fresh by someone else, lands on that recipe (a page's own routes, and
+naturally tier 1). A held-out task confirms that a skill edit generalises; it
+never chooses one.
 
 Flags: `--base <ref>` or `--only-head`, `--tasks` (comma-separated ids; every
 task that isn't held out by default), `--builders` (`sonnet,terra`),
