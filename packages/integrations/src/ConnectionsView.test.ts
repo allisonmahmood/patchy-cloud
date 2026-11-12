@@ -319,6 +319,7 @@ const connection = (extra: Partial<View.Connection> = {}): View.Connection => ({
   description: "Deals and companies",
   status: "connected",
   blockGuests: false,
+  builders: "People at Northwind",
   testedAt: "2026-10-13T09:00:00.000Z",
   addedBy: "Dana",
   facts: [["Workspace", "Northwind"]],

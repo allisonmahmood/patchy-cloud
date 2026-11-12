@@ -6,6 +6,7 @@ import { DeviceLogins, getAnAgent, SetupLinks } from "@patchy/auth";
 import { PUBLIC_BASE_URL } from "@patchy/auth/testing";
 import { sha256 } from "../../../test/crypto.js";
 import { disclosure, unopenedName } from "@patchy/core";
+import { Teams } from "@patchy/companies";
 import { GuestGrants, Patches } from "@patchy/patches";
 import {
   DAY,
@@ -286,6 +287,49 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
     })
   );
 
+  it.effect(
+    "shows Home and the way back when its owner can no longer open their first publication",
+    () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const sql = yield* SqlClient.SqlClient;
+        const teams = yield* Teams.Teams;
+        // Connected ten minutes ago, so Home still watches for the first publication.
+        yield* sql`UPDATE machine_tokens SET created_at = to_timestamp(${1_767_225_600 - 600})
+        WHERE user_id = ${workspace.member.id}`;
+        const viewer = { companyId: workspace.id, actorId: workspace.admin.id };
+        const team = yield* teams.create({ ...viewer, name: "First publication" });
+        const members = (added: boolean) =>
+          teams.setMemberships({
+            ...viewer,
+            teamId: team.id,
+            ...(added ? { add: [workspace.member.id] } : { remove: [workspace.member.id] })
+          });
+        yield* members(true);
+        yield* publish(workspace.member, "team-first", {
+          audience: { kind: "teams", teamIds: [team.id] }
+        });
+        yield* members(false);
+
+        const home = yield* request("/", workspace.member);
+        assert.strictEqual(home.status, 200);
+        assert.strictEqual(heading(yield* home.text), "Home");
+        const live = yield* (yield* request("/guide/steps", workspace.member)).text;
+        assert.include(live, 'data-state="live"');
+        assert.isTrue(
+          links(live).some(
+            (link) => link.href === cardPath("team-first") && link.text === "View patch"
+          )
+        );
+        const watch = yield* (yield* request("/guide/steps?mode=watch", workspace.member)).text;
+        // The card, not the address it can't open.
+        assert.deepStrictEqual(
+          links(watch).map((link) => link.href),
+          [cardPath("team-first")]
+        );
+      })
+  );
+
   it.effect("follows the setup line's link through the agent's fetch, login and key", () =>
     Effect.gen(function* () {
       const workspace = yield* company();
@@ -504,7 +548,7 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
         const guests = yield* company();
         const quiet = yield* publishTier2(workspace.owner, "quiet-tool");
         const busy = yield* publishTier2(workspace.owner, "busy-tool");
-        yield* publish(workspace.owner, "about-us", { scope: "public" });
+        yield* publish(workspace.owner, "about-us", { audience: { kind: "public" } });
         const shared = yield* publish(workspace.owner, "site-notes");
         yield* publishTier2(workspace.member, "their-tool");
         yield* (yield* GuestGrants.GuestGrants).share({
@@ -532,10 +576,10 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
         assert.include(text(yours), "busy-tool Find the right person Company None");
         assert.include(text(yours), "quiet-tool Find the right person Company No calls yet");
         assert.include(text(yours), "site-notes Find the right person Company + 1 guest —");
-        // Share on every row, over Home; the menu has it too.
+        // Each owned patch keeps Share in its menu over Home.
         for (const name of ["about-us", "busy-tool", "quiet-tool", "site-notes"])
           assert.isTrue(
-            links(yours).some((link) => link.href === `/?share=${name}` && link.text === "Share"),
+            links(yours).some((link) => link.href === `/?share=${name}` && link.text === "Share…"),
             name
           );
         assert.include(menuItems(html, `yours-${quiet.patchId}`), "Share…");
@@ -615,7 +659,7 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
       yield* publish(workspace.admin, "forms");
       yield* TestClock.adjust(60_000);
       // New leaves out a public page, whose signed-out reads record no open, and the viewer's own.
-      yield* publish(workspace.admin, "press-kit", { scope: "public" });
+      yield* publish(workspace.admin, "press-kit", { audience: { kind: "public" } });
       yield* publish(workspace.member, "my-notes");
       const html = yield* (yield* request("/", workspace.member)).text;
       assert.deepStrictEqual(names(html, "new"), ["forms", "weekly-recap"]);
@@ -646,7 +690,7 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
         const workspace = yield* company();
         const patches = yield* Patches.Patches;
         const notes = yield* publish(workspace.owner, "team-notes");
-        yield* publish(workspace.owner, "press-kit", { scope: "public" });
+        yield* publish(workspace.owner, "press-kit", { audience: { kind: "public" } });
         yield* publishTier2(workspace.admin, "desk-booker");
         const shelved = yield* publish(workspace.owner, "old-crm");
         yield* patches.retire(shelved.patchId, actor(workspace.owner));

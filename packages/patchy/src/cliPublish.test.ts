@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -809,7 +810,7 @@ describe("patchy publish", async () => {
     expect(published.status).toBe(0);
     expect(published.stderr).toBe("");
     expect(JSON.parse(published.stdout)).toMatchObject({ scope: "public" });
-    expect(instance.requests[2]?.body).toMatchObject({ scope: "public" });
+    expect(instance.requests[2]?.body).toMatchObject({ audience: { kind: "public" } });
     expect(instance.requests[2]?.body).not.toHaveProperty("patchId");
 
     const restricted = await runCli(["publish", file, "--share", "company"], {
@@ -818,7 +819,10 @@ describe("patchy publish", async () => {
     });
     expect(restricted.status).toBe(0);
     expect(restricted.stdout).toContain("Scope: company (signed-in colleagues in your company)");
-    expect(instance.requests[5]?.body).toMatchObject({ scope: "company", patchId: "abcdefghijkl" });
+    expect(instance.requests[5]?.body).toMatchObject({
+      audience: { kind: "company" },
+      patchId: "abcdefghijkl"
+    });
 
     const invalid = await runCli(["publish", file, "--share", "private", "--json"], {
       stateDir: dir,
@@ -827,6 +831,75 @@ describe("patchy publish", async () => {
     expect(invalid.status).toBe(1);
     expect(JSON.parse(invalid.stderr)).toMatchObject({ ok: false, kind: "local" });
     expect(instance.requests).toHaveLength(6);
+  });
+
+  it("shares with teams by name, reports their names, and never replays a refused audience", async () => {
+    const teams = [
+      { id: "team_design", name: "Design" },
+      { id: "team_sales", name: "Sales" }
+    ];
+    let refuse = true;
+    const instance = await stubPublishingInstance((request, respond) => {
+      if (request.url === "/api/patches/audiences") return respond(200, { ok: true, teams });
+      if (request.url === "/api/patches/abcdefghijkl/share")
+        return respond(200, {
+          ok: true,
+          patchId: "abcdefghijkl",
+          scope: "company",
+          audience: { kind: "teams", teams: [teams[0]] },
+          publicUrl: "http://instance.test/page"
+        });
+      if (refuse) {
+        refuse = false;
+        return respond(400, {
+          ok: false,
+          code: "audience_excludes_owner",
+          error: "Choose an audience its owner can open: Company, Public, or a team they are on."
+        });
+      }
+      respond(201, { ...publish(201, "abcdefghijkl", 1), audience: { kind: "teams", teams } });
+    });
+    const dir = tempDir();
+    const file = htmlFile(dir, "page.html", validHtml);
+    const env = { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" };
+    const publishes = () => instance.requests.filter((request) => request.url === "/api/publish");
+
+    const refused = await runCli(["publish", file, "--team", "sales", "--json"], {
+      stateDir: dir,
+      env
+    });
+    expect(refused.status).toBe(2);
+    expect(JSON.parse(refused.stderr)).toMatchObject({
+      kind: "rejected",
+      code: "audience_excludes_owner"
+    });
+    // The instance decided that attempt, so the next publish sends only its own.
+    const published = await runCli(
+      ["publish", file, "--share", "teams", "--team", "Design", "--team", "team_sales", "--json"],
+      { stateDir: dir, env }
+    );
+    expect(published.status).toBe(0);
+    expect(publishes()).toHaveLength(2);
+    expect(publishes()[1]?.body).toMatchObject({
+      audience: { kind: "teams", teamIds: ["team_design", "team_sales"] }
+    });
+    expect(publishes()[1]?.body).not.toHaveProperty("scope");
+    expect(Object.keys(JSON.parse(published.stdout))[0]).toBe("audience");
+
+    const shared = await runCli(["share", file, "teams", "--team", "Design"], {
+      stateDir: dir,
+      env
+    });
+    expect(shared.status).toBe(0);
+    expect(shared.stdout).toContain("Scope: teams Design (signed-in members of these teams)");
+
+    const unknown = await runCli(["publish", file, "--team", "Ops", "--json"], {
+      stateDir: dir,
+      env
+    });
+    expect(unknown.status).toBe(1);
+    expect(JSON.parse(unknown.stderr)).toMatchObject({ kind: "local" });
+    expect(publishes()).toHaveLength(2);
   });
 
   it("publishes with the worktree seed and leaves stderr empty under --json", async () => {
@@ -1028,7 +1101,7 @@ describe("patchy share", () => {
     );
     const dir = tempDir();
     // Sharing only needs the cached path, not the original file's contents.
-    const file = path.join(dir, "page.html");
+    const file = path.join(realpathSync(dir), "page.html");
     const cached = { patchId, publicUrl, latestVersionNumber: 7, updatedAt: "unchanged" };
     const cachePath = path.join(dir, "patches.json");
     const cache = JSON.stringify({
@@ -1041,7 +1114,7 @@ describe("patchy share", () => {
     const env = { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" };
 
     const shared = await runCli(["share", "page.html", "public"], { stateDir: dir, env });
-    expect(shared.status).toBe(0);
+    expect(shared.status, shared.stderr).toBe(0);
     expect(shared.stderr).toBe("");
     expect(shared.stdout).toContain(`URL: ${publicUrl}`);
     expect(shared.stdout).toContain("Scope: public (anyone with the link)");

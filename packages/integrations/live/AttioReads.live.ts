@@ -1,8 +1,9 @@
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Live from "./attioHarness.js";
 import { afterAll, assert, describe, it } from "@effect/vitest";
 import { CURRENT_RELEASE, WIRE_VERSION, type AttioSnapshot, type AttioValue } from "@patchy/api";
 import { DEV_SEED } from "@patchy/auth/seed";
-import { Directory } from "@patchy/companies";
+import { Directory, Teams } from "@patchy/companies";
 import { Binding, Runtime } from "@patchy/runtime/core";
 import { RuntimeLog } from "@patchy/runtime";
 import * as Testing from "@patchy/sql/testing";
@@ -64,7 +65,9 @@ type Viewer = NonNullable<Binding.Binding["Service"]["identity"]>;
 
 /** The probe workspace, connected as `crm`, and its reads as a tier 2 action's callbacks make them. */
 const connect = Effect.gen(function* () {
-  const store = yield* SqlConnectionStore.make;
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`INSERT INTO patches (id, company_id, owner_user_id, title, name) VALUES ('dealdesk00001', ${who.companyId}, ${who.userId}, 'Attio journey', 'dealdesk00001') ON CONFLICT (id) DO NOTHING`;
+  const store = yield* SqlConnectionStore.make.pipe(Effect.provide(Teams.layer));
   const connection = yield* store.connect({
     integration: "attio",
     ...who,

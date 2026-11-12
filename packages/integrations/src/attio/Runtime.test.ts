@@ -5,7 +5,7 @@ import * as WideEvents from "@patchy/analytics/wide-events";
 import { Session } from "@patchy/auth";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { clerkEnv } from "@patchy/auth/testing";
-import { Companies, Directory, Users } from "@patchy/companies";
+import { Companies, Directory, Users, Teams } from "@patchy/companies";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import { Binding, InvocationCapabilities, InvocationLog, RuntimeLog } from "@patchy/runtime";
 import * as Testing from "@patchy/sql/testing";
@@ -98,7 +98,7 @@ const routes: ReadonlyArray<Reads.Route> = [
 /** The Attio handlers as the server builds them, over the scripted answers, and one connection. */
 const handlers = Effect.gen(function* () {
   const attio = Reads.scripted(routes);
-  const store = yield* SqlConnectionStore.make.pipe(Effect.provide(attio.layer));
+  const store = yield* SqlConnectionStore.make.pipe(Effect.provide([attio.layer, Teams.layer]));
   yield* Reads.seed({ ...who, ...crm });
   const built = yield* Operations.makeHandlers.pipe(
     Effect.provide(Layer.merge(attio.layer, Directory.layer)),
@@ -179,8 +179,7 @@ const tier1 = Layer.mergeAll(
   OperatingLimits.layer,
   RuntimeLog.layer,
   credentials,
-  RuntimeTest.versions(patchId, versionId, () => uses),
-  RuntimeTest.storedPatch(patchId)
+  RuntimeTest.versions(patchId, versionId, () => uses)
 )
   .pipe(
     Layer.provideMerge(Testing.layer()),
@@ -263,7 +262,11 @@ it.layer(tier1)("Attio from a tier 2 action's callbacks", (it) => {
 
         // Recent calls name the object or list and the rows; nothing holds a value or the key.
         const log = yield* RuntimeLog.RuntimeLog;
-        const calls = yield* log.recent({ companyId: who.companyId, connectionId: crm.id });
+        const calls = yield* log.recent({
+          companyId: who.companyId,
+          connectionId: crm.id,
+          patchIds: [patchId]
+        });
         assert.includeMembers(
           calls.map((recent) => recent.resource),
           ["deals", "companies", "pipeline", null]

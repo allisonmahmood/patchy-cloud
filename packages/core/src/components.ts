@@ -55,27 +55,40 @@ export const menuCopy = (text: string, label: string, target?: string) =>
 
 /**
  * A GET search form over `q`. `keep` holds other query parameters to carry; `className` is the
- * page's layout hook for the form.
+ * page's layout hook for the form. With `inForm`, it is drawn inside a form of the page's own,
+ * such as a list whose ticks a search keeps: no form of its own, and its search icon is a submit
+ * button, which the page puts before the form's other submits so Enter searches.
  */
-export const searchField = (input: {
-  readonly action: string;
-  readonly id: string;
-  readonly query: string;
-  readonly placeholder: string;
-  readonly label: string;
-  readonly keep?: Readonly<Record<string, string>>;
-  readonly className?: string;
-}) =>
-  `<form${input.className === undefined ? "" : ` class="${escapeAttribute(input.className)}"`} method="get" action="${escapeAttribute(input.action)}" role="search">${Object.entries(
+export const searchField = (
+  input: {
+    readonly id: string;
+    readonly query: string;
+    readonly placeholder: string;
+    readonly label: string;
+    readonly className?: string;
+  } & (
+    | { readonly action: string; readonly keep?: Readonly<Record<string, string>> }
+    | { readonly inForm: true }
+  )
+) => {
+  const prefix =
+    "inForm" in input
+      ? `<button class="field-prefix" type="submit" aria-label="${escapeAttribute(input.label)}">${searchIcon}</button>`
+      : `<label class="field-prefix" for="${escapeAttribute(input.id)}">${searchIcon}</label>`;
+  const field = `<div class="field field-group field-search">${prefix}<input id="${escapeAttribute(input.id)}" type="search" name="q" value="${escapeAttribute(input.query)}" maxlength="200" placeholder="${escapeAttribute(input.placeholder)}" aria-label="${escapeAttribute(input.label)}"></div>`;
+  if ("inForm" in input)
+    return input.className === undefined
+      ? field
+      : `<div class="${escapeAttribute(input.className)}">${field}</div>`;
+  return `<form${input.className === undefined ? "" : ` class="${escapeAttribute(input.className)}"`} method="get" action="${escapeAttribute(input.action)}" role="search">${Object.entries(
     input.keep ?? {}
   )
     .map(
       ([name, value]) =>
         `<input type="hidden" name="${escapeAttribute(name)}" value="${escapeAttribute(value)}">`
     )
-    .join(
-      ""
-    )}<div class="field field-group field-search"><label class="field-prefix" for="${escapeAttribute(input.id)}">${searchIcon}</label><input id="${escapeAttribute(input.id)}" type="search" name="q" value="${escapeAttribute(input.query)}" maxlength="200" placeholder="${escapeAttribute(input.placeholder)}" aria-label="${escapeAttribute(input.label)}"></div></form>`;
+    .join("")}${field}</form>`;
+};
 
 const dataAttributes = (data: Readonly<Record<string, string>> | undefined) =>
   Object.entries(data ?? {})

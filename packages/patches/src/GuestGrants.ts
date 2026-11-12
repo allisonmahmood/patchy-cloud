@@ -17,7 +17,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { GuestReason, guestReasonText, Manifest, PatchState, SharingScope } from "@patchy/api";
-import { type CompanyPage, Users } from "@patchy/companies";
+import { type CompanyPage, Teams, Users } from "@patchy/companies";
 import { ConnectionStore } from "@patchy/integrations";
 import * as Patches from "./Patches.js";
 
@@ -138,7 +138,7 @@ class SharedRow extends Schema.Class<SharedRow>("SharedRow")({
   sharedBy: Schema.String,
   grantedAt: Schema.Date,
   state: PatchState,
-  scope: SharingScope,
+  scope: Patches.StoredScope,
   tier: Schema.Int,
   uses: Manifest.fields.uses
 }) {}
@@ -148,6 +148,7 @@ class RevokedRow extends Schema.Class<RevokedRow>("RevokedRow")({ userId: Schema
 /** One active grant on a company's patch, with its guest and who shared it. */
 class CompanyGrantRow extends Schema.Class<CompanyGrantRow>("CompanyGrantRow")({
   userId: Schema.String,
+  patchId: Schema.String,
   name: Schema.String,
   email: Schema.String,
   companyName: Schema.String,
@@ -174,8 +175,8 @@ export interface Shared {
   readonly company: { readonly handle: string; readonly name: string };
   /** Who shared it with them last, by name. */
   readonly sharedBy: string;
-  /** The patch's sharing scope now: a grant outlives the patch going public and back. */
-  readonly scope: typeof SharingScope.Type;
+  /** The kind of the patch's audience now: a grant outlives the patch going public and back. */
+  readonly scope: typeof Patches.StoredScope.Type;
   readonly grantedAt: Date;
   readonly unavailable: Option.Option<GuestReason>;
 }
@@ -203,12 +204,12 @@ class VersionRow extends Schema.Class<VersionRow>("VersionRow")({
 /** A patch with an active grant, as publish reads it. */
 class GrantedPatchRow extends Schema.Class<GrantedPatchRow>("GrantedPatchRow")({
   state: PatchState,
-  scope: SharingScope
+  scope: Patches.StoredScope
 }) {}
 
 type Failure = SqlError | ConnectionStore.ConnectionStorageFailed;
 /** Who may manage the patch decides, as for every lifecycle act. */
-type Refusal = Patches.PatchUnavailable | Patches.NotOwner;
+type Refusal = Patches.OwnerAccessLost | Patches.PatchUnavailable | Patches.NotOwner;
 
 /**
  * `grant`, `revoke` and `revokeAll` write what their caller decided; `share`, `remove` and `list` are
@@ -227,17 +228,17 @@ export class GuestGrants extends Context.Service<
       readonly grantedBy: string;
     }) => Effect.Effect<void, SqlError>;
     /** Ends a person's grant, keeping it. True when one was active. */
+    /** Ends one grant; `actorId` is who ended it, the guest themselves when absent. */
     readonly revoke: (input: {
       readonly patchId: string;
       readonly userId: string;
+      readonly actorId?: string;
     }) => Effect.Effect<boolean, SqlError>;
-    /**
-     * Ends every grant this person holds on the company's patches, keeping them; one on a patch
-     * open to teams stays, since this release can't show it.
-     */
+    /** Ends every grant this person holds on the company's patches, keeping them, as `actorId`. */
     readonly revokeAll: (input: {
       readonly companyId: string;
       readonly userId: string;
+      readonly actorId: string;
     }) => Effect.Effect<void, SqlError>;
     /** A patch's guests with active grants, deactivated accounts included, oldest grant first. */
     readonly guests: (patchId: string) => Effect.Effect<ReadonlyArray<Guest>, SqlError>;
@@ -255,7 +256,8 @@ export class GuestGrants extends Context.Service<
      * stays in, as `disabled`, since its grants come back with it. One read.
      */
     readonly companyGuests: (
-      companyId: string
+      companyId: string,
+      viewerId: string
     ) => Effect.Effect<ReadonlyArray<CompanyPage.Guest>, SqlError>;
     /** The patches shared with a person, by company and name; deleted ones are absent. */
     readonly sharedWith: (userId: string) => Effect.Effect<ReadonlyArray<Shared>, Failure>;
@@ -331,6 +333,7 @@ export class GuestGrants extends Context.Service<
 >()("@patchy/patches/GuestGrants") {}
 
 export const make = Effect.gen(function* () {
+  const teams = yield* Teams.Teams;
   const sql = yield* SqlClient.SqlClient;
   const connections = yield* ConnectionStore.ConnectionStore;
   const patches = yield* Patches.Patches;
@@ -351,8 +354,6 @@ export const make = Effect.gen(function* () {
     WHEN p.retired_at IS NOT NULL THEN 'retired' ELSE 'live' END`;
   const granted = sql`EXISTS (SELECT 1 FROM patch_guest_grants g
     WHERE g.patch_id = p.id AND g.revoked_at IS NULL)`;
-  // A patch whose scope is `teams` is a later release's, which this one opens for nobody, as
-  // Patches does: no guest is shown it, no list names it and no grant on it changes here.
 
   const revoked = SqlSchema.findOneOption({
     Request: Schema.Struct({ patchId: Schema.String, userId: Schema.String, at: Schema.Number }),
@@ -405,7 +406,7 @@ export const make = Effect.gen(function* () {
     Result: CompanyGrantRow,
     execute: (companyId) => sql`
       SELECT g.user_id AS "userId", u.name, u.email, c.name AS "companyName",
-        p.name AS "patchName", p.title, v.tier,
+        p.id AS "patchId", p.name AS "patchName", p.title, v.tier,
         CASE WHEN p.disabled_at IS NOT NULL THEN 'disabled' ELSE ${state} END AS state,
         s.name AS "sharerName", s.email AS "sharerEmail", g.granted_at AS "sharedAt"
       FROM patch_guest_grants g
@@ -414,7 +415,7 @@ export const make = Effect.gen(function* () {
       JOIN patches p ON p.id = g.patch_id
       JOIN patch_versions v ON v.id = p.current_version_id
       JOIN users s ON s.id = g.granted_by
-      WHERE g.company_id = ${companyId} AND g.revoked_at IS NULL AND p.scope <> 'teams'
+      WHERE g.company_id = ${companyId} AND g.revoked_at IS NULL
       ORDER BY u.name, u.email, g.user_id, g.granted_at DESC, p.name`
   });
   const holderRows = SqlSchema.findAll({
@@ -443,7 +444,7 @@ export const make = Effect.gen(function* () {
       JOIN companies c ON c.id = g.company_id
       JOIN users s ON s.id = g.granted_by
       WHERE g.user_id = ${userId} AND g.revoked_at IS NULL
-        AND p.deleted_at IS NULL AND p.disabled_at IS NULL AND p.scope <> 'teams'
+        AND p.deleted_at IS NULL AND p.disabled_at IS NULL
       ORDER BY c.name, p.name`
   });
   const hostRow = SqlSchema.findOneOption({
@@ -460,7 +461,7 @@ export const make = Effect.gen(function* () {
     execute: (companyId) => sql`
       SELECT p.id AS "patchId", ${state} AS state, v.tier, v.manifest->'uses' AS uses
       FROM patches p JOIN patch_versions v ON v.id = p.current_version_id
-      WHERE p.company_id = ${companyId} AND p.scope = 'company'
+      WHERE p.company_id = ${companyId} AND p.scope <> 'public'
         AND p.retired_at IS NULL AND p.deleted_at IS NULL AND p.disabled_at IS NULL
         AND ${granted}`
   });
@@ -469,10 +470,18 @@ export const make = Effect.gen(function* () {
     Result: GrantedPatchRow,
     execute: ({ patchId, companyId }) => sql`
       SELECT ${state} AS state, p.scope FROM patches p
-      WHERE p.id = ${patchId} AND p.company_id = ${companyId} AND p.scope <> 'teams'
-        AND ${granted}`
+      WHERE p.id = ${patchId} AND p.company_id = ${companyId} AND ${granted}`
   });
 
+  const recordGuestChange = Effect.fn("GuestGrants.recordChange")(function* (
+    patchId: string,
+    actorId: string
+  ) {
+    yield* sql`UPDATE patches SET lifecycle_revision = lifecycle_revision + 1,
+      last_changed_at = now(), last_changed_by = ${actorId}, last_changed_action = 'sharing changed'
+      WHERE id = ${patchId}`;
+    yield* sql`SELECT pg_notify('patchy_runtime_wakes', json_build_object('keys', ARRAY[${`patch:${patchId}`}])::text)`;
+  });
   const grant = Effect.fn("GuestGrants.grant")(function* ({
     patchId,
     userId,
@@ -483,33 +492,49 @@ export const make = Effect.gen(function* () {
     readonly grantedBy: string;
   }) {
     const at = yield* Clock.currentTimeMillis;
-    yield* sql`
+    const changed = yield* sql`
       INSERT INTO patch_guest_grants (patch_id, company_id, user_id, granted_by, granted_at)
       SELECT id, company_id, ${userId}, ${grantedBy}, to_timestamp(${at / 1_000})
       FROM patches WHERE id = ${patchId}
       ON CONFLICT (patch_id, user_id) DO UPDATE SET granted_by = EXCLUDED.granted_by,
         granted_at = EXCLUDED.granted_at, revoked_at = NULL
-      WHERE patch_guest_grants.revoked_at IS NOT NULL`;
-  });
-  const revoke = Effect.fn("GuestGrants.revoke")(function* (input: {
-    readonly patchId: string;
-    readonly userId: string;
-  }) {
-    const at = yield* Clock.currentTimeMillis;
-    return Option.isSome(yield* revoked({ ...input, at }));
-  }, Effect.catchTags(dieOnSchemaError));
+      WHERE patch_guest_grants.revoked_at IS NOT NULL RETURNING patch_id`;
+    if (changed.length) yield* recordGuestChange(patchId, grantedBy);
+  }, sql.withTransaction);
+  // Sharing locks the patch, then its grant. Revoking takes them in the same order, so a guest
+  // leaving or an admin removing them never deadlocks against a share.
+  const revoke = Effect.fn("GuestGrants.revoke")(
+    function* (input: {
+      readonly patchId: string;
+      readonly userId: string;
+      readonly actorId?: string;
+    }) {
+      yield* sql`SELECT id FROM patches WHERE id = ${input.patchId} FOR UPDATE`;
+      const at = yield* Clock.currentTimeMillis;
+      const changed = Option.isSome(yield* revoked({ ...input, at }));
+      if (changed) yield* recordGuestChange(input.patchId, input.actorId ?? input.userId);
+      return changed;
+    },
+    sql.withTransaction,
+    Effect.catchTags(dieOnSchemaError)
+  );
   const revokeAll = Effect.fn("GuestGrants.revokeAll")(function* (input: {
     readonly companyId: string;
     readonly userId: string;
+    readonly actorId: string;
   }) {
+    const held = yield* sql<{ readonly id: string }>`SELECT p.id FROM patches p
+      WHERE p.id IN (SELECT patch_id FROM patch_guest_grants
+        WHERE company_id = ${input.companyId} AND user_id = ${input.userId} AND revoked_at IS NULL)
+      ORDER BY p.id FOR UPDATE`;
+    if (held.length === 0) return;
     const at = yield* Clock.currentTimeMillis;
     yield* sql`
-      UPDATE patch_guest_grants g SET revoked_at = to_timestamp(${at / 1_000})
-      FROM patches p
-      WHERE p.id = g.patch_id AND p.scope <> 'teams'
-        AND g.company_id = ${input.companyId} AND g.user_id = ${input.userId}
-        AND g.revoked_at IS NULL`;
-  });
+      UPDATE patch_guest_grants SET revoked_at = to_timestamp(${at / 1_000})
+      WHERE company_id = ${input.companyId} AND user_id = ${input.userId} AND revoked_at IS NULL
+        AND patch_id IN ${sql.in(held.map((row) => row.id))}`;
+    for (const row of held) yield* recordGuestChange(row.id, input.actorId);
+  }, sql.withTransaction);
   const guests = Effect.fn("GuestGrants.guests")(
     (patchId: string) => Effect.map(patchGuests(patchId), (rows) => rows.map(named(Guest))),
     Effect.catchTags(dieOnSchemaError)
@@ -522,9 +547,26 @@ export const make = Effect.gen(function* () {
     const rows = yield* holderRows({ companyId, patchId, userIds: [...new Set(userIds)] });
     return new Map(rows.map(({ userId, active }) => [userId, active]));
   }, Effect.catchTags(dieOnSchemaError));
-  const companyGuests = Effect.fn("GuestGrants.companyGuests")(function* (companyId: string) {
+  const companyGuests = Effect.fn("GuestGrants.companyGuests")(function* (
+    companyId: string,
+    viewerId: string
+  ) {
+    const [viewer] = yield* teams.people(companyId, [viewerId]);
+    // An admin oversees every patch; anyone else sees the patches they can open, and the guests
+    // of those alone, so a team patch's title stays with its audience.
+    const openable =
+      viewer?.active === true && viewer.role === "admin"
+        ? undefined
+        : new Set(
+            (yield* patches
+              .list({ companyId, userId: viewerId, state: "all", canOpen: () => true })
+              .pipe(
+                Effect.catchTags({ PatchUnavailable: Effect.die, WrongState: Effect.die })
+              )).map((listed) => listed.patch.id)
+          );
     const found = new Map<string, CompanyPage.Guest & { patches: CompanyPage.GuestPatch[] }>();
     for (const row of yield* companyGrantRows(companyId)) {
+      if (openable !== undefined && !openable.has(row.patchId)) continue;
       const patch: CompanyPage.GuestPatch = {
         name: row.patchName,
         title: row.title,
@@ -645,7 +687,9 @@ export const make = Effect.gen(function* () {
     const userId = named.includes("@") ? (yield* users.findByEmail(named))?.id : named;
     return {
       patch,
-      removed: userId !== undefined && (yield* revoke({ patchId: patch.id, userId }))
+      removed:
+        userId !== undefined &&
+        (yield* revoke({ patchId: patch.id, userId, actorId: actor.userId }))
     };
   }, sql.withTransaction);
   const list = Effect.fn("GuestGrants.list")(function* (input: {

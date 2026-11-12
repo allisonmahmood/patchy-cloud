@@ -15,7 +15,7 @@ import {
 } from "@patchy/api";
 import { Authorization, MachineTokens } from "@patchy/auth";
 import { DEV_SEED } from "@patchy/auth/seed";
-import { Directory } from "@patchy/companies";
+import { Directory, Teams } from "@patchy/companies";
 import { ContractLimits, Limits } from "@patchy/limits";
 import { Binding, LoadedVersions, Runtime, RuntimeLog } from "@patchy/runtime";
 import * as Testing from "@patchy/sql/testing";
@@ -51,6 +51,7 @@ import * as PostHogOperations from "./posthog/Operations.js";
 import * as SqlConnectionStore from "./SqlConnectionStore.js";
 import * as AttioReads from "./test/attioReads.js";
 import * as PidgeonTest from "./test/pidgeon.js";
+import * as RuntimeTest from "./test/runtime.js";
 import * as PostHogDouble from "./test/posthog.js";
 import { decodeError, isPatchyError } from "../../patchy/src/clientError.js";
 import { Cryptography, NodeCryptography } from "@patchy/core";
@@ -233,6 +234,8 @@ const workspace = AttioReads.scripted(
 const heard = () => mail.requests;
 
 const seed = Effect.gen(function* () {
+  yield* RuntimeTest.seedPatch("localdev0000");
+  yield* RuntimeTest.seedPatch("publishedone");
   const sql = yield* SqlClient.SqlClient;
   yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
     VALUES (${member}, ${member}, ${DEV_SEED.companyId}, 'member@dev-reads.test', 'Morgan', 'member')`;
@@ -269,6 +272,9 @@ const runtime = Layer.effect(
 ).pipe(
   Layer.provide(
     Layer.succeed(LoadedVersions.LoadedVersions, {
+      findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+        return this.find(patchId);
+      },
       find: () => Effect.succeed(Option.none())
     })
   )
@@ -313,6 +319,7 @@ const serve = (
         Redacted.make(`dev-reads:${Buffer.alloc(32, 3).toString("base64")}`)
       )
     ),
+    Layer.provideMerge(Teams.layer),
     Layer.provideMerge(Testing.layer()),
     Layer.provideMerge(NodeCryptography.layer)
   );
@@ -565,7 +572,8 @@ it.layer(layer, { excludeTestServices: true, timeout: "60 seconds" })(
           const log = yield* RuntimeLog.RuntimeLog;
           const [shown] = yield* log.recent({
             companyId: DEV_SEED.companyId,
-            connectionId: found.id
+            connectionId: found.id,
+            patchIds: []
           });
           assert.deepStrictEqual(shown?.machine, {
             id: DEV_SEED.tokenId,

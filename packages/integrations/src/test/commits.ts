@@ -1,3 +1,4 @@
+import { Teams } from "@patchy/companies";
 import * as Effect from "effect/Effect";
 import type * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -48,7 +49,7 @@ export const losingCommits = (pidgeon: Layer.Layer<PidgeonSource.Source>) =>
         key === "withTransaction" ? withTransaction : Reflect.get(target, key, receiver)
     });
     const store = yield* SqlConnectionStore.make.pipe(
-      Effect.provide(pidgeon),
+      Effect.provide([pidgeon, Teams.layer]),
       Effect.provideService(SqlClient.SqlClient, lossy)
     );
     return { store, armed };

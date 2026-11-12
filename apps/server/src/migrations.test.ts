@@ -1,3 +1,4 @@
+import { Teams } from "@patchy/companies";
 import { assert, it } from "@effect/vitest";
 import {
   CredentialKeys,
@@ -159,7 +160,7 @@ it.layer(Testing.emptyLayer(beforeIntegrations))(
           // Today's store, on today's schema, reads what the upgrades kept: a connection made
           // before guests existed allows them.
           yield* migrate(migrations);
-          const store = yield* SqlConnectionStore.make;
+          const store = yield* SqlConnectionStore.make.pipe(Effect.provide(Teams.layer));
           const kept = yield* store.get(who.companyId, connection.id);
           assert.deepInclude(kept, {
             integration: "postgres",
@@ -253,7 +254,7 @@ it.layer(Testing.emptyLayer(release10))("the handles-per-integration upgrade", (
           ),
           "ConstraintError"
         );
-        const store = yield* SqlConnectionStore.make;
+        const store = yield* SqlConnectionStore.make.pipe(Effect.provide(Teams.layer));
         assert.deepStrictEqual(
           (yield* store.list(who.companyId)).map(({ id, integration, handle }) => ({
             id,

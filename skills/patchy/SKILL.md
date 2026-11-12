@@ -334,14 +334,26 @@ sending again. `withdraw <id>` deletes one.
 For the single-file flow, keep secrets, private URLs, local filesystem paths and
 production documentation of record off the published page; a tool that keeps data
 is a patch repo. Publish only material the intended audience may read: the
-user's company by default, anyone with the link only by explicit choice.
+user's explicitly chosen audience; Public only by explicit choice.
 
 ## Publishing
 
 The `patchy` CLI publishes one self-contained HTML document as a page and returns its
 view URL.
-New patches default to company scope; use `--share public` only when the user wants
-anyone with the link to read the page.
+A first publish is Company-wide unless the person specifies another audience.
+Pass `--share company|public`, or `--share teams` with a `--team <name>` for each
+team. `patchy audiences --json` lists the company's teams; never invent one, and
+never create teams while publishing. Named guests receive access to individual
+patches with `patchy share --add`. Later publishes keep the audience; `--share` sends
+the whole new one, so `share company` opens a team patch to the company.
+Report the returned `audience` after every publish and share.
+
+The audience must include the owner. Named guest grants stay through audience
+changes; guests need active outside-company Patchy accounts. If `owner_access_lost`
+is returned, ask an admin to restore the owner's team access or reassign this patch
+instead of creating a replacement. A warning that the audience reaches people the
+patch's sources or connections don't means those people will see errors or reach
+team data through it; tell the person.
 
 Requires Node.js 22.22.0 or newer, with npm, and the `patchy` CLI on `PATH`.
 If the CLI is missing or its release differs from the intended instance,
@@ -536,9 +548,7 @@ browser sign-out is a separate control, **Sign out** in the account menu.
   `not_on_patchy` means the email has no Patchy account yet, `already_member` that they're
   in the company already, and `guests_unavailable` says, in its `reason`, what keeps guests
   out of the current version and how to let them in.
-- Announce the returned `scope`, not an assumed default: `company` means signed-in
-  colleagues in the user's company can open the link; `public` means anyone with
-  the link can open it without signing in. Text output names both scope and readership.
+- Announce the returned `audience`, naming its teams, and any guests. `scope` is what older CLIs read: a team patch reports `scope: company` though only its teams can open it. `public` admits anyone with the link only at the current version.
   Publish returns `name` and `address`; `publicUrl` equals the address, not a grant of public access.
 - Only the current version of a public patch is public; older versions stay behind the company door.
   The current version is public at both `/<company>/<name>` and `/<company>/<name>/~v/<current n>`.
@@ -587,7 +597,8 @@ browser sign-out is a separate control, **Sign out** in the account menu.
   `publish --json` prints the instance's response as it is on the wire
   (`patchId`, `name`, `address`, `publicUrl`, `scope`, `tier`, `versionNumber`, `schemaRevision`,
   `provisioned`, `unused`, `warnings`, …).
-  `share --json` prints `{ "ok": true, "patchId", "scope", "publicUrl" }`.
+  When a team-audience change returns `has_dependants`, show the affected tools to the person before retrying `patchy share` with `--force`. The refused call changes nothing.
+  `share --json` prints `{ "ok": true, "patchId", "scope", "audience", "publicUrl" }`.
   Stderr carries failures only.
   `delete --json` prints `{ "ok": true, "patchId", "state": "deleted", "deletedAt", "purgeAt" }`.
   Prefer JSON when an address, id or recovery deadline is going into a script.
@@ -738,7 +749,7 @@ patch](#reading-a-patch) lists the rest.
 3. Run `validate` until it passes.
 4. Publish with `--json` so the response gives the actual scope; set `--share` only for
    an explicit sharing choice. With no key, finish the login handoff above before retrying.
-5. Return `publicUrl` and announce who can open it from the returned `scope`, as above.
+5. Return `publicUrl` and announce who can open it from the returned `audience`.
 
 ## Pitfalls
 

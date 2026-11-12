@@ -90,6 +90,9 @@ const services = Layer.mergeAll(
   ),
   Layer.provideMerge(
     Layer.succeed(LoadedVersions.LoadedVersions, {
+      findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+        return this.find(patchId);
+      },
       find: () => Effect.succeed(Option.some({ ...binding, patchTier: binding.manifest.tier }))
     })
   )

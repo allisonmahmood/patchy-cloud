@@ -27,7 +27,7 @@ export const loaded = ({
     manifest: version.manifest,
     wireVersion: version.wireVersion,
     patchTier,
-    scope: patch.scope === "public" && current ? ("public" as const) : ("company" as const),
+    scope: patch.audience.kind === "public" && current ? ("public" as const) : ("company" as const),
     ...(current ? { current: true as const } : {})
   };
 };
@@ -36,6 +36,9 @@ export const loaded = ({
 export const make = Effect.gen(function* () {
   const patches = yield* Patches.Patches;
   return LoadedVersions.LoadedVersions.of({
+    findForViewer: Effect.fn("LoadedVersions.findForViewer")(function* (patchId, viewer) {
+      return Option.map(yield* patches.findForViewer(patchId, viewer), loaded);
+    }),
     find: Effect.fn("LoadedVersions.find")(function* (patchId, versionId) {
       return Option.map(yield* patches.find(patchId, undefined, versionId), loaded);
     })

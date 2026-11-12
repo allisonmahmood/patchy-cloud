@@ -1,9 +1,11 @@
+import { Teams } from "@patchy/companies";
 import * as Effect from "effect/Effect";
 import type * as Layer from "effect/Layer";
 import type * as SqlClient from "effect/sql/SqlClient";
 import type { Analytics } from "@patchy/analytics";
 import { type Companies, type Users } from "@patchy/companies";
 import type * as ConnectionStore from "./ConnectionStore.js";
+import type * as PatchVisibility from "./PatchVisibility.js";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -134,6 +136,7 @@ const errors = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServerResponse, 
   });
 
 const confirmations = [
+  "audience",
   "rotate",
   "retarget",
   "access",
@@ -164,8 +167,10 @@ export const layer: Layer.Layer<
       | Session.Session
       | Companies.Companies
       | Users.Users
+      | Teams.Teams
       | SqlClient.SqlClient
       | ConnectionStore.ConnectionStore
+      | PatchVisibility.PatchVisibility
       | RuntimeLog.RuntimeLog
       | Analytics.Analytics
       | PidgeonSource.Source

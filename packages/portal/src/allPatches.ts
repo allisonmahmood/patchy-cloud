@@ -30,7 +30,9 @@ import {
 import type { Patches } from "@patchy/patches";
 import type { InvocationLog } from "@patchy/runtime";
 import {
+  accessLabel,
   byTitle,
+  canReassign,
   cardPath,
   failedBadge,
   failedLog,
@@ -42,7 +44,6 @@ import {
   matches,
   openItems,
   patchAddress,
-  shareHref,
   turnedAwayTitle,
   unopened
 } from "./shared/presentation.js";
@@ -94,8 +95,15 @@ const attentionOf = (
   turnedAway: ReadonlyMap<string, GuestReason> | undefined
 ): Attention | undefined => {
   const { patch } = row;
-  if (!manages(row, viewer)) return undefined;
   const title = patchTitle(patch, viewer.company.name);
+  // An owner who can't open their own patch manages nothing of it, but should know.
+  if (!row.access.canOpen && row.owner.id === viewer.user.id && !manages(row))
+    return {
+      title: "You can’t open it",
+      detail: "Ask an admin to add you to one of its teams or reassign it.",
+      act: linkButton("View patch", cardPath(patch), { size: "sm", ariaLabel: `View ${title}` })
+    };
+  if (!manages(row)) return undefined;
   // A deletion about to be reclaimed is the more urgent of the two.
   if (patch.state === "deleted" && patch.purgeAt !== null) {
     const deadline = epoch(patch.purgeAt);
@@ -106,10 +114,10 @@ const attentionOf = (
         act: `<form method="post" action="${escapeAttribute(cardPath(patch, "restore"))}">${restoreForm(patch)}${button("Restore", { size: "sm", ariaLabel: `Restore ${title}` })}</form>`
       };
   }
-  if (row.owner.deactivated && viewer.role === "admin")
+  if ((row.owner.deactivated || !row.access.ownerCanOpen) && canReassign(viewer))
     return {
-      title: "Its owner is deactivated",
-      detail: "Nobody can publish to it until someone else owns it.",
+      title: row.owner.deactivated ? "Its owner is deactivated" : "Its owner can’t open it",
+      detail: "Nobody can publish to it until someone who can open it owns it.",
       act: linkButton("Reassign…", cardPath(patch, "reassign"), {
         size: "sm",
         ariaLabel: `Reassign ${title}`
@@ -147,10 +155,10 @@ const actions = (
   const { now } = input;
   const title = patchTitle(patch, viewer.company.name);
   const items = openItems(row, viewer, input.publicBaseUrl, input.here);
-  if (!manages(row, viewer)) return rowMenu(patch.id, title, items);
+  if (!manages(row)) return rowMenu(patch.id, title, items);
   const manage = [
     menuLink(cardPath(patch, "settings"), "Settings", false, title),
-    ...(viewer.role === "admin"
+    ...(canReassign(viewer)
       ? [menuLink(cardPath(patch, "reassign"), "Reassign…", false, title)]
       : []),
     ...(patch.state === "live"
@@ -192,9 +200,10 @@ export const listPath = ({ show, query, owner }: Listing, page = 1) => {
  * All patches at `/patches`: every patch the viewer can open, A–Z, filtered by `?show=`, searched
  * by the sidebar's `?q=` and narrowed to one person's by `?owner=` (People's See their patches),
  * each of those two shown as a chip that clears it, and paged by `?page=`. Its title opens a live
- * patch; Share sits on the rows the viewer owns, and each row's other acts in its menu.
+ * patch; each row keeps its available actions in its menu.
  */
 export const renderAllPatches = (input: {
+  /** With the patches the viewer manages or owns but can't open, their content left out. */
   readonly rows: readonly Patches.ReadPatch[];
   readonly viewer: Viewer;
   readonly show: Show;
@@ -292,9 +301,11 @@ export const renderAllPatches = (input: {
   const failed = (patch: Patches.Patch) => failedBadge(patch, input.calls?.get(patch.id));
   const patchCell = (row: Patches.ReadPatch, phone = "") => {
     const { patch } = row;
-    // A live patch's title opens it, as on Home; an off one's leads to its card. The dot marks a
-    // colleague's the viewer has never opened, under every filter and search, as on Home.
-    const href = patch.state === "live" ? patchAddress(patch) : cardPath(patch);
+    // A live patch's title opens it, as on Home; an off one's, or one the viewer can't open, leads
+    // to its card. The dot marks a colleague's the viewer has never opened, under every filter
+    // and search, as on Home.
+    const href =
+      patch.state === "live" && row.access.canOpen ? patchAddress(patch) : cardPath(patch);
     const title = patchTitle(patch, viewer.company.name);
     const line = firstClause(patch.description);
     return `<div class="cell-name">${patchMark(patch.name, row.tier)}<div class="row-main"><span class="row-name"><a class="row-link" href="${escapeAttribute(href)}">${unopened(row, viewer, input.opens) ? unopenedName(title) : escapeHtml(title)}</a></span>${line ? `<span class="row-desc">${escapeHtml(line)}</span>` : ""}${phone ? `<span class="show-sm">${phone}</span>` : ""}</div></div>`;
@@ -356,23 +367,13 @@ export const renderAllPatches = (input: {
       });
     // Failures show beside the tier 2 patches the viewer manages, never on Pages.
     const failures = input.calls !== undefined && show !== "pages";
-    const shares = shown.some(
-      (row) => row.patch.state === "live" && row.owner.id === viewer.user.id
-    );
-    const access = ({ patch }: Patches.ReadPatch) => {
-      if (patch.scope === "public") return "Public";
-      const count = input.guests.get(patch.name) ?? 0;
-      return count === 0 ? "Company" : `Company + ${plural(count, "guest", "guests")}`;
+    const access = (row: Patches.ReadPatch) => {
+      const audience = accessLabel(row.audience);
+      const count = row.audience.kind === "public" ? 0 : (input.guests.get(row.patch.name) ?? 0);
+      return escapeHtml(
+        count === 0 ? audience : `${audience} + ${plural(count, "guest", "guests")}`
+      );
     };
-    const shareCell = (row: Patches.ReadPatch) =>
-      row.owner.id === viewer.user.id
-        ? linkButton("Share", shareHref(here, row.patch.name), {
-            kind: "quiet",
-            size: "sm",
-            icon: "share",
-            ariaLabel: `Share ${patchTitle(row.patch, viewer.company.name)}`
-          })
-        : "";
     return table({
       label: "Patches",
       columns: [
@@ -382,17 +383,6 @@ export const renderAllPatches = (input: {
         { label: "Visits", align: "end", hideOnPhone: true, nowrap: true },
         { label: "Access", hideOnPhone: true, nowrap: true },
         ...(failures ? [failuresColumn] : []),
-        ...(shares
-          ? [
-              {
-                label: "Share",
-                hidden: true,
-                hideOnPhone: true,
-                align: "end",
-                nowrap: true
-              } as const
-            ]
-          : []),
         actionsColumn
       ],
       rows: shown.map((row) => [
@@ -402,7 +392,6 @@ export const renderAllPatches = (input: {
         escapeHtml(row.visits),
         access(row),
         ...(failures ? [failuresCell(row.patch, input.calls?.get(row.patch.id))] : []),
-        ...(shares ? [shareCell(row)] : []),
         menuCell(row)
       ])
     });

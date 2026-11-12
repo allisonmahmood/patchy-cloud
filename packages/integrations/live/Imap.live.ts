@@ -1,3 +1,4 @@
+import { Teams } from "@patchy/companies";
 import { assert, it } from "@effect/vitest";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { NodeCryptography } from "@patchy/core";
@@ -73,7 +74,7 @@ const imap = (connection: ConnectionStore.Connection) =>
 /** Connect, Test, Refresh folders and Delete, as an admin would; answers the first snapshot. */
 const lifecycle = (handle: string, credentials: ReturnType<typeof login>) =>
   Effect.gen(function* () {
-    const store = yield* SqlConnectionStore.make;
+    const store = yield* SqlConnectionStore.make.pipe(Effect.provide(Teams.layer));
     const connection = yield* store.connect({
       integration: "imap",
       ...who,
@@ -125,7 +126,7 @@ it.layer(services, { timeout: "120 seconds", excludeTestServices: true })("IMAP,
 
   it.effect("names what each server misses: STARTTLS, the certificate's name, the password", () =>
     Effect.gen(function* () {
-      const store = yield* SqlConnectionStore.make;
+      const store = yield* SqlConnectionStore.make.pipe(Effect.provide(Teams.layer));
       const connect = (handle: string, credentials: ReturnType<typeof login>) =>
         store
           .connect({ integration: "imap", ...who, handle, description: "", credentials })
@@ -157,7 +158,7 @@ it.layer(services, { timeout: "120 seconds", excludeTestServices: true })("IMAP,
     "refuses a wrong new password without pausing the stored one, then takes the right one",
     () =>
       Effect.gen(function* () {
-        const store = yield* SqlConnectionStore.make;
+        const store = yield* SqlConnectionStore.make.pipe(Effect.provide(Teams.layer));
         const connection = yield* store.connect({
           integration: "imap",
           ...who,

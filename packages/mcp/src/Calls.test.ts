@@ -559,7 +559,7 @@ it.layer(harness)("read_patch", (it) => {
           (typeof acme.people)[0],
           (typeof acme.people)[0]
         ];
-        yield* publish(acme.id, priya, "new-business", { handlers: deals });
+        const published = yield* publish(acme.id, priya, "new-business", { handlers: deals });
         const sql = yield* SqlClient.SqlClient;
         const access = (on: boolean) =>
           Companies.Companies.use((companies) =>
@@ -570,7 +570,10 @@ it.layer(harness)("read_patch", (it) => {
           Effect.Effect<
             unknown,
             unknown,
-            SqlClient.SqlClient | Companies.Companies | AgentConnections.AgentConnections
+            | SqlClient.SqlClient
+            | Companies.Companies
+            | AgentConnections.AgentConnections
+            | Patches.Patches
           >
         > = [];
         const fake = yield* runtime((handed) =>
@@ -615,6 +618,17 @@ it.layer(harness)("read_patch", (it) => {
         steps = [Effect.void, sql`UPDATE users SET deactivated_at = now() WHERE id = ${cleo.id}`];
         assert.deepStrictEqual(answered(yield* read(cleo.token))["structuredContent"], {
           result: ["member", "access_denied"],
+          version: 1
+        });
+        const patches = yield* Patches.Patches;
+        const actor = { userId: priya.id, admin: true };
+        steps = [
+          Effect.void,
+          patches.retire(published.patchId, actor),
+          patches.restore(published.patchId, actor)
+        ];
+        assert.deepStrictEqual(answered(yield* read(priya.token))["structuredContent"], {
+          result: ["admin", "access_denied", "admin"],
           version: 1
         });
       })

@@ -1,7 +1,8 @@
+import * as SqlClient from "effect/sql/SqlClient";
 import { assert, it } from "@effect/vitest";
 import { CURRENT_RELEASE, WIRE_VERSION, type AttioSnapshot } from "@patchy/api";
 import { DEV_SEED } from "@patchy/auth/seed";
-import { Directory } from "@patchy/companies";
+import { Directory, Teams } from "@patchy/companies";
 import { Binding, Runtime } from "@patchy/runtime/core";
 import { RuntimeLog } from "@patchy/runtime";
 import * as Testing from "@patchy/sql/testing";
@@ -42,7 +43,8 @@ const fixture = Layer.mergeAll(
   ),
   PostHogSource.layer,
   PidgeonSource.layer,
-  ImapTest.offline
+  ImapTest.offline,
+  Teams.layer
 ).pipe(Layer.provideMerge(Testing.layer()), Layer.provideMerge(NodeCryptography.layer));
 
 type Viewer = NonNullable<Binding.Binding["Service"]["identity"]>;
@@ -105,6 +107,8 @@ const setup = (
   } = {}
 ) =>
   Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`INSERT INTO patches (id, company_id, owner_user_id, title, name) VALUES ('dealpatch0001', ${who.companyId}, ${who.userId}, 'Integration operations', 'dealpatch0001') ON CONFLICT (id) DO NOTHING`;
     made++;
     const crm = { id: `conn_attio_${made}`, handle: `crm${made}` };
     const attio = Reads.scripted(
@@ -862,6 +866,55 @@ it.layer(fixture)("Attio operations, offline", (it) => {
       2
     );
   });
+
+  it.effect(
+    "refuses a call once the patch's owner leaves the connection's team, when admitted and once it holds its slot",
+    () =>
+      Effect.gen(function* () {
+        const { attio, call, crm, store } = yield* setup([
+          Reads.route("GET", "/workspace_members", { body: { data: [] } })
+        ]);
+        const teams = yield* Teams.Teams;
+        const actor = { companyId: who.companyId, actorId: who.userId };
+        const team = yield* teams.create({ ...actor, name: `Builders of ${crm.handle}` });
+        // The patch's owner, who is also its viewer here, joins or leaves the connection's team.
+        const membership = (added: boolean) =>
+          teams
+            .setMemberships({
+              ...actor,
+              teamId: team.id,
+              ...(added ? { add: [who.userId] } : { remove: [who.userId] })
+            })
+            .pipe(Effect.orDie);
+        yield* membership(true);
+        yield* store.setAudience({
+          ...who,
+          id: crm.id,
+          audience: { kind: "teams", teamIds: [team.id] }
+        });
+        yield* call("attio.listMembers", {});
+        assert.lengthOf(attio.requests, 1);
+        yield* membership(false);
+        // Refused when admitted, so it never waits for a slot or rechecks its viewer.
+        const unwaited = binding(crm, { reauthorize: Effect.die("The call waited for a slot.") });
+        assert.include(
+          Runtime.toFailure(yield* call("attio.listMembers", {}, unwaited).pipe(Effect.flip)),
+          { code: "access_denied" }
+        );
+        assert.lengthOf(attio.requests, 1);
+        // Admitted on the team, then the owner leaves while the call waits: the door's recheck of
+        // its viewer runs once it holds its slot, and the owner's is checked again after it.
+        yield* membership(true);
+        const leaving = binding(crm, {
+          reauthorize: membership(false).pipe(Effect.as(viewer))
+        });
+        assert.include(
+          Runtime.toFailure(yield* call("attio.listMembers", {}, leaving).pipe(Effect.flip)),
+          { code: "access_denied" }
+        );
+        assert.lengthOf(attio.requests, 1);
+      })
+  );
 
   it.effect(
     "rechecks the viewer and the connection once a queued call holds its slot, and times out",

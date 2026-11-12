@@ -22,6 +22,7 @@ export interface ButtonLook {
   readonly kind?: "primary" | "secondary" | "quiet" | "danger" | "danger-solid";
   /** `sm` for row actions and compact places. */
   readonly size?: "md" | "sm";
+  readonly danger?: boolean;
   readonly icon?: IconName;
   /** As wide as what holds it. */
   readonly block?: boolean;
@@ -32,11 +33,12 @@ export interface ButtonLook {
 }
 
 /** A button's classes from its look, with `extra` last; for core helpers that draw a button. */
-export const buttonClass = ({ kind, size, block }: ButtonLook, extra = "") =>
+export const buttonClass = ({ kind, size, block, danger }: ButtonLook, extra = "") =>
   [
     "btn",
     kind === undefined || kind === "secondary" ? "" : `btn-${kind}`,
     size === "sm" ? "btn-sm" : "",
+    danger ? "btn-danger" : "",
     block === true ? "btn-block" : "",
     extra
   ]
@@ -65,6 +67,9 @@ export const button = (
     readonly value?: string;
     /** The id of the form it submits, when it sits outside it. */
     readonly form?: string;
+    /** Native form overrides let a GET search and its POST save share the current selection. */
+    readonly formAction?: string;
+    readonly formMethod?: "get" | "post";
     /** The id of the popover it opens, closes or toggles, such as Tell Patchy's panel. */
     readonly popovertarget?: string;
     readonly popovertargetaction?: "show" | "hide" | "toggle";
@@ -72,7 +77,7 @@ export const button = (
     readonly pendingLabel?: string;
   } = {}
 ) =>
-  `<button class="${buttonClass(options)}" type="${options.type ?? "submit"}"${attribute("name", options.name)}${attribute("value", options.value)}${attribute("form", options.form)}${attribute("popovertarget", options.popovertarget)}${attribute("popovertargetaction", options.popovertargetaction)}${options.pending === true ? ' aria-disabled="true"' : ""}${attribute("data-pending", options.pendingLabel)}${lookAttributes(options)}>${options.pendingLabel === undefined ? buttonInner(label, options) : `<span>${buttonInner(label, options)}</span>`}</button>`;
+  `<button class="${buttonClass(options)}" type="${options.type ?? "submit"}"${attribute("name", options.name)}${attribute("value", options.value)}${attribute("form", options.form)}${attribute("formaction", options.formAction)}${attribute("formmethod", options.formMethod)}${attribute("popovertarget", options.popovertarget)}${attribute("popovertargetaction", options.popovertargetaction)}${options.pending === true ? ' aria-disabled="true"' : ""}${attribute("data-pending", options.pendingLabel)}${lookAttributes(options)}>${options.pendingLabel === undefined ? buttonInner(label, options) : `<span>${buttonInner(label, options)}</span>`}</button>`;
 
 /**
  * A link drawn as a button, for an action that is a place: Open, Connect, Cancel. `id` makes it

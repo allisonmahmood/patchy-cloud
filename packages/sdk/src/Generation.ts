@@ -20,7 +20,7 @@ import {
 import { Looks } from "@patchy/companies";
 import { Attio, ConnectionStore, Imap, Pidgeon, Postgres, PostHog } from "@patchy/integrations";
 import type { CompanyDatabases } from "@patchy/company-database";
-import { Patches } from "@patchy/patches";
+import { Audiences, Patches } from "@patchy/patches";
 import { sdkCapabilities, sdkCapabilitiesMarkdown } from "./sdkCapabilities.js";
 import { generateClient, generateSharedStoreClient } from "./generateClient.js";
 import { generateServer } from "./generateServer.js";
@@ -230,7 +230,8 @@ const definitionContext = (title: string, definition: unknown) =>
 
 export const generate = Effect.fn("Generation.generate")(function* (
   companyId: string,
-  request: typeof GenerateRequest.Type
+  request: typeof GenerateRequest.Type,
+  viewerId: string
 ): Effect.fn.Return<
   typeof Generated.Type,
   GenerationRefused | CompanyDatabases.Busy | GenerationUnavailable,
@@ -263,9 +264,20 @@ export const generate = Effect.fn("Generation.generate")(function* (
   else skills.delete("patchy-server");
   if (request.manifest.uses.members?.kind === "members") skills.add("patchy-members");
   else skills.delete("patchy-members");
+  // Whether everyone in the company can open a source the viewer just could, so `patchy dev`'s
+  // colleague, on none of their teams, reads it too.
+  const companyWide = (patchId: string) =>
+    patches.findForViewer(patchId, { companyId, userId: viewerId }).pipe(
+      Effect.map(
+        (source) =>
+          Option.isSome(source) &&
+          Audiences.admits(source.value.patch.audience, { active: true, teamIds: [] })
+      ),
+      Effect.catchTags({ SqlError: Effect.die })
+    );
   if (request.patchId !== undefined) {
     const existing = yield* patches
-      .find(request.patchId)
+      .findForViewer(request.patchId, { companyId, userId: viewerId })
       .pipe(Effect.catchTags({ SqlError: Effect.die }));
     if (Option.isNone(existing) || existing.value.patch.companyId !== companyId)
       return yield* new PatchNotOpenable({ patchId: request.patchId });
@@ -312,7 +324,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
       entry.kind === "attio" ||
       entry.kind === "imap"
   )
-    ? yield* connections.list(companyId).pipe(
+    ? yield* connections.list(companyId, viewerId).pipe(
         Effect.mapError(
           (cause) =>
             new GenerationUnavailable({
@@ -338,8 +350,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
         (entry) =>
           entry.integration === declaration.kind &&
           entry.handle === declaration.handle &&
-          entry.status === "connected" &&
-          !entry.restricted
+          entry.status === "connected"
       );
       if (connection === undefined)
         return yield* new ConnectionNotConnected({
@@ -460,11 +471,15 @@ export const generate = Effect.fn("Generation.generate")(function* (
       factories[alias] = `./uses/${alias}.js`;
     } else if (declaration.kind === "sharedStore") {
       const source = yield* patches
-        .sharedStore(declaration.patchId, declaration.store, companyId)
+        .sharedStore(declaration.patchId, declaration.store, companyId, viewerId)
         .pipe(Effect.catchTags(sharedSourceErrors(declaration)));
       const fixture = `fixtures/shared-${alias}/README.md`;
       const resolved = { ...declaration, id: source.id, revision: source.schemaRevision };
-      metadata.shared[alias] = { declaration: resolved, definition: source.definition };
+      metadata.shared[alias] = {
+        declaration: resolved,
+        definition: source.definition,
+        companyWide: yield* companyWide(declaration.patchId)
+      };
       files.set(client, generateSharedStoreClient());
       files.set(
         context,
@@ -489,14 +504,15 @@ export const generate = Effect.fn("Generation.generate")(function* (
       });
     } else {
       const source = yield* patches
-        .sharedTable(declaration.patchId, declaration.table, companyId)
+        .sharedTable(declaration.patchId, declaration.table, companyId, viewerId)
         .pipe(Effect.catchTags(sharedSourceErrors(declaration)));
       const fixture = `fixtures/shared-${alias}.sql`;
       const resolved = { ...declaration, id: source.id, revision: source.schemaRevision };
       metadata.shared[alias] = {
         declaration: resolved,
         tables: source.tables,
-        uses: source.uses
+        uses: source.uses,
+        companyWide: yield* companyWide(declaration.patchId)
       };
       files.set(client, sharedClient(source));
       files.set(

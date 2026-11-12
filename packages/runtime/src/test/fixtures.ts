@@ -1,3 +1,4 @@
+import { Teams } from "@patchy/companies";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -46,10 +47,18 @@ const manifest = {
   tables: {},
   files: {},
   uses: {
-    sales: { kind: "postgres" as const, handle: "warehouse", id: "connection-runtime", revision: 1 }
+    sales: {
+      kind: "postgres" as const,
+      handle: "warehouse",
+      id: "connection-runtime",
+      revision: 1
+    }
   }
 };
 const versions = Layer.succeed(LoadedVersions.LoadedVersions, {
+  findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+    return this.find(patchId);
+  },
   find: (patch, version = versionId) =>
     Effect.succeed(
       ![patchId, "secondpatch1", "otherpatch11"].includes(patch) ||
@@ -91,6 +100,7 @@ const seed = Layer.effectDiscard(
 
 /** Suites without Patches hold no grants: nobody from another company is its guest. */
 export const noGuests = Layer.succeed(GrantedGuests.GrantedGuests, {
+  member: () => Effect.succeed(true),
   host: () => Effect.succeed(Option.none())
 });
 
@@ -122,7 +132,7 @@ export const layer = (
         OperatingLimits.layer,
         RuntimeLog.layer,
         Session.layer,
-        Users.layer,
+        Layer.merge(Users.layer, Teams.layer),
         Companies.layer
       )
     ),

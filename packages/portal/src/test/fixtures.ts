@@ -32,12 +32,12 @@ import { Feedback } from "@patchy/feedback";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import { AgentConnections, MachineTokens, RequireSession, Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
-import { Companies, Users } from "@patchy/companies";
+import { Companies, Teams, Users } from "@patchy/companies";
 import { contentHash, sha256 } from "../../../../test/crypto.js";
 import * as Testing from "@patchy/company-database/testing";
 import { ConnectionStore } from "@patchy/integrations";
 import { ConnectionStoreDev } from "@patchy/integrations/dev";
-import { GuestGrants, Patches } from "@patchy/patches";
+import { GuestGrants, Patches, ConnectionVisibility } from "@patchy/patches";
 import { Tables } from "@patchy/primitives";
 import * as PortalPages from "../PortalPages.js";
 import { InvocationLog, RuntimeLog, Wakes } from "@patchy/runtime";
@@ -180,6 +180,8 @@ export const services = Layer.mergeAll(
       }
     ])
   ),
+  Layer.provideMerge(ConnectionVisibility.layer),
+  Layer.provideMerge(Teams.layer),
   Layer.provideMerge(Tables.layer),
   Layer.provideMerge(Testing.layer()),
   Layer.provideMerge(Testing.resourceChangesLayer),

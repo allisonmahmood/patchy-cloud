@@ -135,7 +135,12 @@ const versionAuthority = Effect.gen(function* () {
     initial,
     latest,
     find,
-    layer: Layer.succeed(LoadedVersions.LoadedVersions, { find })
+    layer: Layer.succeed(LoadedVersions.LoadedVersions, {
+      findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+        return this.find(patchId);
+      },
+      find
+    })
   };
 });
 
@@ -837,6 +842,9 @@ it.layer(layer)("document streams", (it) => {
       const resume = yield* Deferred.make<void>();
       let holdCurrent = true;
       const delayed = Layer.succeed(LoadedVersions.LoadedVersions, {
+        findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+          return this.find(patchId);
+        },
         find: (patchId, versionId) =>
           Effect.gen(function* () {
             const found = yield* authority.find(patchId, versionId);
@@ -885,6 +893,9 @@ it.layer(layer)("document streams", (it) => {
       const resume = yield* Deferred.make<void>();
       let holdAdmission = true;
       const delayed = Layer.succeed(LoadedVersions.LoadedVersions, {
+        findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+          return this.find(patchId);
+        },
         find: (patchId, versionId) =>
           Effect.gen(function* () {
             const found = yield* authority.find(patchId, versionId);
@@ -923,6 +934,9 @@ it.layer(layer)("document streams", (it) => {
       });
       const logs: unknown[] = [];
       const failing = Layer.succeed(LoadedVersions.LoadedVersions, {
+        findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+          return this.find(patchId);
+        },
         find: (patchId, versionId) =>
           Effect.suspend(() =>
             unavailable ? Effect.fail(cause) : authority.find(patchId, versionId)

@@ -67,6 +67,7 @@ const publish = (patchId: string, intent: "create" | "update") =>
   Fixtures.record({
     ...Fixtures.publishRecord(),
     intent,
+    ...(intent === "create" ? { scope: "company" as const } : {}),
     patchId,
     versionId: newInternalId("ver"),
     companyId: identity.company.id,
@@ -109,6 +110,9 @@ it.layer(dependencies)("scoped lifecycle dispatch", (it) => {
           Effect.provideServiceEffect(Subscriptions.Subscriptions, Subscriptions.make),
           Effect.provide(SubscriptionReads.layer),
           Effect.provideService(LoadedVersions.LoadedVersions, {
+            findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+              return this.find(patchId);
+            },
             find: (id, versionId) =>
               Effect.gen(function* () {
                 const found = yield* source.find(id, versionId);
@@ -133,6 +137,7 @@ it.layer(dependencies)("scoped lifecycle dispatch", (it) => {
               Layer.provide([
                 DurableVersions.layer,
                 Layer.succeed(GrantedGuests.GrantedGuests, {
+                  member: () => Effect.succeed(true),
                   host: () => Effect.succeed(Option.none())
                 })
               ])

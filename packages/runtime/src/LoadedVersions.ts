@@ -22,7 +22,14 @@ export interface LoadedVersion {
 export class LoadedVersions extends Context.Service<
   LoadedVersions,
   {
-    /** Loads the served tier in the same snapshot; omit versionId for the current source. */
+    /**
+     * Protected current-source reads require the initiating viewer.
+     */
+    readonly findForViewer: (
+      patchId: string,
+      viewer: { readonly companyId: string; readonly userId: string }
+    ) => Effect.Effect<Option.Option<LoadedVersion & { readonly patchTier: number }>, SqlError>;
+    /** Trusted runtime loading; protected source reads must use findForViewer. */
     readonly find: (
       patchId: string,
       versionId?: string

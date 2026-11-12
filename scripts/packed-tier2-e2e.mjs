@@ -130,7 +130,7 @@ export function App() { return <output id="status">ready</output>; }
 `
   );
   await source.command("refresh");
-  const sourcePublished = await source.command("publish");
+  const sourcePublished = await source.command("publish", "--share", "company");
   const ownerContext = await context({});
   const colleagueContext = await context({
     sub: "user_packed_other",
@@ -221,7 +221,7 @@ export default defineConfig({ name: "tier2-acceptance", tier: 2,
   await stopDev();
 
   console.log("[packed-tier2-e2e] publish both artifacts and sync independent signed-in viewers");
-  const published = await repo.command("publish");
+  const published = await repo.command("publish", "--share", "company");
   assert.equal(published.tier, 2);
   assert.deepEqual(
     published.handlers

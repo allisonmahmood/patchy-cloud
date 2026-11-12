@@ -151,8 +151,7 @@ const tier1 = Layer.mergeAll(
   Limits.layer,
   OperatingLimits.layer,
   RuntimeLog.layer,
-  RuntimeTest.versions(patchId, versionId, () => ({ analytics: declaration })),
-  RuntimeTest.storedPatch(patchId)
+  RuntimeTest.versions(patchId, versionId, () => ({ analytics: declaration }))
 )
   .pipe(
     Layer.provideMerge(Testing.layer()),
@@ -215,7 +214,8 @@ it.layer(tier1)("PostHog from a tier 2 action's callbacks", (it) => {
         const log = yield* RuntimeLog.RuntimeLog;
         const calls = yield* log.recent({
           companyId: DEV_SEED.companyId,
-          connectionId: declaration.id
+          connectionId: declaration.id,
+          patchIds: [patchId]
         });
         // Both calls share the test clock's instant, so compare them by name.
         assert.deepStrictEqual(

@@ -2,7 +2,7 @@ import { Runtime, type Binding } from "@patchy/runtime/core";
 import * as Effect from "effect/Effect";
 import type * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import type * as ConnectionStore from "./ConnectionStore.js";
+import * as ConnectionStore from "./ConnectionStore.js";
 
 /** Which connection a call goes to and until when, for a caller its door already admitted. */
 export interface Target<E = never> {
@@ -45,6 +45,33 @@ export const viewerRecheck = (binding: Binding.Binding["Service"]) =>
         : Effect.fail(new Runtime.AccessDenied({}))
     )
   );
+
+/**
+ * Refuses a call through a patch whose current owner can't build with the connection, as each
+ * connection call checks when admitted. Its caller only needs to open the patch.
+ */
+export const ownerCheck: (
+  binding: Binding.Binding["Service"],
+  id: string
+) => Effect.Effect<
+  void,
+  Runtime.AccessDenied | Runtime.SourceUnavailable,
+  ConnectionStore.ConnectionStore
+> = Effect.fn("Integrations.ownerCheck")(function* (binding, id) {
+  const allowed = yield* (yield* ConnectionStore.ConnectionStore)
+    .ownerCanUse(binding.companyId, binding.patchId, id)
+    .pipe(
+      Effect.catchTags({
+        ConnectionNotFound: () => Effect.succeed(false),
+        ConnectionStorageFailed: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause }))
+      })
+    );
+  if (!allowed) return yield* new Runtime.AccessDenied({});
+});
+
+/** A connection call's `Target.recheck` once it holds its slot: its viewer, then the patch's owner. */
+export const connectionRecheck = (binding: Binding.Binding["Service"], id: string) =>
+  viewerRecheck(binding).pipe(Effect.andThen(ownerCheck(binding, id)));
 
 /**
  * A `live` operation as the instance's dev door runs it (ADR-0013): its arguments arrive without

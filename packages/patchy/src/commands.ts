@@ -13,6 +13,7 @@ import * as Layer from "effect/Layer";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -40,6 +41,9 @@ import {
   Shared,
   ShareRequest,
   SharingScope,
+  PatchAudience,
+  type ReportedAudience,
+  AudienceOptions,
   GuestRemoved,
   GuestRequest,
   GuestShared,
@@ -160,6 +164,71 @@ const scopeLines = {
   company: "Scope: company (signed-in colleagues in your company)",
   public: "Scope: public (anyone with the link)"
 } satisfies Record<typeof SharingScope.Type, string>;
+/**
+ * Who can open a patch, from the audience a response reports, or from its scope when the
+ * instance answered without one.
+ */
+const audienceLine = (audience: ReportedAudience | undefined, scope: typeof SharingScope.Type) =>
+  audience?.kind === "teams"
+    ? `Scope: teams ${audience.teams.map((team) => team.name).join(", ")} (signed-in members of these teams)`
+    : scopeLines[scope];
+/** A JSON document with its `audience` first, so an agent reads who can open it before `scope`. */
+const audienceFirst = (document: unknown): unknown => {
+  if (!Predicate.isObject(document) || !("audience" in document)) return document;
+  const { audience, ...rest } = document;
+  return { audience, ...rest };
+};
+
+/** Who can open a patch, as `--share` and `share`'s scope argument name it. */
+const audienceKinds = ["company", "public", "teams"] as const;
+const shareFlag = Flag.Literals("share", audienceKinds).pipe(
+  Flag.withDescription(
+    "Who can open the patch: your company, anyone with the link, or the teams named by --team"
+  ),
+  Flag.optional
+);
+const teamFlag = Flag.String("team").pipe(
+  Flag.withDescription(
+    "A team that can open it, by name or id; repeat for each, with --share teams"
+  ),
+  Flag.atLeast(0),
+  Flag.withDefault([])
+);
+/**
+ * The audience `--share` and `--team` ask for, team names resolved to ids through the instance,
+ * or none when neither is given, which keeps an update's audience.
+ */
+const chosenAudience = Effect.fn("chosenAudience")(function* (
+  token: Redacted.Redacted,
+  kind: Option.Option<(typeof audienceKinds)[number]>,
+  teams: ReadonlyArray<string>
+) {
+  const asked = Option.getOrElse(kind, () => (teams.length > 0 ? "teams" : undefined));
+  if (asked === undefined) return undefined;
+  if (asked !== "teams") {
+    if (teams.length > 0)
+      return yield* new LocalError({ message: `--team goes with --share teams, not ${asked}.` });
+    return { kind: asked } satisfies PatchAudience;
+  }
+  if (teams.length === 0)
+    return yield* new LocalError({ message: "Name at least one team with --team." });
+  const client = yield* Api.client(token);
+  const known = (yield* client
+    .audienceOptions()
+    .pipe(Effect.catch((error) => refused(error, "Could not read the company's teams.")))).teams;
+  const teamIds: string[] = [];
+  for (const named of teams) {
+    const team =
+      known.find((candidate) => candidate.id === named) ??
+      known.find((candidate) => candidate.name.toLowerCase() === named.trim().toLowerCase());
+    if (team === undefined)
+      return yield* new LocalError({
+        message: `No team is named ${named}. Run patchy audiences to list them.`
+      });
+    teamIds.push(team.id);
+  }
+  return { kind: "teams", teamIds } satisfies PatchAudience;
+});
 
 /** Wire literal of the 401 (`Unauthorized` in `@patchy/api`); the hint below keys on it. */
 const UNAUTHORIZED = "Missing or invalid API token.";
@@ -425,7 +494,7 @@ const status = Command.make("status", {}, () =>
 
 const fileArgument = Argument.String("file").pipe(Argument.withDescription("HTML file path"));
 
-/** `--force` on publish, delete, retire and restore. */
+/** `--force` accepts reported dependency impact on publication, sharing and lifecycle changes. */
 const forceFlag = Flag.Boolean("force").pipe(
   Flag.withDescription("Accept the reported dependant or source breakage; ask the person first"),
   Flag.withDefault(false)
@@ -567,11 +636,13 @@ const sendPublish = Effect.fn("sendPublish")(function* (
   const allWarnings =
     warnings.length === 0 ? published.warnings : [...published.warnings, ...warnings];
   yield* Output.report(
-    warnings.length === 0 ? document : Object.assign({}, document, { warnings: allWarnings }),
+    audienceFirst(
+      warnings.length === 0 ? document : Object.assign({}, document, { warnings: allWarnings })
+    ),
     [
       attempt.request.patchId !== undefined ? "Updated patch" : "Published patch",
       `URL: ${published.address}`,
-      scopeLines[published.scope],
+      audienceLine(published.audience, published.scope),
       `Patch ID: ${published.patchId}`,
       `Tier: ${published.tier}`,
       `Version: ${published.versionNumber}`,
@@ -682,6 +753,24 @@ const dryRunPublish = Effect.fn("dryRunPublish")(function* (
   for (const warning of warnings) yield* Output.warn(`Warning: ${warning}`);
 });
 
+const encodeAudienceOptions = Schema.encodeSync(AudienceOptions);
+const audiences = Command.make("audiences", {}, () =>
+  run(
+    Effect.gen(function* () {
+      const client = yield* Api.client(yield* requiredToken());
+      const choices = yield* client
+        .audienceOptions()
+        .pipe(Effect.catch((error) => refused(error, "Could not read audience choices.")));
+      yield* Output.report(
+        encodeAudienceOptions(choices),
+        choices.teams.length === 0
+          ? ["No teams yet. An admin creates them in Settings."]
+          : choices.teams.map((team) => `${team.name}  ${team.id}`)
+      );
+    })
+  )
+).pipe(Command.withDescription("List the company's teams, for --share teams --team <name>"));
+
 const publish = Command.make(
   "publish",
   {
@@ -694,10 +783,8 @@ const publish = Command.make(
       Flag.withDescription("Update an existing patch only; never creates a patch"),
       Flag.optional
     ),
-    share: Flag.Literals("share", SharingScope.literals).pipe(
-      Flag.withDescription("Who can open the patch: your company or anyone with the link"),
-      Flag.optional
-    ),
+    share: shareFlag,
+    team: teamFlag,
     description: Flag.String("description").pipe(
       Flag.withDescription("Set the description when publishing an HTML file"),
       Flag.optional
@@ -745,6 +832,8 @@ const publish = Command.make(
         if (Option.isSome(pending)) {
           return yield* sendPublish(pending.value, apiToken, identity.user.id, true, repo);
         }
+        // Sent whole, so `--share company` widens a patch open to teams; none keeps its audience.
+        const audience = yield* chosenAudience(apiToken, options.share, options.team);
 
         if (repo !== undefined) {
           const project = yield* checkRepoPublish(repo, options);
@@ -770,7 +859,7 @@ const publish = Command.make(
               ...(project.version === undefined || options.allowBehind
                 ? {}
                 : { baseVersion: project.version }),
-              ...(Option.isSome(options.share) ? { scope: options.share.value } : {}),
+              ...(audience === undefined ? {} : { audience }),
               ...(options.force ? { force: true } : {}),
               publishKey: yield* cryptography.internalId("pub"),
               metadata: new PublishMetadata({
@@ -849,7 +938,7 @@ const publish = Command.make(
             },
             html,
             ...(patchId !== null ? { patchId } : {}),
-            ...(Option.isSome(options.share) ? { scope: options.share.value } : {}),
+            ...(audience === undefined ? {} : { audience }),
             ...(options.force ? { force: true } : {}),
             publishKey: yield* cryptography.internalId("pub"),
             metadata: new PublishMetadata({
@@ -914,11 +1003,11 @@ const patchTarget = Effect.fn("patchTarget")(function* (
 
 // --- share ------------------------------------------------------------------
 
-const isScope = Schema.is(SharingScope);
+const isScope = Schema.is(Schema.Literals(audienceKinds));
 
 /** What `share` was asked to do, read once from its arguments and flags, and the file it names. */
 type ShareOperation = { readonly file: Option.Option<string> } & (
-  | { readonly _tag: "Scope"; readonly scope: typeof SharingScope.Type }
+  | { readonly _tag: "Scope"; readonly scope: Option.Option<(typeof audienceKinds)[number]> }
   | { readonly _tag: "Add"; readonly email: string }
   | { readonly _tag: "Remove"; readonly guest: string }
   | { readonly _tag: "List" }
@@ -927,8 +1016,9 @@ type ShareOperation = { readonly file: Option.Option<string> } & (
 /** `share`'s arguments as the one operation they ask for, or why they don't. */
 const shareOperation = (options: {
   readonly fileOrScope: Option.Option<string>;
-  readonly scope: Option.Option<typeof SharingScope.Type>;
-  readonly share: Option.Option<typeof SharingScope.Type>;
+  readonly scope: Option.Option<(typeof audienceKinds)[number]>;
+  readonly share: Option.Option<(typeof audienceKinds)[number]>;
+  readonly team: ReadonlyArray<string>;
   readonly add: Option.Option<string>;
   readonly remove: Option.Option<string>;
   readonly list: boolean;
@@ -945,6 +1035,7 @@ const shareOperation = (options: {
     if (
       Option.isSome(options.scope) ||
       Option.isSome(options.share) ||
+      options.team.length > 0 ||
       Option.exists(options.fileOrScope, isScope)
     )
       return refuse("Change who can open the patch, or its guests, not both.");
@@ -954,12 +1045,18 @@ const shareOperation = (options: {
     return refuse("Pass --share or a positional scope, not both.");
   const named = Option.orElse(options.share, () => options.scope);
   const scope = Option.isSome(named) ? named : Option.filter(options.fileOrScope, isScope);
-  if (Option.isNone(scope))
-    return refuse("Pass a sharing scope, company or public, or one of --add, --remove or --list.");
+  // `--team` alone means the teams it names.
+  if (Option.isNone(scope) && options.team.length === 0)
+    return refuse(
+      "Pass who can open it, company, public or teams with --team, or one of --add, --remove or --list."
+    );
   return Result.succeed({
     _tag: "Scope",
-    scope: scope.value,
-    file: Option.isSome(named) ? options.fileOrScope : Option.none()
+    scope,
+    file:
+      Option.isSome(named) || (Option.isNone(scope) && options.team.length > 0)
+        ? options.fileOrScope
+        : Option.none()
   });
 };
 
@@ -967,17 +1064,18 @@ const share = Command.make(
   "share",
   {
     fileOrScope: Argument.String("file-or-scope").pipe(
-      Argument.withDescription("The published HTML file, or company|public when using --patch"),
+      Argument.withDescription(
+        "The published HTML file, or company|public|teams when using --patch"
+      ),
       Argument.optional
     ),
-    scope: Argument.Literals("scope", SharingScope.literals).pipe(
-      Argument.withDescription("company or public, after the published HTML file"),
+    scope: Argument.Literals("scope", audienceKinds).pipe(
+      Argument.withDescription("company, public or teams, after the published HTML file"),
       Argument.optional
     ),
-    share: Flag.Literals("share", SharingScope.literals).pipe(
-      Flag.withDescription("Who can open the patch: your company or anyone with the link"),
-      Flag.optional
-    ),
+    force: forceFlag,
+    share: shareFlag,
+    team: teamFlag,
     add: Flag.String("add").pipe(
       Flag.withDescription(
         "Share the patch with someone at another company, by the email they sign in to Patchy with"
@@ -1007,21 +1105,36 @@ const share = Command.make(
     return (untargeted ? runProject : run)(
       Effect.gen(function* () {
         const operation = yield* Effect.fromResult(decoded);
+        if (options.force && operation._tag !== "Scope")
+          return yield* new LocalError({ message: "--force applies only to audience changes." });
         const patchId = yield* patchTarget(operation.file, options.patch);
-        const client = yield* Api.client(yield* requiredToken());
+        const token = yield* requiredToken();
+        const client = yield* Api.client(token);
         yield* Match.valueTags(operation, {
           Scope: ({ scope }) =>
-            client.share({ params: { patchId }, payload: new ShareRequest({ scope }) }).pipe(
-              Effect.catch((error) => refused(error, "Sharing failed.")),
-              Effect.flatMap((shared) =>
-                Output.report(encodeShared(shared), [
-                  "Changed patch sharing",
-                  `URL: ${shared.publicUrl}`,
-                  scopeLines[shared.scope],
-                  `Patch ID: ${shared.patchId}`
-                ])
-              )
-            ),
+            Effect.gen(function* () {
+              // Always the whole audience, so `share <file> company` widens one open to teams.
+              const audience = yield* chosenAudience(token, scope, options.team);
+              if (audience === undefined)
+                return yield* new LocalError({ message: "Pass who can open it." });
+              const shared = yield* client
+                .share({
+                  params: { patchId },
+                  payload: new ShareRequest({
+                    audience,
+                    ...(options.force ? { force: true } : {})
+                  })
+                })
+                .pipe(Effect.catch((error) => refused(error, "Sharing failed.")));
+              yield* Output.report(audienceFirst(encodeShared(shared)), [
+                "Changed patch sharing",
+                `URL: ${shared.publicUrl}`,
+                audienceLine(shared.audience, shared.scope),
+                `Patch ID: ${shared.patchId}`
+              ]);
+              for (const warning of shared.warnings ?? [])
+                yield* Output.warn(`Warning: ${warning}`);
+            }),
           Add: ({ email }) =>
             client.addGuest({ params: { patchId }, payload: new GuestRequest({ email }) }).pipe(
               Effect.catch((error) => refused(error, "Sharing failed.")),
@@ -2268,6 +2381,7 @@ const withCommandHeader = <Name extends CliCommand, Input, ContextInput, E, R>(
 export const root = Command.make("patchy").pipe(
   Command.withDescription("Build patch repos and publish patches to a Patchy Cloud instance."),
   Command.withSubcommands([
+    withCommandHeader(audiences),
     withCommandHeader(login),
     withCommandHeader(logout),
     auth,

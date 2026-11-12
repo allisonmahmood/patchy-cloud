@@ -8,7 +8,6 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/sql/SqlClient";
 import * as Binding from "./Binding.js";
 import * as CallbackGateway from "./CallbackGateway.js";
 import * as InvocationCapabilities from "./InvocationCapabilities.js";
@@ -17,27 +16,8 @@ import * as RuntimeLog from "./RuntimeLog.js";
 import * as Fixtures from "./test/callbacks.js";
 import { NodeCryptography } from "@patchy/core";
 
-/** The binding's company, viewer and patch, which a connection's calls must come from to be shown. */
-const bindingPatch = Layer.effectDiscard(
-  Effect.flatMap(SqlClient.SqlClient, (sql) =>
-    Effect.all([
-      sql`INSERT INTO companies (id, handle, name)
-        VALUES (${Fixtures.identity.company.id}, ${Fixtures.identity.company.handle}, ${Fixtures.identity.company.name})`,
-      sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
-        VALUES (${Fixtures.identity.user.id}, 'user_callbacks_viewer', ${Fixtures.identity.company.id},
-          ${Fixtures.identity.user.email}, ${Fixtures.identity.user.name}, 'member')`,
-      sql`INSERT INTO patches (id, company_id, owner_user_id, title, name)
-        VALUES (${Fixtures.binding.patchId}, ${Fixtures.identity.company.id}, ${Fixtures.identity.user.id},
-          'Callbacks', ${Fixtures.binding.patchId})`
-    ])
-  )
-);
-
 it.layer(
-  Layer.merge(RuntimeLog.layer, bindingPatch).pipe(
-    Layer.provide(Testing.layer()),
-    Layer.provideMerge(NodeCryptography.layer)
-  )
+  RuntimeLog.layer.pipe(Layer.provide(Testing.layer()), Layer.provideMerge(NodeCryptography.layer))
 )("CallbackGateway", (it) => {
   it.effect(
     "kind checks refuse query writes, mutation file/shared access, and unknown nested calls",
@@ -448,6 +428,7 @@ it.layer(
             { ok: false, code: "access_denied" }
           );
           assert.deepStrictEqual([...dependencies].sort(), [
+            `members:${Fixtures.identity.company.id}`,
             "patch:sourceshared",
             "store:sourceshared:docs"
           ]);
@@ -763,7 +744,11 @@ it.layer(
         kind: "action",
         reauthorize: Effect.gen(function* () {
           const [pending] = yield* log
-            .recent({ companyId: Fixtures.identity.company.id, connectionId: "integration-order" })
+            .recent({
+              companyId: Fixtures.identity.company.id,
+              connectionId: "integration-order",
+              patchIds: [Fixtures.binding.patchId]
+            })
             .pipe(Effect.orDie);
           assert.strictEqual(pending?.outcome, "pending");
           return yield* new Runtime.SessionExpired({});
@@ -792,7 +777,8 @@ it.layer(
       });
       const [denied] = yield* log.recent({
         companyId: Fixtures.identity.company.id,
-        connectionId: "integration-order"
+        connectionId: "integration-order",
+        patchIds: [Fixtures.binding.patchId]
       });
       assert.include(denied, {
         outcome: "failure",

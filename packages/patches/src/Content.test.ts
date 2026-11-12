@@ -16,6 +16,7 @@ import * as SqlError from "effect/sql/SqlError";
 import { Analytics } from "@patchy/analytics";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { sharedTableId } from "@patchy/api";
+import { Teams } from "@patchy/companies";
 import { ContentStore } from "@patchy/content-store";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import * as CompanyTesting from "@patchy/company-database/testing";
@@ -396,7 +397,7 @@ it.layer(
         assert.isFalse(inventory.tables.contacts?.shared);
         assert.instanceOf(
           yield* service
-            .sharedTable(source.patchId, "contacts", uploader.company.id)
+            .sharedTable(source.patchId, "contacts", uploader.company.id, uploader.user.id)
             .pipe(Effect.flip),
           Patches.PatchNotOpenable
         );
@@ -422,7 +423,7 @@ it.layer(
         );
         assert.instanceOf(
           yield* service
-            .sharedTable(source.patchId, "contacts", uploader.company.id)
+            .sharedTable(source.patchId, "contacts", uploader.company.id, uploader.user.id)
             .pipe(Effect.flip),
           Patches.PatchNotOpenable
         );
@@ -1139,6 +1140,7 @@ it.layer(
     Layer.provideMerge(Layer.mergeAll(Patches.layer, store.layer)),
     Layer.provideMerge(Analytics.layerNoop),
     Layer.provideMerge(Fixtures.integrations),
+    Layer.provideMerge(Teams.layer),
     Layer.provideMerge(
       Tables.layer.pipe(Layer.provideMerge(CompanyTesting.layer({ maxBackends: 0 })))
     ),

@@ -122,10 +122,15 @@ export interface Guest {
  */
 export const Guests = Context.Reference<
   | {
-      readonly list: (companyId: string) => Effect.Effect<ReadonlyArray<Guest>, SqlError>;
+      /** As `viewerId` may see them: an admin every patch, anyone else the ones they can open. */
+      readonly list: (
+        companyId: string,
+        viewerId: string
+      ) => Effect.Effect<ReadonlyArray<Guest>, SqlError>;
       readonly removeAll: (input: {
         readonly companyId: string;
         readonly userId: string;
+        readonly actorId: string;
       }) => Effect.Effect<void, SqlError>;
     }
   | undefined
@@ -395,7 +400,8 @@ const render = Effect.fn("CompanyPage.render")(function* (
   const users = yield* (yield* Users.Users).list(viewer.company.id);
   const invites = yield* companies.listInvites(viewer.company.id);
   const companyGuests = yield* Guests;
-  const guests = companyGuests === undefined ? [] : yield* companyGuests.list(viewer.company.id);
+  const guests =
+    companyGuests === undefined ? [] : yield* companyGuests.list(viewer.company.id, viewer.user.id);
   const ownedPatches = yield* OwnedPatches;
   const owned =
     ownedPatches === undefined
@@ -429,7 +435,12 @@ const render = Effect.fn("CompanyPage.render")(function* (
     list.map((user): Entry => ({ kind: "user", user }));
   const invited = openInvites.map((invite): Entry => ({ kind: "invite", invite }));
   const lists: Record<Show, readonly Entry[]> = {
-    all: [...people(active), ...invited, ...people(deactivated)],
+    all: [
+      ...people(active),
+      ...invited,
+      ...people(deactivated),
+      ...guests.map((guest): Entry => ({ kind: "guest", guest }))
+    ],
     admins: people(admins),
     invited,
     guests: guests.map((guest): Entry => ({ kind: "guest", guest })),
@@ -460,9 +471,9 @@ const render = Effect.fn("CompanyPage.render")(function* (
     readonly name: string;
     readonly line: string;
     readonly after?: string;
-    readonly role?: Users.Role;
+    readonly role?: string;
   }) =>
-    `<div class="cell-name">${spec.mark}<div class="row-main"><span class="row-name">${escapeHtml(spec.name)}${spec.after === undefined ? "" : ` ${spec.after}`}</span>${spec.line === "" ? "" : `<span class="row-desc">${spec.line}</span>`}${spec.role === undefined ? "" : `<span class="row-desc show-sm">${roleLabel(spec.role)}</span>`}</div></div>`;
+    `<div class="cell-name">${spec.mark}<div class="row-main"><span class="row-name">${escapeHtml(spec.name)}${spec.after === undefined ? "" : ` ${spec.after}`}</span>${spec.line === "" ? "" : `<span class="row-desc">${spec.line}</span>`}${spec.role === undefined ? "" : `<span class="row-desc show-sm">${escapeHtml(spec.role)}</span>`}</div></div>`;
   const none = '<span class="muted">—</span>';
 
   const userRow = (user: Users.User) => {
@@ -514,7 +525,7 @@ const render = Effect.fn("CompanyPage.render")(function* (
           ...(user.name.trim() ? [escapeHtml(user.email)] : []),
           ...(user.deactivatedAt === null ? [] : [`Deactivated ${time(user.deactivatedAt)}`])
         ].join(" · "),
-        role: user.role,
+        role: roleLabel(user.role),
         ...(self ? { after: '<span class="you">(you)</span>' } : {})
       }),
       roleLabel(user.role),
@@ -543,7 +554,7 @@ const render = Effect.fn("CompanyPage.render")(function* (
         name: invite.email,
         line,
         after: status,
-        role: invite.role
+        role: roleLabel(invite.role)
       }),
       roleLabel(invite.role),
       ...(owned ? [none] : []),
@@ -568,14 +579,19 @@ const render = Effect.fn("CompanyPage.render")(function* (
     personCell({
       mark: avatar(guest.userId, guest.name),
       name: guest.name,
-      line: `${escapeHtml(guest.email)} · ${escapeHtml(guest.companyName)}`
+      line: `${escapeHtml(guest.email)} · ${escapeHtml(guest.companyName)}`,
+      ...(show === "guests" ? {} : { role: "Guest" })
     }),
-    guest.patches
-      .map(
-        (patch) =>
-          `<div class="cell-name">${patchMark(patch.name, patch.tier)}<div class="row-main"><span>${patchLink(viewer, patch)} ${offBadge(patch)}</span><span class="row-desc">Shared by ${escapeHtml(patch.sharedBy)} · ${time(patch.sharedAt)}</span></div></div>`
-      )
-      .join(""),
+    ...(show === "guests"
+      ? [
+          guest.patches
+            .map(
+              (patch) =>
+                `<div class="cell-name">${patchMark(patch.name, patch.tier)}<div class="row-main"><span>${patchLink(viewer, patch)} ${offBadge(patch)}</span><span class="row-desc">Shared by ${escapeHtml(patch.sharedBy)} · ${time(patch.sharedAt)}</span></div></div>`
+            )
+            .join("")
+        ]
+      : ["Guest", ...(owned ? [`${guest.patches.length} patches`] : []), none]),
     ...(admin
       ? [
           menu({
@@ -616,7 +632,7 @@ const render = Effect.fn("CompanyPage.render")(function* (
               ? [userRow(entry.user)]
               : entry.kind === "invite"
                 ? [inviteRow(entry.invite)]
-                : []
+                : [guestRow(entry.guest)]
           )
         });
   const empty = emptyState(
@@ -923,7 +939,9 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
       const guest =
         guests === undefined
           ? undefined
-          : (yield* guests.list(viewer.company.id)).find(({ userId }) => userId === act.id);
+          : (yield* guests.list(viewer.company.id, viewer.user.id)).find(
+              ({ userId }) => userId === act.id
+            );
       if (guests === undefined || guest === undefined)
         return yield* render(viewer, {
           filter: { show: "guests", query: "" },
@@ -932,7 +950,11 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
       if (act.kind === "view-guest-removal")
         return yield* render(viewer, { filter: { show: "guests", query: "" }, removing: guest });
       // Ends whatever they hold now, so a patch shared since the confirmation goes too.
-      yield* guests.removeAll({ companyId: viewer.company.id, userId: guest.userId });
+      yield* guests.removeAll({
+        companyId: viewer.company.id,
+        userId: guest.userId,
+        actorId: viewer.user.id
+      });
       return done(`Removed ${guest.name} from all patches`, peopleHref("guests", ""));
     }
     const { role } = yield* decodeRole(Object.fromEntries(yield* request.urlParamsBody));

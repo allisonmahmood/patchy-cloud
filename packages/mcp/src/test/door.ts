@@ -26,7 +26,7 @@ import {
   type ServerCallReply
 } from "@patchy/api";
 import { AgentConnections, MachineTokens } from "@patchy/auth";
-import { Companies, Users } from "@patchy/companies";
+import { Companies, Teams, Users } from "@patchy/companies";
 import * as CompanyTesting from "@patchy/company-database/testing";
 import { contentHash } from "../../../../test/crypto.js";
 import { Feedback } from "@patchy/feedback";
@@ -71,6 +71,7 @@ export const harnessWith = (connections: ReadonlyArray<ConnectionStoreDev.DevCon
     Layer.provideMerge(ConnectionStoreDev.layer(connections)),
     Layer.provideMerge(Tables.layer),
     Layer.provideMerge(Wakes.layer),
+    Layer.provideMerge(Teams.layer),
     Layer.provideMerge(CompanyTesting.layer()),
     Layer.provideMerge(CompanyTesting.resourceChangesLayer),
     Layer.provideMerge(Testing.layer())
@@ -331,7 +332,9 @@ export const publish = Effect.fn("DoorTest.publish")(function* (
     filename: null,
     title: options.title ?? `${name} title`,
     ...(options.description === undefined ? {} : { description: options.description }),
-    ...(options.scope === undefined ? {} : { scope: options.scope }),
+    ...(options.update === true && options.scope === undefined
+      ? {}
+      : { scope: options.scope ?? "company" }),
     repoOrg: null,
     repoName: null,
     cliVersion: null,

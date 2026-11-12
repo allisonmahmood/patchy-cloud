@@ -1,3 +1,4 @@
+import type * as PatchVisibility from "./PatchVisibility.js";
 import {
   AttioSnapshot,
   type ConnectionDeclaration,
@@ -25,6 +26,16 @@ export const Description = Schema.String.check(
   Schema.isMaxLength(500),
   Schema.makeFilter((value) => !/[\r\n]/.test(value))
 );
+/** Who may build patches with a connection: everyone in the company, or the people on its teams. */
+export const Audience = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("company") }),
+  Schema.Struct({
+    kind: Schema.Literal("teams"),
+    teamIds: Schema.Array(Schema.String).check(Schema.isMinLength(1))
+  })
+]);
+export type Audience = typeof Audience.Type;
+
 const fields = {
   id: Schema.String,
   companyId: Schema.String,
@@ -34,12 +45,6 @@ const fields = {
   status: Schema.Literals(["connected", "disconnected"]),
   /** Patches that declare it turn their guests away while it's set; an admin's choice. */
   blockGuests: Schema.Boolean,
-  /**
-   * Open only to selected teams, which a later release sets and decides. This one can't tell who
-   * is on them, so no patch builds or calls with it; admins still see and manage it. The store
-   * always says; a connection made without it, as `patchy dev` makes its own, is open to all.
-   */
-  restricted: Schema.optionalKey(Schema.Boolean),
   credentialRevision: Schema.Int,
   metadataRevision: Schema.Int,
   lastTestedAt: Schema.NullOr(Schema.String),
@@ -112,27 +117,16 @@ export class ConnectionNotFound extends Schema.TaggedError<ConnectionNotFound>()
     return "This connection could not be found.";
   }
 }
-/** A connection patches can't use now: paused, or `restricted` to teams. */
 export class ConnectionNotConnected extends Schema.TaggedError<ConnectionNotConnected>()(
   "ConnectionNotConnected",
-  { restricted: Schema.optionalKey(Schema.Literal(true)) }
+  {}
 ) {
   readonly code = "connection_not_connected";
   readonly status = 409;
   override get message() {
-    return this.restricted
-      ? "This connection is open only to some teams, which this release of Patchy can't check, so no patch can use it. Ask a company administrator."
-      : "This connection is paused. Ask a company administrator to resume it.";
+    return "This connection is paused. Ask a company administrator to resume it.";
   }
 }
-
-/** Refuses a connection patches can't use now, as `ConnectionNotConnected` says why. */
-export const usable = (connection: Pick<Connection, "status" | "restricted">) =>
-  connection.restricted
-    ? Effect.fail(new ConnectionNotConnected({ restricted: true }))
-    : connection.status === "connected"
-      ? Effect.void
-      : Effect.fail(new ConnectionNotConnected({}));
 export class StaleGenerated extends Schema.TaggedError<StaleGenerated>()("StaleGenerated", {}) {
   readonly code = "stale_generated";
   readonly status = 409;
@@ -232,6 +226,17 @@ export class ConnectionMutationUnavailable extends Schema.TaggedError<Connection
     return "Connection administration is unavailable in the local development runtime. Use the company's connections page.";
   }
 }
+/** A form that names no audience or no team, or a team that isn't the company's. */
+export class InvalidConnectionAudience extends Schema.TaggedError<InvalidConnectionAudience>()(
+  "InvalidConnectionAudience",
+  { cause: Schema.optional(Schema.Defect()) }
+) {
+  readonly code = "invalid_connection_audience";
+  readonly status = 422;
+  override get message() {
+    return "Select Company or one or more existing company teams.";
+  }
+}
 export class ConnectionStorageFailed extends Schema.TaggedError<ConnectionStorageFailed>()(
   "ConnectionStorageFailed",
   {
@@ -252,6 +257,7 @@ export class ConnectionStorageFailed extends Schema.TaggedError<ConnectionStorag
       "describe",
       "blockGuests",
       "blockingGuests",
+      "audience",
       "delete",
       "resolve",
       "poolCredentials",
@@ -269,8 +275,47 @@ export class ConnectionStorageFailed extends Schema.TaggedError<ConnectionStorag
   }
 }
 
-export type ResolveError = ConnectionNotConnected | StaleGenerated | ConnectionStorageFailed;
+/** A publish whose owner can't build with a connection it declares. */
+export class ConnectionAccessDenied extends Schema.TaggedError<ConnectionAccessDenied>()(
+  "ConnectionAccessDenied",
+  {}
+) {
+  readonly code = "connection_access_denied";
+  readonly status = 403;
+  override get message() {
+    return "The patch owner cannot build with a declared connection. Restore their connection team access or reassign the patch.";
+  }
+}
+/** The actor stopped being an active admin before the change committed. */
+export class ConnectionAdministrationDenied extends Schema.TaggedError<ConnectionAdministrationDenied>()(
+  "ConnectionAdministrationDenied",
+  { cause: Schema.Defect() }
+) {
+  readonly code = "access_denied";
+  readonly status = 403;
+  override get message() {
+    return "Only an admin can change connection audiences.";
+  }
+}
+/**
+ * The audience an admin chose stops live patches' owners building with the connection, by name;
+ * saving again with acknowledgement goes ahead.
+ */
+export class ConnectionCutsOff extends Schema.TaggedError<ConnectionCutsOff>()(
+  "ConnectionCutsOff",
+  { patches: Schema.Array(Schema.String) }
+) {
+  readonly code = "connection_cuts_off";
+  readonly status = 409;
+  override get message() {
+    return `This stops ${this.patches.join(", ")} from using the connection. Nothing was changed.`;
+  }
+}
+export type ResolveError =
+  ConnectionAccessDenied | ConnectionNotConnected | StaleGenerated | ConnectionStorageFailed;
 export type ConnectionError =
+  | ConnectionAdministrationDenied
+  | InvalidConnectionAudience
   | ResolveError
   | ConnectionNotFound
   | ConnectionChanged
@@ -347,12 +392,47 @@ export interface Deleted {
 export class ConnectionStore extends Context.Service<
   ConnectionStore,
   {
-    readonly list: (companyId: string) => Effect.Effect<ReadonlyArray<Connection>, ConnectionError>;
+    readonly audience: (companyId: string, id: string) => Effect.Effect<Audience, ConnectionError>;
+    /**
+     * An admin's change; the actor is rechecked as an active admin under the company lock. Under
+     * that lock it refuses, unless `acknowledged`, when it stops live patches whose owners can
+     * build with the connection now, so a publish landing before it can't slip past the warning.
+     */
+    readonly setAudience: (
+      input: Identity & { readonly audience: Audience; readonly acknowledged?: boolean }
+    ) => Effect.Effect<void, ConnectionError | ConnectionCutsOff>;
+    /**
+     * Whether this person may build with the connection: its audience admits them by their
+     * recorded teams, whether or not they are active.
+     */
+    readonly canUse: (
+      companyId: string,
+      id: string,
+      userId: string
+    ) => Effect.Effect<boolean, ConnectionNotFound | ConnectionStorageFailed>;
+    /**
+     * Whether the patch's current owner may build with the connection, as every call through it
+     * checks; never the handler's caller, who only needs to open the patch.
+     */
+    readonly ownerCanUse: (
+      companyId: string,
+      patchId: string,
+      id: string
+    ) => Effect.Effect<boolean, ConnectionNotFound | ConnectionStorageFailed>;
+    readonly list: (
+      companyId: string,
+      userId?: string
+    ) => Effect.Effect<ReadonlyArray<Connection>, ConnectionError>;
     readonly get: (companyId: string, id: string) => Effect.Effect<Connection, ConnectionError>;
     /** Each declared connection's usage by id; a connection with no entry is `unused`. */
     readonly usage: (
-      companyId: string
-    ) => Effect.Effect<ReadonlyMap<string, Usage>, ConnectionError>;
+      companyId: string,
+      userId?: string
+    ) => Effect.Effect<
+      ReadonlyMap<string, Usage>,
+      ConnectionError,
+      PatchVisibility.PatchVisibility
+    >;
     /** The patch and number of stored versions, so recent calls name where they came from. */
     readonly versions: (
       companyId: string,
@@ -365,7 +445,8 @@ export class ConnectionStore extends Context.Service<
     readonly detail: (
       companyId: string,
       integration: Integration,
-      handle: string
+      handle: string,
+      userId?: string
     ) => Effect.Effect<ConnectionDetail, ConnectionNotFound | ConnectionStorageFailed>;
     /** A stored snapshot, by the integration its own row names, even after its connection is gone. */
     readonly snapshot: (

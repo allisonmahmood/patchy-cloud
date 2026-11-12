@@ -46,13 +46,13 @@ it.layer(socket)("the switcher's list", (it) => {
       const patches = yield* Patches.Patches;
       const sql = yield* SqlClient.SqlClient;
       const notes = yield* publish(workspace.owner, "team-notes", { title: "Team notes" });
-      const kit = yield* publish(workspace.admin, "press-kit", { scope: "public" });
+      const kit = yield* publish(workspace.admin, "press-kit", { audience: { kind: "public" } });
       const retired = yield* publish(workspace.owner, "old-board");
       yield* patches.retire(retired.patchId, actor(workspace.owner));
       const disabled = yield* publish(workspace.owner, "rota");
       yield* sql`UPDATE patches SET disabled_at = now() WHERE id = ${disabled.patchId}`;
       yield* publish(other.owner, "their-notes");
-      yield* publish(other.owner, "their-kit", { scope: "public" });
+      yield* publish(other.owner, "their-kit", { audience: { kind: "public" } });
       yield* patches.recordOpen(workspace.member.id, notes.patchId, notes.versionId);
       const rows = (viewer: Person) => ({
         kit: {
@@ -98,7 +98,7 @@ it.layer(socket)("the switcher's list", (it) => {
       const board = yield* publish(workspace.owner, "site-board");
       const notes = yield* publish(workspace.owner, "site-notes", { title: "Site notes" });
       const retired = yield* publish(workspace.owner, "old-notes");
-      yield* publish(workspace.owner, "price-list", { scope: "public" });
+      yield* publish(workspace.owner, "price-list", { audience: { kind: "public" } });
       for (const patch of [board, notes, retired])
         yield* grants.grant({
           patchId: patch.patchId,
@@ -135,9 +135,17 @@ it.layer(socket)("the switcher's list", (it) => {
       // Never Harbor Works' own public patch, nor one the guest can't open now.
       yield* listed("board", "notes");
       // The same grant drops a patch while it is public, and lists it once it isn't.
-      yield* patches.setScope(notes.patchId, actor(workspace.owner), "public");
+      yield* patches.setSharing({
+        patchId: notes.patchId,
+        actor: actor(workspace.owner),
+        audience: { kind: "public" }
+      });
       yield* listed("board");
-      yield* patches.setScope(notes.patchId, actor(workspace.owner), "company");
+      yield* patches.setSharing({
+        patchId: notes.patchId,
+        actor: actor(workspace.owner),
+        audience: { kind: "company" }
+      });
       yield* listed("board", "notes");
       yield* grants.revoke({ patchId: board.patchId, userId: guests.member.id });
       yield* listed("notes");

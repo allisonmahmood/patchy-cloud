@@ -1,3 +1,4 @@
+import { Teams } from "@patchy/companies";
 import { assert, it } from "@effect/vitest";
 import type { ImapRead } from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
@@ -96,7 +97,7 @@ const setup = (handle: string, options: Setup = {}) =>
       ...(options.before === undefined ? {} : { before: options.before })
     });
     const source = Source.layer.pipe(Layer.provide(ImapTest.network(served, certs)));
-    const stored = yield* SqlConnectionStore.make.pipe(Effect.provide(source));
+    const stored = yield* SqlConnectionStore.make.pipe(Effect.provide([source, Teams.layer]));
     const store =
       options.pauseLogin === undefined ? stored : { ...stored, pauseLogin: options.pauseLogin };
     const connection = yield* store.connect({

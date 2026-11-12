@@ -1,3 +1,4 @@
+import { Teams } from "@patchy/companies";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import { assert, it } from "@effect/vitest";
@@ -177,6 +178,7 @@ const services = Layer.mergeAll(Content.layer, DeviceLogins.layer).pipe(
   Layer.provideMerge(recordingAnalytics),
   Layer.provideMerge(ConnectionStoreDev.layer([])),
   Layer.provideMerge(Tables.layer),
+  Layer.provideMerge(Teams.layer),
   Layer.provideMerge(Testing.layer()),
   Layer.provideMerge([Testing.resourceChangesLayer, Wakes.layer]),
   Layer.provideMerge(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv())))
@@ -195,7 +197,7 @@ const get = (url: string, headers: Record<string, string> = { cookie: signedInCo
 
 const publish = (
   title: string,
-  scope?: Patches.Patch["scope"],
+  scope?: "company" | "public",
   patchId: string | null = null,
   name?: string,
   definitions?: Pick<typeof Manifest.Type, "tables" | "uses">
@@ -223,7 +225,12 @@ const publish = (
         ownerUserId: DEV_SEED.userId,
         machineTokenId: DEV_SEED.tokenId,
         title,
-        ...(scope === undefined ? {} : { scope }),
+        audience:
+          scope === undefined
+            ? patchId === null
+              ? { kind: "company" }
+              : undefined
+            : { kind: scope },
         html: `<!doctype html><html><head><title>${title}</title></head><body><h1>${title}</h1></body></html>`,
         filename: null,
         repoOrg: null,
@@ -238,6 +245,64 @@ const publish = (
   );
 
 it.layer(layer)("pages", (it) => {
+  it.effect(
+    "team audiences protect direct, alias, historical and raw-content URLs after membership removal",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const patches = yield* Patches.Patches;
+        for (const [id, role] of [
+          ["usr_audience_inside", "member"],
+          ["usr_audience_outside", "admin"]
+        ] as const) {
+          yield* sql`INSERT INTO users(id, clerk_user_id, company_id, email, name, role) VALUES (${id}, ${id}, ${DEV_SEED.companyId}, ${`${id}@example.test`}, ${id}, ${role})`;
+        }
+        const manager = { companyId: DEV_SEED.companyId, actorId: DEV_SEED.userId };
+        const team = yield* (yield* Teams.Teams).create({ ...manager, name: "Serving audience" });
+        yield* (yield* Teams.Teams).setMemberships({
+          ...manager,
+          teamId: team.id,
+          add: [DEV_SEED.userId, "usr_audience_inside"]
+        });
+        const initial = yield* publish("Restricted original", "company", null, "audience-original");
+        yield* patches.setSharing({
+          patchId: initial.patchId,
+          actor: { userId: DEV_SEED.userId, admin: true },
+          audience: { kind: "teams", teamIds: [team.id] }
+        });
+        const latest = yield* publish(
+          "Restricted renamed",
+          undefined,
+          initial.patchId,
+          "audience-renamed"
+        );
+        const urls = [
+          initial.path,
+          latest.path,
+          `${latest.path}/~v/1`,
+          `/~content/${initial.patchId}/${initial.versionId}`
+        ];
+        const headers = (id: string) => ({
+          cookie: signedInCookies(signSession({ sub: id, email: `${id}@example.test`, name: id }))
+        });
+        for (const url of urls) {
+          const inside = yield* get(url, headers("usr_audience_inside"));
+          assert.equal(inside.status, url === initial.path ? 308 : 200, url);
+          const admin = yield* get(url, { cookie: signedInCookies() });
+          assert.equal(admin.status, url === initial.path ? 308 : 200, url);
+          const outside = yield* get(url, headers("usr_audience_outside"));
+          assert.equal(outside.status, 404, url);
+          assert.notInclude(yield* outside.text, "Restricted");
+        }
+        yield* (yield* Teams.Teams).setMemberships({
+          ...manager,
+          teamId: team.id,
+          remove: ["usr_audience_inside"]
+        });
+        for (const url of urls)
+          assert.equal((yield* get(url, headers("usr_audience_inside"))).status, 404, url);
+      })
+  );
   it.effect(
     "shows off notices only to active colleagues and limits Restore to owner or admin",
     () =>
@@ -418,11 +483,11 @@ it.layer(layer)("pages", (it) => {
       Effect.gen(function* () {
         const { patchId, path, versionId: olderVersionId } = yield* publish("Company-only history");
         const current = yield* publish("Serving Guarantees", undefined, patchId);
-        yield* (yield* Patches.Patches).setScope(
-          patchId,
-          { userId: DEV_SEED.userId, admin: false },
-          "public"
-        );
+        yield* (yield* Patches.Patches).setSharing({
+          patchId: patchId,
+          actor: { userId: DEV_SEED.userId, admin: false },
+          audience: { kind: "public" }
+        });
         for (const [url, content] of [
           [path, false],
           [`${path}/~v/2`, false],
@@ -1288,7 +1353,11 @@ it.layer(services)("pages in memory", (it) => {
         const { patchId, path: patchPath } = yield* publish("Sharing boundary");
         const patches = yield* Patches.Patches;
         for (const scope of ["company", "public", "company"] as const) {
-          yield* patches.setScope(patchId, { userId: DEV_SEED.userId, admin: false }, scope);
+          yield* patches.setSharing({
+            patchId: patchId,
+            actor: { userId: DEV_SEED.userId, admin: false },
+            audience: { kind: scope }
+          });
           for (const path of [patchPath, `${patchPath}/~v/1`]) {
             // A member gets their switcher and session at either scope, over the public page
             // while it is public; signed out, it is the bare public shell.
@@ -1570,7 +1639,11 @@ it.layer(services)("pages in memory", (it) => {
 
       // A public patch's own member still gets their switcher. Its guest, the deactivated and the
       // signed out get the public page's notice, with no viewer data and no cookie.
-      yield* patches.setScope(patchId, { userId: DEV_SEED.userId, admin: false }, "public");
+      yield* patches.setSharing({
+        patchId: patchId,
+        actor: { userId: DEV_SEED.userId, admin: false },
+        audience: { kind: "public" }
+      });
       yield* forViewer(yield* open(signedInCookies()), "needs_rebuild", about, rebuild);
       for (const cookie of [guest, other.cookie(), ""]) {
         const response = yield* open(cookie);
@@ -1663,7 +1736,11 @@ it.layer(services)("pages in memory", (it) => {
           userId: guest.user.id,
           grantedBy: DEV_SEED.userId
         });
-        yield* patches.setScope(patchId, { userId: DEV_SEED.userId, admin: false }, "public");
+        yield* patches.setSharing({
+          patchId: patchId,
+          actor: { userId: DEV_SEED.userId, admin: false },
+          audience: { kind: "public" }
+        });
         const visit = (cookie: string, at = path) =>
           send(at, { headers: { ...navigation, ...(cookie === "" ? {} : { cookie }) } });
         const opened = Effect.map(patches.opens(DEV_SEED.userId), (opens) =>
@@ -1835,8 +1912,8 @@ it.layer(services)("pages in memory", (it) => {
 
   /** A published tier 1 version's content URL, with its stored document. */
   /** A tier 1 patch: its `stored` document, and its `html` as a reader receives it, with the relay. */
-  const scripted = Effect.fn(function* (title: string) {
-    const { patchId, versionId, path } = yield* publish(title);
+  const scripted = Effect.fn(function* (title: string, scope?: "company" | "public") {
+    const { patchId, versionId, path } = yield* publish(title, scope);
     const sql = yield* SqlClient.SqlClient;
     yield* sql`UPDATE patch_versions SET tier = 1 WHERE id = ${versionId}`;
     const stored = yield* (yield* ContentStore.ContentStore).get(
@@ -1855,8 +1932,8 @@ it.layer(services)("pages in memory", (it) => {
 
   /**
    * One host's routes, built once so requests share its content documents, over the memory
-   * store with document reads counted. `beforeRead` runs inside each read, and `afterFind` after
-   * each retained-version lookup: a content request's last wait before the documents. Requests
+   * store with document reads counted. `beforeRead` runs inside each read, and `afterAdmit` after
+   * each audience check: a member's content request's last wait before the documents. Requests
    * run inside request events whose `contentLoad` and `contentEncoding` `loads` takes in order.
    */
   const host = Effect.fn(function* (
@@ -1871,7 +1948,7 @@ it.layer(services)("pages in memory", (it) => {
     const control = {
       reads: 0,
       beforeRead: Effect.void as Effect.Effect<void>,
-      afterFind: Effect.void as Effect.Effect<void>
+      afterAdmit: Effect.void as Effect.Effect<void>
     };
     const store = ContentStore.ContentStore.of({
       ...memory,
@@ -1886,8 +1963,7 @@ it.layer(services)("pages in memory", (it) => {
       Effect.map(Patches.make, (patches) =>
         Patches.Patches.of({
           ...patches,
-          findRetained: (...args) =>
-            patches.findRetained(...args).pipe(Effect.tap(() => control.afterFind))
+          admits: (...args) => patches.admits(...args).pipe(Effect.tap(() => control.afterAdmit))
         })
       )
     );
@@ -1975,19 +2051,19 @@ it.layer(services)("pages in memory", (it) => {
     Effect.gen(function* () {
       const { url, html } = yield* scripted("Joined once");
       const { control, request, loads } = yield* host();
-      let found = 0;
-      const bothFound = yield* Deferred.make<void>();
-      control.afterFind = Effect.suspend(() =>
-        ++found === 2 ? Deferred.succeed(bothFound, undefined) : Effect.void
+      let admitted = 0;
+      const bothAdmitted = yield* Deferred.make<void>();
+      control.afterAdmit = Effect.suspend(() =>
+        ++admitted === 2 ? Deferred.succeed(bothAdmitted, undefined) : Effect.void
       );
       const opened = yield* Deferred.make<void>();
       control.beforeRead = Deferred.await(opened);
-      // Neither request yields on its op budget: past its lookup, the second runs straight on
-      // to wait on the first one's read before this fiber's next turn.
+      // Neither request yields on its op budget: past its audience check, the second runs
+      // straight on to wait on the first one's read before this fiber's next turn.
       const both = yield* Effect.all([request(url), request(url)], {
         concurrency: "unbounded"
       }).pipe(Effect.provideService(Scheduler.PreventSchedulerYield, true), Effect.forkScoped);
-      yield* Deferred.await(bothFound);
+      yield* Deferred.await(bothAdmitted);
       yield* Effect.yieldNow;
       yield* Deferred.succeed(opened, undefined);
       for (const response of yield* Fiber.join(both)) {
@@ -1998,7 +2074,7 @@ it.layer(services)("pages in memory", (it) => {
       assert.sameMembers([(yield* loads)?.load, (yield* loads)?.load], ["read", "joined"]);
 
       // A failed read is a fault for this request (the server's 500), and the next one reads again.
-      control.afterFind = Effect.void;
+      control.afterAdmit = Effect.void;
       control.beforeRead = Effect.void;
       const missing = yield* scripted("Read again");
       const store = yield* ContentStore.ContentStore;
@@ -2068,7 +2144,10 @@ it.layer(services)("pages in memory", (it) => {
       });
       for (const [reason, [headers, status]] of Object.entries(refusals))
         yield* refused(reason, headers, status);
-      yield* (yield* Users.Users).deactivate({ companyId: DEV_SEED.companyId, userId: memberId });
+      yield* (yield* Users.Users).deactivate({
+        companyId: DEV_SEED.companyId,
+        userId: memberId
+      });
       yield* refused("deactivated", member, 403);
       // An operator-disabled patch is absent even to an active colleague.
       yield* sql`UPDATE patches SET disabled_at = now() WHERE id = ${patchId}`;
@@ -2209,13 +2288,13 @@ it.layer(services)("pages in memory", (it) => {
       yield* Queue.take(entered);
       yield* Fiber.interrupt(abandoned);
       // The retry waits on the abandoned load's work before it is allowed to finish.
-      const found = yield* Deferred.make<void>();
-      control.afterFind = Deferred.succeed(found, undefined).pipe(Effect.asVoid);
+      const admitted = yield* Deferred.make<void>();
+      control.afterAdmit = Deferred.succeed(admitted, undefined).pipe(Effect.asVoid);
       const retry = yield* request(url).pipe(
         Effect.provideService(Scheduler.PreventSchedulerYield, true),
         Effect.forkScoped
       );
-      yield* Deferred.await(found);
+      yield* Deferred.await(admitted);
       yield* Effect.yieldNow;
       yield* Deferred.succeed(opened, undefined);
       const retried = yield* Fiber.join(retry);

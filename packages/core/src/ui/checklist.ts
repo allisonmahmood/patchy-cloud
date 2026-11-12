@@ -10,7 +10,19 @@ export interface CheckItem {
   readonly checked?: boolean;
   /** Listed but not choosable now, such as a retired patch among live ones. */
   readonly disabled?: boolean;
+  /** Choosable but set back, such as a deactivated person on a team. */
+  readonly muted?: boolean;
+  /**
+   * Whether the box is ticked in what is saved, for a list that edits a saved selection, such as
+   * a team's people. A box that differs says Adding or Removing, and a `changeBar` counts it.
+   */
+  readonly saved?: boolean;
 }
+
+// Both words are drawn and the checklist chunk shows the one that applies, so they follow the box
+// without script.
+const changeWords =
+  '<span class="badge badge-info checkrow-adding">Adding</span><span class="badge badge-danger checkrow-removing">Removing</span>';
 
 /**
  * Checkboxes of one group as rows in a box, each with its name and a line about it, under a
@@ -44,7 +56,7 @@ export const checklist = (spec: {
         ...(item.description === undefined ? [] : [descriptionId]),
         ...group
       ].join(" ");
-      return `<label class="row checkrow"><input class="field-checkbox" type="checkbox" name="${escapeAttribute(spec.name)}" value="${escapeAttribute(item.value)}"${item.checked === true ? " checked" : ""}${item.disabled === true ? " disabled" : ""}${describedBy === "" ? "" : ` aria-describedby="${escapeAttribute(describedBy)}"`}${invalid}${index === first ? " autofocus" : ""}><span class="row-main"><span class="row-name">${escapeHtml(item.label)}</span>${item.description === undefined ? "" : `<span class="row-desc" id="${escapeAttribute(descriptionId)}">${escapeHtml(item.description)}</span>`}</span></label>`;
+      return `<label class="row checkrow${item.muted === true ? " checkrow-muted" : ""}"><input class="field-checkbox" type="checkbox" name="${escapeAttribute(spec.name)}" value="${escapeAttribute(item.value)}"${item.checked === true ? " checked" : ""}${item.disabled === true ? " disabled" : ""}${item.saved === undefined ? "" : ` data-saved="${item.saved ? "1" : "0"}"`}${describedBy === "" ? "" : ` aria-describedby="${escapeAttribute(describedBy)}"`}${invalid}${index === first ? " autofocus" : ""}><span class="row-main"><span class="row-name">${escapeHtml(item.label)}${item.saved === undefined ? "" : changeWords}</span>${item.description === undefined ? "" : `<span class="row-desc" id="${escapeAttribute(descriptionId)}">${escapeHtml(item.description)}</span>`}</span></label>`;
     })
     .join("");
   return `<fieldset class="fieldset" id="${escapeAttribute(spec.id)}"${invalid}><legend class="field-label">${escapeHtml(spec.legend)}</legend>${spec.hint === undefined ? "" : `<p class="field-hint" id="${escapeAttribute(hintId)}">${escapeHtml(spec.hint)}</p>`}<div class="rows box checklist">${items}</div>${spec.error === undefined ? "" : `<p class="field-error" id="${escapeAttribute(errorId)}"${first === -1 ? ' tabindex="-1" autofocus' : ""}>${escapeHtml(spec.error)}</p>`}</fieldset>`;

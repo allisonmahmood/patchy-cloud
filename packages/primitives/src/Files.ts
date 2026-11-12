@@ -284,7 +284,10 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
     )
       return yield* new Runtime.AccessDenied({});
     const source = yield* versions
-      .find(declaration.patchId)
+      .findForViewer(declaration.patchId, {
+        companyId: binding.identity.company.id,
+        userId: binding.identity.user.id
+      })
       .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
     if (Option.isNone(source) || source.value.companyId !== binding.companyId)
       return yield* new Runtime.AccessDenied({});

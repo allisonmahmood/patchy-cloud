@@ -38,6 +38,7 @@ import * as GuestProtocol from "@patchy/api/guest";
 import * as Inspection from "@patchy/execution/inspection";
 import { DeploymentConfig } from "@patchy/limits";
 import { Runtime, ServerBundles } from "@patchy/runtime";
+import type * as Audiences from "./Audiences.js";
 import * as Patches from "./Patches.js";
 
 const sameHandlers = Schema.toEquivalence(HandlerDescriptors);
@@ -116,6 +117,8 @@ export class Content extends Context.Service<
       | Patches.Behind
       | Patches.PendingObjectExpired
       | Patches.ResourceError
+      | Audiences.InvalidAudience
+      | Audiences.UpgradeRequired
       | Patches.LifecycleError
       | Patches.Tier2NotPublic
       | SqlError

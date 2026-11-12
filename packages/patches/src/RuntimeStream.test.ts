@@ -58,7 +58,10 @@ const layer = RuntimeStream.layer.pipe(
     Layer.mergeAll(StreamAdmission.layer, StreamLimits.layer).pipe(
       Layer.provideMerge(LoadedVersions.layer),
       Layer.provide(
-        Layer.succeed(GrantedGuests.GrantedGuests, { host: () => Effect.succeed(Option.none()) })
+        Layer.succeed(GrantedGuests.GrantedGuests, {
+          member: () => Effect.succeed(true),
+          host: () => Effect.succeed(Option.none())
+        })
       ),
       Layer.provideMerge(dependencies)
     )

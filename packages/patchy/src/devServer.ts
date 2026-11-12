@@ -392,7 +392,7 @@ export const serve = Effect.fn("Dev.serve")(function* (
   const url = yield* mount({
     user: prepared.identity.user,
     company: prepared.identity.company,
-    admin: prepared.identity.role === "admin"
+    admin: prepared.identity.role !== "member"
   });
   const colleagueServer = yield* Layer.build(Layer.fresh(layer));
   const colleagueUrl = yield* mount({

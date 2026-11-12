@@ -18,7 +18,7 @@ import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as ConnectionStore from "../ConnectionStore.js";
-import { operation } from "../definition.js";
+import { connectionRecheck, operation, ownerCheck, ViewerRefusal } from "../definition.js";
 import * as Execution from "./Execution.js";
 import {
   acceptedSourceTypes,
@@ -123,6 +123,7 @@ export class SourceSchemaChanged extends Schema.TaggedError<SourceSchemaChanged>
 }
 
 export const Errors = Schema.Union([
+  ViewerRefusal,
   Execution.Errors,
   ConnectionNotDeclared,
   RelationUnknown,
@@ -199,7 +200,7 @@ const resolve = Effect.fn("PostgresOperations.resolve")(function* (alias: string
   if (!Object.hasOwn(binding.manifest.uses, alias) || declaration?.kind !== "postgres")
     return yield* new ConnectionNotDeclared({});
   if (
-    binding.scope !== "company" ||
+    binding.scope === "public" ||
     binding.identity === null ||
     binding.principal === null ||
     binding.identity.company.id !== binding.companyId ||
@@ -222,10 +223,12 @@ const resolve = Effect.fn("PostgresOperations.resolve")(function* (alias: string
     connection.integration !== "postgres" ||
     connection.mode !== "company" ||
     connection.handle !== declaration.handle ||
-    connection.status !== "connected" ||
-    connection.restricted
+    connection.status !== "connected"
   )
     return yield* new Runtime.AccessDenied({});
+  // The patch's owner must be able to build with the connection now, and again once the call
+  // holds its backend.
+  yield* ownerCheck(binding, declaration.id);
   return { binding, declaration };
 });
 
@@ -262,7 +265,13 @@ const execute = Effect.fn("PostgresOperations.execute")(function* (
       companyId: resolved.binding.companyId,
       declaration: resolved.declaration,
       text,
-      parameters
+      parameters,
+      recheck: connectionRecheck(resolved.binding, resolved.declaration.id).pipe(
+        Effect.provideService(
+          ConnectionStore.ConnectionStore,
+          yield* ConnectionStore.ConnectionStore
+        )
+      )
     })
     .pipe(
       Effect.catchTags({

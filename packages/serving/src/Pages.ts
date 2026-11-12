@@ -266,7 +266,7 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
   }
   const isPublic =
     served.value.patch.state === "live" &&
-    served.value.patch.scope === "public" &&
+    served.value.patch.audience.kind === "public" &&
     served.value.version.id === served.value.patch.currentVersionId;
   const isAlias = Option.isSome(resolved) && !resolved.value.current;
   // A public page follows the redirect that completes a verified sign-in, and its address the
@@ -284,6 +284,15 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
         }),
         cookies
       );
+    }
+    // A member outside the patch's audience gets the same 404 as a stranger.
+    if (
+      served.value.patch.companyId === admission.company.id &&
+      !(yield* patches
+        .admits(served.value.patch, admission.company.id, admission.user.id)
+        .pipe(Effect.catchTags({ SqlError: Effect.die })))
+    ) {
+      return withCookies(HttpServerResponse.setHeaders(notFound, patchUrlHeaders), cookies);
     }
     // Someone from another company opens only the current version of a patch shared with them,
     // while its guests can open it; anyone else gets the same 404 as a stranger.

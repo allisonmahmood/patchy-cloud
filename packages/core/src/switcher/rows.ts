@@ -79,6 +79,7 @@ export interface Here {
 /** The icon each of the sidebar's places wears in the menu. */
 const placeIcons: Readonly<Record<Place["section"], Icon>> = {
   home: "home",
+  teams: "people",
   patches: "patches",
   agents: "agents",
   people: "people",

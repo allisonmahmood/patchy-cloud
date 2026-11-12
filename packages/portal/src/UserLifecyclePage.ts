@@ -190,13 +190,15 @@ const renderConfirm = (input: {
   action: Action;
   selected: readonly Patches.ReadPatch[];
   dependants: readonly Patches.ReadPatch["dependants"][number][];
+  /** How many more of those dependants the admin can't open. */
+  hiddenDependants: number;
   warnings: readonly Warning[];
   /** Under the acknowledgement, whose box then takes the focus. */
   problem?: string;
 }): Template => {
-  const { user, action, selected, dependants, warnings } = input;
+  const { user, action, selected, dependants, hiddenDependants, warnings } = input;
   const deactivating = action === "deactivate";
-  const breaks = dependants.length > 0 || warnings.length > 0;
+  const breaks = dependants.length + hiddenDependants > 0 || warnings.length > 0;
   const titles = listed(selected.map((row) => named(row.patch, input.company)));
   const change =
     selected.length === 0
@@ -214,7 +216,11 @@ const renderConfirm = (input: {
           row({ name: dependant.name, description: `${dependant.owner.name}’s` })
         ),
         true
-      )}`
+      )}${
+        hiddenDependants === 0
+          ? ""
+          : `<p class="meta">${dependants.length === 0 ? "" : "And "}${hiddenDependants} ${hiddenDependants === 1 ? "patch" : "patches"} you can’t open.</p>`
+      }`
     : `<p class="prose">These will serve, but error when they read these tables or stores until their sources are restored too.</p>${rows(
         warnings.map((warning) =>
           row({
@@ -315,6 +321,10 @@ const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: string, acti
   const refuseNamed = (message: string, status: number) => refuse(message, status, named);
   const run = Effect.gen(function* () {
     const ref = { companyId: viewer.company.id, userId: id };
+    // Retire and restore lock the company row before each patch, and deactivate and reactivate
+    // lock it again: taking it first keeps that order when a share waits on one of the patches.
+    if (choice === "keep" || choice === "confirm")
+      yield* Users.lockAdministrator({ companyId: viewer.company.id, actorId: viewer.user.id });
     const user =
       action === "deactivate"
         ? yield* users.checkDeactivation(ref)
@@ -327,7 +337,8 @@ const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: string, acti
         `This user is already ${user.deactivatedAt === null ? "active" : "deactivated"}. Nothing was done.`,
         409
       );
-    const rows = (yield* patches.read({ ...access, state: "all" }))
+    // Every patch they own, the ones the admin manages without opening included.
+    const rows = (yield* patches.read({ ...access, state: "all", managed: true }))
       .filter((row) => row.owner.id === id)
       .sort((a, b) => a.patch.name.localeCompare(b.patch.name));
     const eligible = rows.filter(
@@ -383,14 +394,17 @@ const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: string, acti
         headers: { "cache-control": "private, no-store" }
       });
     const dependants = new Map<string, Patches.ReadPatch["dependants"][number]>();
+    const hiddenDependants = new Set<string>();
     const warnings: Warning[] = [];
     for (const row of selected) {
+      const card = yield* patches.portalCard(row.patch.id, access);
       if (action === "deactivate") {
-        for (const dependant of row.dependants) {
+        for (const dependant of card.dependants) {
           if (!selectedIds.has(dependant.patchId)) dependants.set(dependant.patchId, dependant);
         }
+        for (const patchId of card.hiddenDependants)
+          if (!selectedIds.has(patchId)) hiddenDependants.add(patchId);
       } else {
-        const card = yield* patches.portalCard(row.patch.id, access);
         const sources = card.offSources.filter((source) => !selectedIds.has(source.patchId));
         if (sources.length > 0) warnings.push({ name: row.patch.name, sources });
       }
@@ -403,6 +417,7 @@ const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: string, acti
           action,
           selected,
           dependants: [...dependants.values()],
+          hiddenDependants: hiddenDependants.size,
           warnings,
           ...(problem === undefined ? {} : { problem })
         }),
@@ -411,7 +426,7 @@ const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: string, acti
       );
     if (choice !== "keep" && choice !== "confirm") return confirm();
     if (
-      (dependants.size > 0 || warnings.length > 0) &&
+      (dependants.size + hiddenDependants.size > 0 || warnings.length > 0) &&
       !Option.contains(UrlParams.getFirst(fields, "ack"), "1")
     )
       return confirm("Acknowledge what breaks before confirming. Nothing was done.", 409);
@@ -443,6 +458,8 @@ const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: string, acti
   ).pipe(
     Effect.catchTags({
       UserNotFound: (error) => Effect.succeed(refuse(error.message, 404)),
+      RoleForbidden: (error) => Effect.succeed(refuse(error.message, 403)),
+      OwnerAccessLost: (error) => Effect.succeed(refuse(error.message, 403)),
       LastAdmin: (error) => Effect.succeed(refuseNamed(error.message, 409)),
       PatchRetired: (error) =>
         Effect.succeed(refuseNamed(`${error.message} Nothing was done.`, 409)),

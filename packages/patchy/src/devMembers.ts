@@ -23,7 +23,7 @@ export const guest = {
  */
 export const layer = (identity: typeof Identity.Type) => {
   const rows: readonly (typeof Member.Type)[] = [
-    { ...identity.user, admin: identity.role === "admin", active: true },
+    { ...identity.user, admin: identity.role !== "member", active: true },
     { ...colleague, admin: false, active: true },
     { ...guest, admin: false, active: true, guest: true as const }
   ].sort((left, right) => {

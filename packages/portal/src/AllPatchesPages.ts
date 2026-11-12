@@ -42,14 +42,21 @@ export const page: (refused?: Sharing) => Page = Effect.fn("AllPatchesPages.page
   const show = shows.find((candidate) => candidate === params.get("show")) ?? "all";
   const query = searchQuery(params.get("q"));
   const patches = yield* Patches.Patches;
-  const rows = yield* patches.read({ ...access, state: "all" });
+  // With the ones the viewer manages or owns but can't open, their content left out.
+  const rows = yield* patches.read({ ...access, state: "all", managed: true });
   const opens = new Map((yield* patches.opens(viewer.user.id)).map((open) => [open.patchId, open]));
-  yield* prewarm(rows, opens);
+  yield* prewarm(
+    rows.filter((row) => row.access.canOpen),
+    opens
+  );
   const members = yield* (yield* Users.Users).list(viewer.company.id);
   const owner = members.find((member) => member.id === params.get("owner"));
   // How many guests each patch has, by name, from the company's guests and what each holds.
   const guests = new Map<string, number>();
-  for (const guest of yield* (yield* GuestGrants.GuestGrants).companyGuests(viewer.company.id))
+  for (const guest of yield* (yield* GuestGrants.GuestGrants).companyGuests(
+    viewer.company.id,
+    viewer.user.id
+  ))
     for (const shared of guest.patches) guests.set(shared.name, (guests.get(shared.name) ?? 0) + 1);
   // Only a search asks whether the viewer has connected an agent, for what finding nothing offers.
   const connected =

@@ -1,3 +1,4 @@
+import { Teams } from "@patchy/companies";
 import { assert, it } from "@effect/vitest";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { RuntimeLog } from "@patchy/runtime";
@@ -18,6 +19,7 @@ import * as SqlConnectionStore from "../SqlConnectionStore.js";
 import * as AttioDouble from "../test/attio.js";
 import * as Source from "./Source.js";
 import { NodeCryptography } from "@patchy/core";
+import * as PatchVisibilityTest from "../test/patchVisibility.js";
 
 /**
  * Attio connections in the store, offline over a scripted Attio: connect, the key check at Test,
@@ -44,7 +46,11 @@ const fixture = Layer.mergeAll(
   PostHogSource.layer,
   PidgeonSource.layer,
   ImapTest.offline
-).pipe(Layer.provideMerge(Testing.layer()), Layer.provideMerge(NodeCryptography.layer));
+).pipe(
+  Layer.provideMerge(PatchVisibilityTest.layer),
+  Layer.provideMerge(Testing.layer()),
+  Layer.provideMerge(NodeCryptography.layer)
+);
 
 const { readKey } = AttioDouble;
 const write = [...readKey.scopes, "note:read-write"];
@@ -62,7 +68,7 @@ const setup = (handle: string) =>
       if (request.url.pathname === "/v2/self") await gates.get(token);
       return AttioDouble.workspace(...keys.values())(request);
     });
-    const store = yield* SqlConnectionStore.make.pipe(Effect.provide(double.layer));
+    const store = yield* SqlConnectionStore.make.pipe(Effect.provide([double.layer, Teams.layer]));
     const connection = yield* store.connect({
       integration: "attio",
       ...who,
@@ -98,7 +104,8 @@ it.layer(fixture)("Attio connections", (it) => {
       assert.notInclude(row!.display, readKey.token);
       const [call] = yield* (yield* RuntimeLog.RuntimeLog).recent({
         companyId: who.companyId,
-        connectionId: id
+        connectionId: id,
+        patchIds: []
       });
       assert.strictEqual(call?.op, "attio.discover");
       assert.strictEqual(call?.deadlineMs, 60_000);
@@ -169,7 +176,8 @@ it.layer(fixture)("Attio connections", (it) => {
         // Calls recorded in one test-clock instant have no order: find the Refresh by its admin.
         const calls = yield* (yield* RuntimeLog.RuntimeLog).recent({
           companyId: who.companyId,
-          connectionId: id
+          connectionId: id,
+          patchIds: []
         });
         const refresh = calls.find((call) => call.userId === other.userId);
         assert.strictEqual(refresh?.op, "attio.discover");
@@ -315,7 +323,8 @@ it.layer(fixture)("Attio connections", (it) => {
       assert.deepStrictEqual(metadata.snapshot.lists, []);
       const calls = yield* (yield* RuntimeLog.RuntimeLog).recent({
         companyId: who.companyId,
-        connectionId: id
+        connectionId: id,
+        patchIds: []
       });
       assert.strictEqual(calls.length, 2);
       assert.isTrue(
@@ -342,7 +351,7 @@ it.layer(fixture)("Attio connections", (it) => {
           'attio-hidden', 'test', '{}'::jsonb, 201)`;
       // That release's queries: the same store, knowing only the integrations it shipped.
       const before = yield* SqlConnectionStore.knowing(["postgres", "posthog", "pidgeon"]).pipe(
-        Effect.provide(AttioDouble.make(AttioDouble.workspace(readKey)).layer)
+        Effect.provide([AttioDouble.make(AttioDouble.workspace(readKey)).layer, Teams.layer])
       );
       assert.notInclude(
         (yield* before.list(who.companyId)).map((item) => item.id),
@@ -403,7 +412,9 @@ it.layer(fixture)("Attio connections", (it) => {
         if (request.url.pathname === "/v2/objects") await opened;
         return honest(request);
       });
-      const store = yield* SqlConnectionStore.make.pipe(Effect.provide(double.layer));
+      const store = yield* SqlConnectionStore.make.pipe(
+        Effect.provide([double.layer, Teams.layer])
+      );
       const connect = store.connect({
         integration: "attio",
         ...who,

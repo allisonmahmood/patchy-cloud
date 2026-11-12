@@ -7,13 +7,13 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as WideEvents from "@patchy/analytics/wide-events";
-import { SharingScope } from "@patchy/api";
 import { pageResponse, Receipt, RequireSession } from "@patchy/auth";
 import { patchTitle } from "@patchy/core";
 import { Users } from "@patchy/companies";
 import { GuestGrants, Patches } from "@patchy/patches";
 import { renderLeaveConfirmation } from "./share.js";
 import {
+  actionSelection,
   behind,
   context,
   errorPage,
@@ -29,13 +29,11 @@ import {
   type Sharing,
   staleNotice
 } from "./shared/handlers.js";
-import { manages } from "./shared/presentation.js";
+import { accessLabel, manages } from "./shared/presentation.js";
 
+/** General access as its form posts it; `teams` names them in `teamIds`. */
 const decodeScope = Schema.decodeUnknownEffect(
-  Schema.Struct({
-    scope: SharingScope,
-    expectedScope: SharingScope
-  })
+  Schema.Struct({ scope: Schema.Literals(["company", "public", "teams"]) })
 );
 
 /** The forms of the Share dialog, each posted to `/patches/<name>/<act>`. */
@@ -93,22 +91,19 @@ export const layer = (pages: PagesBehind): Routes => {
     if (name.length > maxNameLength) return yield* overlongName;
     if (!isName(name))
       return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
-    const { viewer, session, access } = yield* context;
+    const { viewer, session } = yield* context;
     const patches = yield* Patches.Patches;
-    const selected = (yield* patches.read({ ...access, state: "all" })).find(
-      (row) => row.patch.name === name
-    );
+    const selected = yield* actionSelection(name);
     if (!selected)
       return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
-    yield* WideEvents.enrich(Patches.eventFields(selected.patch));
+    yield* WideEvents.enrich({ patchId: selected.patch.id });
     const request = yield* HttpServerRequest.HttpServerRequest;
-    const form = Object.fromEntries(
-      new URLSearchParams(
-        yield* request.text.pipe(
-          Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(16_384))
-        )
+    const values = new URLSearchParams(
+      yield* request.text.pipe(
+        Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(16_384))
       )
     );
+    const form = Object.fromEntries(values);
     // As every patch form: one rendered for whichever patch had this name stops here.
     if (form.expectedPatchId !== selected.patch.id)
       return yield* pages.card(name, {
@@ -118,8 +113,7 @@ export const layer = (pages: PagesBehind): Routes => {
           ? "This name now belongs to a different patch. Nothing was done."
           : "This form is out of date. Nothing was done."
       });
-    if (!manages(selected, viewer))
-      return yield* pages.card(name, { status: 403, notice: forbidden });
+    if (!manages(selected)) return yield* pages.card(name, { status: 403, notice: forbidden });
     const actor = { userId: viewer.user.id, admin: viewer.role === "admin" };
     const at = behind(form.back, name, session.publicBaseUrl);
     const title = patchTitle(selected.patch, viewer.company.name);
@@ -144,7 +138,19 @@ export const layer = (pages: PagesBehind): Routes => {
     };
     /** The page behind again, with the dialog open and what it has to say. */
     const again = Effect.fnUntraced(function* (sharing: Omit<Sharing, "name" | "at">) {
-      const shown = { ...sharing, name, at };
+      const shown = {
+        ...sharing,
+        name,
+        at,
+        ...(act === "scope"
+          ? {
+              submitted: {
+                scope: form.scope ?? selected.audience.kind,
+                teamIds: values.getAll("teamIds")
+              }
+            }
+          : {})
+      };
       if (at.pathname === "/") return yield* pages.home(shown);
       if (at.pathname === "/patches") return yield* pages.allPatches(shown);
       const tab = at.pathname.endsWith("/versions")
@@ -156,8 +162,8 @@ export const layer = (pages: PagesBehind): Routes => {
     });
     const email = (form.email ?? "").trim();
     const run = Effect.gen(function* () {
-      // The dialog opens only over a live patch, so a form from it for one that's off is stale.
-      if (selected.patch.state !== "live")
+      // Off its address, only its audience changes; a guest form for it is stale.
+      if (act !== "scope" && selected.patch.state !== "live")
         return yield* new Patches.WrongState({ state: selected.patch.state });
       switch (act) {
         case "add-guest": {
@@ -180,13 +186,6 @@ export const layer = (pages: PagesBehind): Routes => {
           );
         }
         case "scope": {
-          // A form naming an audience is a later release's, which sets teams this one can't;
-          // applying only its scope could open the patch to the whole company.
-          if (form.audience !== undefined || form.teamIds !== undefined)
-            return yield* again({
-              status: 422,
-              notice: nothing("This Patchy release can't set a patch's audience yet.")
-            });
           const fields = yield* decodeScope(form);
           // Going public asks first, at its own address, and only its answer applies it,
           // re-running every check.
@@ -194,22 +193,39 @@ export const layer = (pages: PagesBehind): Routes => {
             if (selected.tier >= 2) return yield* new Patches.Tier2NotPublic();
             return reopened(undefined, true);
           }
-          yield* patches.setScope(selected.patch.id, actor, fields.scope, fields.expectedScope);
-          return reopened(
-            `${title} is open to ${fields.scope === "public" ? "anyone on the internet" : `people at ${viewer.company.name}`}`
-          );
+          const shared = yield* patches.setSharing({
+            patchId: selected.patch.id,
+            actor,
+            audience:
+              fields.scope === "teams"
+                ? { kind: "teams", teamIds: values.getAll("teamIds") }
+                : { kind: fields.scope },
+            expectedLifecycleRevision: form.expectedLifecycleRevision,
+            force: form.force === "true"
+          });
+          const open =
+            shared.audience.kind === "public"
+              ? "anyone on the internet"
+              : shared.audience.kind === "company"
+                ? `people at ${viewer.company.name}`
+                : `people on ${accessLabel(shared.audience)}`;
+          return reopened(`${title} is open to ${open}`);
         }
       }
     });
     const nothing = (notice: string) => `${notice} Nothing was done.`;
-    // setScope's type names every lifecycle refusal; one that can't answer a scope change still says why.
+    // setSharing's type names every lifecycle refusal; one that can't answer it still says why.
     const onCard = (error: { readonly message: string }) =>
       pages.card(name, { status: 409, notice: nothing(error.message) });
     return yield* run.pipe(
       Effect.catchTags({
         PatchRetired: onCard,
         PatchDeleted: onCard,
-        HasDependants: onCard,
+        HasDependants: (error) =>
+          again({
+            status: 409,
+            narrowing: { dependants: error.dependants, hiddenCount: error.hiddenCount ?? 0 }
+          }),
         SourcesOff: onCard,
         ReservedName: onCard,
         InvalidDescription: onCard,
@@ -218,6 +234,10 @@ export const layer = (pages: PagesBehind): Routes => {
         NotOnPatchy: (refusal) => again({ status: 422, refused: { email, refusal } }),
         AlreadyMember: (refusal) => again({ status: 409, refused: { email, refusal } }),
         GuestsUnavailable: (refusal) => again({ status: 422, refused: { email, refusal } }),
+        OwnerAccessLost: (error) => pages.card(name, { status: 403, notice: error.message }),
+        InvalidAudienceTeams: (error) => again({ status: 422, notice: error.message }),
+        AudienceExcludesOwner: (error) => again({ status: 422, notice: error.message }),
+        UpgradeRequired: Effect.die,
         NotOwner: () => pages.card(name, { status: 403, notice: forbidden }),
         WrongState: (error) =>
           Effect.flatMap(staleNotice(selected.patch.id, error.state), (notice) =>

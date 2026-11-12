@@ -38,6 +38,8 @@ The source's tier does not restrict consumption: a tier 2 consumer can read a st
 
 A source publishes sharing with `files(description, { shared: true })`. Omitting the store and rolling back either source or consumer preserve sharing. Publishing the store with `shared: false` or without `shared` unshares it. Unshare, retire and delete refuse while live consumers depend on the store unless forced; the refusal names those consumers.
 
+Each read, and each live delivery, requires a viewer who can open the source now, by its audience; declaring it grants nothing. Someone the patch reaches but the source doesn't gets `access_denied` while everyone else keeps working; publish and share warn when the patch's audience reaches people the source's doesn't, and in `pnpm patchy dev` the colleague, on none of your teams, reads only sources the whole company can open.
+
 After forced unshare or loss of source access, the next read returns `access_denied`, including bytes and downloads. Do not turn that refusal into an empty successful listing. Resharing or restoring the same source lets consumers recover unchanged. A new patch under its old name never replaces the canonical source id. Public patches cannot use shared stores.
 
 Generation uses cumulative source inventory, not only its active manifest. A stale revision produces a publish warning; refresh updates the declaration metadata and stamp without replacing invented files. `pnpm patchy remove assets` removes the declaration and generated files, and this skill when no shared-store declarations remain. It leaves the fixture directory for you.

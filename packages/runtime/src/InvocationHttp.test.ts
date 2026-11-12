@@ -109,6 +109,9 @@ const layer = Layer.unwrap(
     ),
     Layer.provide(
       Layer.succeed(LoadedVersions.LoadedVersions, {
+        findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+          return this.find(patchId);
+        },
         find: () => Effect.succeed(Option.some({ ...version, patchTier: version.manifest.tier }))
       })
     ),
@@ -278,6 +281,9 @@ const callbackRuntime = Layer.unwrap(
   Layer.provide(Layer.succeed(ServerBundles.ServerBundles, { load: () => Effect.succeed(bundle) })),
   Layer.provide(
     Layer.succeed(LoadedVersions.LoadedVersions, {
+      findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+        return this.find(patchId);
+      },
       find: () => Effect.succeed(Option.some({ ...version, patchTier: version.manifest.tier }))
     })
   ),

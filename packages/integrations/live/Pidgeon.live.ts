@@ -1,4 +1,5 @@
 // First: the harness keeps Node's own fetch before the pages' offline Clerk fixture replaces it.
+import { Teams } from "@patchy/companies";
 import * as Live from "./pidgeonHarness.js";
 import { assert, describe, it } from "@effect/vitest";
 import { DEV_SEED } from "@patchy/auth/seed";
@@ -108,7 +109,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon, live in test mode", () =
         "connects a new test address at send through a lost answer, keeping one key for it alone",
         () =>
           Effect.gen(function* () {
-            const store = yield* SqlConnectionStore.make;
+            const store = yield* SqlConnectionStore.make.pipe(Effect.provide(Teams.layer));
             const localPart = `patchy-${Live.RUN}-a`;
             const logs: string[] = [];
             // Pidgeon makes the address and its answer is lost; the same Idempotency-Key gets it.
@@ -201,7 +202,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon, live in test mode", () =
       // would have the run touch an admin key, which the live tier never does.
       it.effect("refuses a key that isn't an admin key, creating nothing", () =>
         Effect.gen(function* () {
-          const store = yield* SqlConnectionStore.make;
+          const store = yield* SqlConnectionStore.make.pipe(Effect.provide(Teams.layer));
           const address = need(made.address, "The address from the first test");
           const addressKey = (yield* stored(store, need(made.a, "The first connection"))).key.token;
           const before = Live.count(writes);
@@ -232,7 +233,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon, live in test mode", () =
         "changes access with a new key; an old key that won't revoke stays named until Test connection",
         () =>
           Effect.gen(function* () {
-            const store = yield* SqlConnectionStore.make;
+            const store = yield* SqlConnectionStore.make.pipe(Effect.provide(Teams.layer));
             const a = need(made.a, "The connection from the first test");
             const old = yield* stored(store, a);
             // The old key's revoke is refused, every try, and nothing is done.
@@ -263,7 +264,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon, live in test mode", () =
         "recovers a lost mint by revoking the key it can't read, while another submission keeps its own",
         () =>
           Effect.gen(function* () {
-            const store = yield* SqlConnectionStore.make;
+            const store = yield* SqlConnectionStore.make.pipe(Effect.provide(Teams.layer));
             const address = need(made.address, "The address from the first test");
             const shared = attempt();
             const connect = (name: string) =>
@@ -327,7 +328,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon, live in test mode", () =
 
       it.effect("keeps a declared connection's key, and says when the address is gone", () =>
         Effect.gen(function* () {
-          const store = yield* SqlConnectionStore.make;
+          const store = yield* SqlConnectionStore.make.pipe(Effect.provide(Teams.layer));
           const b = need(made.b, "The connection from the fourth test");
           const c = need(made.c, "The connection from the fourth test");
           const sql = yield* SqlClient.SqlClient;

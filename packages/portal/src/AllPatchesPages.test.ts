@@ -167,7 +167,7 @@ it.layer(socket)("all patches on a socket", (it) => {
       assert.isTrue(
         links(second).some((link) => link.href === "/patches?q=board" && link.text === "Previous")
       );
-      // Share and the menu's Share… return to the same page.
+      // The menu's Share… returns to the same page.
       assert.include(second, 'href="/patches?q=board&amp;page=2&amp;share=board-50"');
       // A page past the last is the last; one short table has no paging.
       assert.deepStrictEqual(
@@ -220,14 +220,13 @@ it.layer(socket)("all patches on a socket", (it) => {
         html,
         `<a class="row-link" href="/${workspace.handle}/office-map">${unopenedName("office-map")}</a>`
       );
-      // The viewer's own patches say so in Owner, without a badge, and carry Share; an admin
-      // shares a colleague's from its menu.
+      // The viewer's own patches say so in Owner; sharing stays in the row menu.
       const mine = yield* (yield* request("/patches", workspace.owner)).text;
       assert.include(mine, `<span title="${workspace.owner.name}">You</span>`);
       assert.notInclude(mine, '<span class="badge">You</span>');
       assert.isTrue(
         links(mine).some(
-          (link) => link.href === "/patches?share=office-map" && link.text === "Share"
+          (link) => link.href === "/patches?share=office-map" && link.text === "Share…"
         )
       );
       for (const person of [workspace.member, workspace.admin])
@@ -290,10 +289,6 @@ it.layer(socket)("all patches on a socket", (it) => {
           yield* (yield* request(`/patches?share=${payroll.name}`, workspace.owner)).text
         );
         assert.include(text(dialog), "Guests can't open this");
-        assert.include(
-          text(dialog),
-          "Tools can’t be public. Invite people at other companies above."
-        );
         assert.notInclude(dialog, 'value="public"');
       })
   );

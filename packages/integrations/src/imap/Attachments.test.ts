@@ -1,3 +1,4 @@
+import { Teams } from "@patchy/companies";
 import { createHash, randomBytes } from "node:crypto";
 import { assert, it } from "@effect/vitest";
 import * as WideEvents from "@patchy/analytics/wide-events";
@@ -121,7 +122,7 @@ const setup = (handle: string, attachment: ImapTest.ScriptedAttachment, options:
       ...(options.before === undefined ? {} : { before: options.before })
     });
     const source = Source.layer.pipe(Layer.provide(ImapTest.network(served, certs)));
-    const store = yield* SqlConnectionStore.make.pipe(Effect.provide(source));
+    const store = yield* SqlConnectionStore.make.pipe(Effect.provide([source, Teams.layer]));
     const connection = yield* store.connect({
       integration: "imap",
       ...who,

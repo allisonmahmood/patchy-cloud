@@ -522,9 +522,13 @@ const sharedStoreContract = Effect.fn("test.filesContract.sharedStore")(function
   let sourceCompany = companyId;
   const handlers = yield* Files.makeLocal.pipe(
     Effect.provideService(LoadedVersions.LoadedVersions, {
-      find: (patchId) =>
+      find: () => Effect.succeed(Option.none()),
+      findForViewer: (patchId, viewer) =>
         Effect.sync(() =>
-          live && patchId === source.binding.patchId
+          viewer?.companyId === companyId &&
+          viewer.userId === identity.user.id &&
+          live &&
+          patchId === source.binding.patchId
             ? Option.some({ ...source.binding, companyId: sourceCompany, patchTier: 2 })
             : Option.none()
         )
@@ -565,6 +569,26 @@ const sharedStoreContract = Effect.fn("test.filesContract.sharedStore")(function
     { bytes, contentType: "application/octet-stream" }
   );
   const inventory = yield* Inventory.Inventory;
+  const permittedBinding = binding;
+  binding = {
+    ...binding,
+    identity: { ...identity, user: { ...identity.user, id: "outside-design" } }
+  };
+  for (const op of ["shared.files.list", "shared.files.stat", "shared.files.get"] as const)
+    assert.strictEqual(
+      (yield* call(
+        op,
+        op === "shared.files.list"
+          ? { alias: "documents" }
+          : { alias: "documents", name: "folder/a.bin" }
+      ).pipe(Effect.flip)).code,
+      "access_denied"
+    );
+  binding = permittedBinding;
+  assert.deepStrictEqual(
+    yield* call("shared.files.get", { alias: "documents", name: "folder/a.bin" }),
+    { bytes, contentType: "application/octet-stream" }
+  );
   const sharing = (shared: boolean) =>
     source.databases.withCompany(companyId)(
       source.databases.withPatchLock(source.binding.patchId)(

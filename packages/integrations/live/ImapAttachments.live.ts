@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- A delay proxy relays real sockets to Dovecot.
+import { Teams } from "@patchy/companies";
 import { createHash, randomBytes } from "node:crypto";
 import { createServer, connect, type Socket } from "node:net";
 import { assert, it } from "@effect/vitest";
@@ -245,7 +246,7 @@ const decodeStaged = Schema.decodeUnknownSync(imapStageAttachment.output);
 /** A connected mailbox, and a stage on it through `sessions`, as a tier 2 action's viewer. */
 const connected = (server: LiveServer, handle: string, sessions?: Sessions.Sessions["Service"]) =>
   Effect.gen(function* () {
-    const store = yield* SqlConnectionStore.make;
+    const store = yield* SqlConnectionStore.make.pipe(Effect.provide(Teams.layer));
     const connection = yield* store.connect({
       integration: "imap",
       ...who,

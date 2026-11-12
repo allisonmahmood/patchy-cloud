@@ -241,7 +241,8 @@ unknown outcome, but does not have a safe mutation retry.
 
 An action has 60 s and no transaction around its callbacks or external effects.
 A guest still running at 61 s is killed. `ctx.connections.<alias>` uses the
-declared integration as the viewer and rechecks access on every callback.
+declared integration as the viewer and rechecks access on every callback,
+including that the patch's owner can still build with the connection.
 Each integration call has at most 15 s, or the action's remaining budget if
 shorter. A disconnected connection can refuse the next call after an earlier
 call succeeded.
@@ -366,7 +367,7 @@ Both forms deliver `{ status, data, error, loading }`, with status `"loading"`,
 An error keeps the last successful data; an initially failing query has no data.
 `busy`, `rate_limited`, `source_unavailable` and `handler_timeout` back off.
 A refusal inside a handler, such as an unshared source, keeps the subscription
-so a reshare can recover it without a reload, even when its first run was refused.
+so a reshare, or the viewer regaining the source, recovers it without a reload, even when its first run was refused.
 `handler_failed`, invalid results and a removed handler end only that subscription.
 Its last data and error remain visible to mounted consumers; mounting another
 consumer or reconnecting does not restart it. Loss of permission to open the

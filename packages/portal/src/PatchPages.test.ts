@@ -7,7 +7,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as SqlClient from "effect/sql/SqlClient";
 import { Analytics } from "@patchy/analytics";
 import { PUBLIC_BASE_URL } from "@patchy/auth/testing";
-import { Companies, Users } from "@patchy/companies";
+import { Companies, Teams, Users } from "@patchy/companies";
 import { sha256 } from "../../../test/crypto.js";
 import { GuestGrants, Patches } from "@patchy/patches";
 import {
@@ -644,6 +644,49 @@ it.layer(socket)("a patch's card on a socket", (it) => {
           })
       );
 
+    it.effect(
+      `${action} goes through when every patch reading it is one the owner can't open`,
+      () =>
+        Effect.gen(function* () {
+          const workspace = yield* company();
+          const service = yield* Patches.Patches;
+          const source = yield* publishSource(workspace.owner, `${action}-hidden-source`, "table");
+          const reader = yield* publishDependant(
+            workspace.member,
+            `${action}-hidden-reader`,
+            source.patchId
+          );
+          const teams = yield* Teams.Teams;
+          const team = yield* teams.create({
+            companyId: workspace.id,
+            actorId: workspace.admin.id,
+            name: `${action} readers`
+          });
+          yield* teams.setMemberships({
+            companyId: workspace.id,
+            actorId: workspace.admin.id,
+            teamId: team.id,
+            add: [workspace.member.id]
+          });
+          yield* service.setSharing({
+            patchId: reader.patchId,
+            actor: actor(workspace.member),
+            audience: { kind: "teams", teamIds: [team.id] }
+          });
+          const path = `${cardPath(source.name)}/${action}`;
+          const dialog = yield* (yield* request(path, workspace.owner)).text;
+          const done = yield* post(path, workspace.owner, {
+            ...formFields(dialog, path),
+            ...(action === "delete" ? { confirm: source.name } : {})
+          });
+          assert.strictEqual(done.status, 303);
+          assert.strictEqual(
+            (yield* readPatch(workspace.owner, source.patchId)).patch.state,
+            action === "retire" ? "retired" : "deleted"
+          );
+        })
+    );
+
     it.effect(`refuses a stale ${action} confirmation with the fresh state and actor`, () =>
       Effect.gen(function* () {
         const workspace = yield* company();
@@ -1016,8 +1059,16 @@ it.layer(socket)("a patch's card on a socket", (it) => {
           yield* service.setDescription(patch.patchId, actor(workspace.admin), "Sam's description");
           changed = "description changed";
         } else if (action === "scope") {
-          fields = { scope: "company", expectedScope: "company" };
-          yield* service.setScope(patch.patchId, actor(workspace.admin), "public");
+          fields = {
+            scope: "company",
+            expectedLifecycleRevision: (yield* readPatch(workspace.owner, patch.patchId)).patch
+              .lifecycleRevision
+          };
+          yield* service.setSharing({
+            patchId: patch.patchId,
+            actor: actor(workspace.admin),
+            audience: { kind: "public" }
+          });
           changed = "sharing changed";
         } else if (action === "rollback") {
           yield* publish(workspace.owner, patch.name, { intent: "update", patchId: patch.patchId });
@@ -1047,13 +1098,13 @@ it.layer(socket)("a patch's card on a socket", (it) => {
         if (action === "description") assert.include(html, ">Overwritten</textarea>");
         const expectedName = {
           description: "expectedDescriptionUpdatedAt",
-          scope: "expectedScope",
+          scope: "expectedLifecycleRevision",
           rollback: "expectedCurrentVersionId",
           restore: "expectedState"
         }[action];
         const expectedValue = {
           description: before.patch.descriptionUpdatedAt ?? "",
-          scope: before.patch.scope,
+          scope: before.patch.lifecycleRevision,
           rollback: before.patch.currentVersionId ?? "",
           restore: before.patch.state
         }[action];
@@ -1197,7 +1248,11 @@ it.layer(socket)("a patch's card on a socket", (it) => {
       // A tool's version can't serve while the patch is public.
       const patch = yield* publishTier2(workspace.owner, "serve-refused");
       yield* publish(workspace.owner, patch.name, { intent: "update", patchId: patch.patchId });
-      yield* service.setScope(patch.patchId, actor(workspace.owner), "public");
+      yield* service.setSharing({
+        patchId: patch.patchId,
+        actor: actor(workspace.owner),
+        audience: { kind: "public" }
+      });
       const before = yield* readPatch(workspace.owner, patch.patchId);
       const path = `${cardPath(patch.name)}/rollback`;
       const asked = yield* (yield* request(`${path}?version=1`, workspace.owner)).text;
@@ -1219,34 +1274,45 @@ it.layer(socket)("a patch's card on a socket", (it) => {
     })
   );
 
-  it.effect("refuses scope and rollback on an off card without drawing those forms", () =>
-    Effect.gen(function* () {
-      const workspace = yield* company();
-      const service = yield* Patches.Patches;
-      const patch = yield* publish(workspace.owner, "retired-act");
-      yield* service.retire(patch.patchId, actor(workspace.admin));
-      yield* service.setDescription(patch.patchId, actor(workspace.admin), "Edited after retire");
-      const before = yield* readPatch(workspace.owner, patch.patchId);
-      for (const [action, fields] of [
-        ["scope", { scope: "public", expectedScope: "company" }],
-        ["rollback", { versionNumber: "1", expectedCurrentVersionId: patch.versionId }]
-      ] as const) {
-        const response = yield* post(`${cardPath(patch.name)}/${action}`, workspace.owner, {
+  it.effect(
+    "refuses rollback on an off card without drawing its form, and still changes who can open it",
+    () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const service = yield* Patches.Patches;
+        const patch = yield* publish(workspace.owner, "retired-act");
+        yield* service.retire(patch.patchId, actor(workspace.admin));
+        yield* service.setDescription(patch.patchId, actor(workspace.admin), "Edited after retire");
+        const before = yield* readPatch(workspace.owner, patch.patchId);
+        const response = yield* post(`${cardPath(patch.name)}/rollback`, workspace.owner, {
           expectedPatchId: patch.patchId,
-          ...fields
+          versionNumber: "1",
+          expectedCurrentVersionId: patch.versionId
         });
         assert.strictEqual(response.status, 409);
         const html = yield* response.text;
         assert.strictEqual(heading(html), patch.name);
-        assert.notInclude(html, `${cardPath(patch.name)}/${action}`);
+        assert.notInclude(html, `${cardPath(patch.name)}/rollback`);
         const notice = text(
           html.match(/<div\b[^>]*role="alert"[^>]*>([\s\S]*?)<\/div>/)?.[1] ?? ""
         );
         assert.include(notice, "description changed by Sam");
         assert.match(notice, /\bretired\b/);
         assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
-      }
-    })
+        // Its audience still changes, so a team it names can be deleted; it stays retired.
+        const shared = yield* post(`${cardPath(patch.name)}/scope`, workspace.owner, {
+          expectedPatchId: patch.patchId,
+          expectedLifecycleRevision: before.patch.lifecycleRevision,
+          scope: "public",
+          confirm: "public"
+        });
+        assert.strictEqual(shared.status, 303);
+        const after = yield* readPatch(workspace.owner, patch.patchId);
+        assert.deepStrictEqual(
+          [after.patch.audience, after.patch.state],
+          [{ kind: "public" }, "retired"]
+        );
+      })
   );
 
   it.effect("recomputes off sources for restore GET and POST before acknowledgement", () =>
@@ -1547,7 +1613,7 @@ it.layer(socket)("a patch's card on a socket", (it) => {
         const workspace = yield* company();
         const foreign = yield* company();
         const other = yield* publish(foreign.owner, "foreign-secret", {
-          scope: "public",
+          audience: { kind: "public" },
           description: "Foreign confidential text"
         });
         const renamed = yield* publish(workspace.owner, "old-address");

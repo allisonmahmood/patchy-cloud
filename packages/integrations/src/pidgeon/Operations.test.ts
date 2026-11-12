@@ -1,7 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import { CURRENT_RELEASE, WIRE_VERSION } from "@patchy/api";
 import { DEV_SEED } from "@patchy/auth/seed";
-import { Directory } from "@patchy/companies";
+import { Directory, Teams } from "@patchy/companies";
 import { NodeCryptography } from "@patchy/core";
 import { sha256 } from "../../../../test/crypto.js";
 import { ContractLimits } from "@patchy/limits";
@@ -23,6 +23,7 @@ import * as AttioSource from "../attio/Source.js";
 import * as ImapTest from "../test/imap.js";
 import * as SqlConnectionStore from "../SqlConnectionStore.js";
 import * as PidgeonTest from "../test/pidgeon.js";
+import { seedPatch } from "../test/runtime.js";
 import * as Operations from "./Operations.js";
 
 /**
@@ -229,6 +230,7 @@ let made = 0;
  */
 const setup = (answers: (address: Address) => ReadonlyArray<PidgeonTest.Recorded> = () => []) =>
   Effect.gen(function* () {
+    yield* seedPatch("deskpatch001");
     made++;
     const address = (id: string, handle: string): Address => ({
       id,
@@ -239,7 +241,7 @@ const setup = (answers: (address: Address) => ReadonlyArray<PidgeonTest.Recorded
     const send = address(`conn_ops_s${made}`, `ops-s${made}`);
     const read = address(`conn_ops_r${made}`, `ops-r${made}`);
     const pidgeon = PidgeonTest.recorded(answers(send));
-    const store = yield* SqlConnectionStore.make.pipe(Effect.provide(pidgeon.layer));
+    const store = yield* SqlConnectionStore.make.pipe(Effect.provide([pidgeon.layer, Teams.layer]));
     const key = (yield* PidgeonTest.seed({ ...who, id: send.id, handle: send.handle })).key;
     yield* PidgeonTest.seed({ ...who, id: read.id, handle: read.handle, access: "read" });
     const handlers = yield* Operations.makeHandlers.pipe(
@@ -634,13 +636,14 @@ it.layer(fixture)("Pidgeon operations, offline", (it) => {
             body: { data: sentRow }
           }
         ]);
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`INSERT INTO patches (id, company_id, owner_user_id, title, name) VALUES ('otherpatch01', ${who.companyId}, ${who.userId}, 'Other patch', 'otherpatch01')`;
         const reply = { id: "msg_1", text: "Thanks!", idempotencyKey: "draft-shared-01" };
         yield* call("pidgeon.write", "messages.reply", reply);
         yield* call("pidgeon.write", "messages.reply", reply, {
           binding: binding(send, { patchId: "otherpatch01" })
         });
         // Replace key gives the connection a new key; Pidgeon, not Patchy, says the draft was used.
-        const sql = yield* SqlClient.SqlClient;
         const keys = yield* CredentialKeys.CredentialKeys;
         const replaced = yield* keys.encrypt(
           { companyId: who.companyId, id: send.id, integration: "pidgeon" },
@@ -1025,7 +1028,9 @@ it.layer(fixture)("Pidgeon operations, offline", (it) => {
         // Even the same draft again is refused: a replay is an attempt too.
         assert.include(yield* refused(reply("draft-budget-a")), { code: "source_rate_limited" });
         // Another process, or this one restarted, reads the same count.
-        const restarted = yield* SqlConnectionStore.make.pipe(Effect.provide(pidgeon.layer));
+        const restarted = yield* SqlConnectionStore.make.pipe(
+          Effect.provide([pidgeon.layer, Teams.layer])
+        );
         const handlers = yield* Operations.makeHandlers.pipe(
           Effect.provide(Layer.merge(pidgeon.layer, Directory.layer)),
           Effect.provideService(ConnectionStore.ConnectionStore, restarted)

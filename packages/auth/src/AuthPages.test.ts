@@ -10,7 +10,7 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as SqlClient from "effect/sql/SqlClient";
-import { Companies, InviteMail, Terms, Users } from "@patchy/companies";
+import { Companies, InviteMail, Teams, Terms, Users } from "@patchy/companies";
 import { Analytics } from "@patchy/analytics";
 import { Limits } from "@patchy/limits";
 import * as AgentConnections from "./AgentConnections.js";
@@ -67,6 +67,7 @@ const services = Layer.mergeAll(
   Session.layer,
   Companies.layer,
   Users.layer,
+  Teams.layer,
   InviteMail.layerRecording
 ).pipe(
   Layer.provideMerge(DeviceLogins.layer),
@@ -552,7 +553,13 @@ const localRevocation = Layer.effect(
   }))
 );
 it.layer(
-  Layer.mergeAll(localRevocation, Companies.layer, Users.layer, InviteMail.layerRecording).pipe(
+  Layer.mergeAll(
+    localRevocation,
+    Companies.layer,
+    Users.layer,
+    Teams.layer,
+    InviteMail.layerRecording
+  ).pipe(
     Layer.provideMerge(DeviceLogins.layer),
     Layer.provideMerge(MachineTokens.layer),
     Layer.provideMerge(AgentConnections.layer),

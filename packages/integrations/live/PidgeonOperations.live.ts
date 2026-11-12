@@ -7,7 +7,7 @@ import * as WideEvents from "@patchy/analytics/wide-events";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { NodeCryptography } from "@patchy/core";
 import { sha256, newPatchId } from "../../../test/crypto.js";
-import { Directory } from "@patchy/companies";
+import { Directory, Teams } from "@patchy/companies";
 import { ContractLimits, Limits, OperatingLimits } from "@patchy/limits";
 import {
   Binding,
@@ -227,6 +227,7 @@ const desk = Effect.fn("live.desk")(function* (
   connection: Pidgeon,
   patchId: string
 ) {
+  yield* RuntimeTest.seedPatch(patchId);
   const handlers = yield* Operations.makeHandlers.pipe(
     Effect.provide(Layer.merge(Live.layer, Directory.layer)),
     Effect.provideService(ConnectionStore.ConnectionStore, store)
@@ -342,7 +343,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
     (it) => {
       it.effect("connects the desk, and mail arrives from a customer and from outside", () =>
         Effect.gen(function* () {
-          const store = yield* SqlConnectionStore.make;
+          const store = yield* SqlConnectionStore.make.pipe(Effect.provide(Teams.layer));
           const connection = yield* connectDesk(store, "desk");
           made.connection = connection;
           const customer = yield* createCustomer("cust");
@@ -392,7 +393,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
         "the generated client, through an action's callbacks, lists open mail, reads a thread past a page and an attachment, replies once though sent twice, and marks it waiting",
         () =>
           Effect.gen(function* () {
-            const store = yield* SqlConnectionStore.make;
+            const store = yield* SqlConnectionStore.make.pipe(Effect.provide(Teams.layer));
             const connection = need(made.connection, "The desk");
             const chainstay = need(made.chainstay, "The chainstay thread").threadId;
             const order = need(made.order, "The order thread").threadId;
@@ -473,7 +474,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
         "new messages to the customer the desk just answered are held for the address's cooldown, naming her, and the held draft goes as a reply in her conversation",
         () =>
           Effect.gen(function* () {
-            const store = yield* SqlConnectionStore.make;
+            const store = yield* SqlConnectionStore.make.pipe(Effect.provide(Teams.layer));
             const connection = need(made.connection, "The desk");
             const customer = need(made.customer, "The customer");
             const first = need(made.firstDraft, "The first reply");
@@ -516,7 +517,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
         "a lost answer replays, a draft key with other mail sends nothing, and one draft sent twice at once mails once",
         () =>
           Effect.gen(function* () {
-            const store = yield* SqlConnectionStore.make;
+            const store = yield* SqlConnectionStore.make.pipe(Effect.provide(Teams.layer));
             const connection = need(made.connection, "The desk");
             const order = need(made.order, "The order thread");
             const { call } = yield* desk(store, connection, patchId);
@@ -575,7 +576,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
         "the send policy refuses a whole send, and the fixed draft sends under the same key",
         () =>
           Effect.gen(function* () {
-            const store = yield* SqlConnectionStore.make;
+            const store = yield* SqlConnectionStore.make.pipe(Effect.provide(Teams.layer));
             const connection = need(made.connection, "The desk");
             const { call } = yield* desk(store, connection, patchId);
             // Someone the desk hasn't written to: Pidgeon holds back new messages from an address
@@ -606,7 +607,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
         "a send held for a person's approval is pending, and so is its replay, with the approval and its event recorded; a rejected@ recipient comes back the same twice",
         () =>
           Effect.gen(function* () {
-            const store = yield* SqlConnectionStore.make;
+            const store = yield* SqlConnectionStore.make.pipe(Effect.provide(Teams.layer));
             const connection = need(made.connection, "The desk");
             const { call } = yield* desk(store, connection, patchId);
             const send = (draft: string, to: ReadonlyArray<string>) =>
@@ -699,7 +700,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
 
       it.effect("answers not_found for the customer's own copy of a conversation", () =>
         Effect.gen(function* () {
-          const store = yield* SqlConnectionStore.make;
+          const store = yield* SqlConnectionStore.make.pipe(Effect.provide(Teams.layer));
           const { call } = yield* desk(store, need(made.connection, "The desk"), patchId);
           const copy = need(made.customerCopy, "The customer's sent mail");
           assert.include(
@@ -716,7 +717,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
 
       it.effect("holds suspicious mail for a person, unread and unanswered", () =>
         Effect.gen(function* () {
-          const store = yield* SqlConnectionStore.make;
+          const store = yield* SqlConnectionStore.make.pipe(Effect.provide(Teams.layer));
           const connection = need(made.connection, "The desk");
           const { call } = yield* desk(store, connection, patchId);
           yield* Live.reconfigure(connection.display.identityId, { hold_suspicious: true });
@@ -751,7 +752,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
 
       it.effect("after Replace key, a draft already sent fails mismatch and sends nothing", () =>
         Effect.gen(function* () {
-          const store = yield* SqlConnectionStore.make;
+          const store = yield* SqlConnectionStore.make.pipe(Effect.provide(Teams.layer));
           const connection = need(made.connection, "The desk");
           const chainstay = need(made.chainstay, "The chainstay thread").threadId;
           const first = need(made.firstDraft, "The first reply");
@@ -815,7 +816,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
         "an action lists open mail, reads a conversation and its attachment, replies with the page's draft and marks it waiting; the draft again is one email",
         () =>
           Effect.gen(function* () {
-            const store = yield* SqlConnectionStore.make;
+            const store = yield* SqlConnectionStore.make.pipe(Effect.provide(Teams.layer));
             const connection = yield* connectDesk(store, "action");
             const customer = yield* createCustomer("buyer");
             yield* customerMail(customer, connection.display.email, {

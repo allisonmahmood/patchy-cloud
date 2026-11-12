@@ -15,6 +15,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as Struct from "effect/Struct";
 import { TestClock } from "effect/testing";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -37,17 +38,21 @@ import {
   ForceRequest,
   DescriptionRequest,
   RollbackRequest,
+  AudienceRefused,
   PublishCreated,
   PublishRequest,
   PublishUpdated,
   NotAdditive,
+  PatchSummary,
+  Shared,
   CURRENT_RELEASE,
   WIRE_VERSION,
   sharedTableId,
   sharedStoreId,
   repoLimits
 } from "@patchy/api";
-import { Companies, Looks, Users } from "@patchy/companies";
+import { Companies, Looks, Teams, Users } from "@patchy/companies";
+import { CompanyDatabases } from "@patchy/company-database";
 import { ContentStore } from "@patchy/content-store";
 import { Limits } from "@patchy/limits";
 import { InvocationLog, RuntimeLog } from "@patchy/runtime";
@@ -71,7 +76,31 @@ const looks = Looks.layer.pipe(Layer.provide([NodeFileSystem.layer, NodePath.lay
 
 const client = Fixtures.ownRouter(HttpApiTest.groups(PatchyApi, ["patches"]));
 const decodeNotAdditive = Schema.decodeUnknownEffect(NotAdditive);
+const decodeAudienceRefused = Schema.decodeUnknownSync(AudienceRefused);
 const decodeCreated = Schema.decodeUnknownSync(PublishCreated);
+/**
+ * The responses a CLI released before team audiences decodes: these schemas as they were then,
+ * with a two-valued scope and no `audience`. A team patch must still read as one of its scopes.
+ */
+const releasedScope = Schema.Literals(["company", "public"]);
+const released = {
+  publish: Schema.decodeUnknownSync(
+    Schema.Struct({ ...Struct.omit(PublishCreated.fields, ["audience"]), scope: releasedScope })
+  ),
+  list: Schema.decodeUnknownSync(
+    Schema.Struct({
+      patches: Schema.Array(
+        Schema.Struct({ ...Struct.omit(PatchSummary.fields, ["audience"]), scope: releasedScope })
+      )
+    })
+  ),
+  share: Schema.decodeUnknownSync(
+    Schema.Struct({ ...Struct.omit(Shared.fields, ["audience", "warnings"]), scope: releasedScope })
+  ),
+  refusal: Schema.decodeUnknownSync(
+    Schema.Struct({ ok: Schema.Literal(false), error: Schema.String })
+  )
+};
 
 const html = (title: string) =>
   `<!doctype html><html><head><title>${title}</title></head><body><p>${title}</p></body></html>`;
@@ -169,7 +198,9 @@ const layer = Layer.mergeAll(PatchesApi.layer, HttpServer.layerServices).pipe(
     Layer.mergeAll(GuestGrants.layer.pipe(Layer.provideMerge(Patches.layer)), looks, memoryStore)
   ),
   Layer.provideMerge(recordingAnalytics),
-  Layer.provideMerge(Layer.mergeAll(InvocationLog.layer, Users.layer, Companies.layer)),
+  Layer.provideMerge(
+    Layer.mergeAll(InvocationLog.layer, Layer.merge(Users.layer, Teams.layer), Companies.layer)
+  ),
   Layer.provideMerge(Fixtures.database),
   Layer.provide(
     ConfigProvider.layer(
@@ -196,6 +227,7 @@ it.layer(layer)("patches group", (it) => {
       assert.instanceOf(created, PublishCreated);
       assert.strictEqual(created.title, "First");
       assert.strictEqual(created.scope, "company");
+      assert.deepStrictEqual(created.audience, { kind: "company" });
       assert.strictEqual(created.name, "launch-plan");
       assert.strictEqual(
         created.address,
@@ -274,7 +306,7 @@ it.layer(layer)("patches group", (it) => {
       ]);
 
       const served = Option.getOrThrow(yield* (yield* Patches.Patches).find(created.patchId));
-      assert.strictEqual(served.patch.scope, "company");
+      assert.strictEqual(served.patch.audience.kind, "company");
       assert.strictEqual(restricted.name, "launch-notes");
       assert.strictEqual(served.patch.name, restricted.name);
       assert.strictEqual(served.patch.companyHandle, uploader.company.handle);
@@ -287,6 +319,63 @@ it.layer(layer)("patches group", (it) => {
         { patchId: created.patchId, name: restricted.name, current: false }
       );
       assert.include(yield* (yield* Content.Content).read(served.version), "Fourth");
+      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const outsider = yield* client.pipe(Effect.provide(Fixtures.as(reader)));
+      const viewer = { companyId: uploader.company.id, actorId: admin.user.id };
+      const t = yield* (yield* Teams.Teams).create({ ...viewer, name: "API audience recovery" });
+      yield* (yield* Teams.Teams).setMemberships({
+        ...viewer,
+        teamId: t.id,
+        add: [uploader.user.id]
+      });
+      const restrictedAudience = yield* owner.share({
+        params: { patchId: created.patchId },
+        payload: new ShareRequest({ audience: { kind: "teams", teamIds: [t.id] } })
+      });
+      // Clients released before team audiences read `company`; the audience names the team.
+      assert.equal(restrictedAudience.scope, "company");
+      assert.deepStrictEqual(restrictedAudience.audience, {
+        kind: "teams",
+        teams: [{ id: t.id, name: t.name }]
+      });
+      // A scope alone, as those clients send, never widens it.
+      const upgrade = yield* owner.share({
+        params: { patchId: created.patchId },
+        payload: new ShareRequest({ scope: "company" }),
+        responseMode: "response-only"
+      });
+      assert.equal(upgrade.status, 400);
+      assert.equal(decodeAudienceRefused(yield* upgrade.json).code, "upgrade_required");
+      yield* (yield* Teams.Teams).setMemberships({
+        ...viewer,
+        teamId: t.id,
+        remove: [uploader.user.id]
+      });
+      const lost = yield* owner.share({
+        params: { patchId: created.patchId },
+        payload: new ShareRequest({ scope: "company" }),
+        responseMode: "response-only"
+      });
+      assert.equal(lost.status, 400);
+      assert.equal(decodeAudienceRefused(yield* lost.json).code, "owner_access_lost");
+      const hidden = yield* outsider.share({
+        params: { patchId: created.patchId },
+        payload: new ShareRequest({ scope: "company" }),
+        responseMode: "response-only"
+      });
+      assert.equal(hidden.status, 404);
+      yield* (yield* Teams.Teams).setMemberships({
+        ...viewer,
+        teamId: t.id,
+        add: [uploader.user.id]
+      });
+      const invalid = yield* owner.share({
+        params: { patchId: created.patchId },
+        payload: new ShareRequest({ audience: { kind: "teams", teamIds: ["unknown-team"] } }),
+        responseMode: "response-only"
+      });
+      assert.equal(invalid.status, 400);
+      assert.equal(decodeAudienceRefused(yield* invalid.json).code, "invalid_audience_teams");
     })
   );
 
@@ -302,7 +391,7 @@ it.layer(layer)("patches group", (it) => {
         assert.strictEqual(created.scope, "public");
         const patches = yield* Patches.Patches;
         assert.strictEqual(
-          Option.getOrThrow(yield* patches.find(created.patchId)).patch.scope,
+          Option.getOrThrow(yield* patches.find(created.patchId)).patch.audience.kind,
           "public"
         );
 
@@ -312,10 +401,16 @@ it.layer(layer)("patches group", (it) => {
           const shared = yield* sameUser.share({ params, payload: new ShareRequest({ scope }) });
           assert.deepStrictEqual(
             { ...shared },
-            { ok: true, patchId: created.patchId, scope, publicUrl: created.publicUrl }
+            {
+              ok: true,
+              patchId: created.patchId,
+              scope,
+              audience: { kind: scope },
+              publicUrl: created.publicUrl
+            }
           );
           assert.strictEqual(
-            Option.getOrThrow(yield* patches.find(created.patchId)).patch.scope,
+            Option.getOrThrow(yield* patches.find(created.patchId)).patch.audience.kind,
             scope
           );
         }
@@ -440,7 +535,9 @@ const publishLayer = Layer.mergeAll(PatchesApi.layer, HttpServer.layerServices).
     Layer.mergeAll(GuestGrants.layer.pipe(Layer.provideMerge(Patches.layer)), looks, memoryStore)
   ),
   Layer.provideMerge(recordingAnalytics),
-  Layer.provideMerge(Layer.mergeAll(InvocationLog.layer, Users.layer, Companies.layer)),
+  Layer.provideMerge(
+    Layer.mergeAll(InvocationLog.layer, Layer.merge(Users.layer, Teams.layer), Companies.layer)
+  ),
   Layer.provideMerge(Fixtures.database),
   Layer.provide(publishConfig())
 );
@@ -1028,6 +1125,60 @@ it.layer(Layer.fresh(publishLayer))("patch discovery over machine tokens", (it) 
       });
       assert.strictEqual(primitive.status, 503);
       expect(yield* primitive.json).toMatchObject({ code: "source_unavailable" });
+    })
+  );
+
+  it.effect("answers a CLI released before team audiences with responses it reads", () =>
+    Effect.gen(function* () {
+      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const actor = { companyId: uploader.company.id, actorId: admin.user.id };
+      const team = yield* (yield* Teams.Teams).create({ ...actor, name: "Released clients" });
+      yield* (yield* Teams.Teams).setMemberships({
+        ...actor,
+        teamId: team.id,
+        add: [uploader.user.id]
+      });
+      const payload = publishRequest({
+        html: html("Released clients"),
+        manifest: { ...Fixtures.manifest, name: "released-clients" },
+        audience: { kind: "teams", teamIds: [team.id] }
+      });
+      const body = (response: { readonly json: Effect.Effect<unknown, unknown> }) => response.json;
+      const created = released.publish(
+        yield* body(yield* owner.publish({ payload, responseMode: "response-only" }))
+      );
+      assert.strictEqual(created.scope, "company");
+      // The stored receipt a retried attempt gets back, and a later publish without a scope.
+      const replayed = yield* owner.publish({ payload, responseMode: "response-only" });
+      assert.strictEqual(released.publish(yield* body(replayed)).scope, "company");
+      const updated = yield* owner.publish({
+        payload: publishRequest({ html: html("Released clients v2"), patchId: created.patchId }),
+        responseMode: "response-only"
+      });
+      assert.strictEqual(released.publish(yield* body(updated)).scope, "company");
+      const listed = released.list(
+        yield* body(yield* owner.list({ query: {}, responseMode: "response-only" }))
+      );
+      assert.strictEqual(listed.patches.find((p) => p.id === created.patchId)?.scope, "company");
+      const shared = yield* owner.share({
+        params: { patchId: created.patchId },
+        payload: new ShareRequest({ audience: { kind: "teams", teamIds: [team.id] } }),
+        responseMode: "response-only"
+      });
+      assert.strictEqual(released.share(yield* body(shared)).scope, "company");
+      // Its `share company` is refused in words it shows, and the patch stays with its team.
+      const upgrade = yield* owner.share({
+        params: { patchId: created.patchId },
+        payload: new ShareRequest({ scope: "company" }),
+        responseMode: "response-only"
+      });
+      assert.strictEqual(upgrade.status, 400);
+      assert.include(
+        released.refusal(yield* body(upgrade)).error,
+        `Install patchy ${CURRENT_RELEASE}`
+      );
+      const after = Option.getOrThrow(yield* (yield* Patches.Patches).find(created.patchId));
+      assert.deepStrictEqual(after.patch.audience, { kind: "teams", teamIds: [team.id] });
     })
   );
 
@@ -2321,7 +2472,14 @@ it.layer(publishLayer)("publish attempts", (it) => {
   );
 });
 
-it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
+// Shared tables live in the company's database: the block creates it once, with its layer.
+const sharedTableLayer = Layer.effectDiscard(
+  Effect.gen(function* () {
+    yield* (yield* CompanyDatabases.CompanyDatabases).ensureReady(admin.company.id);
+  })
+).pipe(Layer.provideMerge(Layer.fresh(publishLayer)));
+
+it.layer(sharedTableLayer, { timeout: "30 seconds" })("shared table publishing", (it) => {
   it.effect(
     "keeps shared metadata after omission and counts declaring patches across stored versions",
     () =>
@@ -2379,7 +2537,12 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
           })
         });
         assert.deepStrictEqual(omitted.unused.tables, ["contacts"]);
-        const metadata = yield* patches.sharedTable(source.patchId, "contacts", reader.company.id);
+        const metadata = yield* patches.sharedTable(
+          source.patchId,
+          "contacts",
+          reader.company.id,
+          reader.user.id
+        );
         assert.strictEqual(metadata.id, declaration.id);
         assert.strictEqual(metadata.schemaRevision, evolved.schemaRevision);
         assert.deepStrictEqual(
@@ -2520,7 +2683,7 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
         );
         assert.instanceOf(
           yield* patches
-            .sharedTable(source.patchId, "contacts", reader.company.id)
+            .sharedTable(source.patchId, "contacts", reader.company.id, reader.user.id)
             .pipe(Effect.flip),
           Patches.PatchNotOpenable
         );
@@ -2626,12 +2789,17 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
         const patches = yield* Patches.Patches;
         assert.instanceOf(
           yield* patches
-            .sharedTable(source.patchId, "contacts", reader.company.id)
+            .sharedTable(source.patchId, "contacts", reader.company.id, reader.user.id)
             .pipe(Effect.flip),
           Patches.PatchNotOpenable
         );
         assert.strictEqual(
-          (yield* patches.sharedTable(replacement.patchId, "contacts", reader.company.id)).id,
+          (yield* patches.sharedTable(
+            replacement.patchId,
+            "contacts",
+            reader.company.id,
+            reader.user.id
+          )).id,
           sharedTableId(replacement.patchId, "contacts")
         );
       })
@@ -2673,6 +2841,91 @@ const sourceConnection = Effect.fn("test.sourceConnection")(function* (handle: s
 });
 
 it.layer(Layer.fresh(publishLayer))("Postgres declaration publishing", (it) => {
+  it.effect("a narrowing that waits on a publish still refuses to cut that publish off", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const { connections, identity, declaration } = yield* sourceConnection("narrowing-race");
+      const team = yield* (yield* Teams.Teams).create({
+        companyId: admin.company.id,
+        actorId: admin.user.id,
+        name: "Race builders"
+      });
+      const narrowing = { ...identity, audience: { kind: "teams" as const, teamIds: [team.id] } };
+      const input = Fixtures.recordInput(uploader, {
+        manifest: { ...Fixtures.manifest, tier: 2, uses: { sales: declaration } }
+      });
+      // The owner, on no team, publishes with the connection and holds the company until it commits.
+      const ran = yield* Deferred.make<number>();
+      const commit = yield* Deferred.make<void>();
+      const publishing = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* Fixtures.record(input);
+            const [session] = yield* sql<{ readonly pid: number }>`SELECT pg_backend_pid() AS pid`;
+            if (session !== undefined) yield* Deferred.succeed(ran, session.pid);
+            yield* Deferred.await(commit);
+          })
+        )
+        .pipe(Effect.forkScoped);
+      const holder = yield* Deferred.await(ran);
+      const saving = yield* connections
+        .setAudience(narrowing)
+        .pipe(Effect.result, Effect.forkScoped);
+      yield* sql`SELECT pid FROM pg_stat_activity WHERE ${holder} = ANY(pg_blocking_pids(pid))`.pipe(
+        Effect.repeat({ until: (rows) => rows.length > 0 })
+      );
+      yield* Deferred.succeed(commit, undefined);
+      yield* Fiber.join(publishing);
+      const saved = yield* Fiber.join(saving);
+      const refused = Result.isFailure(saved) ? saved.failure : undefined;
+      assert.strictEqual(refused?._tag ?? "saved", "ConnectionCutsOff");
+      assert.lengthOf(refused?._tag === "ConnectionCutsOff" ? refused.patches : [], 1);
+      assert.deepStrictEqual(yield* connections.audience(admin.company.id, identity.id), {
+        kind: "company"
+      });
+      // Saving again with the acknowledgement goes ahead.
+      yield* connections.setAudience({ ...narrowing, acknowledged: true });
+      assert.deepStrictEqual(
+        yield* connections.audience(admin.company.id, identity.id),
+        narrowing.audience
+      );
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect("publish requires the owner's current connection build access", () =>
+    Effect.gen(function* () {
+      const { connections, identity, declaration } = yield* sourceConnection("owner-build-access");
+      const team = yield* (yield* Teams.Teams).create({
+        companyId: admin.company.id,
+        actorId: admin.user.id,
+        name: "Connection builders"
+      });
+      yield* connections.setAudience({
+        ...identity,
+        audience: { kind: "teams", teamIds: [team.id] }
+      });
+      const api = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const request = yield* consumingRequest({
+        html: html("Owner connection access"),
+        manifest: { ...Fixtures.manifest, name: "owner-build-access", uses: { sales: declaration } }
+      });
+      const denied = yield* api.publish({ payload: request, responseMode: "response-only" });
+      assert.equal(denied.status, 400);
+      assert.include(yield* denied.json, { code: "connection_access_denied" });
+      yield* (yield* Teams.Teams).setMemberships({
+        companyId: admin.company.id,
+        actorId: admin.user.id,
+        teamId: team.id,
+        add: [uploader.user.id]
+      });
+      const published = yield* api.publish({
+        payload: new PublishRequest({ ...request, publishKey: crypto.randomUUID() }),
+        responseMode: "response-only"
+      });
+      assert.equal(published.status, 201);
+    })
+  );
+
   it.effect("publishes a version its guests can't open, and says why only when it has guests", () =>
     Effect.gen(function* () {
       const { connections, identity, declaration } = yield* sourceConnection("guest-warehouse");
@@ -3104,7 +3357,7 @@ it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
         assert.strictEqual(shared.status, 422);
         assert.include(yield* shared.json, { code: "tier2_not_public" });
         assert.strictEqual(
-          Option.getOrThrow(yield* patches.find(created.patchId)).patch.scope,
+          Option.getOrThrow(yield* patches.find(created.patchId)).patch.audience.kind,
           "company"
         );
         const lower = yield* api.publish({
@@ -3125,6 +3378,7 @@ it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
         const publicPublish = yield* api.publish({
           payload: publishRequest({
             ...payload,
+            scope: "public",
             patchId: created.patchId,
             publishKey: crypto.randomUUID()
           }),
@@ -4336,6 +4590,46 @@ it.layer(Layer.fresh(publishLayer))("patch log over machine tokens", (it) => {
       });
       assert.strictEqual(missing.status, 404);
     })
+  );
+
+  it.effect(
+    "answers an admin outside its audience, and an owner who lost access, as unopenable",
+    () =>
+      Effect.gen(function* () {
+        const teams = yield* Teams.Teams;
+        const actor = { companyId: admin.company.id, actorId: admin.user.id };
+        const team = yield* teams.create({ ...actor, name: "Log readers" });
+        const members = (userIds: readonly string[], added: boolean) =>
+          teams.setMemberships({
+            ...actor,
+            teamId: team.id,
+            ...(added ? { add: userIds } : { remove: userIds })
+          });
+        yield* members([uploader.user.id], true);
+        const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+        const published = yield* owner.publish({
+          payload: publishRequest({
+            html: html("Team log"),
+            audience: { kind: "teams", teamIds: [team.id] }
+          })
+        });
+        yield* logCall(published, { at: Date.parse("2026-10-19T13:00:00Z"), outcome: "success" });
+        const statusAs = (identity: Identity) =>
+          Effect.flatMap(client.pipe(Effect.provide(Fixtures.as(identity))), (api) =>
+            api.log({
+              params: { patchId: published.patchId },
+              query: {},
+              responseMode: "response-only"
+            })
+          ).pipe(Effect.map((response) => response.status));
+
+        assert.strictEqual(yield* statusAs(admin), 404);
+        // Joining one of its teams is how an admin reads it.
+        yield* members([admin.user.id], true);
+        assert.strictEqual(yield* statusAs(admin), 200);
+        yield* members([uploader.user.id], false);
+        assert.strictEqual(yield* statusAs(uploader), 404);
+      })
   );
 
   it.effect("names a guest from another company who called the patch", () =>

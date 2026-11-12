@@ -1,3 +1,4 @@
+import { Teams } from "@patchy/companies";
 import * as Live from "./attioHarness.js";
 import { afterAll, assert, describe, it } from "@effect/vitest";
 import { DEV_SEED } from "@patchy/auth/seed";
@@ -116,7 +117,7 @@ describe.skipIf(Live.READ_KEY === undefined)("Attio, live on Patchy's probe work
 
       it.effect("replaces a connection's key with the same key, rediscovering its workspace", () =>
         Effect.gen(function* () {
-          const store = yield* SqlConnectionStore.make;
+          const store = yield* SqlConnectionStore.make.pipe(Effect.provide(Teams.layer));
           const connected = yield* store.connect({
             integration: "attio",
             ...who,

@@ -56,7 +56,8 @@ export const current = Effect.fn("AttioCalls.current")(function* (
       companyId,
       lookup: { id: declared.id }
     });
-  yield* ConnectionStore.usable(connection);
+  if (connection.status !== "connected")
+    return yield* new ConnectionStore.ConnectionNotConnected({});
   const secret = yield* connections.poolCredentials(
     companyId,
     { kind: "attio", id: connection.id, handle: connection.handle, revision: declared.revision },

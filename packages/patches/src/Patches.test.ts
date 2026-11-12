@@ -95,7 +95,12 @@ it.layer(
       actor: Patches.Actor
     ) => Effect.Effect<
       unknown,
-      Patches.LifecycleError | Patches.AdminRequired | Patches.Tier2NotPublic | SqlError
+      | import("./Audiences.js").InvalidAudience
+      | import("./Audiences.js").UpgradeRequired
+      | Patches.LifecycleError
+      | Patches.AdminRequired
+      | Patches.Tier2NotPublic
+      | SqlError
     >;
   }> = [
     { name: "retire", allowed: ["live"], run: (service, id, actor) => service.retire(id, actor) },
@@ -116,8 +121,9 @@ it.layer(
     },
     {
       name: "scope",
-      allowed: ["live"],
-      run: (service, id, actor) => service.setScope(id, actor, "public")
+      allowed: ["live", "retired", "deleted"],
+      run: (service, id, actor) =>
+        service.setSharing({ patchId: id, actor: actor, audience: { kind: "public" } })
     },
     {
       name: "description",
@@ -154,7 +160,11 @@ it.layer(
       yield* Fixtures.record(request);
       yield* update(request.patchId, { manifest: tableManifest(manifest.name!, false) });
       yield* update(request.patchId, { manifest });
-      yield* service.setScope(request.patchId, owner, "public");
+      yield* service.setSharing({
+        patchId: request.patchId,
+        actor: owner,
+        audience: { kind: "public" }
+      });
       yield* service.rollback(request.patchId, owner, 1);
       const retired = yield* service.retire(request.patchId, owner);
       assert.strictEqual(retired.lifecycleRevision, "6");
@@ -201,9 +211,13 @@ it.layer(
       const service = yield* Patches.Patches;
       const patch = yield* create();
       const { patchId } = patch;
-      yield* service.setScope(patchId, owner, "company");
+      yield* service.setSharing({ patchId: patchId, actor: owner, audience: { kind: "company" } });
       yield* service.rollback(patchId, owner, 1);
-      yield* service.setScope(patchId, administrator, "public");
+      yield* service.setSharing({
+        patchId: patchId,
+        actor: administrator,
+        audience: { kind: "public" }
+      });
       yield* update(patchId);
       yield* service.rollback(patchId, owner, 1);
       yield* service.retire(patchId, administrator);
@@ -778,14 +792,25 @@ it.layer(
         const service = yield* Patches.Patches;
         const patch = yield* create();
         assert.strictEqual(patch.scope, "company");
-        yield* service.setScope(patch.patchId, administrator, "public");
+        yield* service.setSharing({
+          patchId: patch.patchId,
+          actor: administrator,
+          audience: { kind: "public" }
+        });
         const before = Option.getOrThrow(yield* service.find(patch.patchId));
-        yield* service.setScope(patch.patchId, owner, "company");
+        yield* service.setSharing({
+          patchId: patch.patchId,
+          actor: owner,
+          audience: { kind: "company" }
+        });
         assert.deepStrictEqual(
           Option.getOrThrow(yield* service.find(patch.patchId)).version,
           before.version
         );
-        assert.strictEqual((yield* update(patch.patchId, { scope: "public" })).scope, "public");
+        assert.strictEqual(
+          (yield* update(patch.patchId, { audience: { kind: "public" } })).scope,
+          "public"
+        );
         assert.strictEqual(
           (yield* update(patch.patchId, { machineTokenId: sibling.machine.id })).scope,
           "public"
@@ -915,7 +940,7 @@ it.layer(
         yield* service.retire(source.patchId, owner, true);
         assert.instanceOf(
           yield* service
-            .sharedTable(source.patchId, "notes", uploader.company.id)
+            .sharedTable(source.patchId, "notes", uploader.company.id, uploader.user.id)
             .pipe(Effect.flip),
           Patches.PatchNotOpenable
         );
@@ -941,7 +966,9 @@ it.layer(
         revision: source.schemaRevision
       };
       assert.instanceOf(
-        yield* service.sharedStore(source.patchId, "photos", "another-company").pipe(Effect.flip),
+        yield* service
+          .sharedStore(source.patchId, "photos", "another-company", uploader.user.id)
+          .pipe(Effect.flip),
         Patches.PatchNotOpenable
       );
       for (const invalid of [
@@ -972,8 +999,12 @@ it.layer(
       });
       yield* service.rollback(consumer.patchId, { userId: reader.user.id, admin: false }, 1);
       assert.isTrue(
-        (yield* service.sharedStore(source.patchId, "photos", uploader.company.id)).definition
-          .shared
+        (yield* service.sharedStore(
+          source.patchId,
+          "photos",
+          uploader.company.id,
+          uploader.user.id
+        )).definition.shared
       );
       const before = yield* stored(source.patchId);
       const unshared = {
@@ -1000,20 +1031,26 @@ it.layer(
         (BigInt(String(before.lifecycle_revision)) + 1n).toString()
       );
       const denied = yield* service
-        .sharedStore(source.patchId, "photos", uploader.company.id)
+        .sharedStore(source.patchId, "photos", uploader.company.id, uploader.user.id)
         .pipe(Effect.flip);
       assert.instanceOf(denied, Patches.PatchNotOpenable);
       assert.strictEqual(denied.store, "photos");
       assert.isUndefined(denied.table);
       yield* service.rollback(source.patchId, owner, 1);
       assert.instanceOf(
-        yield* service.sharedStore(source.patchId, "photos", uploader.company.id).pipe(Effect.flip),
+        yield* service
+          .sharedStore(source.patchId, "photos", uploader.company.id, uploader.user.id)
+          .pipe(Effect.flip),
         Patches.PatchNotOpenable
       );
       yield* update(source.patchId, { manifest });
       assert.isTrue(
-        (yield* service.sharedStore(source.patchId, "photos", uploader.company.id)).definition
-          .shared
+        (yield* service.sharedStore(
+          source.patchId,
+          "photos",
+          uploader.company.id,
+          uploader.user.id
+        )).definition.shared
       );
       const stale = yield* update(consumer.patchId, {
         manifest: { ...Fixtures.manifest, tier: 2, uses: { photos: use } },
@@ -1038,14 +1075,18 @@ it.layer(
       assert.isTrue(read.some((row) => row.dependants.length > 0 || row.reads.length > 0));
       assert.deepStrictEqual(
         yield* service.list(all),
-        read.map(({ patch, owner, currentVersion, tier, publishedAt, visits }) => ({
-          patch,
-          owner,
-          currentVersion,
-          tier,
-          publishedAt,
-          visits
-        }))
+        read.map(
+          ({ patch, access, audience, owner, currentVersion, tier, publishedAt, visits }) => ({
+            patch,
+            access,
+            audience,
+            owner,
+            currentVersion,
+            tier,
+            publishedAt,
+            visits
+          })
+        )
       );
       yield* service.retire(source.patchId, owner, true);
       yield* service.retire(consumer.patchId, { userId: reader.user.id, admin: false });
@@ -1062,18 +1103,28 @@ it.layer(
       yield* service.restore(source.patchId, owner);
       yield* service.restore(consumer.patchId, administrator);
       assert.isTrue(
-        (yield* service.sharedStore(source.patchId, "photos", uploader.company.id)).definition
-          .shared
+        (yield* service.sharedStore(
+          source.patchId,
+          "photos",
+          uploader.company.id,
+          uploader.user.id
+        )).definition.shared
       );
       yield* service.delete(source.patchId, owner, true);
       assert.instanceOf(
-        yield* service.sharedStore(source.patchId, "photos", uploader.company.id).pipe(Effect.flip),
+        yield* service
+          .sharedStore(source.patchId, "photos", uploader.company.id, uploader.user.id)
+          .pipe(Effect.flip),
         Patches.PatchNotOpenable
       );
       yield* service.restore(source.patchId, owner);
       assert.isTrue(
-        (yield* service.sharedStore(source.patchId, "photos", uploader.company.id)).definition
-          .shared
+        (yield* service.sharedStore(
+          source.patchId,
+          "photos",
+          uploader.company.id,
+          uploader.user.id
+        )).definition.shared
       );
       yield* service.delete(source.patchId, owner, true);
       yield* TestClock.adjust(30 * DAY);
@@ -1081,7 +1132,9 @@ it.layer(
       const replacement = yield* create({ manifest });
       assert.notStrictEqual(replacement.patchId, source.patchId);
       assert.instanceOf(
-        yield* service.sharedStore(source.patchId, "photos", uploader.company.id).pipe(Effect.flip),
+        yield* service
+          .sharedStore(source.patchId, "photos", uploader.company.id, uploader.user.id)
+          .pipe(Effect.flip),
         Patches.PatchNotOpenable
       );
     })
@@ -1128,7 +1181,12 @@ it.layer(
       );
       yield* service.restore(retired!.patchId, owner);
       assert.strictEqual(
-        (yield* service.sharedTable(retired!.patchId, "notes", uploader.company.id)).patchId,
+        (yield* service.sharedTable(
+          retired!.patchId,
+          "notes",
+          uploader.company.id,
+          uploader.user.id
+        )).patchId,
         retired!.patchId
       );
     })
@@ -1546,6 +1604,9 @@ it.layer(
       const sql = yield* SqlClient.SqlClient;
       yield* sql`UPDATE users SET deactivated_at = now() WHERE id = ${reader.user.id}`;
       const selected = new Set([colleague.patchId, mine.patchId]);
+      assert.deepStrictEqual(yield* service.read({ ...access, state: "live" }), []);
+      yield* sql`UPDATE users SET deactivated_at = NULL WHERE id = ${reader.user.id}`;
+      yield* sql`UPDATE users SET deactivated_at = now() WHERE id = ${uploader.user.id}`;
       const rows = yield* service.read({
         ...access,
         state: "live",
@@ -1555,9 +1616,9 @@ it.layer(
         rows.map(({ patch }) => patch.id),
         [mine.patchId, colleague.patchId]
       );
-      assert.deepStrictEqual(rows[0]!.owner, {
-        id: reader.user.id,
-        name: reader.user.name,
+      assert.deepStrictEqual(rows[1]!.owner, {
+        id: uploader.user.id,
+        name: uploader.user.name,
         deactivated: true
       });
       assert.strictEqual(rows[0]!.currentVersion, 1);
@@ -1572,11 +1633,11 @@ it.layer(
         })).map(({ patch }) => patch.id),
         [mine.patchId]
       );
-      yield* sql`UPDATE users SET deactivated_at = NULL WHERE id = ${reader.user.id}`;
+      yield* sql`UPDATE users SET deactivated_at = NULL WHERE id = ${uploader.user.id}`;
     })
   );
 
-  it.effect("keeps retained source states while redacting inaccessible source names", () =>
+  it.effect("redacts both names and lifecycle states of inaccessible sources", () =>
     Effect.gen(function* () {
       const service = yield* Patches.Patches;
       const sources: Record<string, Patches.Recorded> = {};
@@ -1613,11 +1674,7 @@ it.layer(
           table: "notes",
           ...(alias === "live" || alias === "retired" || alias === "deleted"
             ? { name: source.name, state: alias }
-            : alias === "disabled"
-              ? { state: "live" }
-              : alias === "hidden"
-                ? { state: "retired" }
-                : { state: "gone" })
+            : { state: "gone" })
         })
       );
       assert.deepStrictEqual(

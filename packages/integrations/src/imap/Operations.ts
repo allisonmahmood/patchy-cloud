@@ -37,7 +37,13 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type { FetchQueryObject, ImapFlow, ImapFlowError, ListResponse } from "imapflow";
 import * as ConnectionStore from "../ConnectionStore.js";
-import { operation, viewerRecheck, ViewerRefusal, type DevRead } from "../definition.js";
+import {
+  operation,
+  connectionRecheck,
+  ownerCheck,
+  ViewerRefusal,
+  type DevRead
+} from "../definition.js";
 import {
   ForeignRef,
   InvalidCheckpoint,
@@ -472,7 +478,8 @@ const current = Effect.fn("ImapOperations.current")(function* (
       companyId,
       lookup: { id: declared.id }
     });
-  yield* ConnectionStore.usable(connection);
+  if (connection.status !== "connected")
+    return yield* new ConnectionStore.ConnectionNotConnected({});
   return connection;
 });
 
@@ -750,7 +757,7 @@ const admitted = <A, R>(
       return yield* new ConnectionNotDeclared({});
     const { identity, principal, companyId } = binding;
     if (
-      binding.scope !== "company" ||
+      binding.scope === "public" ||
       identity === null ||
       principal === null ||
       identity.company.id !== companyId ||
@@ -759,6 +766,9 @@ const admitted = <A, R>(
       return yield* new Runtime.AccessDenied({});
     // The caller's own deadline bounds the wait for a gate, so a refused wait is never a timeout.
     const deadline = binding.deadline ?? (yield* Clock.currentTimeMillis) + DEADLINE_MS;
+    // The patch's owner must be able to build with the connection now, and again once the call
+    // holds its gate.
+    yield* ownerCheck(binding, declaration.id);
     return yield* run({
       companyId,
       connection: {
@@ -767,7 +777,12 @@ const admitted = <A, R>(
         revision: declaration.revision
       },
       deadline,
-      recheck: viewerRecheck(binding)
+      recheck: connectionRecheck(binding, declaration.id).pipe(
+        Effect.provideService(
+          ConnectionStore.ConnectionStore,
+          yield* ConnectionStore.ConnectionStore
+        )
+      )
     });
   }).pipe(
     Effect.catchTags({

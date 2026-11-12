@@ -299,6 +299,9 @@ for (const scope of ["company", "local"] as const) {
     expect(asked).toHaveLength(0);
 
     const frame = await loadLazy(page, consumer);
+    // Exercise the operation-refusal probe without the live stream delivering revocation first.
+    instance.pauseStreams(true);
+    await expect.poll(() => instance.streamConnections.size).toBe(0);
     await instance.platform.query("UPDATE users SET deactivated_at=now() WHERE id='usr_dev'");
     const read = answered(page, "tables.list");
     await frame.evaluate(() => {

@@ -526,6 +526,9 @@ export const revisionsContract = Effect.fn("test.revisionsContract")(function* (
     handlers[op].run(args).pipe(Effect.provideService(Binding.Binding, binding));
   const reader = yield* SubscriptionReads.makeDev.pipe(
     Effect.provideService(LoadedVersions.LoadedVersions, {
+      findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+        return this.find(patchId);
+      },
       find: () => Effect.succeed(Option.some({ ...binding, patchTier: binding.manifest.tier }))
     })
   );
@@ -630,11 +633,14 @@ export const sharedOperationsContract = Effect.fn("test.sharedOperationsContract
     new Map<string, LoadedVersions.LoadedVersion>([[source.binding.patchId, source.binding]])
   );
   const versions = LoadedVersions.LoadedVersions.of({
-    find: (patchId, versionId) =>
+    find: () => Effect.succeed(Option.none()),
+    findForViewer: (patchId, viewer) =>
       Ref.get(live).pipe(
         Effect.map((current) => {
           const found = current.get(patchId);
-          return found === undefined || (versionId !== undefined && found.versionId !== versionId)
+          return viewer?.companyId !== companyId ||
+            viewer.userId !== "usr_viewer" ||
+            found === undefined
             ? Option.none()
             : Option.some({ ...found, patchTier: found.manifest.tier });
         })
@@ -676,6 +682,25 @@ export const sharedOperationsContract = Effect.fn("test.sharedOperationsContract
       "access_denied"
     );
   }
+  for (const op of ["shared.get", "shared.getMany", "shared.list"] as const) {
+    const args =
+      op === "shared.get"
+        ? { alias: "contacts", id: own.id }
+        : op === "shared.getMany"
+          ? { alias: "contacts", ids: [] }
+          : { alias: "contacts" };
+    const outsider = { ...viewer, user: { ...viewer.user, id: "outside-design" } };
+    assert.strictEqual(
+      (yield* handlers[op]
+        .run(args)
+        .pipe(
+          Effect.provideService(Binding.Binding, { ...binding, identity: outsider }),
+          Effect.flip
+        )).code,
+      "access_denied"
+    );
+  }
+  assert.deepStrictEqual(yield* call("shared.getMany", { alias: "contacts", ids: [] }), []);
   const bounded = yield* TableOperations.make.pipe(
     Effect.provideService(LoadedVersions.LoadedVersions, versions),
     Effect.provideService(ContractLimits.overrides, { "runtime.result.bytes": 32 }),

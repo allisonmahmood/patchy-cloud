@@ -86,11 +86,19 @@ const failure = <Fields extends Schema.Struct.Fields>(status: number, fields: Fi
 
 export const BadRequest = failure(400, {});
 /**
- * A publish or share that names an `audience`, as clients released with team audiences send. This
- * release sets sharing only by `scope`, so it refuses the request rather than open the patch to
- * more people than asked. A CLI released before it reads any 400 as `BadRequest` and shows `error`.
+ * Refusals that arrived with team audiences. They answer 400 so a CLI released before them, which
+ * reads any 400 as `BadRequest`, still shows `error`. `upgrade_required` answers a request naming
+ * only a scope for a patch open to teams, which only a newer CLI can describe.
  */
-export const AudienceRefused = failure(400, { code: Schema.Literal("upgrade_required") });
+export const AudienceRefused = failure(400, {
+  code: Schema.Literals([
+    "invalid_audience_teams",
+    "audience_excludes_owner",
+    "owner_access_lost",
+    "connection_access_denied",
+    "upgrade_required"
+  ])
+});
 /** A missing credential and a bad one answer the same sentence, so the wire never says which. */
 export const Unauthorized = Schema.Struct({
   ok: Schema.Literal(false),
@@ -124,6 +132,7 @@ export const PatchDeleted = failure(409, {
 });
 export const HasDependants = failure(409, {
   code: Schema.Literal("has_dependants"),
+  hiddenCount: Schema.optionalKey(Schema.Number),
   dependants: Schema.Array(
     Schema.Struct({ patchId: PatchId, name: Schema.String, owner: PatchOwner })
   )
@@ -280,8 +289,51 @@ export const HtmlPage = (status: number) =>
 
 // --- patches --------------------------------------------------------------
 
-/** Who may open a patch: signed-in company members, or anyone with the link. */
+/**
+ * Who may open a patch, as clients released before team audiences read it: signed-in company
+ * members, or anyone with the link. A patch open to teams reports `company`; its `audience` says
+ * which teams.
+ */
 export const SharingScope = Schema.Literals(["company", "public"]);
+
+const NonEmptyText = Schema.String.check(Schema.isMinLength(1));
+
+/** The most teams one patch audience may name. */
+export const MAX_AUDIENCE_TEAMS = 100;
+
+/**
+ * Who may open a patch: everyone at the company, anyone with the link, or the people on any of
+ * the named teams. Named guest grants are separate and add to it.
+ */
+export const PatchAudience = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("company") }),
+  Schema.Struct({ kind: Schema.Literal("public") }),
+  Schema.Struct({
+    kind: Schema.Literal("teams"),
+    teamIds: Schema.Array(NonEmptyText).check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(MAX_AUDIENCE_TEAMS)
+    )
+  })
+]);
+export type PatchAudience = typeof PatchAudience.Type;
+
+/** One team as an audience reports it. */
+export const AudienceTeam = Schema.Struct({ id: Schema.String, name: Schema.String });
+
+/** A patch's audience as responses report it, with each team's name. */
+export const ReportedAudience = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("company") }),
+  Schema.Struct({ kind: Schema.Literal("public") }),
+  Schema.Struct({ kind: Schema.Literal("teams"), teams: Schema.Array(AudienceTeam) })
+]);
+export type ReportedAudience = typeof ReportedAudience.Type;
+
+/** Every team in the company, for choosing an audience. */
+export class AudienceOptions extends Schema.Class<AudienceOptions>("AudienceOptions")({
+  ok: Schema.Literal(true),
+  teams: Schema.Array(AudienceTeam)
+}) {}
 
 /** The company-handle grammar, in a company's patch namespace. */
 export const PatchName = Schema.String.check(
@@ -290,7 +342,6 @@ export const PatchName = Schema.String.check(
   )
 );
 
-const NonEmptyText = Schema.String.check(Schema.isMinLength(1));
 const Revision = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 export const DefinitionName = Schema.String.check(
   Schema.makeFilter(
@@ -843,17 +894,22 @@ export const DeclarationMetadata = Schema.Struct({
     Schema.String,
     Schema.Struct({ declaration: ImapDeclaration, snapshot: ImapSnapshot })
   ).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
+  // `companyWide`: whether everyone in the company can open the source, so `patchy dev`'s
+  // colleague, on none of the developer's teams, can read it. A release before teams sends none,
+  // which reads as everyone.
   shared: Schema.Record(
     Schema.String,
     Schema.Union([
       Schema.Struct({
         declaration: SharedTableDeclaration,
         tables: Schema.Record(Schema.String, TableDefinition),
-        uses: Schema.Record(Schema.String, SharedTableDeclaration)
+        uses: Schema.Record(Schema.String, SharedTableDeclaration),
+        companyWide: Schema.optionalKey(Schema.Boolean)
       }),
       Schema.Struct({
         declaration: SharedStoreDeclaration,
-        definition: FileStoreDefinition
+        definition: FileStoreDefinition,
+        companyWide: Schema.optionalKey(Schema.Boolean)
       })
     ])
   )
@@ -888,6 +944,8 @@ export class PatchSummary extends Schema.Class<PatchSummary>("PatchSummary")({
   mine: Schema.Boolean,
   tier: Schema.Int,
   scope: SharingScope,
+  /** Absent from an instance released before team audiences. */
+  audience: Schema.optionalKey(ReportedAudience),
   description: Schema.String,
   state: PatchState,
   retiredAt: Schema.NullOr(IsoTimestamp),
@@ -1066,7 +1124,10 @@ export class PublishRequest extends Schema.Class<PublishRequest>("PublishRequest
    */
   baseVersion: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0))),
   patchId: Schema.optionalKey(PatchId),
+  /** What clients released before team audiences send; `audience` replaces it. */
   scope: Schema.optionalKey(SharingScope),
+  /** Omitted, a create is open to the company and an update keeps its audience. */
+  audience: Schema.optionalKey(PatchAudience),
   force: Schema.optionalKey(Schema.Boolean),
   publishKey: NonEmptyText,
   metadata: PublishMetadata
@@ -1092,6 +1153,8 @@ const publishFields = {
   address: Schema.String,
   publicUrl: Schema.String,
   scope: SharingScope,
+  /** Absent only from a receipt recorded before team audiences. */
+  audience: Schema.optionalKey(ReportedAudience),
   tier: Manifest.fields.tier,
   schemaRevision: Schema.Int,
   provisioned: ProvisioningReport,
@@ -1114,16 +1177,25 @@ export class PublishCreated extends Schema.Class<PublishCreated>("PublishCreated
 }) {}
 export class PublishUpdated extends Schema.Class<PublishUpdated>("PublishUpdated")(publishFields) {}
 
-/** Change an owned patch's sharing without publishing a version. */
+/**
+ * Change a patch's audience without publishing a version. Send `audience`; `scope` alone is what
+ * clients released before team audiences send.
+ */
 export class ShareRequest extends Schema.Class<ShareRequest>("ShareRequest")({
-  scope: SharingScope
+  scope: Schema.optionalKey(SharingScope),
+  audience: Schema.optionalKey(PatchAudience),
+  force: Schema.optionalKey(Schema.Boolean)
 }) {}
 
 export class Shared extends Schema.Class<Shared>("Shared")({
   ok: Schema.Literal(true),
   patchId: PatchId,
   scope: SharingScope,
-  publicUrl: Schema.String
+  /** Absent from an instance released before team audiences. */
+  audience: Schema.optionalKey(ReportedAudience),
+  publicUrl: Schema.String,
+  /** Who the new audience reaches that the patch's shared sources or connections don't. */
+  warnings: Schema.optionalKey(Schema.Array(Schema.String))
 }) {}
 
 // --- guests ---------------------------------------------------------------

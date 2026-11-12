@@ -1,7 +1,11 @@
+import type { Teams } from "@patchy/companies";
 import { type GuestReason, guestReasonText } from "@patchy/api";
 import type { RequireSession } from "@patchy/auth";
 import {
   avatar,
+  checkbox,
+  choiceGroup,
+  productMark,
   badge,
   button,
   copyButton,
@@ -21,7 +25,14 @@ import {
   select
 } from "@patchy/core";
 import type { GuestGrants, Patches } from "@patchy/patches";
-import { hidden, patchAddress, shareHref, turnedAwayTitle } from "./shared/presentation.js";
+import {
+  canReassign,
+  cardPath,
+  hidden,
+  patchAddress,
+  shareHref,
+  turnedAwayTitle
+} from "./shared/presentation.js";
 
 type Viewer = RequireSession.Viewer["Service"];
 
@@ -43,53 +54,65 @@ const refusalText = (refused: ShareRefusal, viewer: Viewer): string => {
 
 /**
  * The Share dialog over the page it opened from: invite a guest by email, with the people this
- * company has shared with before as suggestions; the people with access, its owner and its guests
- * with Remove; general access, where going public asks first and a tool says why it can't; then
- * Copy link and Done. Each form posts and comes back to `back` with the dialog open. While the
- * patch is public its guests keep their access, but inviting waits. The page behind loads the
- * copy script.
+ * company has shared with before as suggestions; who has access, its owner, its audience and its
+ * guests with Remove; general access, where going public asks first and a tool can't; then Copy
+ * link, Close and Save. Each form posts and comes back to `back` with the dialog open. Off its
+ * address, only its audience changes, so a team it names can be deleted. While the patch is
+ * public its guests keep their access, but inviting waits. The page behind loads the copy script.
  */
 export const renderShareDialog = (input: {
   readonly row: Patches.ReadPatch;
+  /** Every team in the company, to choose from. */
+  readonly teams: readonly Teams.Team[];
   readonly viewer: Viewer;
   readonly publicBaseUrl: string;
-  /** The page behind, as a path and query: where the forms return and Done goes. */
+  /** The page behind, as a path and query: where the forms return and Close goes. */
   readonly back: string;
   readonly guests: readonly GuestGrants.Guest[];
   readonly suggestions: readonly GuestGrants.Person[];
   /** Why its guests can't open it now, while it has guests and they can't. */
   readonly turnedAway?: GuestReason;
+  /** Who its audience reaches that its shared sources or connections don't. */
+  readonly reach: readonly string[];
   /** What the last form here did. */
   readonly receipt?: string;
   /** Why General access's last change was refused. */
   readonly notice?: string;
   /** The email just refused, with why. */
   readonly refused?: { readonly email: string; readonly refusal: ShareRefusal };
+  /** What General access's refused form chose. */
+  readonly submitted?: { readonly scope: string; readonly teamIds: readonly string[] };
+  /** The patches a narrowing would leave without readers; Save then acknowledges them. */
+  readonly narrowing?: {
+    readonly dependants: readonly { readonly patchId: string; readonly name: string }[];
+    readonly hiddenCount: number;
+  };
   /** Going public was asked for (`&confirm=public`), so the dialog asks before it applies. */
   readonly confirmPublic?: boolean;
 }): string => {
   const { viewer } = input;
-  const { patch, owner, tier } = input.row;
+  const { patch, owner, tier, audience } = input.row;
   const title = patchTitle(patch, viewer.company.name);
   const company = viewer.company.name;
-  const isPublic = patch.scope === "public";
-  // A tool can't be public, so its one choice is its company, with why; going public asks first.
+  const live = patch.state === "live";
+  const isPublic = audience.kind === "public";
+  // Tools require sign-in; pages can also offer public access after confirmation.
   const tool = tier >= 2 && !isPublic;
   const confirming = input.confirmPublic === true && !isPublic && !tool;
   const refused = input.refused;
-  // Inviting waits while it's public, unless an invite sent before it went public was refused:
-  // that one keeps its email and why.
-  const inviting = !isPublic || refused !== undefined;
+  // Inviting waits while it's public or off, unless an invite sent before was refused: that one
+  // keeps its email and why.
+  const inviting = (live && !isPublic) || refused !== undefined;
   // Focus starts where the dialog's state needs it, never on a guest's Remove: Cancel while it
-  // asks about going public, General access after a refusal there or while it's public, and
+  // asks about going public, General access after a refusal there or while it can't invite, and
   // otherwise the invite field.
   const focus = confirming
     ? "cancel"
-    : input.notice !== undefined || !inviting
+    : input.notice !== undefined || input.narrowing !== undefined || !inviting
       ? "scope"
       : "invite";
   const form = (act: "add-guest" | "remove-guest" | "scope", body: string) =>
-    `<form method="post" action="${escapeAttribute(`/patches/${encodeURIComponent(patch.name)}/${act}`)}" novalidate>${hidden("expectedPatchId", patch.id)}${hidden("back", input.back)}${body}</form>`;
+    `<form${act === "scope" ? ' id="share-access-form"' : ""} method="post" action="${escapeAttribute(`/patches/${encodeURIComponent(patch.name)}/${act}`)}" novalidate>${hidden("expectedPatchId", patch.id)}${hidden("back", input.back)}${body}</form>`;
 
   const known = new Set(input.guests.map((guest) => guest.userId));
   const suggestions = input.suggestions
@@ -121,20 +144,42 @@ export const renderShareDialog = (input: {
         })}${suggestions ? `<datalist id="share-suggestions">${suggestions}</datalist>` : ""}`
       );
 
-  const people = `<div class="fieldset"><h3 class="field-label" id="share-people">People with access</h3><div class="rows-flush" role="group" aria-labelledby="share-people">${rows(
+  // The saved audience, apart from the unsaved General access controls below.
+  const audienceRows =
+    audience.kind === "teams"
+      ? audience.teams.map((team) =>
+          row({
+            lead: productMark({ icon: "people" }),
+            name: team.name,
+            end: '<span class="meta">Team</span>'
+          })
+        )
+      : [
+          row({
+            lead: productMark({ icon: isPublic ? "external" : "people" }),
+            name: isPublic ? "Anyone on the internet" : `People at ${company}`,
+            end: `<span class="meta">${isPublic ? "Public" : "Company"}</span>`
+          })
+        ];
+  const people = `<div class="fieldset"><h3 class="field-label" id="share-people">Who has access</h3><div class="rows-flush" role="group" aria-labelledby="share-people">${rows(
     [
       row({
         lead: avatar(owner.id, owner.name, owner.deactivated ? "off" : undefined),
         name: `${owner.name}${owner.id === viewer.user.id ? " (you)" : ""}`,
-        ...(owner.deactivated ? { description: "Deactivated" } : {}),
-        end: '<span class="meta">Owner</span>'
+        ...(owner.deactivated
+          ? { description: "Deactivated" }
+          : !input.row.access.ownerCanOpen
+            ? { description: "Can’t open it" }
+            : {}),
+        end: `<span class="meta">Owner</span>${canReassign(viewer) ? linkButton("Change owner…", cardPath(patch, "reassign"), { kind: "quiet", size: "sm" }) : ""}`
       }),
+      ...audienceRows,
       ...input.guests.map((guest) =>
         row({
           lead: avatar(guest.userId, guest.name),
           name: guest.name,
           description: `${guest.email} · ${guest.companyName}`,
-          end: `${badge("Guest")}${form("remove-guest", `${hidden("guest", guest.userId)}${button("Remove", { kind: "quiet", size: "sm", ariaLabel: `Remove ${guest.name}` })}`)}`
+          end: `${badge("Guest")}${live ? form("remove-guest", `${hidden("guest", guest.userId)}${button("Remove", { kind: "quiet", danger: true, size: "sm", ariaLabel: `Remove ${guest.name}` })}`) : ""}`
         })
       )
     ]
@@ -147,18 +192,38 @@ export const renderShareDialog = (input: {
     input.notice === undefined
       ? ""
       : `<div id="${refusalId}">${notice({ tone: "danger", title: input.notice })}</div>`;
-  const audience = confirming
+  const revision = hidden("expectedLifecycleRevision", patch.lifecycleRevision);
+  // Saving again after a narrowing was refused accepts that its readers lose these patches.
+  const narrowing = input.narrowing;
+  const impact =
+    narrowing === undefined
+      ? ""
+      : notice({
+          tone: "warning",
+          title: "These patches read its tables and lose readers",
+          body: `${rows(
+            narrowing.dependants.map((item) => row({ name: item.name })),
+            true
+          )}${narrowing.hiddenCount ? `<p>${narrowing.hiddenCount} more you can’t open.</p>` : ""}${hidden("force", "true")}`
+        });
+  const chosenScope =
+    input.submitted?.scope ?? (audience.kind === "teams" ? "teams" : audience.kind);
+  const chosenTeams = new Set(
+    input.submitted?.teamIds ?? (audience.kind === "teams" ? audience.teams.map((t) => t.id) : [])
+  );
+  const access = confirming
     ? form(
         "scope",
-        `${hidden("expectedScope", patch.scope)}${hidden("scope", "public")}${notice({
+        `${revision}${hidden("scope", "public")}${notice({
           tone: "warning",
           title: `Make ${title} public?`,
           body: "<p>Anyone with the link can open it without signing in.</p>",
           action: `<div class="cluster">${button("Make public", { kind: "primary", name: "confirm", value: "public" })}${linkButton("Cancel", shareHref(input.back, patch.name), { kind: "quiet", autofocus: true })}</div>`
         })}`
       )
-    : (() => {
-        const audienceField = field({
+    : form(
+        "scope",
+        `${revision}${refusal}${field({
           id: "share-scope",
           label: "General access",
           ...(isPublic
@@ -166,49 +231,70 @@ export const renderShareDialog = (input: {
                 hint: `Anyone with the link can open it without signing in.${input.guests.length ? ` Its guests keep their access if it goes back to people at ${company}.` : ""}`
               }
             : {}),
-          control: (aria) => {
-            // The control describes why it is the only choice, and why its last change was refused.
-            const reason = "share-scope-reason";
-            const describedBy = [
-              aria.describedBy,
-              tool ? reason : undefined,
-              refusal ? refusalId : undefined
-            ]
-              .filter((id) => id !== undefined)
-              .join(" ");
-            const choice = select(
+          control: (aria) =>
+            select(
               {
                 ...aria,
-                describedBy: describedBy === "" ? undefined : describedBy,
+                describedBy:
+                  [aria.describedBy, refusal ? refusalId : undefined]
+                    .filter((id) => id !== undefined)
+                    .join(" ") || undefined,
                 invalid: refusal !== ""
               },
               {
                 name: "scope",
-                value: patch.scope,
+                value: chosenScope,
                 width: "md",
                 autofocus: focus === "scope",
                 choices: [
                   { value: "company", label: `People at ${company}` },
+                  ...(input.teams.length > 0 ? [{ value: "teams", label: "Selected teams" }] : []),
                   ...(tool ? [] : [{ value: "public", label: "Anyone on the internet" }])
                 ]
               }
-            );
-            return `<div class="pair">${choice}${tool ? `<p class="meta grow" id="${reason}">Tools can’t be public. Invite people at other companies above.</p>` : button("Save")}</div>`;
-          }
-        });
-        return tool
-          ? `${refusal}${audienceField}`
-          : form("scope", `${hidden("expectedScope", patch.scope)}${refusal}${audienceField}`);
-      })();
+            )
+        })}${
+          input.teams.length === 0
+            ? ""
+            : choiceGroup({
+                id: "share-teams",
+                legend: "Teams",
+                choices: (aria) =>
+                  input.teams
+                    .map((team) =>
+                      checkbox({
+                        name: "teamIds",
+                        value: team.id,
+                        label: team.name,
+                        checked: chosenTeams.has(team.id),
+                        aria
+                      })
+                    )
+                    .join("")
+              })
+        }${impact}`
+      );
 
-  const warning =
-    input.turnedAway === undefined
-      ? ""
-      : notice({
-          tone: "warning",
-          title: turnedAwayTitle,
-          body: `<p>${escapeHtml(guestReasonText(input.turnedAway))}</p>`
-        });
+  const warnings = [
+    ...(input.turnedAway === undefined
+      ? []
+      : [
+          notice({
+            tone: "warning",
+            title: turnedAwayTitle,
+            body: `<p>${escapeHtml(guestReasonText(input.turnedAway))}</p>`
+          })
+        ]),
+    ...(input.reach.length === 0
+      ? []
+      : [
+          notice({
+            tone: "warning",
+            title: "Its audience is wider than what it uses",
+            body: input.reach.map((line) => `<p>${escapeHtml(line)}</p>`).join("")
+          })
+        ])
+  ].join("");
   const link = `${input.publicBaseUrl.replace(/\/+$/u, "")}${patchAddress(patch)}`;
   return dialog({
     id: "share",
@@ -216,8 +302,8 @@ export const renderShareDialog = (input: {
     mark: patchMark(patch.name, tier),
     size: "lg",
     closeHref: input.back,
-    body: `${input.receipt === undefined ? "" : receipt(input.receipt)}${warning}${invite}${people}${audience}`,
-    foot: `<span class="dialog-foot-start">${copyButton(link, { label: "Copy link", size: "sm" })}</span>${linkButton("Done", input.back, { kind: "primary" })}`
+    body: `${input.receipt === undefined ? "" : receipt(input.receipt)}${warnings}${invite}${people}${access}`,
+    foot: `${live ? `<span class="dialog-foot-start">${copyButton(link, { label: "Copy link", size: "sm" })}</span>` : ""}${linkButton("Close", input.back, { kind: "quiet" })}${confirming ? "" : button("Save", { kind: "primary", form: "share-access-form" })}`
   });
 };
 

@@ -5,7 +5,7 @@ import * as WideEvents from "@patchy/analytics/wide-events";
 import { Session } from "@patchy/auth";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { clerkEnv } from "@patchy/auth/testing";
-import { Companies, Directory, Users } from "@patchy/companies";
+import { Companies, Directory, Users, Teams } from "@patchy/companies";
 import { NodeCryptography } from "@patchy/core";
 import { sha256 } from "../../../../test/crypto.js";
 import { Limits, OperatingLimits } from "@patchy/limits";
@@ -155,7 +155,7 @@ const answers: ReadonlyArray<PidgeonTest.Recorded> = [
 /** The Pidgeon handlers as the server builds them, over the recorded answers, and two connections. */
 const handlers = Effect.gen(function* () {
   const recorded = PidgeonTest.recorded(answers);
-  const store = yield* SqlConnectionStore.make.pipe(Effect.provide(recorded.layer));
+  const store = yield* SqlConnectionStore.make.pipe(Effect.provide([recorded.layer, Teams.layer]));
   yield* PidgeonTest.seed({ ...who, ...support });
   yield* PidgeonTest.seed({ ...who, ...invoices, access: "read" });
   const built = yield* Operations.makeHandlers.pipe(
@@ -200,8 +200,7 @@ const tier1 = Layer.mergeAll(
   OperatingLimits.layer,
   RuntimeLog.layer,
   credentials,
-  RuntimeTest.versions(patchId, versionId, () => uses),
-  RuntimeTest.storedPatch(patchId)
+  RuntimeTest.versions(patchId, versionId, () => uses)
 )
   .pipe(
     Layer.provideMerge(Testing.layer()),
@@ -299,7 +298,11 @@ it.layer(tier1)("Pidgeon from a tier 2 action's callbacks", (it) => {
 
         // Recent calls name each call; neither they nor a log line hold a body or search text.
         const log = yield* RuntimeLog.RuntimeLog;
-        const calls = yield* log.recent({ companyId: who.companyId, connectionId: support.id });
+        const calls = yield* log.recent({
+          companyId: who.companyId,
+          connectionId: support.id,
+          patchIds: [patchId]
+        });
         assert.includeMembers(
           calls.map((recent) => recent.resource),
           [

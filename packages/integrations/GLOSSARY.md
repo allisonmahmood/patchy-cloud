@@ -1,6 +1,6 @@
 # Integrations
 
-The company capability for connecting outside systems without handing credentials to patches. Postgres, PostHog, Pidgeon, Attio and Email (IMAP) connections and their discovered metadata are managed here; the `connections` API group exposes their safe metadata to active members. [Companies](../companies/GLOSSARY.md) owns membership, and [Runtime](../runtime/GLOSSARY.md) uses the initiating viewer as the effective principal for connection calls.
+The company capability for connecting outside systems without handing credentials to patches. Postgres, PostHog, Pidgeon, Attio and Email (IMAP) connections and their discovered metadata are managed here; the `connections` API group exposes their safe metadata to active members. [Companies](../companies/GLOSSARY.md) owns membership and teams, and [Runtime](../runtime/GLOSSARY.md) uses the initiating viewer as the effective principal for connection calls, which also check that the patch's owner may build with the connection.
 
 ## Language
 
@@ -231,3 +231,7 @@ _Avoid_: dry run, fake send, test send (a test-mode key's send, which does land 
 **Fixture**:
 Builder-authored synthetic data for a declaration's local shape, with invented rows for connections and shared tables, or files for shared stores. Fixtures establish local behavior, not production data, authority or volume guarantees; view fixtures contain explicit rows rather than recomputed source data.
 _Avoid_: Sample of production, mock response
+
+**Connection audience**:
+Who may build patches with a connection: everyone in the company, or the people on any of its selected teams by their recorded memberships, whether or not they are active. Only an admin sets it; every existing connection is the company's. A patch's current owner must be in it at publish and on every call through the patch; anyone who can open the patch uses the connection through its handlers. Discovery, connection pages and SDK generation list only the connections a person can build with. Blocking guests is separate.
+_Avoid_: connection permission, connection access list

@@ -12,12 +12,13 @@ import {
   isWelcomePage,
   linkButton,
   notice,
+  sentenceList,
   steps,
   type Step,
   type Template
 } from "@patchy/core";
 import type { Patches } from "@patchy/patches";
-import { hidden } from "./shared/presentation.js";
+import { cardPath, hidden } from "./shared/presentation.js";
 
 /** Why a setup line can't finish on the panel; each says what happened, and all offer a new line. */
 export type Fallback = "contested" | "denied" | "expired" | "other_account" | "ran_out";
@@ -86,21 +87,32 @@ const announcements: Record<SetupState["kind"], string> = {
 
 /**
  * "Your welcome page is live", or "Your first patch is live" for anything else, with the ways to
- * open it and pass it on: the steps' last state.
+ * open it and pass it on: the steps' last state. One its owner can't open any more says so, with
+ * the way to its card.
  */
 export const renderLiveNote = (row: Patches.ReadPatch, viewer: Viewer, publicBaseUrl: string) => {
   const { patch } = row;
+  const title = isWelcomePage({ name: patch.name, tier: row.tier })
+    ? "Your welcome page is live"
+    : "Your first patch is live";
+  if (!row.access.canOpen)
+    return notice({
+      tone: "info",
+      title,
+      body: "<p>You can’t open it. Ask an admin to add you to one of its teams or reassign it.</p>",
+      action: linkButton("View patch", cardPath(patch), { kind: "primary", size: "sm" })
+    });
   const address = `/${encodeURIComponent(patch.companyHandle)}/${encodeURIComponent(patch.name)}`;
   const url = `${publicBaseUrl.replace(/\/+$/u, "")}${address}`;
   return notice({
     tone: "info",
-    title: isWelcomePage({ name: patch.name, tier: row.tier })
-      ? "Your welcome page is live"
-      : "Your first patch is live",
+    title,
     body: `<p>${
-      patch.scope === "public"
+      row.audience.kind === "public"
         ? "Anyone with the link can open it."
-        : `Signed-in people at ${escapeHtml(viewer.company.name)} can open it.`
+        : row.audience.kind === "teams"
+          ? `Signed-in people on ${sentenceList(row.audience.teams.map((team) => team.name))} can open it.`
+          : `Signed-in people at ${escapeHtml(viewer.company.name)} can open it.`
     } To change it, tell your agent what to change.</p>`,
     action: `<div class="btn-group">${linkButton("Open it", address, { kind: "primary", size: "sm" })}${copyButton(url, { label: "Copy link", size: "sm" })}</div>`
   });

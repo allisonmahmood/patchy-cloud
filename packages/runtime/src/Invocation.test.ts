@@ -979,6 +979,9 @@ it.layer(services)("Invocation", (it) => {
         ).pipe(
           Effect.provideService(Invocation.Invocation, invocations),
           Effect.provideService(LoadedVersions.LoadedVersions, {
+            findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+              return this.find(patchId);
+            },
             find: () =>
               Effect.succeed(Option.some({ ...binding, patchTier: binding.manifest.tier }))
           })

@@ -12,7 +12,12 @@ test("the sidebar lights the page's place and opens Settings around its pages, f
     await instance.session(page.context(), user);
     await page.goto(`${instance.origin}/settings/integrations`);
     const settings = primary(page).getByRole("group", { name: "Settings" });
-    await expect(settings.getByRole("link")).toHaveText(["People", "Integrations", "Agent access"]);
+    await expect(settings.getByRole("link")).toHaveText([
+      "Teams",
+      "People",
+      "Integrations",
+      "Agent access"
+    ]);
     await expect(settings.getByRole("link", { name: "Integrations" })).toHaveAttribute(
       "aria-current",
       "page"

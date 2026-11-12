@@ -9,11 +9,12 @@ import * as RuntimeLog from "./RuntimeLog.js";
 import { NodeCryptography } from "@patchy/core";
 
 const NOW = Date.UTC(2026, 0, 1);
+const PATCH = "runtimepatch";
 const mutation = (
   correlationId: string
 ): Extract<RuntimeLog.Begin, { readonly credentialKind: "session" | "admin" }> => ({
   companyId: DEV_SEED.companyId,
-  patchId: "runtimepatch",
+  patchId: PATCH,
   versionId: "ver_runtime",
   userId: DEV_SEED.userId,
   credentialKind: "session",
@@ -32,21 +33,61 @@ const rolledBack = <A, E, R>(body: Effect.Effect<A, E, R>) =>
       .pipe(Effect.catch((error) => (error === "rolled back" ? Effect.void : Effect.fail(error))));
   });
 
-/** The patch `mutation`'s calls come from, since a connection's calls show only a patch's that exists. */
-const runtimePatch = Layer.effectDiscard(
-  Effect.flatMap(
-    SqlClient.SqlClient,
-    (sql) => sql`INSERT INTO patches (id, company_id, owner_user_id, title, name)
-      VALUES ('runtimepatch', ${DEV_SEED.companyId}, ${DEV_SEED.userId}, 'Runtime', 'runtimepatch')`
-  )
-);
-
 it.layer(
-  Layer.merge(RuntimeLog.layer, runtimePatch).pipe(
+  RuntimeLog.layer.pipe(
     Layer.provideMerge(Testing.layer()),
     Layer.provideMerge(NodeCryptography.layer)
   )
 )("RuntimeLog", (it) => {
+  it.effect(
+    "shows calls from the patches it's given and from no patch, filtered before the limit",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW);
+        const log = yield* RuntimeLog.RuntimeLog;
+        const connectionId = "recent-hidden";
+        const call = (
+          correlationId: string,
+          patchId: string | null,
+          connection: string = connectionId
+        ) =>
+          log
+            .begin({
+              ...mutation(correlationId),
+              credentialKind: patchId === null ? "admin" : "session",
+              patchId,
+              versionId: patchId === null ? null : "ver_runtime",
+              op: "postgres.query",
+              connectionId: connection
+            })
+            .pipe(Effect.andThen(TestClock.adjust(1)));
+        yield* call("from-open", "openpatch");
+        yield* call("from-admin", null);
+        for (const n of [1, 2, 3]) yield* call(`from-other-${n}`, "otherpatch");
+        yield* call("only-other", "otherpatch", "recent-only-hidden");
+        const recent = yield* log.recent({
+          companyId: DEV_SEED.companyId,
+          connectionId,
+          limit: 2,
+          patchIds: ["openpatch"]
+        });
+        assert.deepStrictEqual(
+          recent.map((found) => found.correlationId),
+          ["from-admin", "from-open"]
+        );
+        // The newest call, too, is the newest of those.
+        assert.deepStrictEqual(
+          [
+            ...(yield* log.latest({
+              companyId: DEV_SEED.companyId,
+              connectionIds: [connectionId, "recent-only-hidden"],
+              patchIds: ["openpatch"]
+            }))
+          ],
+          [[connectionId, new Date(NOW + 1)]]
+        );
+      })
+  );
   it.effect(
     "bounds recent calls by company and connection with the same deadline semantics as correlation lookup",
     () =>
@@ -76,24 +117,32 @@ it.layer(
           connectionId: "another",
           sql: "SELECT 'foreign-connection'"
         });
-        const selected = yield* log.recent({ companyId, connectionId, limit: 2 });
+        const selected = yield* log.recent({
+          companyId,
+          connectionId,
+          limit: 2,
+          patchIds: [PATCH]
+        });
         assert.deepStrictEqual(
           selected.map((call) => call.correlationId),
           ["recent-correlation-101", "recent-correlation-100"]
         );
-        assert.strictEqual((yield* log.recent({ companyId, connectionId })).length, 50);
         assert.strictEqual(
-          (yield* log.recent({ companyId, connectionId, limit: 1000 })).length,
+          (yield* log.recent({ companyId, connectionId, patchIds: [PATCH] })).length,
+          50
+        );
+        assert.strictEqual(
+          (yield* log.recent({ companyId, connectionId, limit: 1000, patchIds: [PATCH] })).length,
           100
         );
         yield* TestClock.setTime(NOW + 15_101);
         assert.strictEqual(
-          (yield* log.recent({ companyId, connectionId, limit: 1 }))[0]?.outcome,
+          (yield* log.recent({ companyId, connectionId, limit: 1, patchIds: [PATCH] }))[0]?.outcome,
           "pending"
         );
         yield* TestClock.adjust(1);
         assert.strictEqual(
-          (yield* log.recent({ companyId, connectionId, limit: 1 }))[0]?.outcome,
+          (yield* log.recent({ companyId, connectionId, limit: 1, patchIds: [PATCH] }))[0]?.outcome,
           "unknown"
         );
         yield* log.finish({
@@ -103,7 +152,12 @@ it.layer(
           durationMs: 15_001,
           rowCount: null
         });
-        const completed = (yield* log.recent({ companyId, connectionId, limit: 1 }))[0]!;
+        const completed = (yield* log.recent({
+          companyId,
+          connectionId,
+          limit: 1,
+          patchIds: [PATCH]
+        }))[0]!;
         assert.strictEqual(completed.outcome, "failure");
         assert.strictEqual(completed.outcomeCode, "timeout");
       })
@@ -125,68 +179,16 @@ it.layer(
       yield* call("latest-foreign", "latest-quiet", "foreign");
       const latest = yield* log.latest({
         companyId: DEV_SEED.companyId,
-        connectionIds: ["latest-busy", "latest-quiet"]
+        connectionIds: ["latest-busy", "latest-quiet"],
+        patchIds: [PATCH]
       });
       assert.deepStrictEqual([...latest], [["latest-busy", new Date(NOW + 1_000)]]);
       assert.strictEqual(
-        (yield* log.latest({ companyId: DEV_SEED.companyId, connectionIds: [] })).size,
+        (yield* log.latest({ companyId: DEV_SEED.companyId, connectionIds: [], patchIds: [PATCH] }))
+          .size,
         0
       );
     })
-  );
-
-  it.effect(
-    "leaves out the calls of a patch open to teams or since reclaimed, before the limit and from the newest call",
-    () =>
-      rolledBack(
-        Effect.gen(function* () {
-          yield* TestClock.setTime(NOW);
-          const log = yield* RuntimeLog.RuntimeLog;
-          const sql = yield* SqlClient.SqlClient;
-          // A later release opens a patch to selected teams; this one opens it for nobody.
-          yield* sql`INSERT INTO patches (id, company_id, owner_user_id, scope, title, name)
-          VALUES ('runtime-open', ${DEV_SEED.companyId}, ${DEV_SEED.userId}, 'company', 'Open', 'runtime-open'),
-            ('runtime-team', ${DEV_SEED.companyId}, ${DEV_SEED.userId}, 'teams', 'Team', 'runtime-team')`;
-          const connectionId = "teams-connection";
-          const call = (
-            correlationId: string,
-            patchId: string | null,
-            connection: string = connectionId
-          ) =>
-            Effect.andThen(
-              log.begin({
-                ...mutation(correlationId),
-                op: "postgres.list",
-                connectionId: connection,
-                patchId
-              }),
-              TestClock.adjust(1)
-            );
-          yield* call("from-open", "runtime-open");
-          yield* call("from-admin", null);
-          yield* call("from-team-1", "runtime-team");
-          yield* call("from-team-2", "runtime-team");
-          // Its row is gone, so nothing says whether it was open to teams.
-          yield* call("from-reclaimed", "runtime-reclaimed");
-          yield* call("hidden-team", "runtime-team", "hidden-connection");
-          yield* call("hidden-reclaimed", "runtime-reclaimed", "hidden-connection");
-          assert.deepStrictEqual(
-            (yield* log.recent({ companyId: DEV_SEED.companyId, connectionId, limit: 2 })).map(
-              (found) => found.correlationId
-            ),
-            ["from-admin", "from-open"]
-          );
-          assert.deepStrictEqual(
-            [
-              ...(yield* log.latest({
-                companyId: DEV_SEED.companyId,
-                connectionIds: [connectionId, "hidden-connection"]
-              }))
-            ],
-            [[connectionId, new Date(NOW + 1)]]
-          );
-        })
-      )
   );
 
   it.effect("hides calls recorded under a credential kind this release does not know", () =>
@@ -214,13 +216,22 @@ it.layer(
         yield* later("only-later", "only-unknown");
         // Filters apply before the limit, so the newest call this release knows still shows.
         assert.deepStrictEqual(
-          (yield* log.recent({ companyId, connectionId: "known", limit: 1 })).map(
-            (call) => call.correlationId
-          ),
+          (yield* log.recent({
+            companyId,
+            connectionId: "known",
+            limit: 1,
+            patchIds: [PATCH]
+          })).map((call) => call.correlationId),
           ["known-session"]
         );
         assert.deepStrictEqual(
-          [...(yield* log.latest({ companyId, connectionIds: ["known", "only-unknown"] }))],
+          [
+            ...(yield* log.latest({
+              companyId,
+              connectionIds: ["known", "only-unknown"],
+              patchIds: [PATCH]
+            }))
+          ],
           [["known", new Date(NOW)]]
         );
         assert.isNull(yield* log.find({ companyId, correlationId: "known-later" }));
@@ -240,18 +251,22 @@ it.layer(
           correlationId: "known-dev"
         });
         assert.deepStrictEqual(
-          (yield* log.recent({ companyId, connectionId: "known" })).map((call) => [
-            call.correlationId,
-            call.credentialKind,
-            call.machine
-          ]),
+          (yield* log.recent({ companyId, connectionId: "known", patchIds: [PATCH] })).map(
+            (call) => [call.correlationId, call.credentialKind, call.machine]
+          ),
           [
             ["known-dev", "machine", { id: "tok_laptop", name: "Laptop" }],
             ["known-session", "session", null]
           ]
         );
         assert.deepStrictEqual(
-          [...(yield* log.latest({ companyId, connectionIds: ["known", "only-unknown"] }))],
+          [
+            ...(yield* log.latest({
+              companyId,
+              connectionIds: ["known", "only-unknown"],
+              patchIds: [PATCH]
+            }))
+          ],
           [["known", new Date(NOW + 2_000)]]
         );
       })
@@ -298,7 +313,11 @@ it.layer(
         durationMs: 7,
         rowCount: 1
       });
-      const recent = yield* log.recent({ companyId, connectionId: "callback-connection" });
+      const recent = yield* log.recent({
+        companyId,
+        connectionId: "callback-connection",
+        patchIds: [PATCH]
+      });
       assert.strictEqual(recent.length, 1);
       assert.strictEqual(recent[0]?.userId, DEV_SEED.userId);
       assert.strictEqual(recent[0]?.effectivePrincipal, DEV_SEED.userId);

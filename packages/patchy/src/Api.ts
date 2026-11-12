@@ -219,6 +219,12 @@ export const isDefinitivePublishRefusal = (error: ClientFailure, update: boolean
         error.code === "has_dependants" ||
         error.code === "patch_retired" ||
         error.code === "patch_deleted")) ||
+    (error.status === 400 &&
+      (error.code === "invalid_audience_teams" ||
+        error.code === "audience_excludes_owner" ||
+        error.code === "owner_access_lost" ||
+        error.code === "connection_access_denied" ||
+        error.code === "upgrade_required")) ||
     (error.status === 403 && error.code === "not_owner") ||
     (error.status === 404 && update && error.error === PATCH_NOT_FOUND));
 

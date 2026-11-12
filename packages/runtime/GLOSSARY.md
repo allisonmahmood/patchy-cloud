@@ -25,11 +25,11 @@ The refusal of a direct operation when a tier 2 document must use handlers, or w
 _Avoid_: revoked, permission lost
 
 **Invocation admission**:
-The decision that a live viewer, or their worker agent while agent access is on, may start a handler on an eligible loaded version of a live company patch, within its admission limits. An agent's call starts only an agent tool, and a page's never does; an agent tool's own nested calls run ordinary sibling handlers as usual. Dispatched work retains that admission until settlement.
+The decision that a live viewer the patch's current audience admits, or their worker agent while agent access is on, may start a handler on an eligible loaded version of a live company patch, within its admission limits. An agent's call starts only an agent tool, and a page's never does; an agent tool's own nested calls run ordinary sibling handlers as usual. Dispatched work retains that admission until settlement.
 _Avoid_: callback authorisation, presence lease
 
 **Callback authorisation**:
-The decision about one operation requested by an invocation. Owned resources inherit invocation admission; company resources require the initiating viewer's current authority.
+The decision about one operation requested by an invocation. Owned resources inherit invocation admission; company resources require the initiating viewer's current authority, against the patch's current audience.
 _Avoid_: invocation admission, guest permission
 
 **Query**:

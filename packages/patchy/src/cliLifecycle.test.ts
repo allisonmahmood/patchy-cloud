@@ -165,7 +165,36 @@ describe("patch lifecycle commands", () => {
     });
   });
 
+  it("sends explicit dependency acknowledgement for sharing", async () => {
+    const payloads: unknown[] = [];
+    const instance = await stubInstance((request, respond) => {
+      if (request.method === "POST" && request.url === `/api/patches/${patchId}/share`) {
+        payloads.push(request.body);
+        respond(200, {
+          ok: true,
+          patchId,
+          scope: "company",
+          publicUrl: "https://example.test/board"
+        });
+      }
+    });
+    const result = await runCli(["share", "--patch", patchId, "company", "--force", "--json"], {
+      stateDir: tempDir(),
+      env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
+    });
+    expect(result.status).toBe(0);
+    expect(payloads).toEqual([{ audience: { kind: "company" }, force: true }]);
+  });
+
   it.each([
+    {
+      verb: "share",
+      args: ["company"],
+      status: 409,
+      code: "has_dependants",
+      fields: { dependants, hiddenCount: 2 },
+      text: "2 others"
+    },
     {
       verb: "retire",
       args: [],

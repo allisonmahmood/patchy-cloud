@@ -19,6 +19,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import type { Prepared } from "./devPreparation.js";
+import * as DevMembers from "./devMembers.js";
 import * as DevResources from "./devResources.js";
 import { RELEASE, MANIFEST_VERSION } from "./release.js";
 import { NodeCryptography } from "@patchy/core";
@@ -34,7 +35,7 @@ const decodeFiles = Schema.decodeUnknownEffect(FilePage);
 const viewerOf = ({ identity }: Pick<Prepared, "identity">) => ({
   user: identity.user,
   company: identity.company,
-  admin: identity.role === "admin"
+  admin: identity.role !== "member"
 });
 // These Prepared versions are tier 1 even where they declare `uses`, which refresh, dev and
 // publish now refuse below tier 2: preparing a tier 2 version also requires a server bundle and
@@ -149,6 +150,109 @@ VALUES ('invented-contact', 'Invented contact', 'missing-member');\n`;
         .pipe(Effect.provideService(Binding.Binding, binding), Effect.flip);
       assert.propertyVal(undeclared, "_tag", "TableNotDeclared");
       assert.strictEqual(yield* fs.readFileString(fixturePath), fixture);
+    }).pipe(
+      Effect.provide([NodeServices.layer, NodeCryptography.layer]),
+      Effect.provide(FetchHttpClient.layer),
+      Effect.provide(WideEvents.layerNoop)
+    ),
+  { timeout: 30_000 }
+);
+
+it.live(
+  "lets the colleague read only the sources open to the whole company, and the guest none",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-shared-audience-" });
+      const source = (patchId: string) => ({
+        kind: "sharedTable" as const,
+        patchId,
+        table: "notes",
+        id: `${patchId}/notes`,
+        revision: 1
+      });
+      const everyone = source("companysrc01");
+      const sales = source("salessrc0001");
+      const tables = {
+        notes: {
+          description: "Notes",
+          columns: { title: { kind: "text" } },
+          indexes: {},
+          shared: true
+        }
+      };
+      const prepared: Prepared = {
+        patchId: "localdev0000",
+        manifest: {
+          release: RELEASE,
+          manifestVersion: MANIFEST_VERSION,
+          tier: 1,
+          tables: {},
+          files: {},
+          uses: { everyone, sales }
+        },
+        identity: new Identity({
+          user: { id: "local-user", email: "local@example.test", name: "Local" },
+          company: { id: "local-company", handle: "local", name: "Local" },
+          role: "member",
+          machine: { id: "local-machine", name: "Local machine" }
+        }),
+        metadata: yield* decodeMetadata({
+          postgres: {},
+          posthog: {},
+          pidgeon: {},
+          attio: {},
+          imap: {},
+          shared: {
+            everyone: { declaration: everyone, tables, uses: {} },
+            sales: { declaration: sales, tables, uses: {}, companyWide: false }
+          }
+        })
+      };
+      yield* fs.makeDirectory(path.join(root, "fixtures"));
+      for (const [alias, patchId] of [
+        ["everyone", everyone.patchId],
+        ["sales", sales.patchId]
+      ] as const)
+        yield* fs.writeFileString(
+          path.join(root, "fixtures", `shared-${alias}.sql`),
+          `INSERT INTO "p_${patchId}"."notes" ("id", "title") VALUES ('note', 'A note');\n`
+        );
+      const resources = yield* DevResources.prepare(
+        prepared,
+        root,
+        path.join(root, ".patchy", "dev"),
+        offline
+      );
+      const read = (
+        user: { readonly id: string; readonly name: string; readonly email: string },
+        alias: string
+      ) => {
+        const viewer = { user, company: prepared.identity.company, admin: false };
+        return resources.handlers["shared.get"].run({ alias, id: "note" }).pipe(
+          Effect.provideService(
+            Binding.Binding,
+            Binding.Binding.of({
+              ...resources.version,
+              identity: viewer,
+              reauthorize: Effect.succeed(viewer),
+              principal: { userId: user.id },
+              correlationId: "shared-audience"
+            })
+          ),
+          Effect.as("read" as const),
+          Effect.catchTags({ AccessDenied: () => Effect.succeed("refused" as const) })
+        );
+      };
+      const outcomes = [];
+      for (const person of [prepared.identity.user, DevMembers.colleague, DevMembers.guest])
+        outcomes.push([yield* read(person, "everyone"), yield* read(person, "sales")]);
+      assert.deepStrictEqual(outcomes, [
+        ["read", "read"],
+        ["read", "refused"],
+        ["refused", "refused"]
+      ]);
     }).pipe(
       Effect.provide([NodeServices.layer, NodeCryptography.layer]),
       Effect.provide(FetchHttpClient.layer),

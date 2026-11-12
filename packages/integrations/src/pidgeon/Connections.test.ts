@@ -1,3 +1,4 @@
+import { Teams } from "@patchy/companies";
 import { assert, it } from "@effect/vitest";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { registry } from "@patchy/limits/registry";
@@ -24,6 +25,7 @@ import * as Calls from "./Calls.js";
 import * as Keys from "./Keys.js";
 import * as Source from "./Source.js";
 import { NodeCryptography } from "@patchy/core";
+import * as PatchVisibilityTest from "../test/patchVisibility.js";
 
 /**
  * Patchy's side of Pidgeon connections, offline: what needs no answer from Pidgeon beyond a revoke
@@ -46,13 +48,17 @@ const fixture = Layer.mergeAll(
   PostHogSource.layer,
   AttioSource.layer,
   ImapTest.offline
-).pipe(Layer.provideMerge(Testing.layer()), Layer.provideMerge(NodeCryptography.layer));
+).pipe(
+  Layer.provideMerge(PatchVisibilityTest.layer),
+  Layer.provideMerge(Testing.layer()),
+  Layer.provideMerge(NodeCryptography.layer)
+);
 
 /** A store over the canned transport, and a seeded connection. */
 const setup = (handle: string, options: { readonly test?: boolean } = {}) =>
   Effect.gen(function* () {
     const pidgeon = PidgeonTest.canned();
-    const store = yield* SqlConnectionStore.make.pipe(Effect.provide(pidgeon.layer));
+    const store = yield* SqlConnectionStore.make.pipe(Effect.provide([pidgeon.layer, Teams.layer]));
     const id = `conn_${handle.replaceAll("-", "_")}`;
     const seeded = yield* PidgeonTest.seed({ ...who, id, handle, ...options });
     return { pidgeon, store, id, key: seeded.key };
@@ -74,7 +80,9 @@ it.layer(fixture)("Pidgeon connections, offline", (it) => {
   it.effect("refuses what can't be an admin key before asking Pidgeon anything", () =>
     Effect.gen(function* () {
       const pidgeon = PidgeonTest.canned();
-      const store = yield* SqlConnectionStore.make.pipe(Effect.provide(pidgeon.layer));
+      const store = yield* SqlConnectionStore.make.pipe(
+        Effect.provide([pidgeon.layer, Teams.layer])
+      );
       const refused = yield* store
         .connect({
           integration: "pidgeon",
@@ -236,7 +244,7 @@ it.layer(fixture)("Pidgeon connections, offline", (it) => {
           'pidgeon-hidden', 'test', '{}'::jsonb, 201)`;
       // That release's queries: the same store, knowing only the integrations it shipped.
       const before = yield* SqlConnectionStore.knowing(["postgres", "posthog"]).pipe(
-        Effect.provide(pidgeon.layer)
+        Effect.provide([pidgeon.layer, Teams.layer])
       );
       assert.notInclude(
         (yield* before.list(who.companyId)).map((item) => item.id),

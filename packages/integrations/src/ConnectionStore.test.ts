@@ -19,6 +19,7 @@ import * as PostHogDouble from "./test/posthog.js";
 import * as PidgeonSource from "./pidgeon/Source.js";
 import * as AttioSource from "./attio/Source.js";
 import * as ImapTest from "./test/imap.js";
+import { Teams } from "@patchy/companies";
 import { NodeCryptography } from "@patchy/core";
 
 const empty: typeof Snapshot.Type = { version: 1, relations: [], enums: [], exclusions: [] };
@@ -89,11 +90,127 @@ const fixture = SqlConnectionStore.layer.pipe(
       ImapTest.offline
     )
   ),
+  Layer.provideMerge(Teams.layer),
   Layer.provideMerge(Testing.layer()),
   Layer.provideMerge(NodeCryptography.layer)
 );
 
 it.layer(fixture)("ConnectionStore", (it) => {
+  it.effect(
+    "a connection's teams decide who builds with it, by recorded membership even once deactivated",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* ConnectionStore.ConnectionStore;
+        const sql = yield* SqlClient.SqlClient;
+        const connection = yield* store.connect(input("team-audience"));
+        const actor = { companyId: who.companyId, actorId: who.userId };
+        const design = yield* (yield* Teams.Teams).create({ ...actor, name: "Connection Design" });
+        const engineering = yield* (yield* Teams.Teams).create({
+          ...actor,
+          name: "Connection Engineering"
+        });
+        const member = "connection-audience-member";
+        const admin = "connection-audience-admin";
+        yield* sql`INSERT INTO users(id, clerk_user_id, company_id, email, name, role) VALUES
+        (${member}, 'connection-member-clerk', ${who.companyId}, 'connection-member@example.test', 'Connection member', 'member'),
+        (${admin}, 'connection-admin-clerk', ${who.companyId}, 'connection-admin@example.test', 'Connection admin', 'admin')`;
+        assert.deepEqual(yield* store.audience(who.companyId, connection.id), { kind: "company" });
+        const target = {
+          ...identity(connection),
+          audience: { kind: "teams" as const, teamIds: [design.id, engineering.id] }
+        };
+        const configure = store.setAudience(target);
+        yield* configure;
+        const invalid = yield* store
+          .setAudience({ ...target, audience: { kind: "teams", teamIds: ["unknown-team"] } })
+          .pipe(Effect.flip);
+        assert.equal(invalid.status, 422);
+        assert.equal(
+          (yield* store.setAudience({ ...target, userId: member }).pipe(Effect.flip))._tag,
+          "ConnectionAdministrationDenied"
+        );
+        const canUse = (userId: string) => store.canUse(who.companyId, connection.id, userId);
+        yield* sql`INSERT INTO patches (id, company_id, owner_user_id, title, name) VALUES ('connection-owner-access', ${who.companyId}, ${member}, 'Owner access', 'connection-owner-access')`;
+        const ownerAccess = store.ownerCanUse(
+          who.companyId,
+          "connection-owner-access",
+          connection.id
+        );
+        assert.equal(yield* ownerAccess, false);
+        assert.equal(yield* canUse(member), false);
+        assert.notInclude(
+          (yield* store.list(who.companyId, member)).map((row) => row.id),
+          connection.id
+        );
+        assert.equal(yield* canUse(who.userId), false);
+        assert.equal(yield* canUse(admin), false);
+        yield* (yield* Teams.Teams).setMemberships({
+          ...actor,
+          teamId: design.id,
+          add: [member]
+        });
+        assert.equal(yield* ownerAccess, true);
+        assert.equal(yield* canUse(member), true);
+        assert.include(
+          (yield* store.list(who.companyId, member)).map((row) => row.id),
+          connection.id
+        );
+        yield* (yield* Teams.Teams).setMemberships({
+          ...actor,
+          teamId: engineering.id,
+          add: [member]
+        });
+        yield* (yield* Teams.Teams).setMemberships({
+          ...actor,
+          teamId: design.id,
+          remove: [member]
+        });
+        assert.equal(yield* ownerAccess, true);
+        assert.equal(yield* canUse(member), true);
+        assert.include(
+          (yield* store.list(who.companyId, member)).map((row) => row.id),
+          connection.id
+        );
+        yield* (yield* Teams.Teams).setMemberships({
+          ...actor,
+          teamId: engineering.id,
+          remove: [member]
+        });
+        assert.equal(yield* ownerAccess, false);
+        assert.equal(yield* canUse(member), false);
+        assert.notInclude(
+          (yield* store.list(who.companyId, member)).map((row) => row.id),
+          connection.id
+        );
+        yield* (yield* Teams.Teams).setMemberships({
+          ...actor,
+          teamId: design.id,
+          add: [member]
+        });
+        assert.equal(yield* ownerAccess, true);
+        assert.equal(yield* canUse(member), true);
+        assert.include(
+          (yield* store.list(who.companyId, member)).map((row) => row.id),
+          connection.id
+        );
+        // A deactivated owner's patch keeps the connection, as their teams are still recorded.
+        yield* sql`UPDATE users SET deactivated_at = now() WHERE id = ${member}`;
+        assert.equal(yield* ownerAccess, true);
+        yield* sql`UPDATE users SET deactivated_at = NULL WHERE id = ${member}`;
+        yield* sql`UPDATE patches SET owner_user_id = ${who.userId} WHERE id = 'connection-owner-access'`;
+        assert.equal(yield* ownerAccess, false);
+        yield* sql`UPDATE patches SET owner_user_id = ${member} WHERE id = 'connection-owner-access'`;
+        assert.equal(yield* ownerAccess, true);
+        yield* store.disconnect(identity(connection));
+        yield* store.reconnect(identity(connection));
+        assert.deepEqual(
+          yield* store.audience(who.companyId, connection.id),
+          target.audience.kind === "teams"
+            ? { kind: "teams", teamIds: [...target.audience.teamIds].sort() }
+            : target.audience
+        );
+      })
+  );
   it.effect(
     "pool creation checks live identity and credentials without rebinding published metadata",
     () =>
@@ -140,48 +257,6 @@ it.layer(fixture)("ConnectionStore", (it) => {
             .poolCredentials(who.companyId, declared, rotated.credentialRevision)
             .pipe(Effect.flip)).code,
           "connection_not_connected"
-        );
-      })
-  );
-
-  it.effect(
-    "lets nothing build or call with a connection restricted to teams, and keeps it so",
-    () =>
-      Effect.gen(function* () {
-        const store = yield* ConnectionStore.ConnectionStore;
-        const sql = yield* SqlClient.SqlClient;
-        const connected = yield* store.connect(input("restricted-teams"));
-        // A later release restricts it to a team; this one never does.
-        yield* sql`INSERT INTO company_teams (id, company_id, name)
-        VALUES ('team_restricted', ${who.companyId}, 'Sales')`;
-        yield* sql`UPDATE connections SET audience_kind = 'teams' WHERE id = ${connected.id}`;
-        yield* sql`INSERT INTO connection_team_grants (connection_id, company_id, team_id)
-        VALUES (${connected.id}, ${who.companyId}, 'team_restricted')`;
-
-        const listed = (yield* store.list(who.companyId)).find((row) => row.id === connected.id);
-        assert.isTrue(listed?.restricted);
-        const refused = [
-          yield* store.resolve(who.companyId, declaration(connected)).pipe(Effect.flip),
-          yield* store
-            .poolCredentials(who.companyId, declaration(connected), connected.credentialRevision)
-            .pipe(Effect.flip)
-        ];
-        for (const error of refused) {
-          assert.strictEqual(error._tag, "ConnectionNotConnected");
-          assert.isTrue("restricted" in error && error.restricted === true);
-        }
-        assert.strictEqual(
-          (yield* store.detail(who.companyId, "postgres", connected.handle).pipe(Effect.flip))._tag,
-          "ConnectionNotFound"
-        );
-
-        yield* store.describe({ ...identity(connected), description: "Restricted warehouse" });
-        yield* store.blockGuests({ ...identity(connected), block: true });
-        yield* store.disconnect(identity(connected));
-        assert.deepStrictEqual(
-          yield* sql`SELECT audience_kind AS kind, (SELECT count(*)::int FROM connection_team_grants
-          WHERE connection_id = ${connected.id}) AS teams FROM connections WHERE id = ${connected.id}`,
-          [{ kind: "teams", teams: 1 }]
         );
       })
   );

@@ -39,6 +39,7 @@ import {
   row,
   rowMenu,
   rows,
+  section,
   select,
   sentenceList,
   settingRow,
@@ -50,6 +51,9 @@ import {
 } from "@patchy/core";
 import { Patches } from "@patchy/patches";
 import {
+  accessLabel,
+  audienceText,
+  canReassign,
   cardPath,
   failedLog,
   firstClause,
@@ -65,9 +69,8 @@ export type CardTab = "overview" | "log" | "versions" | "settings";
 export type ConfirmationAction = "retire" | "delete" | "restore" | "reassign";
 export type PatchAction = "description" | "rollback" | ConfirmationAction;
 
-/** The owner and admins manage a patch: its log, its settings, and taking it down. */
-export const canManage = (card: Patches.ReadPatch, viewer: Viewer) =>
-  card.owner.id === viewer.user.id || viewer.role === "admin";
+/** Admins, and the owner while they can open it, manage a patch: its log, settings and lifecycle. */
+export const canManage = (card: Pick<Patches.ReadPatch, "access">) => card.access.canManage;
 
 const tabLabels: Record<CardTab, string> = {
   overview: "Overview",
@@ -103,10 +106,11 @@ const restoreAction = (card: Patches.PortalCard) =>
 const headerMenu = (card: Patches.PortalCard, viewer: Viewer, url: string, title: string) => {
   const { patch } = card;
   const live = patch.state === "live";
-  const manage = canManage(card, viewer);
-  const everyday = live
-    ? [menuNewTab(patchAddress(patch), title), menuCopy(url, "Copy link", title)]
-    : [];
+  const manage = canManage(card);
+  const everyday =
+    live && card.access.canOpen
+      ? [menuNewTab(patchAddress(patch), title), menuCopy(url, "Copy link", title)]
+      : [];
   const takeDown = !manage
     ? []
     : live
@@ -155,7 +159,8 @@ export const renderPatchPage = (frame: PatchFrame): Template => {
   const { card, viewer, now } = frame;
   const { patch } = card;
   const live = patch.state === "live";
-  const manage = canManage(card, viewer);
+  const manage = canManage(card);
+  const open = card.access.canOpen;
   const title = patchTitle(patch, viewer.company.name);
   const url = `${frame.publicBaseUrl.replace(/\/+$/u, "")}${patchAddress(patch)}`;
   const shown = url.replace(/^https?:\/\//u, "");
@@ -168,22 +173,33 @@ export const renderPatchPage = (frame: PatchFrame): Template => {
     live && frame.tab === "overview" && (frame.failures ?? 0) > 0
       ? `${dot(`${frame.failures} failed ${frame.failures === 1 ? "call" : "calls"} in the last 24 hours`, "danger")}<a href="${escapeAttribute(failedLog(patch))}">View log</a>`
       : "",
-    viewer.role === "admin" && card.owner.deactivated
-      ? `${dot("Nobody can publish to this patch. Its owner is deactivated.", "warning")}${live && !frame.readOnly ? `<a href="${escapeAttribute(cardPath(patch, "reassign"))}">Reassign…</a>` : ""}`
+    !open
+      ? dot(
+          card.owner.id === viewer.user.id
+            ? "You own this patch but can’t open it. Ask an admin to add you to one of its teams or reassign it."
+            : "You can’t open this patch. Join one of its teams to see what’s in it.",
+          "warning"
+        )
+      : "",
+    canReassign(viewer) && (card.owner.deactivated || !card.access.ownerCanOpen)
+      ? `${dot(card.owner.deactivated ? "Nobody can publish to this patch. Its owner is deactivated." : "Its owner can’t open it, so nobody can publish to it.", "warning")}${live && !frame.readOnly ? `<a href="${escapeAttribute(cardPath(patch, "reassign"))}">Reassign…</a>` : ""}`
       : ""
   ].filter((part) => part !== "");
 
   const actions = frame.readOnly
     ? ""
-    : `${live && manage ? linkButton("Share", shareHref(frame.here, patch.name), { icon: "share", ariaLabel: `Share ${title}` }) : ""}${live ? linkButton("Open", patchAddress(patch), { kind: "primary", icon: "external" }) : manage && off?.restorable ? restoreAction(card) : ""}${headerMenu(card, viewer, url, title)}`;
+    : `${live && manage ? linkButton("Share", shareHref(frame.here, patch.name), { icon: "share", ariaLabel: `Share ${title}` }) : ""}${live && open ? linkButton("Open", patchAddress(patch), { kind: "primary", icon: "external" }) : !live && manage && off?.restorable ? restoreAction(card) : ""}${headerMenu(card, viewer, url, title)}`;
 
   const tabStrip = tabs({
     label: title,
     current: tabLabels[frame.tab],
+    // The log and versions are content: someone who can't open it manages it from Settings.
     items: [
       { label: "Overview", href: cardPath(patch) },
-      ...(manage ? [{ label: "Log", href: cardPath(patch, "log") }] : []),
-      { label: "Versions", href: cardPath(patch, "versions"), count: card.versions.length },
+      ...(manage && open ? [{ label: "Log", href: cardPath(patch, "log") }] : []),
+      ...(open
+        ? [{ label: "Versions", href: cardPath(patch, "versions"), count: card.versions.length }]
+        : []),
       ...(manage ? [{ label: "Settings", href: cardPath(patch, "settings") }] : [])
     ]
   });
@@ -194,7 +210,7 @@ export const renderPatchPage = (frame: PatchFrame): Template => {
     title,
     meta: [
       card.tier === 1 ? "Page" : "Tool",
-      `<span class="code copy-address">${escapeHtml(shown)}</span>${live ? copyButton(url, { kind: "quiet", size: "sm", ariaLabel: `Copy the link to ${title}` }) : ""}`
+      `<span class="code copy-address">${escapeHtml(shown)}</span>${live && open ? copyButton(url, { kind: "quiet", size: "sm", ariaLabel: `Copy the link to ${title}` }) : ""}`
     ],
     ...(status.length === 0 ? {} : { status: status.join("") }),
     ...(actions === "" ? {} : { actions }),
@@ -207,13 +223,15 @@ export const renderPatchPage = (frame: PatchFrame): Template => {
     : page;
 };
 
-/** Who can open it: the company or anyone, or nobody while it's off. */
-const audience = (card: Patches.PortalCard, viewer: Viewer) =>
-  card.patch.state !== "live"
-    ? "Nobody until it’s restored"
-    : card.patch.scope === "company"
-      ? `Everyone at ${viewer.company.name}`
-      : "Anyone on the internet. No sign-in.";
+/** Who can open it: everyone at the company, its teams or anyone, once it's back if it's off. */
+const audience = (card: Patches.PortalCard, viewer: Viewer) => {
+  if (card.patch.state === "live") return audienceText(card.audience, viewer.company.name);
+  const who =
+    card.audience.kind === "public"
+      ? "Anyone on the internet"
+      : audienceText(card.audience, viewer.company.name);
+  return `${who}, once it’s restored`;
+};
 
 /** The other patches reading this one's tables or stores, once each, as links. */
 const usedBy = (card: Patches.PortalCard) => {
@@ -229,7 +247,7 @@ const usedBy = (card: Patches.PortalCard) => {
   return parts.length < 2 ? parts.join("") : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
 };
 
-const ownerName = (card: Patches.ReadPatch, viewer: Viewer) =>
+const ownerName = (card: Pick<Patches.ReadPatch, "owner">, viewer: Viewer) =>
   `${person(card.owner.id, card.owner.name)}${card.owner.id === viewer.user.id ? ' <span class="you">(you)</span>' : ""}${card.owner.deactivated ? " (deactivated)" : ""}`;
 
 /**
@@ -250,7 +268,7 @@ export const renderOverview = (input: {
   const { card, viewer, now } = input;
   const { patch } = card;
   const live = patch.state === "live";
-  const manage = canManage(card, viewer);
+  const manage = canManage(card);
   const turnedAway =
     input.turnedAway === undefined
       ? ""
@@ -271,19 +289,54 @@ export const renderOverview = (input: {
     live && manage && !input.readOnly
       ? ` · <a href="${escapeAttribute(shareHref(input.here, patch.name))}">Change</a>`
       : "";
+  // Its version and opens say what it serves; someone who can't open it sees who can, and who reads it.
   const pairs: Array<readonly [string, string]> = [
     ["Owner", ownerName(card, viewer)],
     ...(live ? [["Access", `${escapeHtml(audience(card, viewer))}${change}`] as const] : []),
-    [
-      "Version",
-      escapeHtml(
-        `v${card.currentVersion} · published ${ago(card.publishedAt, now)}${publisher === undefined ? "" : ` by ${publisher.publisherName}`}`
-      )
-    ],
-    ["Opens", escapeHtml(card.visits)],
+    ...(card.access.canOpen
+      ? [
+          [
+            "Version",
+            escapeHtml(
+              `v${card.currentVersion} · published ${ago(card.publishedAt, now)}${publisher === undefined ? "" : ` by ${publisher.publisherName}`}`
+            )
+          ] as const,
+          ["Opens", escapeHtml(card.visits)] as const
+        ]
+      : []),
     ...(card.dependants.length === 0 ? [] : [["Used by", usedBy(card)] as const])
   ];
-  return `${turnedAway}${description}${facts(pairs)}${input.activity}`;
+  return `${turnedAway}${card.access.canOpen ? description : ""}${facts(pairs)}${input.activity}`;
+};
+
+/**
+ * Access to the patch its owner didn't grant, for the owner and admins: audience changes made by
+ * anyone else, and admins added to its teams.
+ */
+export const renderOwnerHistory = (input: {
+  readonly entries: readonly Patches.OwnerHistoryEntry[];
+  /** Everyone the entries name, by id. */
+  readonly names: ReadonlyMap<string, string>;
+}): string => {
+  if (input.entries.length === 0) return "";
+  const name = (id: string) => input.names.get(id) ?? "Someone";
+  return section({
+    title: "Access changes",
+    body: rows(
+      input.entries.map((entry) =>
+        row({
+          name:
+            entry.kind === "audience"
+              ? `${name(entry.actorId)} changed who can open it from ${accessLabel(entry.before)} to ${accessLabel(entry.after)}`
+              : entry.actorId === entry.userId
+                ? `${name(entry.userId)}, an admin, joined ${entry.teamName}`
+                : `${name(entry.actorId)} added ${name(entry.userId)}, an admin, to ${entry.teamName}`,
+          description: dateLabel(entry.at)
+        })
+      ),
+      true
+    )
+  });
 };
 
 type Admin = Pick<Users.User, "id" | "name">;
@@ -345,14 +398,14 @@ export const renderSettings = (input: {
 }): string => {
   const { card: patchCard, viewer } = input;
   const { patch } = patchCard;
-  const live = patch.state === "live";
   const edited =
     patchCard.actorNames.description !== null && patch.descriptionUpdatedAt !== null
       ? `Edited by ${patchCard.actorNames.description} on ${dateLabel(patch.descriptionUpdatedAt)} · `
       : "";
   // A deleted patch's description can't be edited; a draft refused for that is still shown to copy.
-  const description =
-    patch.state !== "deleted"
+  const description = !patchCard.access.canOpen
+    ? ""
+    : patch.state !== "deleted"
       ? uiCard({
           form: {
             action: cardPath(patch, "description"),
@@ -383,45 +436,30 @@ export const renderSettings = (input: {
       settingRow({
         title: "Owner",
         description: "Only they can publish it. Admins can change it and take it down too.",
-        control: `<span>${ownerName(patchCard, viewer)}</span>${viewer.role === "admin" ? linkButton("Reassign…", cardPath(patch, "reassign"), { size: "sm" }) : ""}`
+        control: `<span>${ownerName(patchCard, viewer)}</span>${canReassign(viewer) ? linkButton("Reassign…", cardPath(patch, "reassign"), { size: "sm" }) : ""}`
       }),
+      // An off patch's audience can still change, so it stops naming a team before it's deleted.
       settingRow({
         title: "Who can open it",
         description: audience(patchCard, viewer),
-        control: live
-          ? linkButton("Change…", shareHref(input.here, patch.name), { size: "sm" })
-          : ""
+        control: linkButton("Change…", shareHref(input.here, patch.name), { size: "sm" })
       })
     ]
   });
-  const danger = live
-    ? uiCard({
-        title: "Take it down",
-        danger: true,
-        rows: [
-          settingRow({
-            title: "Retire",
-            description: "Off its address until you restore it. Everything is kept.",
-            control: linkButton("Retire…", cardPath(patch, "retire"), { size: "sm" })
-          }),
-          settingRow({
-            title: "Delete",
-            description: "Off now and gone for good 30 days later, unless restored.",
-            control: linkButton("Delete…", cardPath(patch, "delete"), {
-              size: "sm",
-              kind: "danger"
-            })
-          })
-        ]
-      })
-    : patch.state === "retired"
+  const danger =
+    patch.state === "live"
       ? uiCard({
           title: "Take it down",
           danger: true,
           rows: [
             settingRow({
+              title: "Retire",
+              description: "Off its address until you restore it. Everything is kept.",
+              control: linkButton("Retire…", cardPath(patch, "retire"), { size: "sm" })
+            }),
+            settingRow({
               title: "Delete",
-              description: "Gone for good 30 days later, unless restored.",
+              description: "Off now and gone for good 30 days later, unless restored.",
               control: linkButton("Delete…", cardPath(patch, "delete"), {
                 size: "sm",
                 kind: "danger"
@@ -429,7 +467,22 @@ export const renderSettings = (input: {
             })
           ]
         })
-      : undefined;
+      : patch.state === "retired"
+        ? uiCard({
+            title: "Take it down",
+            danger: true,
+            rows: [
+              settingRow({
+                title: "Delete",
+                description: "Gone for good 30 days later, unless restored.",
+                control: linkButton("Delete…", cardPath(patch, "delete"), {
+                  size: "sm",
+                  kind: "danger"
+                })
+              })
+            ]
+          })
+        : undefined;
   return settingsPanel({
     cards: [description, people].filter((part) => part !== ""),
     ...(danger === undefined ? {} : { danger })
@@ -437,7 +490,7 @@ export const renderSettings = (input: {
 };
 
 /** Where Serve this version… asks about one version. */
-export const servePath = (patch: Patches.Patch, versionNumber: number) =>
+export const servePath = (patch: Pick<Patches.Patch, "name">, versionNumber: number) =>
   `${cardPath(patch, "rollback")}?version=${versionNumber}`;
 
 /** Versions: every retained version, the one at the address marked Serving, with Serve this version… for the owner and admins. */
@@ -448,7 +501,7 @@ export const renderVersions = (input: {
 }): string => {
   const { card: patchCard, now } = input;
   const { patch } = patchCard;
-  const serve = canManage(patchCard, input.viewer) && patch.state === "live";
+  const serve = canManage(patchCard) && patchCard.access.canOpen && patch.state === "live";
   return table({
     label: "Versions",
     columns: [
@@ -522,10 +575,16 @@ const dependantRows = (groups: readonly DependantGroup[]) =>
     true
   );
 
-const dependantsLine = (groups: readonly DependantGroup[]) =>
-  groups.length === 0
-    ? ""
-    : `<p class="prose">${groups.length === 1 ? "This patch reads its tables and stops" : "These patches read its tables and stop"} working until it’s restored.</p>${dependantRows(groups)}`;
+/** The patches that stop working with it, and how many more the viewer can't open. */
+const dependantsLine = (groups: readonly DependantGroup[], hidden: number) => {
+  const count = groups.length + hidden;
+  if (count === 0) return "";
+  const more =
+    hidden === 0
+      ? ""
+      : `<p class="meta">${groups.length === 0 ? "" : "And "}${hidden} ${hidden === 1 ? "patch" : "patches"} you can’t open.</p>`;
+  return `<p class="prose">${count === 1 ? "This patch reads its tables and stops" : "These patches read its tables and stop"} working until it’s restored.</p>${groups.length === 0 ? "" : dependantRows(groups)}${more}`;
+};
 
 /** A dialog's refusal that isn't about one field, just above its buttons, taking focus. */
 const refusal = (text: string | undefined) => (text === undefined ? "" : refusalNotice(text));
@@ -573,24 +632,25 @@ export const renderConfirmation = (
     });
   const form = (fields: string) => ({
     action: cardPath(patch, input.action),
-    fields: `${hidden("expectedPatchId", patch.id)}${fields}`
+    fields: `${hidden("expectedPatchId", patch.id)}${hidden("expectedOwnerUserId", patch.ownerUserId)}${fields}`
   });
   switch (input.action) {
     case "retire": {
       const groups = dependantGroups(patchCard);
+      const hiddenCount = patchCard.hiddenDependants.length;
+      const breaks = groups.length + hiddenCount > 0;
       return dialog({
         id: "patch-retire",
         title: `Retire ${title}?`,
         closeHref: close,
-        form: form(
-          `${hidden("expectedState", "live")}${groups.length === 0 ? "" : hidden("ack", "1")}`
-        ),
-        body: `<p class="prose">Nobody can open it until you or an admin restores it. Its versions, tables and files are kept.</p>${dependantsLine(groups)}${refusal(input.notice)}`,
+        form: form(`${hidden("expectedState", "live")}${breaks ? hidden("ack", "1") : ""}`),
+        body: `<p class="prose">Nobody can open it until you or an admin restores it. Its versions, tables and files are kept.</p>${dependantsLine(groups, hiddenCount)}${refusal(input.notice)}`,
         foot: `${cancel()}${button(`Retire ${title}`, { kind: "danger-solid" })}`
       });
     }
     case "delete": {
       const groups = patch.state === "live" ? dependantGroups(patchCard) : [];
+      const hiddenCount = patch.state === "live" ? patchCard.hiddenDependants.length : 0;
       const reclaimAt = dateLabel(
         DateTime.formatIso(
           DateTime.makeUnsafe(input.now + Duration.toMillis(Patches.RECOVERY_WINDOW))
@@ -605,22 +665,24 @@ export const renderConfirmation = (
         title: `Delete ${title}`,
         closeHref: close,
         form: form(
-          `${hidden("expectedState", "not-deleted")}${groups.length === 0 ? "" : hidden("ack", "1")}`
+          `${hidden("expectedState", "not-deleted")}${groups.length + hiddenCount > 0 ? hidden("ack", "1") : ""}`
         ),
-        body: `<p class="prose">${escapeHtml(lead)}</p>${dependantsLine(groups)}${field({
-          id: "confirm",
-          label: `Type ${patch.name} to confirm`,
-          ...(input.nameError === undefined ? {} : { error: input.nameError }),
-          control: (aria) =>
-            textInput(aria, {
-              name: "confirm",
-              value: input.submittedName ?? "",
-              required: true,
-              autocomplete: "off",
-              mono: true,
-              autofocus: !refused
-            })
-        })}${refusal(input.notice)}`,
+        body: `<p class="prose">${escapeHtml(lead)}</p>${dependantsLine(groups, hiddenCount)}${field(
+          {
+            id: "confirm",
+            label: `Type ${patch.name} to confirm`,
+            ...(input.nameError === undefined ? {} : { error: input.nameError }),
+            control: (aria) =>
+              textInput(aria, {
+                name: "confirm",
+                value: input.submittedName ?? "",
+                required: true,
+                autocomplete: "off",
+                mono: true,
+                autofocus: !refused
+              })
+          }
+        )}${refusal(input.notice)}`,
         foot: `${cancel()}${button(`Delete ${title}`, { kind: "danger-solid" })}`
       });
     }
@@ -652,7 +714,7 @@ export const renderConfirmation = (
         id: "patch-reassign",
         title: `Reassign ${title}`,
         closeHref: close,
-        form: form(hidden("expectedOwnerUserId", patchCard.owner.id)),
+        form: form(""),
         body: `<p class="prose">The new owner can publish to it, change it and take it down. Its versions keep who published them.</p>${field(
           {
             id: "reassign-owner",

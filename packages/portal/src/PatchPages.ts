@@ -27,12 +27,14 @@ import {
   renderAgentAside,
   renderConfirmation,
   renderOverview,
+  renderOwnerHistory,
   renderPatchPage,
   renderSettings,
   renderVersions,
   tabTitle
 } from "./render.js";
 import {
+  actionSelection,
   asked,
   callSummary,
   context,
@@ -51,7 +53,7 @@ import {
   type Routes,
   withOverlay
 } from "./shared/handlers.js";
-import { cardPath } from "./shared/presentation.js";
+import { canReassign, cardPath } from "./shared/presentation.js";
 
 const decodeDescription = Schema.decodeUnknownEffect(
   Schema.Struct({
@@ -120,7 +122,7 @@ const recentActivity = Effect.fn("PatchPages.recentActivity")(function* (
   now: number
 ) {
   const { viewer } = yield* context;
-  if (!canManage(card, viewer)) return "";
+  if (!canManage(card)) return "";
   const { entries } = yield* (yield* InvocationLog.InvocationLog).page({
     companyId: viewer.company.id,
     patchId: card.patch.id,
@@ -165,6 +167,41 @@ const agentAside = Effect.fn("PatchPages.agentAside")(function* (card: Patches.P
   return renderAgentAside({ tools, viewer, admins, apps });
 });
 
+/** Access to the patch its owner didn't grant, on the card of its owner and of admins. */
+const ownerHistory = Effect.fn("PatchPages.ownerHistory")(function* (card: Patches.PortalCard) {
+  const { viewer } = yield* context;
+  if (card.owner.id !== viewer.user.id && !canReassign(viewer)) return "";
+  const entries = yield* (yield* Patches.Patches)
+    .ownerHistory(card.patch.id, { companyId: viewer.company.id, userId: viewer.user.id })
+    .pipe(Effect.catchTags({ PatchUnavailable: () => Effect.succeed([]) }));
+  if (entries.length === 0) return "";
+  const names = yield* (yield* Users.Users).names(
+    entries.flatMap((entry) =>
+      entry.kind === "audience" ? [entry.actorId] : [entry.actorId, entry.userId]
+    )
+  );
+  return renderOwnerHistory({ entries, names });
+});
+
+/** Keep eligibility and stale-authority handling together; fetch only for the reassign dialog. */
+const reassignmentCandidates = Effect.fn("PatchPages.reassignmentCandidates")(function* (
+  patchId: string
+) {
+  const { viewer } = yield* context;
+  const eligible = yield* (yield* Patches.Patches)
+    .eligibleOwners(patchId, { userId: viewer.user.id, admin: viewer.role === "admin" })
+    .pipe(
+      Effect.catchTags({
+        NotOwner: () => new Patches.PatchUnavailable({ patchId }),
+        OwnerAccessLost: () => new Patches.PatchUnavailable({ patchId })
+      })
+    );
+  const ids = new Set(eligible.map((person) => person.id));
+  return (yield* (yield* Users.Users).list(viewer.company.id)).filter((person) =>
+    ids.has(person.id)
+  );
+});
+
 /**
  * Overview's main column: the patch's facts, why its guests can't open it, and the recent log.
  * A page holds one notice, so a refusal over it leaves out the guests' warning until the next look.
@@ -179,15 +216,18 @@ const overview = Effect.fn("PatchPages.overview")(function* (
   const { viewer } = yield* context;
   const { readOnly } = options;
   const reason = options.refused ? undefined : (yield* turnedAway([selected]))?.get(card.patch.id);
-  return renderOverview({
-    card,
-    viewer,
-    now,
-    here,
-    activity: yield* recentActivity(card, now),
-    ...(readOnly ? { readOnly } : {}),
-    ...(reason === undefined ? {} : { turnedAway: reason })
-  });
+  return (
+    renderOverview({
+      card,
+      viewer,
+      now,
+      here,
+      // The log is content, as the version is.
+      activity: card.access.canOpen ? yield* recentActivity(card, now) : "",
+      ...(readOnly ? { readOnly } : {}),
+      ...(reason === undefined ? {} : { turnedAway: reason })
+    }) + (yield* ownerHistory(card))
+  );
 });
 
 /** A tab that is not the log: Overview at `/patches/<name>`, then `/versions` and `/settings`. */
@@ -261,7 +301,8 @@ export const render: (name: string, options?: CardOptions) => Page = Effect.fn("
     if (!isName(name))
       return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
     const patches = yield* Patches.Patches;
-    const selected = (yield* patches.read({ ...access, state: "all" })).find(
+    // Someone who manages or owns it but can't open it gets the same card, its content left out.
+    const selected = (yield* patches.read({ ...access, state: "all", managed: true })).find(
       (row) => row.patch.name === name
     );
     if (selected === undefined)
@@ -270,11 +311,11 @@ export const render: (name: string, options?: CardOptions) => Page = Effect.fn("
     const card = yield* patches.portalCard(selected.patch.id, access);
     const { patch } = card;
     const now = yield* Clock.currentTimeMillis;
-    const manages = canManage(card, viewer);
+    const manages = canManage(card);
     const { confirm } = options;
     if (confirm !== undefined) {
       // Identity and permission before state: someone who can't act learns nothing more.
-      if (viewer.role !== "admin" && (confirm.action === "reassign" || !manages))
+      if (confirm.action === "reassign" ? !canReassign(viewer) || !manages : !manages)
         return yield* render(name, {
           status: 403,
           notice: confirm.action === "reassign" ? adminRequired : forbidden
@@ -316,7 +357,11 @@ export const render: (name: string, options?: CardOptions) => Page = Effect.fn("
             });
     }
     const refused = options.tab === "settings" && !manages;
-    const tab = refused ? "overview" : (options.tab ?? "overview");
+    // Versions is content; someone who can't open it gets Overview.
+    const tab =
+      refused || (options.tab === "versions" && !card.access.canOpen)
+        ? "overview"
+        : (options.tab ?? "overview");
     const here = tabPath(patch, tab);
     const main =
       tab === "settings"
@@ -337,9 +382,11 @@ export const render: (name: string, options?: CardOptions) => Page = Effect.fn("
               readOnly: options.readOnly === true,
               refused: options.notice !== undefined
             });
-    const aside = tab === "overview" ? yield* agentAside(card) : "";
+    const aside = tab === "overview" && card.access.canOpen ? yield* agentAside(card) : "";
     const failures =
-      tab === "overview" ? (yield* callSummary([selected]))?.get(patch.id)?.failures : undefined;
+      tab === "overview" && card.access.canOpen
+        ? (yield* callSummary([selected]))?.get(patch.id)?.failures
+        : undefined;
     const title = patchTitle(patch, viewer.company.name);
     const confirmation =
       confirm === undefined
@@ -352,7 +399,7 @@ export const render: (name: string, options?: CardOptions) => Page = Effect.fn("
               viewer,
               now,
               close: here,
-              members: yield* (yield* Users.Users).list(viewer.company.id)
+              members: yield* reassignmentCandidates(patch.id)
             })
           : renderConfirmation({ ...confirm, card, viewer, now, close: here });
     const sharing =
@@ -428,8 +475,7 @@ const logPage = Effect.fn("PatchPages.logPage")(function* (name: string) {
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
   yield* WideEvents.enrich(Patches.eventFields(selected.patch));
   // Ownership is read now, so reassignment moves who may read the log.
-  if (!canManage(selected, viewer))
-    return yield* render(name, { status: 403, notice: logForbidden });
+  if (!canManage(selected)) return yield* render(name, { status: 403, notice: logForbidden });
   const card = yield* patches.portalCard(selected.patch.id, access);
   const request = yield* HttpServerRequest.HttpServerRequest;
   const query = new URL(request.url, session.publicBaseUrl).searchParams;
@@ -502,13 +548,12 @@ const post = Effect.fn("PatchPages.post")(function* (name: string, action: Patch
   if (name.length > maxNameLength) return yield* overlongName;
   if (!isName(name))
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
-  const { viewer, session, access } = yield* context;
+  const { viewer, session } = yield* context;
   const patches = yield* Patches.Patches;
-  const rows = yield* patches.read({ ...access, state: "all" });
-  const selected = rows.find((row) => row.patch.name === name);
+  const selected = yield* actionSelection(name);
   if (!selected)
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
-  yield* WideEvents.enrich(Patches.eventFields(selected.patch));
+  yield* WideEvents.enrich({ patchId: selected.patch.id });
   const request = yield* HttpServerRequest.HttpServerRequest;
   const form = Object.fromEntries(
     new URLSearchParams(
@@ -528,7 +573,7 @@ const post = Effect.fn("PatchPages.post")(function* (name: string, action: Patch
         ? "This name now belongs to a different patch. Nothing was done."
         : "This form is out of date. Nothing was done."
     });
-  if (viewer.role !== "admin" && (action === "reassign" || !canManage(selected, viewer)))
+  if (action === "reassign" ? !canReassign(viewer) || !canManage(selected) : !canManage(selected))
     return yield* render(name, {
       status: 403,
       notice: action === "reassign" ? adminRequired : forbidden
@@ -581,7 +626,8 @@ const post = Effect.fn("PatchPages.post")(function* (name: string, action: Patch
           selected.patch.id,
           actor,
           fields.versionNumber,
-          fields.expectedCurrentVersionId || null
+          fields.expectedCurrentVersionId || null,
+          form.expectedOwnerUserId
         );
         yield* WideEvents.enrich(Patches.eventFields(rolledBack.patch));
         return landed(
@@ -590,12 +636,18 @@ const post = Effect.fn("PatchPages.post")(function* (name: string, action: Patch
       }
       case "restore": {
         const fields = yield* decodeRestore(form);
-        yield* patches.restore(selected.patch.id, actor, form.ack === "1", fields.expectedState);
+        yield* patches.restore(
+          selected.patch.id,
+          actor,
+          form.ack === "1",
+          fields.expectedState,
+          form.expectedOwnerUserId
+        );
         return landed(`Restored ${title}`);
       }
       case "retire": {
         yield* decodeRetire(form);
-        yield* patches.retire(selected.patch.id, actor, form.ack === "1");
+        yield* patches.retire(selected.patch.id, actor, form.ack === "1", form.expectedOwnerUserId);
         return landed(`Retired ${title}`);
       }
       case "delete": {
@@ -604,7 +656,7 @@ const post = Effect.fn("PatchPages.post")(function* (name: string, action: Patch
           const message = `Type ${selected.patch.name} to confirm. Nothing was done.`;
           return yield* redisplay(422, message, message);
         }
-        yield* patches.delete(selected.patch.id, actor, form.ack === "1");
+        yield* patches.delete(selected.patch.id, actor, form.ack === "1", form.expectedOwnerUserId);
         return landed(`Deleted ${title}; it can be restored for 30 days`);
       }
       case "reassign": {
@@ -652,6 +704,7 @@ const post = Effect.fn("PatchPages.post")(function* (name: string, action: Patch
   return yield* run.pipe(
     Effect.catchTags({
       StaleAction: () => stale(),
+      OwnerAccessLost: (error) => render(name, { status: 403, notice: error.message }),
       NotOwner: () => render(name, { status: 403, notice: forbidden }),
       AdminRequired: () => render(name, { status: 403, notice: adminRequired }),
       WrongState: (error) => stale(error.state),

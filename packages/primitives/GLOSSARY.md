@@ -45,7 +45,7 @@ A table column holding a user id, checked against the candidates on insertion or
 _Avoid_: user ref, owner field
 
 **Shared table**:
-A source patch's table, on any tier, that another tier 2 patch may declare and read from its handlers, never write, while the source remains openable and the table shared. Its identity is the source patch and table; its sharing authority and cumulative definition belong to [Company database's Inventory](../company-database/GLOSSARY.md), independent of the source's active version.
+A source patch's table, on any tier, that another tier 2 patch may declare and read from its handlers, never write, while the initiating viewer can currently open the live source and the table remains shared. The declaration grants no viewer access. Its identity is the source patch and table; its sharing authority and cumulative definition belong to [Company database's Inventory](../company-database/GLOSSARY.md), independent of the source's active version.
 _Avoid_: public table, copied table
 
 **File store**:
