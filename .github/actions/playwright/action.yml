@@ -1,23 +1,37 @@
-name: Install Chromium
+name: Install a Playwright browser
 description: >-
-  Installs Playwright's Chromium, restoring it from the Actions cache when this
-  runner image and Playwright version already have it. Use after `pnpm install`.
+  Installs Playwright's Chromium, or Firefox when asked, restoring it from the
+  Actions cache when this runner image and Playwright version already have it.
+  Use after `pnpm install`.
+
+inputs:
+  browser:
+    description: "`chromium`, or `firefox` for the tier 1 suite's Firefox project."
+    default: chromium
 
 runs:
   using: composite
   steps:
-    - name: Key the cache on the runner image and Playwright version
+    # Chromium's entry holds the whole browser folder, as it always has, and keeps its key and
+    # path, so its cache stays warm. Firefox's holds only Firefox: the job that adds it restores
+    # Chromium's entry first and this one on top.
+    - name: Key the cache on the browser, runner image and Playwright version
       id: key
       shell: bash
+      env:
+        BROWSER: ${{ inputs.browser }}
       run: |
         version=$(pnpm exec playwright --version | cut -d' ' -f2)
-        echo "key=playwright-chromium-$ImageOS-$RUNNER_ARCH-$version" >> "$GITHUB_OUTPUT"
+        echo "key=playwright-$BROWSER-$ImageOS-$RUNNER_ARCH-$version" >> "$GITHUB_OUTPUT"
+        if [ "$BROWSER" = chromium ]; then path='~/.cache/ms-playwright'
+        else path="~/.cache/ms-playwright/$BROWSER-*"; fi
+        echo "path=$path" >> "$GITHUB_OUTPUT"
 
-    - name: Restore Chromium
+    - name: Restore the browser
       id: restore
       uses: actions/cache/restore@v6
       with:
-        path: ~/.cache/ms-playwright
+        path: ${{ steps.key.outputs.path }}
         key: ${{ steps.key.outputs.key }}
 
     # No `--with-deps`. The runner image ships Google Chrome and Chromium, so it
@@ -26,15 +40,20 @@ runs:
     # extra fonts, which the headless suites don't need, and fetching them from a
     # slow apt mirror pushed jobs past their time limit.
     - name: Download Chromium
-      if: steps.restore.outputs.cache-hit != 'true'
+      if: inputs.browser == 'chromium' && steps.restore.outputs.cache-hit != 'true'
       shell: bash
       run: pnpm exec playwright install chromium
 
+    - name: Download Firefox
+      if: inputs.browser == 'firefox' && steps.restore.outputs.cache-hit != 'true'
+      shell: bash
+      run: pnpm exec playwright install firefox
+
     # Saved now rather than at the end of the job, so a failing test still
     # leaves the browser for the next run.
-    - name: Save Chromium
+    - name: Save the browser
       if: steps.restore.outputs.cache-hit != 'true'
       uses: actions/cache/save@v6
       with:
-        path: ~/.cache/ms-playwright
+        path: ${{ steps.key.outputs.path }}
         key: ${{ steps.key.outputs.key }}

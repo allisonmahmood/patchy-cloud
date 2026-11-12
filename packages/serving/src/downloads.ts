@@ -1,6 +1,8 @@
 /// <reference lib="dom" />
 /// <reference lib="es2024.promise" />
 // @effect-diagnostics globalTimers:off
+import { handBackFocus } from "./hand-back-focus.js";
+
 // Download approval belongs to the shell, never to an event reported by the frame.
 // D-1 from #385: a bottom-right card names the offering patch and file, with Download and Not now.
 export function createDownloads(
@@ -52,7 +54,9 @@ export function createDownloads(
     root.hidden = files.length === 0;
     if (active instanceof HTMLElement && root.contains(active)) active.focus();
   };
+  // Only the card's own Download, Not now or Dismiss discards it.
   const discard = (file: (typeof files)[number], downloaded: boolean) => {
+    const handBack = handBackFocus(frame, file.card, { pressed: true });
     files.splice(files.indexOf(file), 1);
     file.card.remove();
     if (file.url !== undefined) {
@@ -72,7 +76,7 @@ export function createDownloads(
     }
     file.settle(downloaded);
     layout();
-    frame.focus();
+    handBack();
   };
   const formatSize = (bytes: number) => {
     const kb = bytes / 1024;

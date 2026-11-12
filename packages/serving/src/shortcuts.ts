@@ -18,6 +18,7 @@
 import { ShortcutsValue } from "@patchy/api";
 import { switcherOpen } from "@patchy/core/switcher";
 import * as Schema from "effect/Schema";
+import { handBackFocus } from "./hand-back-focus.js";
 import { shellBottom } from "./stream-status.js";
 
 /** The route's JSON answer, the value it stored. */
@@ -108,10 +109,12 @@ export function createShortcutSetting(frame: HTMLIFrameElement, starting: () => 
         if (!shown) return;
         shown = false;
         watchLapse();
+        // The dialog holds focus while it is up, so focus found nowhere was still its to give back.
+        const handBack = handBackFocus(frame, dialog, { pressed: true });
         dialog.close();
         dialog.remove();
         // The switcher, opened over the dialog, keeps focus and hands it back when it closes.
-        if (!switcherOpen(document)) frame.focus();
+        if (!switcherOpen(document)) handBack();
       };
       const settle = () => {
         if (settled) return;
@@ -234,13 +237,14 @@ export function showShortcutsNote(frame: HTMLIFrameElement, patchId: string) {
   content.append(heading);
   const dismiss = button("Dismiss", "btn-quiet");
   dismiss.addEventListener("click", () => {
+    const handBack = handBackFocus(frame, note, { pressed: true });
     try {
       localStorage.setItem(key, "dismissed");
     } catch {
       // As above: dismissed for this page only.
     }
     note.remove();
-    frame.focus();
+    handBack();
   });
   const actions = document.createElement("div");
   actions.className = "actions";

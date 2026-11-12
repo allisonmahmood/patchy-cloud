@@ -10,7 +10,7 @@ Use Node 22.22.0+ (`mise.toml` pins 24) and the pnpm version in `package.json`:
 
 ```sh
 pnpm install
-pnpm exec playwright install --with-deps chromium   # browser and packed suites
+pnpm exec playwright install --with-deps chromium firefox   # browser and packed suites
 ```
 
 Install pins `workerd`, embedded Postgres and Bun per platform; nothing is
@@ -101,6 +101,12 @@ For a focused loop:
   about three seconds when warm. Package `src` is checked by `pnpm typecheck`.
 - `pnpm exec playwright test -c playwright.tier1.config.ts --project=chromium <spec>`
   runs one browser spec.
+- `test/browser-tier1/focus.spec.ts` also runs in Firefox, the tier 1 config's `firefox`
+  project, with `pnpm test:browser:firefox`; nothing else does. Firefox won't hand a patch's
+  frame focus during the key event that pressed one of the shell's buttons, so the shell's
+  hand-back tries again once that event is over, and only Firefox needs that second try. The
+  project turns Fission isolation on, as Firefox ships it. CI's `browser` job and `pnpm verify`
+  run it after the Chromium suite.
 
 Every vitest run builds core's browser scripts and the shell broker and stages
 the packed CLI release once before its workers start; `pnpm dev` builds the same

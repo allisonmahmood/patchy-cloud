@@ -71,7 +71,7 @@ useHotkey("Enter", saveTitle, { within: titleField });
   makes its row come and go. To keep it listed, check the condition in `run` instead.
 - Patchy focuses the page when it opens. If the viewer clicks Patchy's own bar or a download
   card, keys go there until they click back into the page. A download card's buttons and the
-  new-version bar's Not now hand focus back themselves.
+  new-version bar's Not now and Hide hand focus back themselves.
 - In a text field, the field keeps its keys, whatever a hotkey's options say. A text field is
   a text `<input>` or `<textarea>` that isn't read-only, a `<select>`, a contenteditable
   element, or an element with `role="textbox"` or `role="searchbox"`. It keeps:
