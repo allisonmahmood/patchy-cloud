@@ -358,9 +358,8 @@ watchdog kill is not proof of CPU abuse.
 Call `patchy.server.<module>.<handler>(args)` for a one-shot result. For a live
 screen, pass a generated query to `useQuery(handler, args)` from `patchy/preact`,
 or call `.subscribe(args, onSnapshot)` and keep its returned unsubscribe function.
-Mutations and actions have neither subscription API. `useQuery` takes no
-options and has no way to skip: it runs the query whenever its component is
-mounted, and each run that fails or refuses leaves an entry in the patch's log.
+Mutations and actions have neither subscription API; `../patchy-preact/SKILL.md`
+says when `useQuery` runs.
 
 Both forms deliver `{ status, data, error, loading }`, with status `"loading"`,
 `"ready"` or `"error"`. Render the whole `data` value and show errors separately.

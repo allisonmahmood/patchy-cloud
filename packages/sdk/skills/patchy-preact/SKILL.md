@@ -86,8 +86,8 @@ const snapshot = useQuery(patchy.server.notes.open, { cursor: null });
 The hook takes those two arguments and no options: nothing skips or delays it.
 It runs the query whenever its component is mounted, so a query that can't run
 yet, for want of a selected id or because the viewer's role is refused, belongs
-in a component rendered only once it can. On tier 2, each run that fails or
-refuses, such as a handler passing an empty id to `get`, leaves an entry in the
+in a component rendered only once it can. On tier 2, each handler run that fails
+or refuses, such as one passing an empty id to `get`, leaves an entry in the
 patch's log.
 
 It returns `{ status, data, error, loading }`. Status is `"loading"`, `"ready"`
@@ -131,14 +131,15 @@ try {
   await patchy.server.notes.finish({ id });
 } catch (error) {
   if (isHandlerError(error, "already_done")) setNotice("That note is already done.");
+  else if (isHandlerError(error, "missing")) setNotice("That note was deleted.");
   else if (isPatchyError(error, "unknown_outcome") && error.retry) setRetry(() => error.retry);
   else setNotice(error instanceof Error ? error.message : String(error));
 }
 ```
 
-`unknown_outcome` means the reply was lost and the write may have committed.
-On a tier 2 mutation the error carries `retry()`, which resends the same key and
-so writes at most once; calling the handler again is a new mutation that can
+`unknown_outcome` means Patchy can't say whether the call ran. A tier 2
+mutation that went out carries `retry()`, which resends the same key and so
+writes at most once; calling the handler again is a new mutation that can
 write twice. `patchy-server` has the retry window and what actions offer instead.
 
 ## useFileUrl
