@@ -60,6 +60,50 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 42,
+    date: "2026-11-12",
+    through: "1cd6d12404a67f7954bbe80583b22847431a6f70",
+    changes: [
+      {
+        kind: "New",
+        title: "Tell Patchy what it's missing",
+        detail:
+          "Tell Patchy, at the foot of the sidebar, sends Patchy's team a request for something Patchy can't do yet, or feedback on something it got wrong. A request shows similar ones already asked for and where each stands. What you sent lists everything you and your agents sent, and you can take any of it back. Your agents can send them too, from the CLI or through Patchy's connection for agents.",
+        prs: [1217, 1218, 1219, 1227, 1228]
+      },
+      {
+        kind: "New",
+        title: "Turn off single-key shortcuts",
+        detail:
+          "If speech input or a stray key keeps setting off a patch's one-letter shortcuts, turn them off from a patch's shortcuts sheet or the account menu. Shortcuts with ⌘, Ctrl or a named key keep working. A patch built before today says its shortcuts still work until it's rebuilt.",
+        prs: [1276, 1279, 1301]
+      },
+      {
+        kind: "Fixed",
+        title: "Typing reaches the patch again",
+        detail:
+          "In Firefox, pressing one of Patchy's own buttons around a patch with the keyboard, such as Not now on the new-version bar or Download on a download card, no longer leaves your typing going nowhere. The same goes for the moment a patch opens in desktop Chrome.",
+        prs: [1407, 1412]
+      },
+      {
+        kind: "Fixed",
+        title: "Dialogs in patches keep your place",
+        detail:
+          "In a rebuilt patch, Tab stays inside an open dialog instead of wandering out to Patchy's or the browser's controls, and dragging while you select text in the shortcuts sheet no longer closes it.",
+        prs: [1420, 1255]
+      }
+    ],
+    behindTheScenes: [
+      "Agents building patches now read plainer facts about forms, errors, tool arguments, list order, dialogs and checking their page in a browser.",
+      "Patchy now stores teams and who a patch or connection is for, ahead of teams arriving. Nothing is open to a team yet."
+    ],
+    patchChanges: [
+      "patchy/hotkeys: Mod+/ always opens a mounted `HotkeySheet`, ahead of every other hotkey, and its `hotkey` prop replaces only `?`, so a page's own `Mod+/` hotkey, `within` an element or not, never fires while a sheet is mounted: move it to another chord. `client.close()` no longer closes the page's connection to Patchy: it stops that client's subscriptions and refuses its later calls, a call already sent settles with its own outcome, and a client made afterwards works.",
+      "patchy/hotkeys: a viewer can now turn single-key shortcuts off. Then a page-wide hotkey whose every step types a character, such as `A`, `G H` or `?`, fires nothing, while chords, named keys and hotkeys `within` an element still fire. Label those commands so the sheet keeps them as buttons, and write a key that belongs to one part of the page `within` it. `window.name` carries the setting and is Patchy's: don't set it.",
+      "In pages on `patchy/preact` or the generated client, Tab now wraps inside a plain modal `<dialog>` opened with `showModal()`: from its last control to its first, and Shift+Tab from its first to its last; a plain dialog with no controls keeps focus. A plain dialog holds only ordinary containers and text with buttons, links, selects, checkboxes, summaries, one-line inputs and elements with `tabindex=\"0\"`. A richer dialog, such as one with a textarea, radio, date input, frame, popover, custom element, scrolling region or positive `tabindex`, keeps the browser's own Tab, and so does every dialog while a popover is open anywhere in the page. A patch's own Tab wrapping for a plain dialog can come out."
+    ]
+  },
+  {
     id: 41,
     date: "2026-11-11",
     through: "a25a9c53dfc767851a4e5e560299d9d33bff5291",
