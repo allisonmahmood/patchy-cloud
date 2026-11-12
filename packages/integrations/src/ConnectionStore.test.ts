@@ -147,8 +147,7 @@ it.layer(fixture)("ConnectionStore", (it) => {
         yield* (yield* Teams.Teams).setMemberships({
           ...actor,
           teamId: design.id,
-          userIds: [member],
-          added: true
+          add: [member]
         });
         assert.equal(yield* ownerAccess, true);
         assert.equal(yield* canUse(member), true);
@@ -159,14 +158,12 @@ it.layer(fixture)("ConnectionStore", (it) => {
         yield* (yield* Teams.Teams).setMemberships({
           ...actor,
           teamId: engineering.id,
-          userIds: [member],
-          added: true
+          add: [member]
         });
         yield* (yield* Teams.Teams).setMemberships({
           ...actor,
           teamId: design.id,
-          userIds: [member],
-          added: false
+          remove: [member]
         });
         assert.equal(yield* ownerAccess, true);
         assert.equal(yield* canUse(member), true);
@@ -177,8 +174,7 @@ it.layer(fixture)("ConnectionStore", (it) => {
         yield* (yield* Teams.Teams).setMemberships({
           ...actor,
           teamId: engineering.id,
-          userIds: [member],
-          added: false
+          remove: [member]
         });
         assert.equal(yield* ownerAccess, false);
         assert.equal(yield* canUse(member), false);
@@ -189,8 +185,7 @@ it.layer(fixture)("ConnectionStore", (it) => {
         yield* (yield* Teams.Teams).setMemberships({
           ...actor,
           teamId: design.id,
-          userIds: [member],
-          added: true
+          add: [member]
         });
         assert.equal(yield* ownerAccess, true);
         assert.equal(yield* canUse(member), true);

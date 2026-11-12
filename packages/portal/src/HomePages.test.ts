@@ -303,8 +303,7 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
           teams.setMemberships({
             ...viewer,
             teamId: team.id,
-            userIds: [workspace.member.id],
-            added
+            ...(added ? { add: [workspace.member.id] } : { remove: [workspace.member.id] })
           });
         yield* members(true);
         yield* publish(workspace.member, "team-first", {

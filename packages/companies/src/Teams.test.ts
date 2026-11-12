@@ -58,7 +58,7 @@ it.layer(services)("Teams", (it) => {
       const teams = yield* Teams.Teams;
       const team = yield* teams.create({ ...ref, name: "Research" });
       const target = { ...ref, teamId: team.id };
-      yield* teams.setMemberships({ ...target, userIds: [member.id, admin.id], added: true });
+      yield* teams.setMemberships({ ...target, add: [member.id, admin.id] });
       assert.strictEqual(
         (yield* teams.remove({ ...target, actorId: member.id }).pipe(Effect.flip))._tag,
         "RoleForbidden"
@@ -88,7 +88,7 @@ it.layer(services)("Teams", (it) => {
       const teams = yield* Teams.Teams;
       const finance = yield* teams.create({ ...ref, name: "Finance" });
       const design = yield* teams.create({ ...ref, name: "Design" });
-      yield* teams.setMemberships({ ...ref, teamId: finance.id, userIds: [admin.id], added: true });
+      yield* teams.setMemberships({ ...ref, teamId: finance.id, add: [admin.id] });
       const asMember = { ...ref, actorId: member.id };
       assert.deepStrictEqual(
         (yield* teams.list(asMember)).map((team) => team.id),
@@ -98,7 +98,7 @@ it.layer(services)("Teams", (it) => {
       assert.deepStrictEqual(yield* teams.members({ ...asMember, teamId: design.id }), []);
       assert.strictEqual(
         (yield* teams
-          .setMemberships({ ...asMember, teamId: design.id, userIds: [member.id], added: true })
+          .setMemberships({ ...asMember, teamId: design.id, add: [member.id] })
           .pipe(Effect.flip))._tag,
         "RoleForbidden"
       );
@@ -109,28 +109,20 @@ it.layer(services)("Teams", (it) => {
     () =>
       Effect.gen(function* () {
         const { ref, admin, member } = yield* setup("teams-batch");
+        const teams = yield* Teams.Teams;
         const directory = yield* Directory.Directory;
-        const team = yield* (yield* Teams.Teams).create({ ...ref, name: "Design" });
-        const input = { ...ref, teamId: team.id, userIds: [admin.id, member.id], added: true };
+        const team = yield* teams.create({ ...ref, name: "Design" });
+        const target = { ...ref, teamId: team.id };
         const before = yield* directory.revision(ref.companyId);
-        const failed = yield* (yield* Teams.Teams)
-          .setMemberships({
-            ...input,
-            userIds: [admin.id, "missing-person"]
-          })
+        const failed = yield* teams
+          .setMemberships({ ...target, add: [admin.id, "missing-person"] })
           .pipe(Effect.flip);
         assert.strictEqual(failed._tag, "UserNotFound");
-        assert.deepStrictEqual(
-          yield* (yield* Teams.Teams).members({ ...ref, teamId: team.id }),
-          []
-        );
+        assert.deepStrictEqual(yield* teams.members(target), []);
         assert.deepStrictEqual(yield* readChanges(ref.companyId, before), []);
         assert.strictEqual(yield* directory.revision(ref.companyId), before);
         assert.strictEqual(
-          yield* (yield* Teams.Teams).setMemberships({
-            ...input,
-            userIds: [admin.id, admin.id, member.id]
-          }),
+          yield* teams.setMemberships({ ...target, add: [admin.id, admin.id, member.id] }),
           2
         );
         const facts = yield* readChanges(ref.companyId, before);
@@ -138,20 +130,65 @@ it.layer(services)("Teams", (it) => {
         assert.isTrue(facts.every((change) => change.actorId === ref.actorId));
         const committed = yield* directory.revision(ref.companyId);
         assert.strictEqual(BigInt(committed), BigInt(before) + 1n);
-        assert.strictEqual(yield* (yield* Teams.Teams).setMemberships(input), 0);
-        assert.strictEqual(
-          yield* (yield* Teams.Teams).setMemberships({ ...input, userIds: [] }),
-          0
-        );
+        assert.strictEqual(yield* teams.revision(ref.companyId), committed);
+        assert.strictEqual(yield* teams.setMemberships({ ...target, add: [member.id] }), 0);
+        assert.strictEqual(yield* teams.setMemberships(target), 0);
         assert.strictEqual(yield* directory.revision(ref.companyId), committed);
         assert.deepStrictEqual(yield* readChanges(ref.companyId, committed), []);
         assert.strictEqual(
-          yield* (yield* Teams.Teams).setMemberships({ ...input, added: false }),
+          yield* teams.setMemberships({ ...target, remove: [admin.id, member.id] }),
           2
         );
+        assert.deepStrictEqual(yield* teams.members(target), []);
+      })
+  );
+
+  it.effect(
+    "saves a roster's adds and removes together, only at the revision it was drawn at",
+    () =>
+      Effect.gen(function* () {
+        const { ref, admin, member } = yield* setup("teams-roster");
+        const teams = yield* Teams.Teams;
+        const team = yield* teams.create({ ...ref, name: "Sales" });
+        const target = { ...ref, teamId: team.id };
+        yield* teams.setMemberships({ ...target, add: [admin.id] });
+        const drawn = yield* teams.revision(ref.companyId);
+        // Another admin's change in between makes the drawn form stale: nothing it asked for lands.
+        const other = yield* teams.create({ ...ref, name: "Finance" });
+        yield* teams.setMemberships({ ...ref, teamId: other.id, add: [member.id] });
+        const stale = yield* teams
+          .setMemberships({ ...target, add: [member.id], remove: [admin.id], revision: drawn })
+          .pipe(Effect.flip);
+        assert.strictEqual(stale._tag, "TeamsChanged");
+        assert.deepStrictEqual(yield* teams.members(target), [admin.id]);
+        const current = yield* teams.revision(ref.companyId);
+        assert.strictEqual(
+          yield* teams.setMemberships({
+            ...target,
+            add: [member.id, ref.actorId],
+            remove: [admin.id, ref.actorId],
+            revision: current
+          }),
+          2
+        );
+        assert.deepStrictEqual(yield* teams.members(target), [member.id]);
         assert.deepStrictEqual(
-          yield* (yield* Teams.Teams).members({ ...ref, teamId: team.id }),
-          []
+          (yield* readChanges(ref.companyId, current))
+            .map(({ userId, added }) => [userId, added])
+            .sort(([, a], [, b]) => Number(a) - Number(b)),
+          [
+            [admin.id, false],
+            [member.id, true]
+          ]
+        );
+        // A team deleted while its roster was being edited refuses the save.
+        const before = yield* teams.revision(ref.companyId);
+        yield* teams.remove(target);
+        assert.strictEqual(
+          (yield* teams
+            .setMemberships({ ...target, add: [admin.id], revision: before })
+            .pipe(Effect.flip))._tag,
+          "TeamNotFound"
         );
       })
   );
@@ -168,14 +205,12 @@ it.layer(services)("Teams", (it) => {
           yield* (yield* Teams.Teams).setMemberships({
             ...asAdmin,
             teamId,
-            userIds: [admin.id],
-            added: true
+            add: [admin.id]
           });
           yield* (yield* Teams.Teams).setMemberships({
             ...asAdmin,
             teamId,
-            userIds: [member.id],
-            added: true
+            add: [member.id]
           });
         }
         yield* (yield* Teams.Teams).rename({
@@ -186,8 +221,7 @@ it.layer(services)("Teams", (it) => {
         yield* (yield* Teams.Teams).setMemberships({
           ...asAdmin,
           teamId: design.id,
-          userIds: [member.id],
-          added: false
+          remove: [member.id]
         });
         assert.deepStrictEqual(
           (yield* (yield* Teams.Teams).list(ref)).map((team) => team.id).sort(),
@@ -203,8 +237,7 @@ it.layer(services)("Teams", (it) => {
         yield* (yield* Teams.Teams).setMemberships({
           ...asAdmin,
           teamId: design.id,
-          userIds: [member.id],
-          added: true
+          add: [member.id]
         });
         assert.strictEqual(
           (yield* (yield* Teams.Teams).memberships(ref.companyId, [member.id])).get(member.id)!
@@ -225,7 +258,7 @@ it.layer(services)("Teams", (it) => {
         const other = yield* setup("teams-foreign");
         const users = yield* Users.Users;
         const team = yield* (yield* Teams.Teams).create({ ...ref, name: "Design" });
-        const input = { ...ref, teamId: team.id, userIds: [member.id], added: true };
+        const input = { ...ref, teamId: team.id, add: [member.id] };
         assert.strictEqual(
           (yield* (yield* Teams.Teams)
             .create({ ...ref, actorId: member.id, name: "Hidden" })
@@ -246,7 +279,7 @@ it.layer(services)("Teams", (it) => {
         );
         assert.strictEqual(
           (yield* (yield* Teams.Teams)
-            .setMemberships({ ...input, userIds: [other.user.id] })
+            .setMemberships({ ...input, add: [other.user.id] })
             .pipe(Effect.flip))._tag,
           "UserNotFound"
         );
@@ -255,8 +288,7 @@ it.layer(services)("Teams", (it) => {
             .setMemberships({
               ...other.ref,
               teamId: team.id,
-              userIds: [other.user.id],
-              added: true
+              add: [other.user.id]
             })
             .pipe(Effect.flip))._tag,
           "TeamNotFound"
@@ -287,7 +319,7 @@ it.layer(services)("Teams", (it) => {
           (yield* (yield* Teams.Teams).list({ ...ref, actorId: member.id }).pipe(Effect.flip))._tag,
           "RoleForbidden"
         );
-        yield* (yield* Teams.Teams).setMemberships({ ...input, added: false });
+        yield* (yield* Teams.Teams).setMemberships({ ...input, add: [], remove: [member.id] });
         yield* users.reactivate({ companyId: ref.companyId, userId: member.id });
         assert.deepStrictEqual(
           (yield* (yield* Teams.Teams).memberships(ref.companyId, [member.id])).get(member.id)!,

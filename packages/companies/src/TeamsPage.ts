@@ -1,3 +1,8 @@
+/**
+ * The Teams page: the company's teams listed beside the open one, which shows what it reaches and
+ * its people. Admins edit the roster as ticks, review what the change does, then save it in one
+ * batch; members read the same page. Every state is an address, so it all works without script.
+ */
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -6,51 +11,56 @@ import * as UrlParams from "effect/http/UrlParams";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import {
   avatar,
+  badge,
   button,
+  card,
+  changeBar,
   checklist,
-  detailPage,
-  directoryCards,
   dialog,
   emptyState,
   escapeAttribute,
   escapeHtml,
+  facts,
   field,
-  flowPage,
   idFor,
   indexPage,
   input,
   linkButton,
+  listDetail,
   menu,
   notice,
-  productMark,
   refusalNotice,
   row,
   rows,
   searchField
 } from "@patchy/core";
 import type { Page } from "./CompanyPage.js";
+import * as Roster from "./Roster.js";
 import * as Teams from "./Teams.js";
 import * as Users from "./Users.js";
 
 export const path = "/settings/company/teams";
-const NameForm = Schema.Struct({ name: Schema.String });
-const PersonForm = Schema.Struct({ userId: Schema.String });
-const decodeName = Schema.decodeUnknownEffect(NameForm);
-const decodePerson = Schema.decodeUnknownEffect(PersonForm);
-const screens = ["create", "rename", "add", "remove", "delete"] as const;
-type Screen = (typeof screens)[number];
-export type Action = "view" | Screen;
+export type Action = "view" | "create" | "rename" | "delete" | "stage" | "save";
+const dialogs = ["create", "rename", "delete", "review"] as const;
+type Dialog = (typeof dialogs)[number];
+const decodeName = Schema.decodeUnknownEffect(Schema.Struct({ name: Schema.String }));
+
 interface Viewer {
   readonly company: { readonly id: string };
   readonly user: { readonly id: string };
   readonly role: Users.Role;
 }
+/** A roster's unsaved changes, which the page's addresses carry from search to review. */
+interface Staged {
+  readonly add: readonly string[];
+  readonly remove: readonly string[];
+}
 interface View {
+  /** The open team; empty opens the first, and on a phone shows the list. */
   readonly teamId: string;
-  readonly screen?: Screen;
+  readonly dialog?: Dialog;
   readonly query: string;
-  readonly personId: string;
-  readonly selected: readonly string[];
+  readonly staged: Staged;
 }
 interface Draft {
   readonly name: string;
@@ -61,59 +71,50 @@ interface Refusal {
   readonly message: string;
   readonly status: number;
 }
-const roleLabel = { member: "Member", admin: "Admin" } satisfies Record<Users.Role, string>;
-/** The patches and connections using a team that the viewer can see, and how many others do. */
-export interface TeamUses {
-  readonly patches: readonly string[];
-  readonly connections: readonly string[];
-  readonly hidden: number;
-}
 
 /**
- * What a refused deletion names. Patches and Integrations know what uses a team, which Companies
- * cannot read, so hosting provides it; without it the refusal names nothing.
+ * What teams reach, as the viewer may see it. Patches and Integrations know it and Companies
+ * cannot read them, so hosting provides it; without it the page shows teams reaching nothing.
  */
-export const Uses = Context.Reference<
-  ((team: Teams.TeamRef) => Effect.Effect<TeamUses, SqlError>) | undefined
->("@patchy/companies/TeamsPage/Uses", { defaultValue: () => undefined });
+export const Reach = Context.Reference<
+  ((viewer: Teams.Viewer) => Effect.Effect<Roster.Reach, SqlError>) | undefined
+>("@patchy/companies/TeamsPage/Reach", { defaultValue: () => undefined });
 
+/** The page's address: the open team, its search and unsaved changes, and a dialog over it. */
+const href = (spec: {
+  readonly teamId?: string;
+  readonly query?: string;
+  readonly staged?: Staged;
+  readonly dialog?: Dialog;
+}) => {
+  const params = new URLSearchParams();
+  if (spec.teamId) params.set("team", spec.teamId);
+  if (spec.query) params.set("q", spec.query);
+  for (const id of spec.staged?.add ?? []) params.append("add", id);
+  for (const id of spec.staged?.remove ?? []) params.append("remove", id);
+  if (spec.dialog) params.set("view", spec.dialog);
+  const search = params.toString();
+  return search ? `${path}?${search}` : path;
+};
+const operation = (action: Exclude<Action, "view">, teamId: string) =>
+  `${path}/${action}${teamId ? `?team=${encodeURIComponent(teamId)}` : ""}`;
+
+const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
 const listed = (items: readonly string[]) =>
   items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
-
-/** "Roadmap, postgres/warehouse and 2 more you can’t see use this team. Change their audiences first." */
-const inUse = (uses: TeamUses | undefined) => {
-  const named = [...(uses?.patches ?? []), ...(uses?.connections ?? [])];
-  const hidden = uses?.hidden ?? 0;
-  if (named.length === 0 && hidden === 0)
-    return "Patches or connections use this team. Change their audiences first.";
-  const more = hidden === 0 ? [] : [`${hidden} more you can’t see`];
-  return `${listed([...named, ...more])} ${named.length + hidden === 1 ? "uses" : "use"} this team. Change ${named.length + hidden === 1 ? "its audience" : "their audiences"} first.`;
-};
-
-const address = (id: string) => `${path}?team=${encodeURIComponent(id)}`;
-const operation = (id: string, action: Screen) =>
-  `${path}/${action}?team=${encodeURIComponent(id)}`;
-const screenHref = (id: string, screen: Screen) => `${address(id)}&view=${screen}`;
-const peopleCount = (count: number) => `${count} ${count === 1 ? "person" : "people"}`;
 const hidden = (name: string, value: string) =>
   `<input type="hidden" name="${escapeAttribute(name)}" value="${escapeAttribute(value)}">`;
-const problem = (refused?: Refusal) => (refused ? refusalNotice(refused.message) : "");
-const teamMark = () => productMark({ icon: "people" });
+const displayName = (user: Users.User) => user.name.trim() || user.email;
+const stateWords = { retired: "Retired", deleted: "Deleted" } as const;
 const cancel = (href: string, autofocus = false) =>
   linkButton("Cancel", href, { kind: "quiet", autofocus });
-const nameField = (name: string, draft?: Draft) =>
+const nameField = (name: string, error?: string) =>
   field({
     id: "team-name",
-    label: "Team name",
-    ...(draft ? { error: draft.error } : {}),
+    label: "Name",
+    ...(error === undefined ? {} : { error }),
     control: (aria) =>
-      input(aria, {
-        name: "name",
-        value: draft?.name ?? name,
-        required: true,
-        maxlength: 100,
-        autofocus: true
-      })
+      input(aria, { name: "name", value: name, required: true, maxlength: 100, autofocus: true })
   });
 const failurePage = (title: string, message: string, status: number): Page => ({
   title,
@@ -124,6 +125,11 @@ const failurePage = (title: string, message: string, status: number): Page => ({
   })
 });
 
+const readReach = Effect.fn("TeamsPage.readReach")(function* (viewer: Teams.Viewer) {
+  const read = yield* Reach;
+  return read === undefined ? undefined : yield* read(viewer);
+});
+
 /** Every read is scoped by Teams first. UI state never grants membership or management authority. */
 const render = Effect.fn("TeamsPage.render")(function* (
   viewer: Viewer,
@@ -132,260 +138,493 @@ const render = Effect.fn("TeamsPage.render")(function* (
   refused?: Refusal
 ): Effect.fn.Return<
   Page,
-  Users.RoleForbidden | Users.UserNotFound | Teams.TeamNotFound | SqlError,
+  Users.RoleForbidden | Teams.TeamNotFound | SqlError,
   Teams.Teams | Users.Users
 > {
   const teams = yield* Teams.Teams;
   const users = yield* Users.Users;
   const ref = { companyId: viewer.company.id, actorId: viewer.user.id };
-  const editable = viewer.role === "admin";
-  if (!editable && view.screen) return yield* new Users.RoleForbidden(ref);
+  const admin = viewer.role === "admin";
+  if (!admin && view.dialog) return yield* new Users.RoleForbidden(ref);
   const all = yield* teams.list(ref);
-  const selected = all.find((team) => team.id === view.teamId);
-  if (view.teamId && !selected) return yield* new Teams.TeamNotFound({ teamId: view.teamId });
-  const query = view.query.trim().toLocaleLowerCase();
-  const matches = (value: string) => value.toLocaleLowerCase().includes(query);
-  const directoryHref = path;
+  const accounts = yield* users.list(ref.companyId);
   const status = draft?.status ?? refused?.status;
-  if (!selected) {
-    // One batched read supplies recorded counts, including inactive members, without one query per team.
-    const people = all.length ? yield* users.list(ref.companyId) : [];
-    const memberships = people.length
-      ? yield* teams.people(
-          ref.companyId,
-          people.map((person) => person.id)
-        )
-      : [];
-    const teamsByPerson = new Map(memberships.map((person) => [person.id, person.teamIds]));
-    const previews = new Map<string, string[]>();
-    const counts = new Map<string, number>();
-    for (const user of [...people].sort(
-      (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)
-    ))
-      for (const teamId of teamsByPerson.get(user.id) ?? []) {
-        counts.set(teamId, (counts.get(teamId) ?? 0) + 1);
-        if (user.deactivatedAt === null) {
-          const preview = previews.get(teamId) ?? [];
-          if (preview.length < 3) preview.push(avatar(user.id, user.name));
-          previews.set(teamId, preview);
-        }
+  const admins = accounts
+    .filter((user) => user.role === "admin" && user.deactivatedAt === null)
+    .map(displayName)
+    .sort((a, b) => a.localeCompare(b));
+  const meta = [
+    all.length === 0 ? "No teams" : plural(all.length, "team", "teams"),
+    ...(admin ? [] : [`Only admins change teams. Admins: ${listed(admins)}.`])
+  ];
+  const actions = admin
+    ? {
+        actions: linkButton("New team", href({ teamId: view.teamId, dialog: "create" }), {
+          kind: "primary",
+          icon: "plus"
+        })
       }
-    const filtered = all.filter((team) => matches(team.name));
-    const create = editable
-      ? linkButton("Create team", `${path}?view=create`, { kind: "primary", icon: "plus" })
-      : "";
-    const content =
-      all.length === 0
-        ? emptyState({
-            title: "No teams yet",
-            ...(create ? { action: create } : {})
-          })
-        : filtered.length === 0
-          ? emptyState({
-              title: "No teams match your search",
-              action: linkButton("Clear search", directoryHref)
-            })
-          : directoryCards(
-              filtered.map((team) => ({
-                name: team.name,
-                href: address(team.id),
-                mark: teamMark(),
-                meta: peopleCount(counts.get(team.id) ?? 0),
-                preview: (previews.get(team.id) ?? []).join(""),
-                action: "Open team"
-              }))
-            );
-    const title = "Teams";
+    : {};
+  const createDialog = (close: string) =>
+    dialog({
+      id: "new-team",
+      title: "New team",
+      closeHref: close,
+      form: { action: operation("create", "") },
+      body: nameField(draft?.name ?? "", draft?.error),
+      foot: cancel(close) + button("Create team", { kind: "primary" })
+    });
+  if (all.length === 0) {
+    if (view.teamId) return yield* new Teams.TeamNotFound({ teamId: view.teamId });
     const page: Page = {
-      title,
+      title: "Teams",
       status,
       ...indexPage({
-        title,
-        meta: [`${all.length} ${all.length === 1 ? "team" : "teams"}`],
-        ...(all.length && create ? { actions: create } : {}),
-        content: `<div class="stack">${all.length ? searchField({ action: path, id: "teams-search", query: view.query, placeholder: "Find a team", label: "Find a team" }) : ""}${problem(refused)}${content}</div>`
+        title: "Teams",
+        meta,
+        ...actions,
+        content: `<div class="box">${emptyState({ title: "No teams yet" })}</div>`
       })
     };
-    if (view.screen === "create")
+    return view.dialog === "create" ? { ...page, overlay: createDialog(path) } : page;
+  }
+  const selected = view.teamId ? all.find((team) => team.id === view.teamId) : all[0];
+  if (selected === undefined) return yield* new Teams.TeamNotFound({ teamId: view.teamId });
+
+  // Recorded teams for everyone, deactivated people included, in one read.
+  const recorded = new Map(
+    (yield* teams.people(
+      ref.companyId,
+      accounts.map((user) => user.id)
+    )).map((person) => [person.id, person.teamIds])
+  );
+  const people: readonly Roster.Person[] = accounts
+    .map((user) => ({
+      id: user.id,
+      name: displayName(user),
+      email: user.email,
+      active: user.deactivatedAt === null,
+      teamIds: recorded.get(user.id) ?? []
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name) || a.email.localeCompare(b.email));
+  const adminIds = new Set(accounts.filter((user) => user.role === "admin").map((user) => user.id));
+  const names = new Map(all.map((team) => [team.id, team.name]));
+  const read = yield* readReach(ref);
+  const reach = read ?? Roster.nothing;
+  const membersOf = (teamId: string) => people.filter((person) => person.teamIds.includes(teamId));
+  const gives = (teamId: string) => {
+    const own = Roster.reachOf(reach, teamId);
+    return [
+      ...(own.patches.length ? [plural(own.patches.length, "patch", "patches")] : []),
+      ...own.connections.map((connection) => connection.label)
+    ];
+  };
+
+  const members = membersOf(selected.id);
+  const memberIds = new Set(members.map((person) => person.id));
+  const others = people.filter((person) => person.active && !memberIds.has(person.id));
+  // Only what still applies: an add of someone active who isn't on it, a removal of someone who is.
+  const staged: Staged = {
+    add: others.filter((person) => view.staged.add.includes(person.id)).map((person) => person.id),
+    remove: members
+      .filter((person) => view.staged.remove.includes(person.id))
+      .map((person) => person.id)
+  };
+  const here = href({ teamId: view.teamId, query: view.query, staged });
+  const label = (person: Roster.Person) =>
+    person.id === viewer.user.id ? `${person.name} (you)` : person.name;
+  const about = (person: Roster.Person) =>
+    [
+      person.email,
+      ...(adminIds.has(person.id) ? ["Admin"] : []),
+      ...(person.active ? [] : ["Deactivated"])
+    ].join(" · ");
+
+  const own = Roster.reachOf(reach, selected.id);
+  const opens = [...own.patches].sort(
+    (a, b) =>
+      Number(a.state !== "live") - Number(b.state !== "live") || a.title.localeCompare(b.title)
+  );
+  const access = card({
+    body: facts([
+      [
+        "Can open",
+        opens.length
+          ? opens
+              .map(
+                (patch) =>
+                  `<a href="${escapeAttribute(patch.href)}">${escapeHtml(patch.title)}</a>${patch.state === "live" ? "" : ` ${badge(stateWords[patch.state])}`}`
+              )
+              .join(", ")
+          : '<span class="muted">No patches yet</span>'
+      ],
+      [
+        "Can build with",
+        own.connections.length
+          ? own.connections
+              .map(
+                (connection) =>
+                  `<a class="code" href="${escapeAttribute(connection.href)}">${escapeHtml(connection.label)}</a>`
+              )
+              .join(", ")
+          : '<span class="muted">No connections yet</span>'
+      ]
+    ])
+  });
+
+  let roster: string;
+  if (admin) {
+    const query = view.query.trim().toLocaleLowerCase();
+    const matches = (person: Roster.Person) =>
+      `${person.name} ${person.email}`.toLocaleLowerCase().includes(query);
+    const shownMembers = members.filter(matches);
+    const shownOthers = others.filter(matches);
+    const shown = new Set([...shownMembers, ...shownOthers].map((person) => person.id));
+    const offPage = {
+      add: staged.add.filter((id) => !shown.has(id)),
+      remove: staged.remove.filter((id) => !shown.has(id))
+    };
+    // The form posts changes, never the whole roster: each shown member is a removal its ticked
+    // `keep` box cancels, and changes the search hides ride along as they are.
+    const carried = [
+      ...offPage.add.map((id) => hidden("add", id)),
+      ...[...offPage.remove, ...shownMembers.map((person) => person.id)].map((id) =>
+        hidden("remove", id)
+      )
+    ].join("");
+    const lists = [
+      shownMembers.length
+        ? checklist({
+            id: "team-people",
+            legend: `In ${selected.name} · ${members.length}`,
+            name: "keep",
+            items: shownMembers.map((person) => ({
+              value: person.id,
+              label: label(person),
+              description: about(person),
+              checked: !staged.remove.includes(person.id),
+              saved: true,
+              muted: !person.active
+            }))
+          })
+        : "",
+      shownOthers.length
+        ? checklist({
+            id: "everyone-else",
+            legend: `Everyone else · ${others.length}`,
+            name: "add",
+            items: shownOthers.map((person) => ({
+              value: person.id,
+              label: label(person),
+              description:
+                person.teamIds.flatMap((id) => names.get(id) ?? []).join(", ") || "No team",
+              checked: staged.add.includes(person.id),
+              saved: false
+            }))
+          })
+        : "",
+      shown.size === 0
+        ? `<div class="box">${emptyState({
+            title: query ? "No one matches your search" : "No one to add yet",
+            ...(query
+              ? { action: linkButton("Clear search", href({ teamId: view.teamId, staged })) }
+              : {})
+          })}</div>`
+        : ""
+    ].join("");
+    roster = `<form class="stack" method="post" action="${escapeAttribute(operation("stage", selected.id))}">${carried}${searchField({ id: "find-people", inForm: true, query: view.query, placeholder: "Find people", label: "Find people" })}${lists}${changeBar(
+      {
+        added: staged.add.length,
+        removed: staged.remove.length,
+        offPage: { added: offPage.add.length, removed: offPage.remove.length },
+        actions:
+          linkButton("Discard", href({ teamId: view.teamId }), { kind: "quiet", size: "sm" }) +
+          button("Review…", { kind: "primary", size: "sm", name: "intent", value: "review" })
+      }
+    )}</form>`;
+  } else
+    roster = members.length
+      ? rows(
+          members.map((person) =>
+            row({
+              lead: avatar(person.id, person.name, person.active ? undefined : "off"),
+              name: label(person),
+              description: about(person)
+            })
+          ),
+          true
+        )
+      : `<div class="box">${emptyState({ title: "No people yet" })}</div>`;
+
+  const page: Page = {
+    title: view.teamId ? selected.name : "Teams",
+    status,
+    ...indexPage({
+      title: "Teams",
+      meta,
+      ...actions,
+      content: listDetail({
+        id: "teams",
+        label: "Teams",
+        at: view.teamId ? "entry" : "list",
+        parent: { label: "Teams", href: path },
+        entries: all.map((team) => ({
+          name: team.name,
+          href: href({ teamId: team.id }),
+          description: [
+            plural(membersOf(team.id).length, "person", "people"),
+            ...(gives(team.id).length ? gives(team.id) : ["Nothing yet"])
+          ].join(" · "),
+          current: team.id === selected.id
+        })),
+        title: selected.name,
+        meta: [plural(members.length, "person", "people"), ...gives(selected.id)],
+        ...(admin
+          ? {
+              actions:
+                linkButton(
+                  "Rename…",
+                  href({ teamId: selected.id, query: view.query, staged, dialog: "rename" }),
+                  { size: "sm" }
+                ) +
+                menu({
+                  id: idFor("team", selected.id),
+                  label: selected.name,
+                  items: [
+                    {
+                      kind: "link",
+                      label: "Delete…",
+                      href: href({
+                        teamId: selected.id,
+                        query: view.query,
+                        staged,
+                        dialog: "delete"
+                      }),
+                      danger: true
+                    }
+                  ]
+                })
+            }
+          : {}),
+        body: `${access}${roster}`
+      })
+    })
+  };
+
+  switch (view.dialog) {
+    case undefined:
+      return page;
+    case "create":
+      return { ...page, overlay: createDialog(here) };
+    case "rename":
       return {
         ...page,
         overlay: dialog({
-          id: "create-team",
-          title: "Create team",
-          closeHref: path,
-          form: { action: `${path}/create` },
-          body: problem(refused) + nameField("", draft),
-          foot: cancel(path) + button("Create team", { kind: "primary" })
+          id: "rename-team",
+          title: `Rename ${selected.name}`,
+          closeHref: here,
+          form: { action: operation("rename", selected.id) },
+          body: nameField(draft?.name ?? selected.name, draft?.error),
+          foot: cancel(here) + button("Save name", { kind: "primary" })
         })
       };
-    return page;
-  }
-  const teamHref = address(selected.id);
-  const people = [...(yield* users.list(ref.companyId))].sort(
-    (a, b) => a.name.localeCompare(b.name) || a.email.localeCompare(b.email)
-  );
-  const ids = new Set(yield* teams.members({ ...ref, teamId: selected.id }));
-  const members = people.filter((person) => ids.has(person.id));
-  const active = people.filter((person) => person.deactivatedAt === null && !ids.has(person.id));
-  if (view.screen === "add") {
-    const eligible = new Set(active.map((person) => person.id));
-    const picked = new Set(view.selected.filter((id) => eligible.has(id)));
-    const found = active.filter((person) => matches(`${person.name} ${person.email}`));
-    const visible = new Set(found.map((person) => person.id));
-    const fieldset = found.length
-      ? checklist({
-          id: "team-candidates",
-          legend: "People",
-          name: "userId",
-          items: found.map((person) => ({
-            value: person.id,
-            label: person.name,
-            description: person.email,
-            checked: picked.has(person.id)
-          }))
-        })
-      : emptyState({
-          title: query ? "No eligible people match" : "Everyone active is already in this team"
-        });
-    // GET search carries checked choices; the final button alone switches to the existing POST operation.
-    // Hidden choices are only those outside this result, so unchecking a visible choice really removes it.
-    const search = `<div class="pair"><span class="grow">${field({ id: "people-search", label: "Search people", control: (aria) => input(aria, { name: "q", type: "search", value: view.query, placeholder: "Name or email", maxlength: 200 }) })}</span>${button("Search")}</div>`;
-    const retained = [...picked]
-      .filter((id) => !visible.has(id))
-      .map((id) => hidden("userId", id))
-      .join("");
-    const selectedNames = active
-      .filter((person) => picked.has(person.id))
-      .map((person) => person.name);
-    const form = `<form method="get" action="${path}">${hidden("team", selected.id)}${hidden("view", "add")}${retained}<div class="stack">${problem(refused)}${search}${picked.size ? notice({ tone: "info", title: `${peopleCount(picked.size)} selected`, body: `<p>${escapeHtml(selectedNames.join(", "))}</p>` }) : ""}${fieldset}<div class="btn-group">${button("Add selected people", { kind: "primary", formAction: operation(selected.id, "add"), formMethod: "post" })}${cancel(teamHref)}</div></div></form>`;
-    return {
-      title: `Add people to ${selected.name}`,
-      status,
-      ...flowPage({
-        title: `Add people to ${selected.name}`,
-        parent: { label: selected.name, href: teamHref },
-        sections: [],
-        outcome: form,
-        submit: ""
-      })
-    };
-  }
-  const joined = ids.has(viewer.user.id);
-  const join =
-    editable && !joined
-      ? `<form method="post" action="${escapeAttribute(operation(selected.id, "add"))}">${hidden("userId", viewer.user.id)}${button("Join team")}</form>`
-      : "";
-  const roster = members.filter((person) => matches(`${person.name} ${person.email}`));
-  const inactiveCount = members.filter((person) => person.deactivatedAt !== null).length;
-  const actions = editable
-    ? linkButton("Add people", screenHref(selected.id, "add"), { kind: "primary", icon: "plus" }) +
-      join +
-      menu({
-        id: idFor("team", selected.id),
-        label: selected.name,
-        items: [
-          { kind: "link", label: "Rename team", href: screenHref(selected.id, "rename") },
-          {
-            kind: "link",
-            label: "Delete team…",
-            href: screenHref(selected.id, "delete"),
-            danger: true
-          }
-        ]
-      })
-    : "";
-  const rosterHtml =
-    members.length === 0
-      ? emptyState({ title: "No people in this team" })
-      : roster.length === 0
-        ? emptyState({
-            title: "No people match your search",
-            action: linkButton("Clear search", teamHref)
+    case "delete": {
+      const unseen = reach.hidden.get(selected.id) ?? 0;
+      if (refused === undefined && own.patches.length + own.connections.length + unseen === 0)
+        return {
+          ...page,
+          overlay: dialog({
+            id: "delete-team",
+            title: `Delete ${selected.name}?`,
+            closeHref: here,
+            form: { action: operation("delete", selected.id) },
+            body: `<p class="prose">${escapeHtml(
+              [
+                ...(read === undefined ? [] : ["No patch or connection uses it."]),
+                members.length
+                  ? `Its ${plural(members.length, "membership goes", "memberships go")} with it, for good.`
+                  : "It goes for good."
+              ].join(" ")
+            )}</p>`,
+            foot: cancel(here, true) + button("Delete team", { kind: "danger-solid" })
           })
-        : rows(
-            roster.map((person) =>
-              row({
-                lead: avatar(person.id, person.name, person.deactivatedAt ? "off" : undefined),
-                name: person.name + (person.id === viewer.user.id ? " (you)" : ""),
-                description: `${person.email} · ${person.deactivatedAt ? "Deactivated" : roleLabel[person.role]}`,
-                end: `${editable ? linkButton(person.id === viewer.user.id ? "Leave…" : "Remove…", `${screenHref(selected.id, "remove")}&person=${encodeURIComponent(person.id)}`, { kind: "quiet", danger: true, size: "sm", ariaLabel: `${person.id === viewer.user.id ? "Leave" : `Remove ${person.name} from`} ${selected.name}` }) : ""}`
-              })
-            ),
-            true
-          );
-  const main = `${view.screen ? "" : problem(refused)}${members.length ? `<div class="toolbar">${searchField({ action: path, id: "roster-search", query: view.query, label: "Find people", placeholder: "Find a person", keep: { team: selected.id }, className: "grow" })}</div>` : ""}${rosterHtml}`;
-  const page: Page = {
-    title: selected.name,
-    status,
-    ...detailPage({
-      title: selected.name,
-      parent: { label: "Teams", href: path },
-      mark: teamMark(),
-      meta: [
-        peopleCount(members.length),
-        ...(inactiveCount ? [`${inactiveCount} deactivated`] : [])
-      ],
-      actions,
-      main
-    })
-  };
-  if (view.screen === "rename")
-    return {
-      ...page,
-      overlay: dialog({
-        id: "rename-team",
-        title: "Rename team",
-        closeHref: teamHref,
-        form: { action: operation(selected.id, "rename") },
-        body: problem(refused) + nameField(selected.name, draft),
-        foot: cancel(teamHref) + button("Save name", { kind: "primary" })
-      })
-    };
-  if (view.screen === "delete")
-    return {
-      ...page,
-      overlay: dialog({
-        id: "delete-team",
-        title: `Delete ${selected.name}?`,
-        closeHref: teamHref,
-        form: { action: operation(selected.id, "delete") },
-        body: `${problem(refused)}<p class="prose">Its memberships go with it.</p>`,
-        foot: cancel(teamHref, !refused) + button("Delete team", { kind: "danger-solid" })
-      })
-    };
-  if (view.screen === "remove") {
-    const person = members.find((person) => person.id === view.personId);
-    if (!person)
-      return yield* new Users.UserNotFound({ companyId: ref.companyId, userId: view.personId });
-    const self = person.id === viewer.user.id;
-    return {
-      ...page,
-      overlay: dialog({
-        id: "remove-person",
-        title: self ? `Leave ${selected.name}?` : `Remove ${person.name} from ${selected.name}?`,
-        closeHref: teamHref,
-        form: { action: operation(selected.id, "remove"), fields: hidden("userId", person.id) },
-        body: `${problem(refused)}${rows([row({ lead: avatar(person.id, person.name), name: person.name, description: person.email })], true)}<p class="prose">${self ? "You’ll" : `${escapeHtml(person.name)} will`} lose access granted by this team.</p>`,
-        foot:
-          cancel(teamHref, !refused) +
-          button(self ? "Leave team" : "Remove person", { kind: "danger-solid" })
-      })
-    };
+        };
+      const ownerName = new Map(people.map((person) => [person.id, person.name]));
+      const counts = [
+        ...(own.patches.length ? [plural(own.patches.length, "patch", "patches")] : []),
+        ...(own.connections.length
+          ? [plural(own.connections.length, "connection", "connections")]
+          : []),
+        ...(unseen ? [`${unseen} more you can’t see`] : [])
+      ];
+      const items = [
+        ...opens.map((patch) =>
+          row({
+            name: patch.title,
+            description: [
+              ...(patch.state === "live" ? [] : [stateWords[patch.state]]),
+              ownerName.get(patch.ownerId) ?? ""
+            ]
+              .filter((part) => part !== "")
+              .join(" · "),
+            end:
+              patch.audienceHref === null
+                ? ""
+                : linkButton("Who can open…", patch.audienceHref, { size: "sm" })
+          })
+        ),
+        ...own.connections.map((connection) =>
+          row({
+            name: connection.label,
+            description: "Connection",
+            end:
+              connection.audienceHref === null
+                ? ""
+                : linkButton("Who can build…", connection.audienceHref, { size: "sm" })
+          })
+        )
+      ];
+      return {
+        ...page,
+        status: refused?.status ?? status,
+        overlay: dialog({
+          id: "team-in-use",
+          title: `${selected.name} is in use`,
+          closeHref: here,
+          size: "lg",
+          body: `<p class="prose">${escapeHtml(
+            counts.length
+              ? `Take ${selected.name} off ${listed(counts)} first.`
+              : "Patches or connections use this team. Change their audiences first."
+          )}</p>${items.length ? rows(items, true) : ""}`,
+          foot: linkButton("Close", here)
+        })
+      };
+    }
+    case "review": {
+      if (staged.add.length + staged.remove.length === 0)
+        return {
+          title: "Teams",
+          body: "",
+          redirect: href({ teamId: selected.id, query: view.query })
+        };
+      const revision = yield* teams.revision(ref.companyId);
+      const byId = new Map(people.map((person) => [person.id, person]));
+      const result = Roster.preview({
+        teamId: selected.id,
+        add: staged.add.flatMap((id) => byId.get(id) ?? []),
+        remove: staged.remove.flatMap((id) => byId.get(id) ?? []),
+        reach,
+        teamNames: names
+      });
+      const person = (who: Roster.Person) =>
+        row({
+          lead: avatar(who.id, who.name, who.active ? undefined : "off"),
+          name: who.name,
+          description: who.email
+        });
+      const named = (item: Roster.ReachPatch | Roster.ReachConnection) =>
+        "state" in item
+          ? escapeHtml(item.title)
+          : `<span class="code">${escapeHtml(item.label)}</span>`;
+      const adding = result.adding.people.length
+        ? `<h3 class="section-title">Adding ${result.adding.people.length}</h3>${rows(result.adding.people.map(person), true)}${
+            result.adding.opens.length + result.adding.builds.length
+              ? facts([
+                  ...(result.adding.opens.length
+                    ? [["They’ll open", result.adding.opens.map(named).join(", ")] as const]
+                    : []),
+                  ...(result.adding.builds.length
+                    ? [["They’ll build with", result.adding.builds.map(named).join(", ")] as const]
+                    : [])
+                ])
+              : ""
+          }`
+        : "";
+      const removing = result.removing.length
+        ? `<h3 class="section-title">Removing ${result.removing.length}</h3>${result.removing
+            .map(
+              (removal) =>
+                `${rows([person(removal.person)], true)}${
+                  removal.loses.length + removal.keeps.length
+                    ? facts([
+                        ...(removal.loses.length
+                          ? [["Loses", removal.loses.map(named).join(", ")] as const]
+                          : []),
+                        ...(removal.keeps.length
+                          ? [
+                              [
+                                "Keeps",
+                                removal.keeps
+                                  .map(
+                                    (kept) =>
+                                      `${named(kept.item)}, through ${escapeHtml(listed(kept.through))}`
+                                  )
+                                  .join("; ")
+                              ] as const
+                            ]
+                          : [])
+                      ])
+                    : ""
+                }`
+            )
+            .join("")}`
+        : "";
+      const [only] = result.breaking;
+      const breaking =
+        only === undefined
+          ? ""
+          : notice({
+              tone: "warning",
+              title:
+                result.breaking.length === 1
+                  ? `${only.patch.title} will stop working`
+                  : `${result.breaking.length} patches will stop working`,
+              body: result.breaking
+                .map(
+                  (stop) =>
+                    `<p>${escapeHtml(`${result.breaking.length === 1 ? "" : `${stop.patch.title}: `}${stop.owner.name} owns it, and it builds with `)}<span class="code">${escapeHtml(stop.connection.label)}</span>${escapeHtml(` through ${selected.name}.`)}</p>`
+                )
+                .join("")
+            });
+      return {
+        ...page,
+        status: refused?.status ?? status,
+        overlay: dialog({
+          id: "review-team",
+          title: `Save changes to ${selected.name}?`,
+          closeHref: here,
+          size: "lg",
+          form: {
+            action: operation("save", selected.id),
+            fields: [
+              ...staged.add.map((id) => hidden("add", id)),
+              ...staged.remove.map((id) => hidden("remove", id)),
+              hidden("revision", revision)
+            ].join("")
+          },
+          body: `${refused === undefined ? "" : refusalNotice(refused.message)}${adding}${removing}${breaking}`,
+          foot:
+            linkButton("Back", here, { kind: "quiet" }) +
+            button("Save changes", { kind: "primary" })
+        })
+      };
+    }
   }
-  return page;
 });
 
-/** Plain session forms preserve existing Teams operations and atomic authority checks. */
+const unique = (values: readonly string[]) => [...new Set(values)];
+
+/** Plain session forms. Every write rechecks the actor's authority and the team inside Teams. */
 export const handle = Effect.fn("TeamsPage.handle")(function* (viewer: Viewer, action: Action) {
   const request = yield* HttpServerRequest.HttpServerRequest;
   const url = new URL(request.url, "http://page.local");
   const asked = url.searchParams.get("view");
   const view: View = {
     teamId: url.searchParams.get("team") ?? "",
-    screen: screens.find((screen) => screen === asked),
+    dialog: dialogs.find((dialog) => dialog === asked),
     query: (url.searchParams.get("q") ?? "").slice(0, 200),
-    personId: url.searchParams.get("person") ?? "",
-    selected: url.searchParams.getAll("userId")
+    staged: { add: url.searchParams.getAll("add"), remove: url.searchParams.getAll("remove") }
   };
   const ref = { companyId: viewer.company.id, actorId: viewer.user.id };
   return yield* Effect.gen(function* () {
@@ -394,89 +633,117 @@ export const handle = Effect.fn("TeamsPage.handle")(function* (viewer: Viewer, a
     const teams = yield* Teams.Teams;
     const form = yield* request.urlParamsBody;
     const target = { ...ref, teamId: view.teamId };
-    if (action === "create" || action === "rename") {
-      const { name } = yield* decodeName(Object.fromEntries(form));
-      return yield* Effect.gen(function* () {
-        const team =
-          action === "create"
-            ? yield* teams.create({ ...ref, name })
-            : yield* teams.rename({ ...target, name });
+    switch (action) {
+      case "create":
+      case "rename": {
+        const { name } = yield* decodeName(Object.fromEntries(form));
+        const refuse = (error: Teams.TeamNameTaken | Teams.InvalidTeamName, status: number) =>
+          render(viewer, { ...view, dialog: action }, { name, error: error.message, status });
+        return yield* Effect.gen(function* () {
+          const team =
+            action === "create"
+              ? yield* teams.create({ ...ref, name })
+              : yield* teams.rename({ ...target, name });
+          return {
+            title: "Teams",
+            body: "",
+            redirect: href({ teamId: team.id }),
+            receipt: action === "create" ? "Team created." : "Team name saved."
+          } satisfies Page;
+        }).pipe(
+          Effect.catchTags({
+            TeamNameTaken: (error) => refuse(error, 409),
+            InvalidTeamName: (error) => refuse(error, 400)
+          })
+        );
+      }
+      case "delete":
+        return yield* teams.remove(target).pipe(
+          Effect.map(
+            () =>
+              ({
+                title: "Teams",
+                body: "",
+                redirect: path,
+                receipt: "Team deleted."
+              }) satisfies Page
+          ),
+          Effect.catchTags({
+            TeamInUse: (error) =>
+              render(viewer, { ...view, dialog: "delete" }, undefined, {
+                message: error.message,
+                status: 409
+              })
+          })
+        );
+      case "stage": {
+        // Staging writes nothing, but answers only an admin, about a team that exists.
+        if (!(yield* teams.list(ref)).some((team) => team.id === view.teamId))
+          return yield* new Teams.TeamNotFound({ teamId: view.teamId });
+        const keep = new Set(UrlParams.getAll(form, "keep"));
+        const staged: Staged = {
+          add: unique(UrlParams.getAll(form, "add")),
+          remove: unique(UrlParams.getAll(form, "remove")).filter((id) => !keep.has(id))
+        };
+        const query = (UrlParams.getAll(form, "q")[0] ?? "").slice(0, 200);
+        const review =
+          UrlParams.getAll(form, "intent").includes("review") &&
+          staged.add.length + staged.remove.length > 0;
         return {
           title: "Teams",
           body: "",
-          redirect: address(team.id),
-          receipt: action === "create" ? "Team created." : "Team name saved."
+          redirect: href({
+            teamId: view.teamId,
+            query,
+            staged,
+            ...(review ? { dialog: "review" } : {})
+          })
         } satisfies Page;
-      }).pipe(
-        Effect.catchTags({
-          TeamNameTaken: (error) =>
-            render(
-              viewer,
-              { ...view, teamId: action === "create" ? "" : view.teamId, screen: action },
-              { name, error: error.message, status: 409 }
+      }
+      case "save": {
+        const staged: Staged = {
+          add: unique(UrlParams.getAll(form, "add")),
+          remove: unique(UrlParams.getAll(form, "remove"))
+        };
+        const again = (message: string) =>
+          render(viewer, { ...view, staged, dialog: "review" }, undefined, {
+            message,
+            status: 409
+          });
+        return yield* teams
+          .setMemberships({
+            ...target,
+            ...staged,
+            revision: UrlParams.getAll(form, "revision")[0] ?? ""
+          })
+          .pipe(
+            Effect.flatMap((changed) =>
+              Effect.map(teams.list(ref), (all) => {
+                const name = all.find((team) => team.id === view.teamId)?.name ?? "Team";
+                const done = [
+                  ...(staged.add.length
+                    ? [`added ${plural(staged.add.length, "person", "people")}`]
+                    : []),
+                  ...(staged.remove.length
+                    ? [`removed ${plural(staged.remove.length, "person", "people")}`]
+                    : [])
+                ];
+                return {
+                  title: "Teams",
+                  body: "",
+                  redirect: href({ teamId: view.teamId }),
+                  receipt:
+                    changed && done.length ? `${name}: ${done.join(", ")}.` : "Nothing changed."
+                } satisfies Page;
+              })
             ),
-          InvalidTeamName: (error) =>
-            render(
-              viewer,
-              { ...view, teamId: action === "create" ? "" : view.teamId, screen: action },
-              { name, error: error.message, status: 400 }
-            )
-        })
-      );
-    }
-    if (action === "delete") {
-      return yield* teams.remove(target).pipe(
-        Effect.map(
-          () =>
-            ({ title: "Teams", body: "", redirect: path, receipt: "Team deleted." }) satisfies Page
-        ),
-        Effect.catchTags({
-          TeamInUse: () =>
-            Effect.gen(function* () {
-              const uses = yield* Uses;
-              return yield* render(viewer, { ...view, screen: "delete" }, undefined, {
-                message: inUse(uses === undefined ? undefined : yield* uses(target)),
-                status: 409
-              });
+            Effect.catchTags({
+              TeamsChanged: (error) => again(error.message),
+              UserNotFound: () => again("Someone you chose is no longer active. Nothing was saved.")
             })
-        })
-      );
+          );
+      }
     }
-    if (action === "remove") {
-      const { userId } = yield* decodePerson(Object.fromEntries(form));
-      yield* teams.setMemberships({ ...target, userIds: [userId], added: false });
-    } else {
-      const userIds = UrlParams.getAll(form, "userId");
-      if (!userIds.length)
-        return yield* render(viewer, { ...view, screen: "add" }, undefined, {
-          message: "Choose at least one person to add.",
-          status: 400
-        });
-      return yield* teams.setMemberships({ ...target, userIds, added: true }).pipe(
-        Effect.map(
-          () =>
-            ({
-              title: "Teams",
-              body: "",
-              redirect: address(view.teamId),
-              receipt: "People added."
-            }) satisfies Page
-        ),
-        Effect.catchTags({
-          UserNotFound: () =>
-            render(viewer, { ...view, screen: "add", selected: userIds }, undefined, {
-              message: "Someone selected is no longer active. No memberships changed.",
-              status: 409
-            })
-        })
-      );
-    }
-    return {
-      title: "Teams",
-      body: "",
-      redirect: address(view.teamId),
-      receipt: "Team membership saved."
-    } satisfies Page;
   }).pipe(
     Effect.catchTags({
       RoleForbidden: () =>
@@ -488,14 +755,8 @@ export const handle = Effect.fn("TeamsPage.handle")(function* (viewer: Viewer, a
           )
         ),
       TeamNotFound: () =>
-        Effect.succeed(failurePage("Team not found", "This team is unavailable.", 404)),
-      UserNotFound: () =>
         Effect.succeed(
-          failurePage(
-            "Person unavailable",
-            "That person is no longer in this team. Nothing changed.",
-            409
-          )
+          failurePage("Team not found", "This team no longer exists. Nothing changed.", 404)
         ),
       SchemaError: () =>
         Effect.succeed(

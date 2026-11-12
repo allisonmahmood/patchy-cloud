@@ -696,7 +696,7 @@ machine tokens revoked by deactivation remain revoked.
 
 A **team** is a durable, named set of company people with a stable identity across renames. A person may belong to several teams. Admins create, rename and manage every membership, other admins' and their own included. Members see every team and its roster, read-only. Teams own no patches or connections.
 
-**Teams**, at `/settings/company/teams`, lists every team and opens each one's roster. Admins create, rename and delete teams there and add and remove people; members read them. Admins gain a team's access only by being on it, like anyone.
+**Teams**, at `/settings/company/teams`, lists every team with what it reaches, the patches whose audience names it and the connections it builds with, as far as the viewer may see them. Admins create, rename and delete teams there and change a team's people in one batch. Before it saves, a review says what each person added or removed gains, loses and keeps through their other teams, and warns of every live patch that stops working because its owner leaves the only team through which it builds with a connection; the warning doesn't refuse the save. A save reviewed before any other change to the company's people or teams is refused and the review drawn again. Members read the same page. Admins gain a team's access only by being on it, like anyone.
 
 Every membership change is recorded with who made it, the person, the team, whether they were added or removed, and when, and takes effect on the next request and on open live queries. Deactivation keeps a person's memberships but makes them count for nothing until reactivation.
 

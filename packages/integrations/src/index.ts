@@ -3,6 +3,7 @@ export * as ConnectionStore from "./ConnectionStore.js";
 export * as SqlConnectionStore from "./SqlConnectionStore.js";
 export * as CredentialKeys from "./CredentialKeys.js";
 export * as ConnectionPage from "./ConnectionPage.js";
+export { connectionPath } from "./ConnectionsView.js";
 export * as ConnectionPages from "./ConnectionPages.js";
 export * as ConnectionAttention from "./ConnectionAttention.js";
 export * as ConnectionsApi from "./ConnectionsApi.js";

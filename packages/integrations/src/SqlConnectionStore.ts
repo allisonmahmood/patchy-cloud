@@ -1948,13 +1948,18 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
 
 export const layer = Layer.effect(ConnectionStore.ConnectionStore, make);
 
-/** Every connection whose audience names the team. */
-export const connectionsUsingTeam = Effect.fn("ConnectionStore.connectionsUsingTeam")(function* (
-  companyId: string,
-  teamId: string
+/** Every connection whose audience names teams, with those teams. */
+export const teamConnections = Effect.fn("ConnectionStore.teamConnections")(function* (
+  companyId: string
 ) {
   const sql = yield* SqlClient.SqlClient;
-  return yield* sql<{ readonly integration: string; readonly handle: string }>`
-    SELECT c.integration, c.handle FROM connection_team_grants g JOIN connections c ON c.id = g.connection_id
-    WHERE g.company_id = ${companyId} AND g.team_id = ${teamId} ORDER BY c.integration, c.handle`;
+  return yield* sql<{
+    readonly id: string;
+    readonly integration: string;
+    readonly handle: string;
+    readonly teamIds: readonly string[];
+  }>`SELECT c.id, c.integration, c.handle, array_agg(g.team_id ORDER BY g.team_id) AS "teamIds"
+    FROM connection_team_grants g JOIN connections c ON c.id = g.connection_id
+    WHERE g.company_id = ${companyId}
+    GROUP BY c.id, c.integration, c.handle ORDER BY c.integration, c.handle`;
 });

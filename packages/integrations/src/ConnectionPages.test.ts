@@ -369,8 +369,7 @@ it.layer(services)("company connection pages", (it) => {
           companyId: owner.company.id,
           actorId: owner.user.id,
           teamId: team.id,
-          userIds: [member.id],
-          added: true
+          add: [member.id]
         });
         assert.equal((yield* send(path, { headers: { cookie: cookie(member) } })).status, 200);
         // Widening cuts nobody off, so it saves at once.

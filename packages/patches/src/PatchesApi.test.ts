@@ -326,8 +326,7 @@ it.layer(layer)("patches group", (it) => {
       yield* (yield* Teams.Teams).setMemberships({
         ...viewer,
         teamId: t.id,
-        userIds: [uploader.user.id],
-        added: true
+        add: [uploader.user.id]
       });
       const restrictedAudience = yield* owner.share({
         params: { patchId: created.patchId },
@@ -350,8 +349,7 @@ it.layer(layer)("patches group", (it) => {
       yield* (yield* Teams.Teams).setMemberships({
         ...viewer,
         teamId: t.id,
-        userIds: [uploader.user.id],
-        added: false
+        remove: [uploader.user.id]
       });
       const lost = yield* owner.share({
         params: { patchId: created.patchId },
@@ -369,8 +367,7 @@ it.layer(layer)("patches group", (it) => {
       yield* (yield* Teams.Teams).setMemberships({
         ...viewer,
         teamId: t.id,
-        userIds: [uploader.user.id],
-        added: true
+        add: [uploader.user.id]
       });
       const invalid = yield* owner.share({
         params: { patchId: created.patchId },
@@ -1139,8 +1136,7 @@ it.layer(Layer.fresh(publishLayer))("patch discovery over machine tokens", (it) 
       yield* (yield* Teams.Teams).setMemberships({
         ...actor,
         teamId: team.id,
-        userIds: [uploader.user.id],
-        added: true
+        add: [uploader.user.id]
       });
       const payload = publishRequest({
         html: html("Released clients"),
@@ -2920,8 +2916,7 @@ it.layer(Layer.fresh(publishLayer))("Postgres declaration publishing", (it) => {
         companyId: admin.company.id,
         actorId: admin.user.id,
         teamId: team.id,
-        userIds: [uploader.user.id],
-        added: true
+        add: [uploader.user.id]
       });
       const published = yield* api.publish({
         payload: new PublishRequest({ ...request, publishKey: crypto.randomUUID() }),
@@ -4605,7 +4600,11 @@ it.layer(Layer.fresh(publishLayer))("patch log over machine tokens", (it) => {
         const actor = { companyId: admin.company.id, actorId: admin.user.id };
         const team = yield* teams.create({ ...actor, name: "Log readers" });
         const members = (userIds: readonly string[], added: boolean) =>
-          teams.setMemberships({ ...actor, teamId: team.id, userIds, added });
+          teams.setMemberships({
+            ...actor,
+            teamId: team.id,
+            ...(added ? { add: userIds } : { remove: userIds })
+          });
         yield* members([uploader.user.id], true);
         const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
         const published = yield* owner.publish({

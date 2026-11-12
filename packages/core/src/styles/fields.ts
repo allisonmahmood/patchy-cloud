@@ -58,6 +58,8 @@ export const fields = `
     /* field-search: searchField's group, whose prefix is the search icon. */
     .field-search > .field-prefix { padding: 0 0 0 10px; border-right: 0; background: transparent; }
     .field-search > input { padding-left: var(--space-2); }
+    .field-search > button.field-prefix { border: 0; cursor: pointer; }
+    @media (hover: hover) { .field-search > button.field-prefix:hover { color: var(--ink); } }
     .field-group:has(> input:disabled) { opacity: .55; cursor: not-allowed; }
 
     .field-choice, .choice { display: flex; align-items: center; gap: 10px; min-height: var(--h-sm); padding: var(--space-1) 0; color: var(--ink); cursor: pointer; }

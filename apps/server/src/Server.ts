@@ -64,7 +64,9 @@ import { FilesystemContentStore, S3ContentStore } from "@patchy/content-store";
 import { Feedback, FeedbackApi } from "@patchy/feedback";
 import {
   ConnectionPages,
+  ConnectionStore,
   ConnectionsApi,
+  connectionPath,
   DevReads,
   SqlConnectionStore,
   CredentialKeys,
@@ -80,6 +82,7 @@ import {
   ImapSessions,
   ImapSource,
   type ImapNetwork,
+  PatchVisibility,
   PidgeonOperations
 } from "@patchy/integrations";
 import { Limits, OperatingLimits } from "@patchy/limits";
@@ -244,37 +247,94 @@ const companyGuests = Layer.effect(
 );
 
 /**
- * A refused team deletion names what uses the team, which Patches and Integrations know and
- * Companies cannot read. Only admins delete teams, and they see every connection.
+ * What teams reach, for the Teams page: Patches and Integrations know it and Companies cannot
+ * read them. Each viewer sees the patches they may open or manage; admins see every connection,
+ * and who declares each, and members those they can build with.
  */
-const teamUses = Layer.effect(
-  TeamsPage.Uses,
+const teamReach = Layer.effect(
+  TeamsPage.Reach,
   Effect.gen(function* () {
     const patches = yield* Patches.Patches;
+    const teams = yield* Teams.Teams;
+    const store = yield* ConnectionStore.ConnectionStore;
+    const visibility = yield* PatchVisibility.PatchVisibility;
     const sql = yield* SqlClient.SqlClient;
-    return Effect.fn("Hosting.teamUses")(
-      function* (team: Teams.TeamRef) {
-        const using = new Set(yield* Audiences.patchesUsingTeam(team.companyId, team.teamId));
-        const visible = (yield* patches
+    return Effect.fn("Hosting.teamReach")(
+      function* (viewer: Teams.Viewer) {
+        const listed = yield* patches
           .list({
-            companyId: team.companyId,
-            userId: team.actorId,
+            companyId: viewer.companyId,
+            userId: viewer.actorId,
             state: "all",
             managed: true,
             canOpen: () => true
           })
-          .pipe(Effect.catchTags({ PatchUnavailable: Effect.die, WrongState: Effect.die })))
-          .filter((row) => row.access.canManage && using.has(row.patch.id))
-          .map((row) => row.patch.name);
-        const connections = yield* SqlConnectionStore.connectionsUsingTeam(
-          team.companyId,
-          team.teamId
+          .pipe(Effect.catchTags({ PatchUnavailable: Effect.die, WrongState: Effect.die }));
+        const [person] = yield* teams.people(viewer.companyId, [viewer.actorId]);
+        const admin = person?.active === true && person.role === "admin";
+        const shown = listed.flatMap((row) =>
+          row.audience.kind === "teams"
+            ? [
+                {
+                  id: row.patch.id,
+                  title: row.patch.title,
+                  ownerId: row.patch.ownerUserId,
+                  state: row.patch.state,
+                  teamIds: row.audience.teams.map((team) => team.id),
+                  href: `/patches/${encodeURIComponent(row.patch.name)}`,
+                  audienceHref: row.access.canManage
+                    ? `/patches/${encodeURIComponent(row.patch.name)}?share=${encodeURIComponent(row.patch.name)}`
+                    : null
+                }
+              ]
+            : []
         );
-        return {
-          patches: visible,
-          connections: connections.map(({ integration, handle }) => `${integration}/${handle}`),
-          hidden: using.size - visible.length
-        };
+        const seen = new Set(shown.map((patch) => patch.id));
+        const hidden = new Map(
+          [...(yield* Audiences.patchesByTeam(viewer.companyId))].map(([teamId, ids]) => [
+            teamId,
+            ids.filter((id) => !seen.has(id)).length
+          ])
+        );
+        // Who declares each connection, by live patch name, is the store's rule; admins only.
+        const usage = admin
+          ? yield* store.usage(viewer.companyId).pipe(
+              Effect.provideService(PatchVisibility.PatchVisibility, visibility),
+              // Its storage failing leaves the page nothing true to say.
+              Effect.orDie
+            )
+          : new Map<string, ConnectionStore.Usage>();
+        const live = new Map(
+          listed
+            .filter((row) => row.patch.state === "live")
+            .map((row) => [row.patch.name, row.patch])
+        );
+        const connections = (yield* SqlConnectionStore.teamConnections(viewer.companyId))
+          .filter(
+            (connection) =>
+              admin ||
+              Teams.admits({ kind: "teams", teamIds: connection.teamIds }, person?.teamIds ?? [])
+          )
+          .map((connection) => ({
+            id: connection.id,
+            label: `${connection.integration}/${connection.handle}`,
+            teamIds: connection.teamIds,
+            href: connectionPath(connection.id),
+            audienceHref: admin ? connectionPath(connection.id, "audience") : null,
+            usedBy: (usage.get(connection.id)?.usedBy ?? []).flatMap((name) => {
+              const patch = live.get(name);
+              return patch === undefined
+                ? []
+                : [
+                    {
+                      title: patch.title,
+                      href: `/patches/${encodeURIComponent(patch.name)}`,
+                      ownerId: patch.ownerUserId
+                    }
+                  ];
+            })
+          }));
+        return { patches: shown, connections, hidden };
       },
       Effect.provideService(SqlClient.SqlClient, sql)
     );
@@ -508,7 +568,7 @@ const app = Layer.mergeAll(
  */
 export const layer = Layer.mergeAll(
   HttpRouter.serve(app, { disableLogger: true, disableListenLog: true }).pipe(
-    Layer.provide([ownedPatches, companyGuests, teamUses])
+    Layer.provide([ownedPatches, companyGuests, teamReach])
   ),
   sweeper,
   Layer.effectContext(

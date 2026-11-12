@@ -880,7 +880,11 @@ it.layer(fixture)("Attio operations, offline", (it) => {
         // The patch's owner, who is also its viewer here, joins or leaves the connection's team.
         const membership = (added: boolean) =>
           teams
-            .setMemberships({ ...actor, teamId: team.id, userIds: [who.userId], added })
+            .setMemberships({
+              ...actor,
+              teamId: team.id,
+              ...(added ? { add: [who.userId] } : { remove: [who.userId] })
+            })
             .pipe(Effect.orDie);
         yield* membership(true);
         yield* store.setAudience({

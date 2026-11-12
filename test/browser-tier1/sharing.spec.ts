@@ -127,12 +127,15 @@ for (const javaScriptEnabled of [true, false])
       );
       expect(created.ok()).toBe(true);
       const teamId = new URL(created.url()).searchParams.get("team")!;
+      // Joining is a roster change: its review carries the revision its save is held to.
+      const reviewed = await context.request.post(
+        `${instance.origin}/settings/company/teams/stage?team=${teamId}`,
+        { headers: { origin: instance.origin }, form: { add: DEV_SEED.userId, intent: "review" } }
+      );
+      const revision = /name="revision" value="(\d+)"/.exec(await reviewed.text())?.[1] ?? "";
       const joined = await context.request.post(
-        `${instance.origin}/settings/company/teams/add?team=${teamId}`,
-        {
-          headers: { origin: instance.origin },
-          form: { userId: DEV_SEED.userId }
-        }
+        `${instance.origin}/settings/company/teams/save?team=${teamId}`,
+        { headers: { origin: instance.origin }, form: { add: DEV_SEED.userId, revision } }
       );
       expect(joined.ok()).toBe(true);
       const engineering = await context.request.post(

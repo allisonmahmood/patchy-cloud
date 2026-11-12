@@ -19,7 +19,7 @@ const access = (userId: string) => ({
 const teamAudience = (ids: readonly string[]): PatchAudience => ({ kind: "teams", teamIds: ids });
 const team = Effect.fn("test.team")(function* (name: string, userIds: readonly string[]) {
   const t = yield* (yield* Teams.Teams).create({ ...viewer, name });
-  yield* (yield* Teams.Teams).setMemberships({ ...viewer, teamId: t.id, userIds, added: true });
+  yield* (yield* Teams.Teams).setMemberships({ ...viewer, teamId: t.id, add: userIds });
   return t;
 });
 const services = GuestGrants.layer.pipe(
@@ -43,8 +43,7 @@ it.layer(services)("Owner recovery", (it) => {
         yield* (yield* Teams.Teams).setMemberships({
           ...viewer,
           teamId: t.id,
-          userIds: [uploader.user.id],
-          added: false
+          remove: [uploader.user.id]
         });
         const managed = (userId: string) =>
           Effect.map(patches.read({ ...access(userId), managed: true }), (rows) =>
@@ -126,8 +125,7 @@ it.layer(services)("Owner recovery", (it) => {
         yield* (yield* Teams.Teams).setMemberships({
           ...viewer,
           teamId: t.id,
-          userIds: [reader.user.id],
-          added: false
+          remove: [reader.user.id]
         });
         yield* patches.manage(input.patchId, { userId: reader.user.id, admin: true });
         yield* users.setRole({ ...viewer, userId: reader.user.id, role: "member" });
@@ -164,7 +162,7 @@ it.layer(services)("Owner recovery", (it) => {
             )
           );
         const join = (teamId: string, userId: string) =>
-          teams.setMemberships({ ...viewer, teamId, userIds: [userId], added: true });
+          teams.setMemberships({ ...viewer, teamId, add: [userId] });
 
         // The owner's own change, and a member added to the team, are no news to the owner; nor
         // is that member becoming an admin later.

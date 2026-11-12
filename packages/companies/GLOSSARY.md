@@ -41,7 +41,7 @@ A user's record of accepting a pair of terms revisions: who, which revisions, wh
 _Avoid_: consent (an agent's consent, in Auth), agreement (the terms themselves), signature
 
 **Directory revision**:
-The company's durable record that its directory has changed, advanced with each join, departure, reactivation or change to a user's name, email or role, and with each guest grant that starts, ends or goes with its patch. It lets readers detect changes to [candidates and resolved users](../primitives/GLOSSARY.md#language), including changes whose notification they missed.
+The company's durable record that its directory has changed, advanced with each join, departure, reactivation or change to a user's name, email or role, with each guest grant that starts, ends or goes with its patch, and with each team change. It lets readers detect changes to [candidates and resolved users](../primitives/GLOSSARY.md#language), including changes whose notification they missed, and a team's roster save is held to the revision its review was drawn at.
 _Avoid_: roster version, membership timestamp
 
 **Look**:

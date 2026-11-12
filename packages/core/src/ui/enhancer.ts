@@ -25,6 +25,8 @@ export const uiScriptTag = `<script defer src="${uiScriptPath}"></script>`;
  *   alone, and a page restored from the back-forward cache is as it was before the press. The
  *   server's own guards are still what stop a repeat.
  * - **Disclosures**: a fragment naming something inside a `<details>` opens it.
+ * - **Change bars** (`changeBar`) count their form's boxes that differ from their saved state as
+ *   they change, in `changeSummary`'s words, and hide while nothing changed.
  */
 export const uiScript = `(() => {
   const RETURN = "patchy:return-focus";
@@ -88,6 +90,26 @@ export const uiScript = `(() => {
     }
     pending.clear();
   });
+
+  for (const bar of document.querySelectorAll("[data-change-bar]")) {
+    const form = bar.closest("form");
+    const summary = bar.querySelector(".change-bar-summary");
+    if (form === null || summary === null) continue;
+    const count = () => {
+      let added = Number(bar.dataset.added ?? 0);
+      let removed = Number(bar.dataset.removed ?? 0);
+      for (const box of form.querySelectorAll("input[type=checkbox][data-saved]")) {
+        if (box.dataset.saved === "0" && box.checked) added++;
+        if (box.dataset.saved === "1" && !box.checked) removed++;
+      }
+      summary.textContent = [added > 0 ? "Add " + added : "", removed > 0 ? (added > 0 ? "r" : "R") + "emove " + removed : ""].filter(Boolean).join(", ");
+      bar.hidden = added + removed === 0;
+    };
+    form.addEventListener("change", count);
+    // A page come back to may have its boxes restored after this first count.
+    addEventListener("pageshow", count);
+    count();
+  }
 
   const openFragment = () => {
     let id = "";

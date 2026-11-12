@@ -955,8 +955,7 @@ it.layer(socket)("user lifecycle pages on a socket", (it) => {
           yield* teams.setMemberships({
             ...viewer,
             teamId: team.id,
-            userIds: [person.id],
-            added: true
+            add: [person.id]
           });
           return { kind: "teams" as const, teamIds: [team.id] };
         });

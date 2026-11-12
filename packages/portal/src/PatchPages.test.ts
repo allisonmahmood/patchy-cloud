@@ -666,8 +666,7 @@ it.layer(socket)("a patch's card on a socket", (it) => {
             companyId: workspace.id,
             actorId: workspace.admin.id,
             teamId: team.id,
-            userIds: [workspace.member.id],
-            added: true
+            add: [workspace.member.id]
           });
           yield* service.setSharing({
             patchId: reader.patchId,

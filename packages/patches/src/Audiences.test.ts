@@ -29,7 +29,7 @@ const access = (userId: string) => ({
 const teamAudience = (ids: readonly string[]): PatchAudience => ({ kind: "teams", teamIds: ids });
 const team = Effect.fn("test.team")(function* (name: string, userIds: readonly string[]) {
   const t = yield* (yield* Teams.Teams).create({ ...viewer, name });
-  yield* (yield* Teams.Teams).setMemberships({ ...viewer, teamId: t.id, userIds, added: true });
+  yield* (yield* Teams.Teams).setMemberships({ ...viewer, teamId: t.id, add: userIds });
   return t;
 });
 // Runs `effect` in a transaction left open, holding its locks, until `release` commits it.
@@ -90,8 +90,7 @@ it.layer(services)("Patch audiences", (it) => {
       yield* (yield* Teams.Teams).setMemberships({
         ...viewer,
         teamId: selected.id,
-        userIds: [reader.user.id],
-        added: false
+        remove: [reader.user.id]
       });
       assert.isTrue(Option.isNone(yield* versions.findForViewer(input.patchId, member)));
       assert.equal(
@@ -114,8 +113,7 @@ it.layer(services)("Patch audiences", (it) => {
       yield* (yield* Teams.Teams).setMemberships({
         ...viewer,
         teamId: selected.id,
-        userIds: [reader.user.id],
-        added: true
+        add: [reader.user.id]
       });
       assert.isTrue(Option.isSome(yield* versions.findForViewer(input.patchId, member)));
     })
@@ -231,8 +229,7 @@ it.layer(services)("Patch audiences", (it) => {
         yield* (yield* Teams.Teams).setMemberships({
           ...viewer,
           teamId: engineering.id,
-          userIds: [reader.user.id],
-          added: false
+          remove: [reader.user.id]
         });
         assert.isFalse(
           yield* patches.admitsMember(input.patchId, viewer.companyId, reader.user.id)
@@ -240,8 +237,7 @@ it.layer(services)("Patch audiences", (it) => {
         yield* (yield* Teams.Teams).setMemberships({
           ...viewer,
           teamId: engineering.id,
-          userIds: [reader.user.id],
-          added: true
+          add: [reader.user.id]
         });
         assert.isTrue(yield* patches.admitsMember(input.patchId, viewer.companyId, reader.user.id));
         yield* (yield* Teams.Teams).rename({
@@ -253,8 +249,7 @@ it.layer(services)("Patch audiences", (it) => {
           yield* (yield* Teams.Teams).setMemberships({
             ...viewer,
             teamId: t.id,
-            userIds: [uploader.user.id],
-            added: false
+            remove: [uploader.user.id]
           });
         assert.isFalse(
           yield* patches.admitsMember(input.patchId, viewer.companyId, uploader.user.id)
@@ -756,8 +751,7 @@ it.layer(services)("Patch audiences", (it) => {
             .setMemberships({
               ...viewer,
               teamId: finance.id,
-              userIds: [admin.user.id],
-              added: true
+              add: [admin.user.id]
             })
             .pipe(Effect.forkScoped);
           yield* directory.waiter;

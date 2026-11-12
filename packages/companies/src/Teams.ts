@@ -41,6 +41,15 @@ export class TeamNotFound extends Schema.TaggedError<TeamNotFound>()("TeamNotFou
     return "Team not found.";
   }
 }
+/** The member directory moved past the revision a form was drawn at, so nothing was saved. */
+export class TeamsChanged extends Schema.TaggedError<TeamsChanged>()("TeamsChanged", {
+  companyId: Schema.String,
+  revision: Schema.String
+}) {
+  override get message() {
+    return "Teams changed since this was drawn. Nothing was saved.";
+  }
+}
 /** A patch or connection audience still names the team, in any state. */
 export class TeamInUse extends Schema.TaggedError<TeamInUse>()("TeamInUse", {
   teamId: Schema.String,
@@ -69,6 +78,11 @@ export interface Viewer {
 export interface TeamRef extends Viewer {
   readonly teamId: string;
 }
+export interface MembershipChange extends TeamRef {
+  readonly add?: readonly string[];
+  readonly remove?: readonly string[];
+  readonly revision?: string;
+}
 const Person = Schema.Struct({
   id: Schema.String,
   active: Schema.Boolean,
@@ -96,9 +110,19 @@ export class Teams extends Context.Service<
     readonly members: (
       input: TeamRef
     ) => Effect.Effect<readonly string[], RoleForbidden | TeamNotFound | SqlError>;
+    /**
+     * Adds and removes people in one atomic batch; someone named in both stays as they are. With
+     * `revision`, refuses `TeamsChanged` unless the member directory is still at it, so a form
+     * drawn before another change can't undo it. Answers how many memberships changed.
+     */
     readonly setMemberships: (
-      input: TeamRef & { readonly userIds: readonly string[]; readonly added: boolean }
-    ) => Effect.Effect<number, RoleForbidden | TeamNotFound | UserNotFound | SqlError>;
+      input: MembershipChange
+    ) => Effect.Effect<
+      number,
+      RoleForbidden | TeamNotFound | UserNotFound | TeamsChanged | SqlError
+    >;
+    /** The member directory's revision, which every team change advances. */
+    readonly revision: (companyId: string) => Effect.Effect<string, SqlError>;
     /** Each person's current teams; a deactivated person has none. */
     readonly memberships: (
       companyId: string,
@@ -250,34 +274,63 @@ export const make = Effect.gen(function* () {
     const rows = yield* memberRows(input).pipe(Effect.catchTags(dieOnSchemaError));
     return rows.map((row) => row.userId);
   });
-  /** One submission is atomic. Only effective edits are recorded, advance the revision and wake readers. */
-  const setMemberships = Effect.fn("Teams.setMemberships")(
-    (input: TeamRef & { readonly userIds: readonly string[]; readonly added: boolean }) =>
-      sql.withTransaction(
-        Effect.gen(function* () {
-          yield* admin(input);
-          const team = yield* requireTeam(input);
-          const edited: string[] = [];
-          for (const userId of new Set(input.userIds)) {
-            const [target] = yield* sql<{ active: boolean }>`SELECT deactivated_at IS NULL AS active
-              FROM users WHERE company_id = ${input.companyId} AND id = ${userId} FOR KEY SHARE`;
-            if (target === undefined || (input.added && !target.active))
-              return yield* new UserNotFound({ companyId: input.companyId, userId });
-            const rows = input.added
-              ? yield* sql`INSERT INTO company_team_members(company_id, team_id, user_id)
-                  VALUES (${input.companyId}, ${input.teamId}, ${userId}) ON CONFLICT DO NOTHING RETURNING user_id`
-              : yield* sql`DELETE FROM company_team_members WHERE company_id = ${input.companyId}
-                  AND team_id = ${input.teamId} AND user_id = ${userId} RETURNING user_id`;
-            if (rows.length > 0) edited.push(userId);
-          }
-          if (edited.length === 0) return 0;
-          const revision = yield* changed(input.companyId);
-          for (const userId of edited)
-            yield* sql`INSERT INTO company_team_changes(company_id, revision, team_id, team_name, user_id, actor_id, added)
-              VALUES (${input.companyId}, ${revision}::bigint, ${team.id}, ${team.name}, ${userId}, ${input.actorId}, ${input.added})`;
-          return edited.length;
-        })
-      )
+  const currentRevision = SqlSchema.findOne({
+    Request: Schema.String,
+    Result: Schema.Struct({ revision: Schema.String }),
+    execute: (companyId) =>
+      sql`SELECT COALESCE((SELECT revision FROM companies_directory WHERE company_id = ${companyId}), 0)::text AS revision`
+  });
+  const revision = Effect.fn("Teams.revision")(function* (companyId: string) {
+    const row = yield* currentRevision(companyId).pipe(
+      Effect.catchTags({ ...dieOnSchemaError, NoSuchElementError: Effect.die })
+    );
+    return row.revision;
+  });
+  /** Only effective edits are recorded, advance the revision and wake readers. */
+  const setMemberships = Effect.fn("Teams.setMemberships")((input: MembershipChange) =>
+    sql.withTransaction(
+      Effect.gen(function* () {
+        yield* admin(input);
+        const team = yield* requireTeam(input);
+        if (input.revision !== undefined) {
+          // Locked to the commit, after the company row, as every team change takes them.
+          const [row] = yield* sql<{ readonly revision: string }>`SELECT revision::text
+            FROM companies_directory WHERE company_id = ${input.companyId} FOR UPDATE`;
+          const current = row?.revision ?? "0";
+          if (current !== input.revision)
+            return yield* new TeamsChanged({ companyId: input.companyId, revision: current });
+        }
+        const adding = new Set(input.add);
+        const removing = new Set(input.remove);
+        const changes = [
+          ...[...removing]
+            .filter((id) => !adding.has(id))
+            .map((userId) => ({ userId, added: false })),
+          ...[...adding]
+            .filter((id) => !removing.has(id))
+            .map((userId) => ({ userId, added: true }))
+        ];
+        const edited: { readonly userId: string; readonly added: boolean }[] = [];
+        for (const change of changes) {
+          const [target] = yield* sql<{ active: boolean }>`SELECT deactivated_at IS NULL AS active
+            FROM users WHERE company_id = ${input.companyId} AND id = ${change.userId} FOR KEY SHARE`;
+          if (target === undefined || (change.added && !target.active))
+            return yield* new UserNotFound({ companyId: input.companyId, userId: change.userId });
+          const rows = change.added
+            ? yield* sql`INSERT INTO company_team_members(company_id, team_id, user_id)
+                VALUES (${input.companyId}, ${input.teamId}, ${change.userId}) ON CONFLICT DO NOTHING RETURNING user_id`
+            : yield* sql`DELETE FROM company_team_members WHERE company_id = ${input.companyId}
+                AND team_id = ${input.teamId} AND user_id = ${change.userId} RETURNING user_id`;
+          if (rows.length > 0) edited.push(change);
+        }
+        if (edited.length === 0) return 0;
+        const advanced = yield* changed(input.companyId);
+        for (const change of edited)
+          yield* sql`INSERT INTO company_team_changes(company_id, revision, team_id, team_name, user_id, actor_id, added)
+            VALUES (${input.companyId}, ${advanced}::bigint, ${team.id}, ${team.name}, ${change.userId}, ${input.actorId}, ${change.added})`;
+        return edited.length;
+      })
+    )
   );
   const memberships = Effect.fn("Teams.memberships")(function* (
     companyId: string,
@@ -317,6 +370,7 @@ export const make = Effect.gen(function* () {
     remove,
     members,
     setMemberships,
+    revision,
     memberships,
     people
   });

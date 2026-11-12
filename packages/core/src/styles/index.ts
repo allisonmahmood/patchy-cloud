@@ -3,10 +3,10 @@ import { appShell } from "./app-shell.js";
 import { base } from "./base.js";
 import { buttons } from "./buttons.js";
 import { canvas } from "./canvas.js";
+import { changeBar } from "./change-bar.js";
 import { changelog } from "./changelog.js";
 import { checklist } from "./checklist.js";
 import { containers } from "./containers.js";
-import { directoryCards } from "./directory-cards.js";
 import { detail } from "./detail.js";
 import { dialogs } from "./dialogs.js";
 import { disclosures } from "./disclosures.js";
@@ -15,6 +15,7 @@ import { doors } from "./doors.js";
 import { fieldRows } from "./field-rows.js";
 import { fields } from "./fields.js";
 import { flowParts } from "./flow-parts.js";
+import { listDetail } from "./list-detail.js";
 import { marks } from "./marks.js";
 import { menus } from "./menus.js";
 import { navigation } from "./navigation.js";
@@ -62,7 +63,8 @@ export const chunks = {
   dialogs,
   steps,
   tiles,
-  directoryCards,
+  listDetail,
+  changeBar,
   flowParts,
   appShell,
   doors,

@@ -159,8 +159,7 @@ it.layer(layer)("connections group", (it) => {
           companyId: DEV_SEED.companyId,
           actorId: DEV_SEED.userId,
           teamId: team.id,
-          userIds: ["connections-member"],
-          added: true
+          add: ["connections-member"]
         });
         assert.equal(
           (yield* api.listConnections({ query: {} })).connections.some(
@@ -172,8 +171,7 @@ it.layer(layer)("connections group", (it) => {
           companyId: DEV_SEED.companyId,
           actorId: DEV_SEED.userId,
           teamId: team.id,
-          userIds: ["connections-member"],
-          added: false
+          remove: ["connections-member"]
         });
         assert.equal(
           (yield* api.listConnections({ query: {} })).connections.some(

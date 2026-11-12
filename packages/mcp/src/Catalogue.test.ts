@@ -149,8 +149,7 @@ it.layer(harness)("the catalogue", (it) => {
         yield* teams.setMemberships({
           ...actor,
           teamId: sales.id,
-          userIds: [priya.id, ben.id],
-          added: true
+          add: [priya.id, ben.id]
         });
         const board = yield* publish(acme.id, priya, "sales-board", { handlers: deals });
         yield* publish(acme.id, priya, "company-board", { handlers: deals });

@@ -33,8 +33,8 @@ import { behindTheScenes, changeEntry } from "./changelog.js";
 import { choiceLinks } from "./choice-links.js";
 import { computerMark } from "./computer-mark.js";
 import { copyButton } from "./copy-button.js";
-import { directoryCards } from "./directory-cards.js";
 import { disclosure } from "./disclosure.js";
+import { changeBar } from "./change-bar.js";
 import { checklist } from "./checklist.js";
 import {
   chipMenu,
@@ -53,6 +53,7 @@ import { expandingTable } from "./expanding-table.js";
 import { fieldRow } from "./field-row.js";
 import { flowOutcome } from "./flow-outcome.js";
 import { productLogos, type ProductLogo } from "./logos.js";
+import { listDetail } from "./list-detail.js";
 import { productMark } from "./product-mark.js";
 import { refusal } from "./refusal.js";
 import {
@@ -503,6 +504,10 @@ const wideParts = demo(
       "Searched",
       "the query kept in the field; the filters it sits beside ride along as hidden fields"
     ],
+    [
+      "In a form",
+      "the same field inside a page's form, its icon the form's first submit, so Enter searches and the form's ticks ride along"
+    ],
     ["Touch", "44px tall with 16px text"]
   ])}${stateTable("Field row", [
     ["Rest", "fields that belong together side by side, one with an answer width keeping it"],
@@ -661,9 +666,6 @@ const homeParts = demo(
     ["Rest", "flat on a hairline: the mark, then the name over its kind and owner"],
     ["Hover (fine pointer)", "an ink edge and a lift"],
     ["Narrow", "two a row; on a phone the name alone"]
-  ])}${stateTable("Directory card", [
-    ["Desktop", "a flat card with a mark, name, count and optional decorative preview"],
-    ["Phone", "one compact link per row, with previews hidden and the name free to wrap"]
   ])}${stateTable("Copy button", [
     ["Without script", "not there, so nothing offers a copy that can't happen"],
     ["With script", "its label, then Copied"],
@@ -866,12 +868,84 @@ const checklistDemo = demo(
     ["Unchecked", "a row with its box, name and a line about it; a press on the row toggles it"],
     ["Checked", "the box filled in ink"],
     ["Not choosable", "the row kept but muted and its box disabled, such as a retired patch"],
+    ["Set back", "the row muted but its box still choosable, such as a deactivated person"],
+    [
+      "Changed",
+      "a box with a saved state says Adding or Removing beside its name while it differs from it, with or without script"
+    ],
     [
       "Refused",
       "the error under the list, each box aria-invalid; focus starts on the first box that can be chosen, or on the error when none can"
     ],
     ["Hover (fine pointer)", "a faint tint on a row that can be chosen"]
   ])
+);
+
+const roster = demo(
+  "List beside its entry and change bar",
+  listDetail({
+    id: "g-teams",
+    label: "Teams",
+    at: "entry",
+    parent: { label: "Teams", href: "#g-teams" },
+    entries: [
+      { name: "Design", href: "#g-teams", description: "4 people · 1 patch" },
+      {
+        name: "Sales",
+        href: "#g-teams",
+        description: "3 people · 2 patches · attio/crm",
+        current: true
+      },
+      { name: "Studio ops", href: "#g-teams", description: "2 people · Nothing yet" }
+    ],
+    title: "Sales",
+    meta: ["3 people", "2 patches", "attio/crm"],
+    actions: linkButton("Rename…", "#g-teams", { size: "sm" }),
+    body: `<form class="stack" method="post" action="#g-teams">${searchField({ id: "g-find", inForm: true, query: "", placeholder: "Find people", label: "Find people" })}${checklist(
+      {
+        id: "g-roster",
+        legend: "In Sales · 2",
+        name: "keep",
+        items: [
+          {
+            value: "ada",
+            label: "Ada Lovelace",
+            description: "ada@example.com · Admin",
+            checked: true,
+            saved: true
+          },
+          { value: "leo", label: "Leo Grant", description: "leo@example.com", saved: true },
+          {
+            value: "rowan",
+            label: "Rowan Hale",
+            description: "rowan@example.com · Deactivated",
+            checked: true,
+            saved: true,
+            muted: true
+          }
+        ]
+      }
+    )}${checklist({
+      id: "g-others",
+      legend: "Everyone else · 1",
+      name: "add",
+      items: [
+        { value: "kofi", label: "Kofi Mensah", description: "Design", checked: true, saved: false }
+      ]
+    })}${changeBar({ added: 1, removed: 1, offPage: { added: 0, removed: 0 }, actions: `${linkButton("Discard", "#g-teams", { kind: "quiet", size: "sm" })}${button("Review…", { kind: "primary", size: "sm", type: "button" })}` })}</form>`
+  }),
+  `${stateTable("List beside its entry", [
+    ["Rest", "the list's rows on the left, the open entry under its own heading on the right"],
+    ["Open", "the open entry's row filled, with an ink mark at its edge"],
+    ["Phone", "each a screen of its own: the list, or the open entry under a link back to the list"]
+  ])}${stateTable("Change bar", [
+    [
+      "Changed",
+      "stuck to the bottom of its form, inked and lifted: Add 1, remove 1, then Discard and Review…"
+    ],
+    ["Unchanged, with script", "not there"],
+    ["Without script", "always there, saying what the page was drawn with"]
+  ])}`
 );
 
 const adaAsParty = {
@@ -1024,7 +1098,7 @@ const flowParts = demo(
 const system = indexPage({
   title: "The system",
   meta: ["Every first-party page composes these parts and one of five templates"],
-  content: `${templatesSection}${type}${colours}${buttons}${fields}${choices}${checklistDemo}${status}${feedback}${navigation}${lists}${wideParts}${homeParts}${detailParts}${headers}${cards}${directoryCards([{ name: "Design", href: "#rows", meta: "4 people", mark: patch("design"), preview: avatar("ada", "Ada Park"), action: "Open team" }])}${disclosures}${changes}${marks}${setupSteps}${flowParts}${doorParts}<script defer src="${copyScriptPath}"></script>`
+  content: `${templatesSection}${type}${colours}${buttons}${fields}${choices}${checklistDemo}${status}${feedback}${navigation}${lists}${wideParts}${homeParts}${detailParts}${headers}${cards}${roster}${disclosures}${changes}${marks}${setupSteps}${flowParts}${doorParts}<script defer src="${copyScriptPath}"></script>`
 });
 
 const sampleRows = ["kudos", "new-business", "spend"].map((name) => [

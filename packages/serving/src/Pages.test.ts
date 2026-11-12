@@ -262,8 +262,7 @@ it.layer(layer)("pages", (it) => {
         yield* (yield* Teams.Teams).setMemberships({
           ...manager,
           teamId: team.id,
-          userIds: [DEV_SEED.userId, "usr_audience_inside"],
-          added: true
+          add: [DEV_SEED.userId, "usr_audience_inside"]
         });
         const initial = yield* publish("Restricted original", "company", null, "audience-original");
         yield* patches.setSharing({
@@ -298,8 +297,7 @@ it.layer(layer)("pages", (it) => {
         yield* (yield* Teams.Teams).setMemberships({
           ...manager,
           teamId: team.id,
-          userIds: ["usr_audience_inside"],
-          added: false
+          remove: ["usr_audience_inside"]
         });
         for (const url of urls)
           assert.equal((yield* get(url, headers("usr_audience_inside"))).status, 404, url);

@@ -112,13 +112,15 @@ export const check = (
   return Effect.void;
 };
 
-/** Every patch whose audience names the team, in any lifecycle state. */
-export const patchesUsingTeam = Effect.fn("Audiences.patchesUsingTeam")(function* (
-  companyId: string,
-  teamId: string
-) {
+/** Every patch whose audience names a team, in any lifecycle state, by team. */
+export const patchesByTeam = Effect.fn("Audiences.patchesByTeam")(function* (companyId: string) {
   const sql = yield* SqlClient.SqlClient;
-  const rows = yield* sql<{ readonly patchId: string }>`SELECT patch_id AS "patchId"
-    FROM patch_audience_teams WHERE company_id = ${companyId} AND team_id = ${teamId}`;
-  return rows.map((row) => row.patchId);
+  const rows = yield* sql<{
+    readonly teamId: string;
+    readonly patchId: string;
+  }>`SELECT team_id AS "teamId", patch_id AS "patchId"
+    FROM patch_audience_teams WHERE company_id = ${companyId}`;
+  const byTeam = new Map<string, string[]>();
+  for (const row of rows) byTeam.set(row.teamId, [...(byTeam.get(row.teamId) ?? []), row.patchId]);
+  return byTeam;
 });

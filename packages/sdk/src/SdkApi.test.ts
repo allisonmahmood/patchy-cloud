@@ -461,8 +461,7 @@ it.layer(layer)("SDK company generation", (it) => {
         companyId: identity.company.id,
         actorId: admin.user.id,
         teamId: team.id,
-        userIds: [admin.user.id],
-        added: true
+        add: [admin.user.id]
       });
       const input = Fixtures.recordInput(admin, {
         audience: { kind: "teams", teamIds: [team.id] }
@@ -517,16 +516,14 @@ it.layer(layer)("SDK company generation", (it) => {
           companyId: identity.company.id,
           actorId: admin.user.id,
           teamId: team.id,
-          userIds: [identity.user.id],
-          added: true
+          add: [identity.user.id]
         });
         assert.deepEqual((yield* generate).uses, [{ alias: "limited", id, revision: 1 }]);
         yield* (yield* Teams.Teams).setMemberships({
           companyId: identity.company.id,
           actorId: admin.user.id,
           teamId: team.id,
-          userIds: [identity.user.id],
-          added: false
+          remove: [identity.user.id]
         });
         assert.instanceOf(yield* generate.pipe(Effect.flip), Generation.ConnectionNotConnected);
       })
