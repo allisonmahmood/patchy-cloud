@@ -76,9 +76,13 @@ re-put or delete it; handles already selected keep redeeming until then.
 Bytes already shown or downloaded cannot be recalled.
 
 `patchy.files.url(handle)` returns a frame-local blob URL, never a shareable
-HTTP URL. Every call rechecks access. For Preact images, use
+HTTP URL. Every call rechecks access and fetches the file's whole bytes into
+the frame, whatever its type: one call against the viewer's 300 a minute and
+the frame's 32 outstanding requests. For Preact images, use
 `useFileUrl(handle)` from `patchy/preact`; render its `{ url, error }`, including
-the error. It drops a stale image on failure and releases the URL on unmount.
+the error. It makes that fetch as soon as it mounts with a handle, so a list
+that mounts one per row downloads every file at once; `useFileUrl(null)`
+fetches nothing. It drops a stale image on failure and releases the URL on unmount.
 `patchy.files.download(handle, filename?)` offers the file in Patchy's shell;
 the viewer clicks Download there. The default filename is the last segment of
 the stored name, as on tier 1: `logos/company.svg` downloads as `company.svg`.
@@ -121,7 +125,9 @@ per viewer per patch. Company capacity defaults to 1 GiB. Oversize files return
 Staging and discard are unlogged transport. Adoption is a logged file write.
 
 Put followed by a mutation is not atomic. If the mutation fails, the file
-remains. Present that partial outcome to the person and offer an intentional
+remains. A write that fails with `unknown_outcome` may have committed, so
+deleting the file on every error can leave a saved row without it. Present a
+partial outcome to the person and offer an intentional
 repair or retry; do not report that nothing was saved or replay the action.
 Exercise this path in `patchy dev`, including cancelling and selecting again.
 

@@ -9,6 +9,11 @@ Read `../patchy-loop/SKILL.md` first. Patchy provides Preact with compat semanti
 not React. This skill and the installed types describe Patchy's supported API;
 do not link to upstream Preact documentation as the Patchy contract.
 
+Pages run in Patchy's sandboxed frame, which drops form submissions: a
+`<form>`'s `submit` event never fires, from a submit button or Enter, so an
+`onSubmit` handler never runs, `preventDefault` or not. A `type="button"`
+button's `onClick` runs.
+
 ## Imports and rendering
 
 Import components, hooks and signals from `patchy/preact`. Never import `react`,
@@ -74,49 +79,80 @@ callable, or a tier 2 generated server query. Shared tables and the member
 directory are read inside tier 2 queries. Pass list options, a get row id, or the handler's declared arguments:
 
 ```tsx
-const snapshot = useQuery(patchy.server.leads.list, { stage: "open" });
+const snapshot = useQuery(patchy.server.notes.open, { cursor: null });
+// snapshot.data is the handler's result: here { rows, cursor }, cursor null on the last page.
 ```
+
+The hook takes those two arguments and no options: nothing skips or delays it.
+It runs the query whenever its component is mounted, so a query that can't run
+yet, for want of a selected id or because the viewer's role is refused, belongs
+in a component rendered only once it can. On tier 2, each handler run that fails
+or refuses, such as one passing an empty id to `get`, leaves an entry in the
+patch's log.
 
 It returns `{ status, data, error, loading }`. Status is `"loading"`, `"ready"`
 or `"error"`. Render the whole `data` value when present and show a separate
-error or loading notice. Both recoverable and permanent errors keep the last
-successful data. A first-run failure has `data: undefined`, not an empty result.
-Source refusals inside a server handler recover after access returns.
+error or loading notice: an error keeps the last successful data, and a
+first-run failure has `data: undefined`, not an empty result.
 `handler_failed`, invalid results and a removed handler end the subscription
 with its last data kept. Another consumer or a reconnect does not restart it.
-Loss of document authority instead produces the shell's stopping notice.
 
-The adapter shares a subscription for the same handler and canonical arguments.
-Object key order does not change identity; omitted fields and object fields set
-to `undefined` have the same identity. A remount within about one second retains
-the subscription. Hidden documents suspend after 30 seconds and reconcile on
-return. Keep query arguments JSON-compatible and call the hook at the top level.
+Consumers of the same handler and canonical arguments share one subscription;
+key order and fields set to `undefined` don't change its identity. Hidden
+documents suspend after 30 seconds and reconcile on return. Keep query
+arguments JSON-compatible and call the hook at the top level.
 Signals, this hook, ordinary hooks and compat components use the same installed
 Preact runtime; leave Vite dependency optimisation enabled.
 
 After a mutation, keep rendering the subscribed result rather than maintaining
 a second copy of server data. Read only what the screen needs, since resources
-read by a handler determine which changes wake it. Member-directory reads are
-outside the query's company-database snapshot. See `../patchy-server/SKILL.md`
-for handler dependencies, failures and bounds, or `../patchy-tables/SKILL.md`
+read by a handler determine which changes wake it. See `../patchy-server/SKILL.md`
+for handler dependencies, backoff and bounds, or `../patchy-tables/SKILL.md`
 for whole-result rendering and table-grain wakes on tier 1.
 
-Tier 1 table subscriptions and tier 2 query subscriptions run in hosted company
-pages and `patchy dev`. Production tier 2 execution uses
-the fleet; local dev uses the supervised local executor.
 Arbitrary promises, table `getMany`, integrations, mutations and actions are not
 query callables. For tier 2 file inputs, stage in the event
 handler and pass the Upload to an action. See `../patchy-files/SKILL.md` for
 adoption, discard and partial saves.
 
+## Calls that fail
+
+A refused call rejects, and the generated client exports the guards that tell
+refusals apart. A `PatchyError` is Patchy's own refusal, with a `code` to
+branch on and a sentence as `message`; `isPatchyError` narrows it on every
+tier. A `HandlerError` is a refusal a tier 2 handler declared in `errors`: its
+`message` is the code itself, not a sentence to show, and `details` is what the
+handler passed. On tier 2:
+
+```tsx
+import { isHandlerError, isPatchyError, patchy } from "../patchy/_generated/client.js";
+
+try {
+  await patchy.server.notes.finish({ id });
+} catch (error) {
+  if (isHandlerError(error, "already_done")) setNotice("That note is already done.");
+  else if (isHandlerError(error, "missing")) setNotice("That note was deleted.");
+  else if (isPatchyError(error, "unknown_outcome") && error.retry) setRetry(() => error.retry);
+  else setNotice(error instanceof Error ? error.message : String(error));
+}
+```
+
+`unknown_outcome` means Patchy can't say whether the call ran. A tier 2
+mutation that went out carries `retry()`, which resends the same key and so
+writes at most once; calling the handler again is a new mutation that can
+write twice. `patchy-server` has the retry window and what actions offer instead.
+
 ## useFileUrl
 
 On tier 2, handlers return selected file handles. Pass a handle to
 `useFileUrl(handle)` from `patchy/preact` and render its `{ url, error }`.
-The URL is a frame-local blob URL, not an HTTP link. The hook clears stale
-images on failure and releases its URL on unmount; show the error rather than
-substituting an older image. `patchy.files.download(handle, filename?)` offers
-a separate download in Patchy's shell.
+The URL is a frame-local blob URL, not an HTTP link. The hook fetches the
+file's whole bytes as soon as it mounts with a handle, a call each time, so a
+list that mounts it per row downloads every file at once; `useFileUrl(null)`
+fetches nothing. It clears stale images on failure and releases its URL on
+unmount; show the error rather than substituting an older image.
+`patchy.files.download(handle, filename?)` offers a separate download in
+Patchy's shell.
 
 See `../patchy-files/SKILL.md` for selection, access and replacement rules.
 Tier 1 retains `patchy.files.<store>.url(name)` and `.download(name)`.
@@ -197,8 +233,4 @@ Toolchain in `../patchy-loop/SKILL.md` says.
 }
 ```
 
-Put reusable company code in `helpers/`, outside `server/` handler discovery.
-Page-only helpers may live under `src/`. A helper imported at runtime by a page
-joins the page's dependency graph: importing server code from that helper leaks
-it into the page too. Keep shared helpers browser-safe, and use `import type`
-for server contracts. A directory name is not an import boundary.
+`patchy-loop` says where helpers live and what a page may import from them.

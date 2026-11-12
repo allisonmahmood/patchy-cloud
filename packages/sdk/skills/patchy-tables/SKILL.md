@@ -49,11 +49,14 @@ import { patchy } from "../patchy/_generated/client.js";
 
 // Exercise this against the local dev runtime, never to seed production.
 const note = await patchy.tables.notes.insert({ title: "Invented local note" });
+// A declared index is ascending by default; with done fixed, "desc" lists newest first.
 const page = await patchy.tables.notes.list({
   index: "byDone",
   eq: { done: false },
+  order: "desc",
   limit: 20
 });
+// page.cursor continues the same list; null means this was the last page.
 await patchy.tables.notes.update(note.id, { done: true });
 ```
 
@@ -67,17 +70,18 @@ described in `../patchy-server/SKILL.md`, and call those handlers from the page.
 
 Kinds: `t.text()`, `t.integer()`, `t.number()`, `t.boolean()`, `t.timestamp()` (ISO string), `t.json()` (read as `unknown`), `t.ref("notes")` (typed row id). Refs have an automatic index named exactly after their column: the example's `parent` ref is queried with `list({ index: "parent", eq: { parent: note.id } })`. They are not foreign keys; deleting a target may leave dangling refs. Validate unknown JSON before using its fields.
 
-For a column that assigns a person, a tier 2 repo runs `pnpm patchy add members`
+For a column that names a person, a tier 2 repo runs `pnpm patchy add members`
 and uses `t.member()` or `t.member().optional()`; member columns need the
-directory, so they are tier 2's. Read `../patchy-members/SKILL.md` for
-candidate checks, deactivated users and batch resolution. This is a string user
-id, not a table reference, and it has no automatic index.
+directory, so they are tier 2's. That command also installs
+`../patchy-members/SKILL.md`, absent until then: candidate checks, deactivated
+users and resolving ids to current names. This is a string user id, not a table
+reference, and it has no automatic index.
 
 Each row has reserved `id`, `createdAt` and `updatedAt`. Patchy supplies and maintains them; never put them in insert or update input. `Row`, `Insert` and `Update` types from `patchy/config` can be inferred from `typeof config` and the table name.
 
 - Insert: required fields must be supplied; omitted optional fields become null; omitted defaulted fields take their default. Defaulted is not nullable. Explicit null is accepted only for optional fields. Unknown fields are refused.
 - Update: omitted fields stay unchanged; null clears an optional field; required/defaulted null is refused. `update(id, patch)` returns the updated row or `row_not_found`.
-- `get(id)` returns a row or null. `getMany(ids)` preserves input order with null for each missing or dangling id.
+- `get(id)` returns a row or null; an empty id is refused with `invalid_request`. `getMany(ids)` preserves input order with null for each missing or dangling id.
 - `insert(row)` returns the inserted row. `insertMany(rows)` returns the inserted rows and is all-or-nothing.
 - `delete(id)` is idempotent, returning null even when already absent. Tier 1 direct writes are last-write-wins; they have no cross-table transaction or automatic mutation retry. Tier 2 mutation handlers group their owned-table operations into one `SERIALIZABLE` transaction, with up to three whole-handler attempts. See `patchy-server` for `write_conflict` and keyed `retry()`.
 
@@ -85,9 +89,11 @@ Rows are bounded to 1 MiB, batches to 1,000 items and 8 MiB, list/getMany result
 
 ## Indexed pages
 
-`list({ index?, eq?, range?, order?, limit?, cursor? })` returns `{ rows, cursor }`. Pages default to 100, maximum 1,000. Without an index, order is `(createdAt, id)`, newest first. With an index, equality must cover its leading columns; at most one trailing column can have a range, such as `range: { column: "createdAt", gte: "2026-01-01T00:00:00.000Z" }` on the built-in index. `order` is `"asc"` or `"desc"`; id breaks ties.
+`list({ index?, eq?, range?, order?, limit?, cursor? })` returns `{ rows, cursor }`, one page of at most `limit` rows: 100 by default, 1,000 at most. With an index, equality must cover its leading columns; at most one trailing column can have a range, such as `range: { column: "createdAt", gte: "2026-01-01T00:00:00.000Z" }` on the built-in index.
 
-Pass a non-null returned cursor to the same query for the next page. Cursors are opaque and bound to index/order, not snapshots. Stop on null; a changed query starts a fresh page. Declare the index the UI needs and filter on the server instead of downloading all rows. Index definitions may use `["column"]` or `{ columns: ["column"], unique: true }`.
+`order` is `"asc"` or `"desc"`; id breaks ties, and ids are time-ordered. Its default depends on the index: newest first without an index or on the built-in `createdAt` index, ascending by the columns of a declared index or a ref. So `list({ index: "byDone", eq: { done: false }, limit: 20 })` returns the 20 oldest matches, and sorting them afterwards brings in no newer row; `order: "desc"` returns the newest.
+
+Rows past `limit` are reached only through the cursor: pass a non-null returned cursor to the same query for the next page, and stop on null. Cursors are opaque and bound to index/order, not snapshots; a changed query starts a fresh page. A filter applied after `list` sees only that page, so put the filtered column in a declared index and filter with `eq`. Index definitions may use `["column"]` or `{ columns: ["column"], unique: true }`.
 
 ## Totals
 
@@ -139,7 +145,7 @@ company. The newest is refused without evicting another. Each snapshot is at
 most 8 MiB; an oversized result ends only that subscription. Public pages and
 company Postgres reads do not support subscriptions.
 By default, each host replica runs at most 2 subscription re-runs per company
-and 1 per patch at a time. Patchy coalesces wakes; these operating limits can
+and 2 per patch at a time. Patchy coalesces wakes; these operating limits can
 have company overrides.
 
 ## Published schemas are additive
