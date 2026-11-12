@@ -1668,9 +1668,12 @@ test("the sheet's row asks Patchy, waits past the reply deadline, then comes bac
   await view.locator("#body").focus();
   await page.keyboard.press("Control+/");
   await sheet.getByRole("button", { name: "Single-key shortcuts: Off" }).click();
-  // The shell's own dialog asks the viewer; the sheet steps aside meanwhile.
+  // The shell's own dialog asks the viewer; the sheet steps aside meanwhile. The ask crosses to the
+  // stand-in shell on its port, so it can land after the sheet has hidden.
   await expect(sheet).toBeHidden();
-  expect((await stubbed(page)).asked).toEqual([{ op: "shortcuts.setting", args: {} }]);
+  await expect
+    .poll(async () => (await stubbed(page)).asked)
+    .toEqual([{ op: "shortcuts.setting", args: {} }]);
   await page.clock.fastForward("00:40");
   const row = sheet.getByRole("button", { name: "Single-key shortcuts: On" });
   await expect(row).toBeFocused();
