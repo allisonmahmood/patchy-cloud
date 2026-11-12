@@ -116,12 +116,20 @@ export class RuntimeLog extends Context.Service<
       readonly companyId: string;
       readonly correlationId: string;
     }) => Effect.Effect<Call | null, SqlError>;
+    /**
+     * A connection's latest calls made from no patch or from a patch this release can open. A
+     * patch open to teams is a later release's audience, which this one opens for nobody, and a
+     * reclaimed patch can't say whether it was one, so calls from either are left out.
+     */
     readonly recent: (input: {
       readonly companyId: string;
       readonly connectionId: string;
       readonly limit?: number;
     }) => Effect.Effect<ReadonlyArray<Call>, SqlError>;
-    /** When each connection's newest call began; connections never called have no entry. */
+    /**
+     * When each connection's newest call began, among the calls `recent` would show; a connection
+     * with none of those has no entry.
+     */
     readonly latest: (input: {
       readonly companyId: string;
       readonly connectionIds: ReadonlyArray<string>;
@@ -171,10 +179,12 @@ export const make = Effect.gen(function* () {
       SELECT ${columns(now)}
       FROM runtime_calls
       WHERE company_id = ${companyId} AND connection_id = ${connectionId} AND ${known}
+        AND (patch_id IS NULL OR EXISTS (SELECT 1 FROM patches p
+          WHERE p.id = runtime_calls.patch_id AND p.scope <> 'teams'))
       ORDER BY at DESC, id DESC LIMIT ${limit}`
   });
 
-  // One index probe per connection, reading past only rows of kinds this release skips.
+  // One index probe per connection, reading past only rows `recent` leaves out.
   const latestCalls = SqlSchema.findAll({
     Request: Schema.Struct({
       companyId: Schema.String,
@@ -189,6 +199,8 @@ export const make = Effect.gen(function* () {
             SELECT at FROM runtime_calls
             WHERE company_id = $1 AND connection_id = connection.id
               AND credential_kind = ANY($3::text[])
+              AND (patch_id IS NULL OR EXISTS (SELECT 1 FROM patches p
+                WHERE p.id = runtime_calls.patch_id AND p.scope <> 'teams'))
             ORDER BY at DESC, id DESC LIMIT 1
           ) AS newest`,
         [companyId, connectionIds, credentialKinds]

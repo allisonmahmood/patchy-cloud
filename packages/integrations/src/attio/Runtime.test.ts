@@ -179,7 +179,8 @@ const tier1 = Layer.mergeAll(
   OperatingLimits.layer,
   RuntimeLog.layer,
   credentials,
-  RuntimeTest.versions(patchId, versionId, () => uses)
+  RuntimeTest.versions(patchId, versionId, () => uses),
+  RuntimeTest.storedPatch(patchId)
 )
   .pipe(
     Layer.provideMerge(Testing.layer()),

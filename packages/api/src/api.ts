@@ -17,6 +17,7 @@ import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
 import * as HttpApiSecurity from "effect/http-api/HttpApiSecurity";
 import * as OpenApi from "effect/http-api/OpenApi";
 import {
+  AudienceRefused,
   BadRequest,
   Conflict,
   DeviceLoginGone,
@@ -267,6 +268,8 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
       success: [PublishCreated, PublishUpdated],
       error: [
         PatchQuotaExceeded,
+        // A 400 decodes as the first schema it fits, so the coded one comes before `BadRequest`.
+        AudienceRefused,
         ...protectedErrors,
         PublishKeyConflict,
         NameTaken,
@@ -349,7 +352,9 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "Each artifact uses `PATCHY_MAX_BUNDLE_BYTES` " +
           "(10 MiB), with oversized artifacts refused as 413. Creates spend the per-token create limit " +
           "and live-patch quota; updates do not. Omitted scope defaults to company on creates " +
-          "and remains unchanged on updates. `manifest.name` is an exact company-scoped name " +
+          "and remains unchanged on updates. A body naming `audience`, as clients released with team audiences send, " +
+          "answers 400 `upgrade_required` before any replay: this release sets sharing only by `scope`. " +
+          "A replay whose patch that release has since opened to teams answers 404, as the patch does, and publishes nothing. `manifest.name` is an exact company-scoped name " +
           "(3–32 lowercase letters, digits or hyphens, starting and ending with a letter or digit); " +
           "another patch's current name, or any name of a retired or deleted patch, answers 409 `name_taken` on create or rename. " +
           "`patches` and `connections` are reserved names and answer 422 `reserved_name` on create. " +
@@ -518,7 +523,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
       params: patchParams,
       payload: ShareRequest,
       success: Shared,
-      error: [...ownerRouteErrors, Tier2NotPublic, PayloadTooLarge]
+      error: [AudienceRefused, ...ownerRouteErrors, Tier2NotPublic, PayloadTooLarge]
     }).annotateMerge(
       describe(
         "Change the sharing scope of a patch owned by the bearer token's user, without publishing a version. " +
@@ -531,7 +536,8 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "`private, no-store` and answer 401 without a session. " +
           "The JSON body is bounded at 1.5 MiB; the larger bundle cap applies only to publishing. " +
           "An oversized declared body answers 413; " +
-          "streaming bodies are cut off at the cap. Rejected requests leave the scope unchanged."
+          "streaming bodies are cut off at the cap. A body naming `audience`, as clients released with team audiences send, " +
+          "answers 400 `upgrade_required`, since this release sets sharing only by `scope`. Rejected requests leave the scope unchanged."
       )
     ),
     HttpApiEndpoint.get("listGuests", "/patches/:patchId/guests", {

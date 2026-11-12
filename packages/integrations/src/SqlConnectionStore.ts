@@ -227,7 +227,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
     const imap = yield* ImapSource.Source;
     const audit = yield* RuntimeLog.RuntimeLog;
     const columns = sql`id, company_id AS "companyId", integration, handle, description, mode, status,
-    block_guests AS "blockGuests", display, credential_revision AS "credentialRevision", metadata_revision AS "metadataRevision",
+    block_guests AS "blockGuests", audience_kind = 'teams' AS restricted, display, credential_revision AS "credentialRevision", metadata_revision AS "metadataRevision",
     to_char(last_tested_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "lastTestedAt",
     to_char(last_discovered_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "lastDiscoveredAt",
     created_by AS "createdBy"`;
@@ -273,6 +273,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       WHERE company_id = ${companyId} AND connection_id = ${id} AND revision = ${revision}
         AND ${isKnown}`
     });
+    // What agents and generation read: a connection restricted to teams isn't theirs to build with.
     const detailRow = SqlSchema.findOneOption({
       Request: Schema.Struct({
         companyId: Schema.String,
@@ -287,11 +288,14 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       FROM connections c LEFT JOIN connection_snapshots s
         ON s.connection_id = c.id AND s.company_id = c.company_id AND s.revision = c.metadata_revision
           AND s.integration = c.integration
-      WHERE c.company_id = ${companyId} AND c.integration = ${integration} AND c.handle = ${handle}`
+      WHERE c.company_id = ${companyId} AND c.integration = ${integration} AND c.handle = ${handle}
+        AND c.audience_kind = 'company'`
     });
     /**
      * Every declaration of a connection in a stored version of one company's patches: the
-     * deletion rule, so `usage` and `delete` cannot disagree about what is unused.
+     * deletion rule, which `usage` also reads. Usage leaves out patches open to teams, a later
+     * release's audience this one opens for nobody, so it neither names nor counts them; they
+     * still keep a connection from being deleted.
      */
     const declarations = (companyId: string) => sql`patch_versions v
     JOIN patches p ON p.id = v.patch_id
@@ -322,7 +326,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       (count(DISTINCT p.id) FILTER (WHERE p.deleted_at IS NOT NULL))::int AS deleted,
       (count(DISTINCT p.id) FILTER (WHERE p.deleted_at IS NULL
         AND p.disabled_at IS NOT NULL))::int AS disabled
-      FROM ${declarations(companyId)}
+      FROM ${declarations(companyId)} AND p.scope <> 'teams'
       GROUP BY 1`
     });
     const versionRows = SqlSchema.findAll({
@@ -1647,11 +1651,11 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         if (
           Option.isNone(found) ||
           found.value.integration !== declaration.kind ||
-          found.value.handle !== declaration.handle ||
-          found.value.status !== "connected"
+          found.value.handle !== declaration.handle
         ) {
           return yield* new ConnectionNotConnected({});
         }
+        yield* ConnectionStore.usable(found.value);
         if (found.value.metadataRevision !== declaration.revision)
           return yield* new StaleGenerated({});
         return {
@@ -1673,10 +1677,10 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         if (
           Option.isNone(found) ||
           found.value.integration !== declaration.kind ||
-          found.value.handle !== declaration.handle ||
-          found.value.status !== "connected"
+          found.value.handle !== declaration.handle
         )
           return yield* new ConnectionNotConnected({});
+        yield* ConnectionStore.usable(found.value);
         if (found.value.credentialRevision !== credentialRevision)
           return yield* new ConnectionChanged({});
         // A refused login paused it: nothing logs in until an admin's Test or Replace password.

@@ -80,5 +80,18 @@ export const migrations: Migrations = {
   // while it's set. Every existing connection allows guests, as a new one does.
   "0032_connections_block_guests": ddl(
     `ALTER TABLE connections ADD COLUMN block_guests BOOLEAN NOT NULL DEFAULT false`
+  ),
+  // Who may build with a connection: the company, as every existing connection stays, or the
+  // teams it names.
+  "0041_connection_audiences": ddl(
+    `ALTER TABLE connections ADD COLUMN audience_kind TEXT NOT NULL DEFAULT 'company' CHECK (audience_kind IN ('company', 'teams'))`,
+    `CREATE TABLE connection_team_grants (
+      connection_id TEXT NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+      company_id TEXT NOT NULL,
+      team_id TEXT NOT NULL,
+      PRIMARY KEY(connection_id, team_id),
+      FOREIGN KEY(company_id, team_id) REFERENCES company_teams(company_id, id)
+    )`,
+    `CREATE INDEX connection_team_references ON connection_team_grants(company_id, team_id)`
   )
 };

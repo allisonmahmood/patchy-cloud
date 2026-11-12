@@ -144,6 +144,48 @@ it.layer(fixture)("ConnectionStore", (it) => {
       })
   );
 
+  it.effect(
+    "lets nothing build or call with a connection restricted to teams, and keeps it so",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* ConnectionStore.ConnectionStore;
+        const sql = yield* SqlClient.SqlClient;
+        const connected = yield* store.connect(input("restricted-teams"));
+        // A later release restricts it to a team; this one never does.
+        yield* sql`INSERT INTO company_teams (id, company_id, name)
+        VALUES ('team_restricted', ${who.companyId}, 'Sales')`;
+        yield* sql`UPDATE connections SET audience_kind = 'teams' WHERE id = ${connected.id}`;
+        yield* sql`INSERT INTO connection_team_grants (connection_id, company_id, team_id)
+        VALUES (${connected.id}, ${who.companyId}, 'team_restricted')`;
+
+        const listed = (yield* store.list(who.companyId)).find((row) => row.id === connected.id);
+        assert.isTrue(listed?.restricted);
+        const refused = [
+          yield* store.resolve(who.companyId, declaration(connected)).pipe(Effect.flip),
+          yield* store
+            .poolCredentials(who.companyId, declaration(connected), connected.credentialRevision)
+            .pipe(Effect.flip)
+        ];
+        for (const error of refused) {
+          assert.strictEqual(error._tag, "ConnectionNotConnected");
+          assert.isTrue("restricted" in error && error.restricted === true);
+        }
+        assert.strictEqual(
+          (yield* store.detail(who.companyId, "postgres", connected.handle).pipe(Effect.flip))._tag,
+          "ConnectionNotFound"
+        );
+
+        yield* store.describe({ ...identity(connected), description: "Restricted warehouse" });
+        yield* store.blockGuests({ ...identity(connected), block: true });
+        yield* store.disconnect(identity(connected));
+        assert.deepStrictEqual(
+          yield* sql`SELECT audience_kind AS kind, (SELECT count(*)::int FROM connection_team_grants
+          WHERE connection_id = ${connected.id}) AS teams FROM connections WHERE id = ${connected.id}`,
+          [{ kind: "teams", teams: 1 }]
+        );
+      })
+  );
+
   it.effect("supports reverse states without silently changing identity or pinned metadata", () =>
     Effect.gen(function* () {
       const store = yield* ConnectionStore.ConnectionStore;

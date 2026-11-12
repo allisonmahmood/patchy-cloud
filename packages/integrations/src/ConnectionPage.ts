@@ -126,7 +126,7 @@ interface About {
  * its name, in its integration's words. An Attio key a check found writable and an IMAP login a
  * server refused name whose check or login it was, from `people`.
  */
-const about = (
+const integrationAbout = (
   connection: ConnectionStore.Connection,
   people: ReadonlyMap<string, string>,
   now: number
@@ -170,6 +170,16 @@ const about = (
         tag: PidgeonPage.tag(connection)
       };
   }
+};
+/** What `integrationAbout` says, with a connection restricted to teams saying so beside its name. */
+const about = (
+  connection: ConnectionStore.Connection,
+  people: ReadonlyMap<string, string>,
+  now: number
+): About => {
+  const known = integrationAbout(connection, people, now);
+  if (!connection.restricted) return known;
+  return { ...known, tag: [known.tag, "Restricted to teams"].filter(Boolean).join(" · ") };
 };
 /** What a snapshot lets patches read, in its integration's words. */
 const readsOf = (metadata: ConnectionStore.Metadata) =>
@@ -304,6 +314,11 @@ const directory = Effect.fn("ConnectionPage.directory")(function* (
   );
 });
 
+/** Members see the connections patches can use; admins also see the ones restricted to teams. */
+const shownTo =
+  (viewer: RequireSession.Viewer["Service"]) => (connection: ConnectionStore.Connection) =>
+    viewer.role === "admin" || !connection.restricted;
+
 const index = Effect.fn("ConnectionPage.index")(function* (
   viewer: RequireSession.Viewer["Service"],
   query: URLSearchParams,
@@ -311,7 +326,7 @@ const index = Effect.fn("ConnectionPage.index")(function* (
 ) {
   const store = yield* ConnectionStore.ConnectionStore;
   const admin = viewer.role === "admin";
-  const connections = yield* store.list(viewer.company.id);
+  const connections = (yield* store.list(viewer.company.id)).filter(shownTo(viewer));
   const usage = yield* store.usage(viewer.company.id);
   const now = yield* Clock.currentTimeMillis;
   // Members can see connection status, but must never read the call log.
@@ -350,7 +365,9 @@ const index = Effect.fn("ConnectionPage.index")(function* (
 const catalogue = Effect.fn("ConnectionPage.catalogue")(function* (
   viewer: RequireSession.Viewer["Service"]
 ) {
-  const connections = yield* (yield* ConnectionStore.ConnectionStore).list(viewer.company.id);
+  const connections = (yield* (yield* ConnectionStore.ConnectionStore).list(
+    viewer.company.id
+  )).filter(shownTo(viewer));
   const now = yield* Clock.currentTimeMillis;
   const admins = viewer.role === "admin" ? [] : ((yield* directory(viewer))?.admins ?? []);
   return {
@@ -409,6 +426,11 @@ const connectionView = Effect.fn("ConnectionPage.connectionView")(function* (
 ) {
   const store = yield* ConnectionStore.ConnectionStore;
   const connection = yield* store.get(viewer.company.id, id);
+  if (!shownTo(viewer)(connection))
+    return yield* new ConnectionStore.ConnectionNotFound({
+      companyId: viewer.company.id,
+      lookup: { id }
+    });
   const page = pages[connection.integration];
   const usage = (yield* store.usage(viewer.company.id)).get(id) ?? ConnectionStore.unused;
   // Deactivated people keep their names: they still added connections and made calls. A

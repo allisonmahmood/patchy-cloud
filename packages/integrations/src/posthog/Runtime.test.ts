@@ -151,7 +151,8 @@ const tier1 = Layer.mergeAll(
   Limits.layer,
   OperatingLimits.layer,
   RuntimeLog.layer,
-  RuntimeTest.versions(patchId, versionId, () => ({ analytics: declaration }))
+  RuntimeTest.versions(patchId, versionId, () => ({ analytics: declaration })),
+  RuntimeTest.storedPatch(patchId)
 )
   .pipe(
     Layer.provideMerge(Testing.layer()),

@@ -472,8 +472,7 @@ const current = Effect.fn("ImapOperations.current")(function* (
       companyId,
       lookup: { id: declared.id }
     });
-  if (connection.status !== "connected")
-    return yield* new ConnectionStore.ConnectionNotConnected({});
+  yield* ConnectionStore.usable(connection);
   return connection;
 });
 

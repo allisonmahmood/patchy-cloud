@@ -338,7 +338,8 @@ export const generate = Effect.fn("Generation.generate")(function* (
         (entry) =>
           entry.integration === declaration.kind &&
           entry.handle === declaration.handle &&
-          entry.status === "connected"
+          entry.status === "connected" &&
+          !entry.restricted
       );
       if (connection === undefined)
         return yield* new ConnectionNotConnected({

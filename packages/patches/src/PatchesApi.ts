@@ -8,12 +8,14 @@
  */
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import {
+  AudienceRefused,
   BadRequest,
   Behind,
   Conflict,
@@ -410,6 +412,18 @@ const canonicalJson = (json: unknown) =>
 
 const rejected = (code: typeof PublishRefused.Type.code, error: string) =>
   refuse(PublishRefused, { ok: false, code, error });
+/**
+ * A request naming an `audience`, which clients released with team audiences send. This release
+ * sets sharing only by `scope`; ignoring the audience could open a patch to the whole company.
+ */
+const audienceRefused = (body: unknown, next: string) =>
+  Predicate.hasProperty(body, "audience")
+    ? refuse(AudienceRefused, {
+        ok: false,
+        code: "upgrade_required",
+        error: `This Patchy release can't set a patch's audience yet. ${next}`
+      })
+    : undefined;
 const keyConflict = () =>
   refuse(PublishKeyConflict, {
     ok: false,
@@ -597,6 +611,13 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             })
           );
           if (HttpServerResponse.isHttpServerResponse(json)) return json;
+          // Before any replay, too: a publish a later release stored with its audience is that
+          // release's to answer, and its stored response names a patch this one opens for nobody.
+          const audience = audienceRefused(
+            json,
+            "Publish without --share or --team, or with the patchy CLI from this release."
+          );
+          if (audience !== undefined) return audience;
           const key = yield* decodeKey(json).pipe(
             Effect.catchTags({
               MalformedBody: (error) => Effect.succeed(malformedPublish(error))
@@ -609,6 +630,9 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               .replay(identity.user.id, key.publishKey)
               .pipe(Effect.catchTags({ SqlError: Effect.die }));
             if (Option.isNone(stored)) return undefined;
+            // Its answer names a patch this release opens for nobody. A retry of it, a create's
+            // included, answers as if that patch weren't there, and publishes nothing.
+            if (stored.value.hidden) return notFound();
             if (stored.value.payloadDigest !== digest) return keyConflict();
             const published = decodeReplayIds(stored.value.response);
             if (Option.isSome(published)) yield* WideEvents.enrich(published.value);
@@ -1160,9 +1184,15 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
       .handleRaw("share", ({ params }) =>
         Effect.gen(function* () {
           const identity = yield* CurrentIdentity;
-          const payload = yield* readBody(maxShareBodyBytes).pipe(
-            Effect.flatMap(decodeShare),
-            Effect.catchTags(bodyFailures)
+          const body = yield* readBody(maxShareBodyBytes).pipe(Effect.catchTags(bodyFailures));
+          if (HttpServerResponse.isHttpServerResponse(body)) return body;
+          const audience = audienceRefused(
+            body,
+            "Change its sharing with the patchy CLI from this release."
+          );
+          if (audience !== undefined) return audience;
+          const payload = yield* decodeShare(body).pipe(
+            Effect.catchTags({ MalformedBody: bodyFailures.MalformedBody })
           );
           if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
           const shared = yield* patches

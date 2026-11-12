@@ -611,7 +611,9 @@ const Replay = Schema.Struct({
   payloadDigest: Schema.String,
   response: Schema.JsonObject,
   body: Schema.String,
-  status: Schema.Literals([200, 201])
+  status: Schema.Literals([200, 201]),
+  /** Its patch is open to teams now, a later release's audience that this one opens for nobody. */
+  hidden: Schema.Boolean
 });
 
 // Today's client hands back a Date; when it becomes epoch ms only these lines move.
@@ -778,6 +780,7 @@ export class Patches extends Context.Service<
       void,
       PatchUnavailable | PatchConflict | NotOwner | PatchRetired | PatchDeleted | SqlError
     >;
+    /** The publish this owner stored under this key, with its patch as it stands now. */
     readonly replay: (
       ownerUserId: string,
       publishKey: string
@@ -1234,7 +1237,11 @@ export const make = Effect.gen(function* () {
   /** The clock's reading now, as that value. */
   const now = Effect.map(Clock.currentTimeMillis, stamp);
 
-  const serving = sql`patches.deleted_at IS NULL AND patches.retired_at IS NULL AND patches.disabled_at IS NULL`;
+  // A `teams` scope is a later release's audience: the patch is open to selected teams, and this
+  // release can't tell who is on them. It opens such a patch for nobody, so every read here leaves
+  // it out, as it leaves out disabled ones, and nothing here ever writes that scope.
+  const serving = sql`patches.deleted_at IS NULL AND patches.retired_at IS NULL AND patches.disabled_at IS NULL
+    AND patches.scope <> 'teams'`;
 
   const countQuotaPatchesRow = SqlSchema.findOne({
     Request: Schema.String,
@@ -1284,7 +1291,7 @@ export const make = Effect.gen(function* () {
       JOIN users owner ON owner.id = patches.owner_user_id
       JOIN patch_versions current_version ON current_version.id = patches.current_version_id
         AND current_version.patch_id = patches.id
-      WHERE patches.company_id = ${companyId}
+      WHERE patches.company_id = ${companyId} AND patches.scope <> 'teams'
       ORDER BY (patches.owner_user_id = ${userId}) DESC, patches.name, patches.id`
   });
 
@@ -1311,7 +1318,7 @@ export const make = Effect.gen(function* () {
       SELECT ${sql.unsafe(PATCH_COLUMNS)}
       FROM patches JOIN companies ON companies.id = patches.company_id
       WHERE patches.id = ${patchId} AND patches.company_id = ${companyId}
-        AND patches.disabled_at IS NULL`
+        AND patches.disabled_at IS NULL AND patches.scope <> 'teams'`
   });
 
   const portalMetadataRow = SqlSchema.findOneOption({
@@ -1369,7 +1376,8 @@ export const make = Effect.gen(function* () {
       FROM patch_names
       JOIN companies ON companies.id = patch_names.company_id
       JOIN patches ON patches.id = patch_names.patch_id
-      WHERE companies.handle = ${companyHandle} AND patch_names.name = ${name}`
+      WHERE companies.handle = ${companyHandle} AND patch_names.name = ${name}
+        AND patches.scope <> 'teams'`
   });
 
   const companyHandleRow = SqlSchema.findOne({
@@ -1457,7 +1465,7 @@ export const make = Effect.gen(function* () {
       // Callers keep both statements in one transaction; its patch lock preserves
       // the company and disabled-state checks through the owner lookup.
       const locked = yield* sql`SELECT id FROM patches
-        WHERE id = ${patchId} AND disabled_at IS NULL
+        WHERE id = ${patchId} AND disabled_at IS NULL AND scope <> 'teams'
           AND company_id = (SELECT company_id FROM users WHERE id = ${userId})
         FOR UPDATE`;
       if (locked.length === 0) return [];
@@ -1502,9 +1510,10 @@ export const make = Effect.gen(function* () {
     Request: Schema.Struct({ ownerUserId: Schema.String, publishKey: Schema.String }),
     Result: Replay,
     execute: ({ ownerUserId, publishKey }) => sql`
-      SELECT payload_digest AS "payloadDigest", publish_response AS response,
-        publish_response::text AS body, publish_status AS status
-      FROM patch_versions WHERE owner_user_id = ${ownerUserId} AND publish_key = ${publishKey}`
+      SELECT v.payload_digest AS "payloadDigest", v.publish_response AS response,
+        v.publish_response::text AS body, v.publish_status AS status, p.scope = 'teams' AS hidden
+      FROM patch_versions v JOIN patches p ON p.id = v.patch_id
+      WHERE v.owner_user_id = ${ownerUserId} AND v.publish_key = ${publishKey}`
   });
   const replay = Effect.fn("Patches.replay")((ownerUserId: string, publishKey: string) =>
     replayRow({ ownerUserId, publishKey }).pipe(Effect.catchTags(dieOnSchemaError))
@@ -1541,7 +1550,7 @@ export const make = Effect.gen(function* () {
               : sql`id = patches.current_version_id`
         }
       ) selected ON true
-      WHERE patches.id = ${patchId}`
+      WHERE patches.id = ${patchId} AND patches.scope <> 'teams'`
   });
   const findRetained = Effect.fn("Patches.findRetained")(function* (
     patchId: string,
@@ -1917,6 +1926,7 @@ export const make = Effect.gen(function* () {
       CROSS JOIN LATERAL jsonb_each(patch_versions.manifest->'uses') AS declaration
       LEFT JOIN patches source ON source.id = declaration.value->>'patchId'
         AND source.company_id = ${companyId} AND source.disabled_at IS NULL
+        AND source.scope <> 'teams'
       WHERE patches.id = ${patchId} AND declaration.value->>'kind' IN ('sharedTable', 'sharedStore')
         AND (source.id IS NULL OR source.deleted_at IS NOT NULL OR source.retired_at IS NOT NULL)
       ORDER BY "patchId", "table", store`
@@ -2708,6 +2718,7 @@ export const make = Effect.gen(function* () {
       SELECT p.id FROM patches p JOIN patch_versions v ON v.id = p.current_version_id
       WHERE v.created_by_machine_token_id IN ${sql.in(tokenIds)}
         AND p.deleted_at IS NULL AND p.retired_at IS NULL AND p.disabled_at IS NULL
+        AND p.scope <> 'teams'
       ORDER BY v.created_at, p.id LIMIT 1`
   });
   const publishedWith = Effect.fn("Patches.publishedWith")(function* (
@@ -2755,6 +2766,9 @@ export const make = Effect.gen(function* () {
           yield* sql`DELETE FROM patch_versions WHERE patch_id = ${patchId} RETURNING id`;
         yield* sql`DELETE FROM patch_names WHERE patch_id = ${patchId}`;
         yield* sql`DELETE FROM patches WHERE id = ${patchId}`;
+        // No foreign key cascades these (migration 0040). They go after the patch, whose guest
+        // grants wait on a team change holding the directory, so that change's rows are seen.
+        yield* sql`DELETE FROM patch_admin_additions WHERE patch_id = ${patchId}`;
         yield* announce(patchId);
         return Option.some({ companyId, ownerUserId, versionCount: removed.length });
       });

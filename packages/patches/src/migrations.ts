@@ -179,5 +179,54 @@ export const migrations: Migrations = {
     `CREATE TRIGGER patch_guest_grants_directory_changed
       AFTER INSERT OR UPDATE OR DELETE ON patch_guest_grants
       FOR EACH ROW EXECUTE FUNCTION patch_guest_grants_directory_changed()`
+  ),
+  // A patch open to selected teams: scope `teams`, with a row per team. Every existing patch keeps
+  // its company or public scope. Kept for the owner to see, as they were when they happened:
+  // audience changes made by anyone but the owner, each side as it was reported then, team names
+  // included; and every admin added to a team while the patch's audience named it, recorded by a
+  // trigger on Companies' team changes in the same transaction, so later demotions and audience
+  // changes leave the record as it was.
+  "0040_patch_audiences": ddl(
+    `ALTER TABLE patches DROP CONSTRAINT patches_scope_check,
+      ADD CONSTRAINT patches_scope_check CHECK (scope IN ('company', 'public', 'teams'))`,
+    `CREATE TABLE patch_audience_teams (
+      patch_id TEXT NOT NULL REFERENCES patches(id) ON DELETE CASCADE,
+      company_id TEXT NOT NULL REFERENCES companies(id), team_id TEXT NOT NULL,
+      PRIMARY KEY(patch_id, team_id),
+      FOREIGN KEY(company_id, team_id) REFERENCES company_teams(company_id, id)
+    )`,
+    `CREATE INDEX patch_audience_teams_team ON patch_audience_teams(company_id, team_id)`,
+    `CREATE TABLE patch_audience_changes (
+      id BIGSERIAL PRIMARY KEY,
+      patch_id TEXT NOT NULL REFERENCES patches(id) ON DELETE CASCADE,
+      actor_id TEXT NOT NULL, before JSONB NOT NULL, after JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL
+    )`,
+    `CREATE INDEX patch_audience_changes_patch ON patch_audience_changes(patch_id, id)`,
+    `CREATE TABLE patch_admin_additions (
+      id BIGSERIAL PRIMARY KEY,
+      patch_id TEXT NOT NULL,
+      actor_id TEXT NOT NULL, user_id TEXT NOT NULL, team_name TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL
+    )`,
+    `CREATE INDEX patch_admin_additions_patch ON patch_admin_additions(patch_id, id)`,
+    // Locks go company row, then patch row, then directory row. This runs inside a team change,
+    // which already holds the company and directory rows, so it must lock no patch: guest removal
+    // and reclamation hold a patch, then wait on the directory. So `patch_id` has no foreign key,
+    // whose check would lock the patch, and reclamation deletes a purged patch's rows itself.
+    `CREATE FUNCTION patch_admin_additions_record() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      INSERT INTO patch_admin_additions (patch_id, actor_id, user_id, team_name, created_at)
+      SELECT audience.patch_id, NEW.actor_id, NEW.user_id, NEW.team_name, NEW.created_at
+      FROM patch_audience_teams audience
+      JOIN users added ON added.company_id = NEW.company_id AND added.id = NEW.user_id
+      WHERE audience.company_id = NEW.company_id AND audience.team_id = NEW.team_id
+        AND added.role = 'admin';
+      RETURN NULL;
+    END;
+    $$`,
+    `CREATE TRIGGER patch_admin_additions_record
+      AFTER INSERT ON company_team_changes
+      FOR EACH ROW WHEN (NEW.added) EXECUTE FUNCTION patch_admin_additions_record()`
   )
 };

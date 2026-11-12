@@ -231,7 +231,10 @@ export class GuestGrants extends Context.Service<
       readonly patchId: string;
       readonly userId: string;
     }) => Effect.Effect<boolean, SqlError>;
-    /** Ends every grant this person holds on the company's patches, keeping them. */
+    /**
+     * Ends every grant this person holds on the company's patches, keeping them; one on a patch
+     * open to teams stays, since this release can't show it.
+     */
     readonly revokeAll: (input: {
       readonly companyId: string;
       readonly userId: string;
@@ -348,6 +351,8 @@ export const make = Effect.gen(function* () {
     WHEN p.retired_at IS NOT NULL THEN 'retired' ELSE 'live' END`;
   const granted = sql`EXISTS (SELECT 1 FROM patch_guest_grants g
     WHERE g.patch_id = p.id AND g.revoked_at IS NULL)`;
+  // A patch whose scope is `teams` is a later release's, which this one opens for nobody, as
+  // Patches does: no guest is shown it, no list names it and no grant on it changes here.
 
   const revoked = SqlSchema.findOneOption({
     Request: Schema.Struct({ patchId: Schema.String, userId: Schema.String, at: Schema.Number }),
@@ -409,7 +414,7 @@ export const make = Effect.gen(function* () {
       JOIN patches p ON p.id = g.patch_id
       JOIN patch_versions v ON v.id = p.current_version_id
       JOIN users s ON s.id = g.granted_by
-      WHERE g.company_id = ${companyId} AND g.revoked_at IS NULL
+      WHERE g.company_id = ${companyId} AND g.revoked_at IS NULL AND p.scope <> 'teams'
       ORDER BY u.name, u.email, g.user_id, g.granted_at DESC, p.name`
   });
   const holderRows = SqlSchema.findAll({
@@ -438,7 +443,7 @@ export const make = Effect.gen(function* () {
       JOIN companies c ON c.id = g.company_id
       JOIN users s ON s.id = g.granted_by
       WHERE g.user_id = ${userId} AND g.revoked_at IS NULL
-        AND p.deleted_at IS NULL AND p.disabled_at IS NULL
+        AND p.deleted_at IS NULL AND p.disabled_at IS NULL AND p.scope <> 'teams'
       ORDER BY c.name, p.name`
   });
   const hostRow = SqlSchema.findOneOption({
@@ -464,7 +469,8 @@ export const make = Effect.gen(function* () {
     Result: GrantedPatchRow,
     execute: ({ patchId, companyId }) => sql`
       SELECT ${state} AS state, p.scope FROM patches p
-      WHERE p.id = ${patchId} AND p.company_id = ${companyId} AND ${granted}`
+      WHERE p.id = ${patchId} AND p.company_id = ${companyId} AND p.scope <> 'teams'
+        AND ${granted}`
   });
 
   const grant = Effect.fn("GuestGrants.grant")(function* ({
@@ -498,8 +504,11 @@ export const make = Effect.gen(function* () {
   }) {
     const at = yield* Clock.currentTimeMillis;
     yield* sql`
-      UPDATE patch_guest_grants SET revoked_at = to_timestamp(${at / 1_000})
-      WHERE company_id = ${input.companyId} AND user_id = ${input.userId} AND revoked_at IS NULL`;
+      UPDATE patch_guest_grants g SET revoked_at = to_timestamp(${at / 1_000})
+      FROM patches p
+      WHERE p.id = g.patch_id AND p.scope <> 'teams'
+        AND g.company_id = ${input.companyId} AND g.user_id = ${input.userId}
+        AND g.revoked_at IS NULL`;
   });
   const guests = Effect.fn("GuestGrants.guests")(
     (patchId: string) => Effect.map(patchGuests(patchId), (rows) => rows.map(named(Guest))),

@@ -85,6 +85,12 @@ const failure = <Fields extends Schema.Struct.Fields>(status: number, fields: Fi
   );
 
 export const BadRequest = failure(400, {});
+/**
+ * A publish or share that names an `audience`, as clients released with team audiences send. This
+ * release sets sharing only by `scope`, so it refuses the request rather than open the patch to
+ * more people than asked. A CLI released before it reads any 400 as `BadRequest` and shows `error`.
+ */
+export const AudienceRefused = failure(400, { code: Schema.Literal("upgrade_required") });
 /** A missing credential and a bad one answer the same sentence, so the wire never says which. */
 export const Unauthorized = Schema.Struct({
   ok: Schema.Literal(false),

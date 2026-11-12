@@ -215,7 +215,8 @@ const tier1 = Layer.mergeAll(
   credentials,
   RuntimeTest.versions(patchId, versionId, () => ({
     mail: { kind: "imap" as const, ...declared, revision: 1 }
-  }))
+  })),
+  RuntimeTest.storedPatch(patchId)
 )
   .pipe(
     Layer.provideMerge(Testing.layer()),

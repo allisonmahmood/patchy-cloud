@@ -63,8 +63,9 @@ export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =
           const shown: ReadonlyArray<Integration> = integrations.filter((integration) =>
             asked.includes(integration)
           );
-          const rows = (yield* connections.list(identity.company.id)).filter((row) =>
-            shown.includes(row.integration)
+          // A connection restricted to teams is no one's to build with in this release.
+          const rows = (yield* connections.list(identity.company.id)).filter(
+            (row) => shown.includes(row.integration) && !row.restricted
           );
           return HttpServerResponse.jsonUnsafe(
             encodeConnections({
