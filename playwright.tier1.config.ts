@@ -22,7 +22,10 @@ export default defineConfig({
     video: "off"
   },
   projects: [
-    { name: "chromium", use: { ...devices["Desktop Chrome"] } },
+    // Desktop Chromium in new headless mode, the browser people use. Playwright's default headless
+    // build, chrome-headless-shell, keeps a patch's sandboxed frame in the shell's process, so
+    // focus and keyboard behaviour that breaks in desktop Chromium passes there.
+    { name: "chromium", use: { ...devices["Desktop Chrome"], channel: "chromium" } },
     // Firefox runs focus.spec.ts alone. It won't hand a patch's frame focus during the key event
     // that pressed a shell button, so the shell tries again once that is over; Chromium never
     // needs the second try. Fission isolation is on, as in Firefox, though Playwright's is off.
