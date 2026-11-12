@@ -136,7 +136,7 @@ it.layer(
   );
 
   it.effect(
-    "leaves out the calls of a patch open to teams or since reclaimed, before the limit",
+    "leaves out the calls of a patch open to teams or since reclaimed, before the limit and from the newest call",
     () =>
       rolledBack(
         Effect.gen(function* () {
@@ -148,9 +148,18 @@ it.layer(
           VALUES ('runtime-open', ${DEV_SEED.companyId}, ${DEV_SEED.userId}, 'company', 'Open', 'runtime-open'),
             ('runtime-team', ${DEV_SEED.companyId}, ${DEV_SEED.userId}, 'teams', 'Team', 'runtime-team')`;
           const connectionId = "teams-connection";
-          const call = (correlationId: string, patchId: string | null) =>
+          const call = (
+            correlationId: string,
+            patchId: string | null,
+            connection: string = connectionId
+          ) =>
             Effect.andThen(
-              log.begin({ ...mutation(correlationId), op: "postgres.list", connectionId, patchId }),
+              log.begin({
+                ...mutation(correlationId),
+                op: "postgres.list",
+                connectionId: connection,
+                patchId
+              }),
               TestClock.adjust(1)
             );
           yield* call("from-open", "runtime-open");
@@ -159,11 +168,22 @@ it.layer(
           yield* call("from-team-2", "runtime-team");
           // Its row is gone, so nothing says whether it was open to teams.
           yield* call("from-reclaimed", "runtime-reclaimed");
+          yield* call("hidden-team", "runtime-team", "hidden-connection");
+          yield* call("hidden-reclaimed", "runtime-reclaimed", "hidden-connection");
           assert.deepStrictEqual(
             (yield* log.recent({ companyId: DEV_SEED.companyId, connectionId, limit: 2 })).map(
               (found) => found.correlationId
             ),
             ["from-admin", "from-open"]
+          );
+          assert.deepStrictEqual(
+            [
+              ...(yield* log.latest({
+                companyId: DEV_SEED.companyId,
+                connectionIds: [connectionId, "hidden-connection"]
+              }))
+            ],
+            [[connectionId, new Date(NOW + 1)]]
           );
         })
       )

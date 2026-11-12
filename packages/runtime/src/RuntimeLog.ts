@@ -126,7 +126,10 @@ export class RuntimeLog extends Context.Service<
       readonly connectionId: string;
       readonly limit?: number;
     }) => Effect.Effect<ReadonlyArray<Call>, SqlError>;
-    /** When each connection's newest call began; connections never called have no entry. */
+    /**
+     * When each connection's newest call began, among the calls `recent` would show; a connection
+     * with none of those has no entry.
+     */
     readonly latest: (input: {
       readonly companyId: string;
       readonly connectionIds: ReadonlyArray<string>;
@@ -181,7 +184,7 @@ export const make = Effect.gen(function* () {
       ORDER BY at DESC, id DESC LIMIT ${limit}`
   });
 
-  // One index probe per connection, reading past only rows of kinds this release skips.
+  // One index probe per connection, reading past only rows `recent` leaves out.
   const latestCalls = SqlSchema.findAll({
     Request: Schema.Struct({
       companyId: Schema.String,
@@ -196,6 +199,8 @@ export const make = Effect.gen(function* () {
             SELECT at FROM runtime_calls
             WHERE company_id = $1 AND connection_id = connection.id
               AND credential_kind = ANY($3::text[])
+              AND (patch_id IS NULL OR EXISTS (SELECT 1 FROM patches p
+                WHERE p.id = runtime_calls.patch_id AND p.scope <> 'teams'))
             ORDER BY at DESC, id DESC LIMIT 1
           ) AS newest`,
         [companyId, connectionIds, credentialKinds]
