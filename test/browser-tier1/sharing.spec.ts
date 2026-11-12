@@ -1,4 +1,5 @@
 import { test, expect, prepare } from "./fixtures.js";
+import { loadDialog } from "./dialog.js";
 
 test("an owner shares a page from its menu, and the guest opens it from Home and removes it", async ({
   page,
@@ -53,7 +54,7 @@ test("a row of All patches opens its patch from anywhere on it, while its Share 
 
   await page.goto(`${instance.origin}/patches`);
   const row = page.getByRole("row").filter({ hasText: title });
-  await row.getByRole("link", { name: `Share ${title}` }).click();
+  await loadDialog(page, () => row.getByRole("link", { name: `Share ${title}` }).click());
   await expect(page.getByRole("dialog", { name: `Share ${title}` })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page).toHaveURL(`${instance.origin}/patches`);

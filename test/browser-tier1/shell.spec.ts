@@ -1,4 +1,5 @@
 import { test, expect, prepare } from "./fixtures.js";
+import { loadDialog } from "./dialog.js";
 import type { Page } from "@playwright/test";
 
 const primary = (page: Page) => page.getByRole("navigation", { name: "Primary" });
@@ -124,7 +125,7 @@ test("closing a dialog puts focus back on the sidebar link that opened it, or on
     );
     await page.goto(`${instance.origin}/~focus/page`);
     if (folded) await page.getByRole("button", { name: "Menu" }).click();
-    await page.getByRole("link", { name: "New patch" }).click();
+    await loadDialog(page, () => page.getByRole("link", { name: "New patch" }).click());
     await expect(page.getByRole("textbox", { name: "What to build" })).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(page).toHaveURL(`${instance.origin}/~focus/page`);

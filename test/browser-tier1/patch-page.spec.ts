@@ -1,4 +1,5 @@
 import { test, expect, prepare } from "./fixtures.js";
+import { loadDialog } from "./dialog.js";
 
 // A patch's page: Retire and Delete ask in dialogs at their own URLs, over Settings.
 const tier1 = { tier: 1, tables: {}, files: {} } as const;
@@ -15,13 +16,13 @@ test("Delete and Retire ask in a dialog over Settings, and Restore sits in the h
   await expect(browser.getByRole("heading", { level: 1 })).toHaveText("Desk map");
 
   // Delete opens on its typed name; a wrong name is refused in the dialog, which closes past it.
-  await browser.getByRole("link", { name: "Delete…" }).click();
+  await loadDialog(browser, () => browser.getByRole("link", { name: "Delete…" }).click());
   await expect(browser).toHaveURL(`${card}/delete`);
   const remove = browser.getByRole("dialog", { name: "Delete Desk map" });
   const typed = remove.getByRole("textbox", { name: `Type ${patch.name} to confirm` });
   await expect(typed).toBeFocused();
   await typed.fill("not-it");
-  await remove.getByRole("button", { name: "Delete Desk map" }).click();
+  await loadDialog(browser, () => remove.getByRole("button", { name: "Delete Desk map" }).click());
   await expect(remove.getByText(`Type ${patch.name} to confirm. Nothing was done.`)).toBeVisible();
   await browser.keyboard.press("Escape");
   await expect(browser).toHaveURL(`${card}/settings`);
@@ -51,11 +52,13 @@ test("Reassign starts on its owner and keeps its refusal there, and a stale act'
   await browser.goto(`${card}/settings`);
 
   // A choice, not a destructive act: the dialog starts on the field, and a refused owner stays on it.
-  await browser.getByRole("link", { name: "Reassign…" }).click();
+  await loadDialog(browser, () => browser.getByRole("link", { name: "Reassign…" }).click());
   const reassign = browser.getByRole("dialog", { name: "Reassign Desk map" });
   const owner = reassign.getByRole("combobox", { name: "New owner" });
   await expect(owner).toBeFocused();
-  await reassign.getByRole("button", { name: "Reassign Desk map" }).click();
+  await loadDialog(browser, () =>
+    reassign.getByRole("button", { name: "Reassign Desk map" }).click()
+  );
   await expect(owner).toBeFocused();
   await expect(owner).toHaveAttribute("aria-invalid", "true");
   await expect(reassign.getByText("Choose an active member of this company.")).toBeVisible();

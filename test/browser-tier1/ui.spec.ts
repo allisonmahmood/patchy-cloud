@@ -1,4 +1,5 @@
 import { test, expect } from "./fixtures.js";
+import { loadDialog } from "./dialog.js";
 
 // The `/~ui` gallery exists only where dev personas sign people in, as in development.
 test.use({ serverEnvironment: { PATCHY_DEV_PERSONAS_SECRET: "ui-gallery" } });
@@ -22,7 +23,7 @@ test("the keyboard opens and closes menus and dialogs, and focus comes back", as
   // returns to the very link that opened it, not another link to the same dialog.
   const openers = page.locator('a[href="/~ui/dialog"]');
   await expect(openers).toHaveCount(2);
-  await openers.nth(1).click();
+  await loadDialog(page, () => openers.nth(1).click());
   await expect(page).toHaveURL(/\/~ui\/dialog$/);
   const dialog = page.getByRole("dialog", { name: "Invite people" });
   await expect(dialog.getByRole("textbox", { name: "Emails" })).toBeFocused();
@@ -32,7 +33,9 @@ test("the keyboard opens and closes menus and dialogs, and focus comes back", as
 
   // From another page, Back returns there rather than to the dialog's own page.
   await page.goto(`${instance.origin}/~ui/index`);
-  await page.getByRole("main").getByRole("link", { name: "New patch" }).click();
+  await loadDialog(page, () =>
+    page.getByRole("main").getByRole("link", { name: "New patch" }).click()
+  );
   await expect(page).toHaveURL(/\/~ui\/dialog$/);
   await dialog.getByRole("link", { name: "Close" }).click();
   await expect(page).toHaveURL(/\/~ui\/index$/);
@@ -55,9 +58,11 @@ test("a refused submission draws the dialog again, and closing it skips the subm
 }) => {
   await page.goto(`${instance.origin}/~ui`);
   await page.goto(`${instance.origin}/~ui/index?page=2`);
-  await page.getByRole("main").getByRole("link", { name: "New patch" }).click();
+  await loadDialog(page, () =>
+    page.getByRole("main").getByRole("link", { name: "New patch" }).click()
+  );
   await expect(page).toHaveURL(/\/~ui\/dialog$/);
-  await page.getByRole("button", { name: "Send invites" }).click();
+  await loadDialog(page, () => page.getByRole("button", { name: "Send invites" }).click());
   const emails = page
     .getByRole("dialog", { name: "Invite people" })
     .getByRole("textbox", { name: "Emails" });
@@ -80,13 +85,13 @@ test("Back from a refused submission closes the dialog to the page that opened i
   const opener = page.getByRole("main").getByRole("link", { name: "New patch" });
   const dialog = page.getByRole("dialog", { name: "Invite people" });
   for (const refusals of [1, 2]) {
-    await opener.click();
+    await loadDialog(page, () => opener.click());
     await expect(page).toHaveURL(/\/~ui\/dialog$/);
     for (let refusal = 0; refusal < refusals; refusal++) {
       const refused = page.waitForResponse(
         (response) => response.request().method() === "POST" && response.status() === 422
       );
-      await page.getByRole("button", { name: "Send invites" }).click();
+      await loadDialog(page, () => page.getByRole("button", { name: "Send invites" }).click());
       await refused;
       await expect(dialog.getByRole("textbox", { name: "Emails" })).toHaveAttribute(
         "aria-invalid",
