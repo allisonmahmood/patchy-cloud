@@ -751,7 +751,7 @@ it.layer(layer)("SDK company generation", (it) => {
   );
 
   it.effect(
-    "generates the current connection snapshot without credential access and rejects disconnected connections",
+    "generates the current connection snapshot without credential access and rejects disconnected and restricted connections",
     () =>
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient;
@@ -783,16 +783,18 @@ it.layer(layer)("SDK company generation", (it) => {
           enums: [],
           exclusions: []
         };
-        for (const [id, handle, status] of [
-          ["sdk-connected", "warehouse", "connected"],
-          ["sdk-disconnected", "archive", "disconnected"]
+        // A later release restricts a connection to teams; this one lets no one build with it.
+        for (const [id, handle, status, audience] of [
+          ["sdk-connected", "warehouse", "connected", "company"],
+          ["sdk-disconnected", "archive", "disconnected", "company"],
+          ["sdk-restricted", "pipeline", "connected", "teams"]
         ]) {
           yield* sql`INSERT INTO connections
           (id, company_id, integration, handle, description, mode, status, display, credentials,
-           key_id, credential_revision, metadata_revision, created_by)
+           key_id, credential_revision, metadata_revision, created_by, audience_kind)
           VALUES (${id}, ${identity.company.id}, 'postgres', ${handle}, 'SDK fixture', 'company', ${status},
             ${sql.json({ host: "db.example.com", port: 5432, database: "sales", role: "reader" })},
-            'not-a-valid-ciphertext', 'missing-key', 1, 4, ${identity.user.id})`;
+            'not-a-valid-ciphertext', 'missing-key', 1, 4, ${identity.user.id}, ${audience})`;
           yield* sql`INSERT INTO connection_snapshots
           (connection_id, company_id, integration, revision, snapshot)
           VALUES (${id}, ${identity.company.id}, 'postgres', 4, ${sql.json(snapshot)})`;
@@ -846,21 +848,23 @@ it.layer(layer)("SDK company generation", (it) => {
           output.files.find(({ path }) => path === "fixtures/postgres-warehouse.sql")!.contents,
           "contacts"
         );
-        const refused = yield* client.execute(
-          HttpClientRequest.post("/api/sdk/generate").pipe(
-            HttpClientRequest.bearerToken(identity.machine.id),
-            HttpClientRequest.bodyJsonUnsafe({
-              ...generateRequest(),
-              manifest: {
-                ...Fixtures.manifest,
-                tier: 2,
-                uses: { sales: { kind: "postgres", handle: "archive" } }
-              }
-            })
-          )
-        );
-        assert.strictEqual(refused.status, 422);
-        assert.include(yield* refused.json, { code: "connection_not_connected" });
+        for (const handle of ["archive", "pipeline"]) {
+          const refused = yield* client.execute(
+            HttpClientRequest.post("/api/sdk/generate").pipe(
+              HttpClientRequest.bearerToken(identity.machine.id),
+              HttpClientRequest.bodyJsonUnsafe({
+                ...generateRequest(),
+                manifest: {
+                  ...Fixtures.manifest,
+                  tier: 2,
+                  uses: { sales: { kind: "postgres", handle } }
+                }
+              })
+            )
+          );
+          assert.strictEqual(refused.status, 422, handle);
+          assert.include(yield* refused.json, { code: "connection_not_connected" });
+        }
       })
   );
 

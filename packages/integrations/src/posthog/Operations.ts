@@ -129,8 +129,7 @@ const connect = Effect.fn("PostHogOperations.connect")(function* (
       companyId,
       lookup: { id: declared.id }
     });
-  if (connection.status !== "connected")
-    return yield* new ConnectionStore.ConnectionNotConnected({});
+  yield* ConnectionStore.usable(connection);
   const secret = yield* connections
     .poolCredentials(
       companyId,

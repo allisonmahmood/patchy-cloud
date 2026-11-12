@@ -400,7 +400,11 @@ export const makeWithClient = Effect.fn("Postgres.makeWithClient")(function* <R>
             : new SourceUnavailable({ stage: "access", cause: Redacted.make(cause) })
         )
       );
-    if (connection.handle !== input.declaration.handle || connection.status !== "connected")
+    if (
+      connection.handle !== input.declaration.handle ||
+      connection.status !== "connected" ||
+      connection.restricted
+    )
       return yield* new AccessDenied({});
     return connection;
   });

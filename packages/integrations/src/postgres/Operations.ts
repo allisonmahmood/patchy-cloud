@@ -222,7 +222,8 @@ const resolve = Effect.fn("PostgresOperations.resolve")(function* (alias: string
     connection.integration !== "postgres" ||
     connection.mode !== "company" ||
     connection.handle !== declaration.handle ||
-    connection.status !== "connected"
+    connection.status !== "connected" ||
+    connection.restricted
   )
     return yield* new Runtime.AccessDenied({});
   return { binding, declaration };

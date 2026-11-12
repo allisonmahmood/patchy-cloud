@@ -34,6 +34,12 @@ const fields = {
   status: Schema.Literals(["connected", "disconnected"]),
   /** Patches that declare it turn their guests away while it's set; an admin's choice. */
   blockGuests: Schema.Boolean,
+  /**
+   * Open only to selected teams, which a later release sets and decides. This one can't tell who
+   * is on them, so no patch builds or calls with it; admins still see and manage it. The store
+   * always says; a connection made without it, as `patchy dev` makes its own, is open to all.
+   */
+  restricted: Schema.optionalKey(Schema.Boolean),
   credentialRevision: Schema.Int,
   metadataRevision: Schema.Int,
   lastTestedAt: Schema.NullOr(Schema.String),
@@ -106,16 +112,27 @@ export class ConnectionNotFound extends Schema.TaggedError<ConnectionNotFound>()
     return "This connection could not be found.";
   }
 }
+/** A connection patches can't use now: paused, or `restricted` to teams. */
 export class ConnectionNotConnected extends Schema.TaggedError<ConnectionNotConnected>()(
   "ConnectionNotConnected",
-  {}
+  { restricted: Schema.optionalKey(Schema.Literal(true)) }
 ) {
   readonly code = "connection_not_connected";
   readonly status = 409;
   override get message() {
-    return "This connection is paused. Ask a company administrator to resume it.";
+    return this.restricted
+      ? "This connection is open only to some teams, which this release of Patchy can't check, so no patch can use it. Ask a company administrator."
+      : "This connection is paused. Ask a company administrator to resume it.";
   }
 }
+
+/** Refuses a connection patches can't use now, as `ConnectionNotConnected` says why. */
+export const usable = (connection: Pick<Connection, "status" | "restricted">) =>
+  connection.restricted
+    ? Effect.fail(new ConnectionNotConnected({ restricted: true }))
+    : connection.status === "connected"
+      ? Effect.void
+      : Effect.fail(new ConnectionNotConnected({}));
 export class StaleGenerated extends Schema.TaggedError<StaleGenerated>()("StaleGenerated", {}) {
   readonly code = "stale_generated";
   readonly status = 409;

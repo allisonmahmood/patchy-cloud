@@ -689,7 +689,7 @@ it.layer(shared, { timeout: 30_000 })("read-only operations over one cluster", (
       }).pipe(Effect.scoped)
   );
 
-  it.effect("an action rechecks a disconnected connection on its next callback", () =>
+  it.effect("an action rechecks a disconnected or restricted connection on its next callback", () =>
     Effect.gen(function* () {
       const { handlers, setConnection } = yield* sharedOperations;
       const capabilities = yield* InvocationCapabilities.make;
@@ -726,6 +726,13 @@ it.layer(shared, { timeout: 30_000 })("read-only operations over one cluster", (
       setConnection({ ...connection, status: "disconnected" } satisfies ConnectionStore.Connection);
       const refusal = yield* gateway.callback(capability.token, capability.attempt, request);
       assert.include(refusal, { ok: false, source: "patchy", code: "access_denied" });
+      // Restricted to teams by a later release: connected, and still no one's to call with.
+      setConnection({ ...connection, restricted: true } satisfies ConnectionStore.Connection);
+      assert.include(yield* gateway.callback(capability.token, capability.attempt, request), {
+        ok: false,
+        source: "patchy",
+        code: "access_denied"
+      });
       assert.isTrue(yield* capabilities.settle(capability.token, "returned"));
     }).pipe(Effect.scoped, Effect.provide(RuntimeLog.layer.pipe(Layer.provide(Testing.layer()))))
   );
