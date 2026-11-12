@@ -146,6 +146,9 @@ const render = Effect.fn("TeamsPage.render")(function* (
   const ref = { companyId: viewer.company.id, actorId: viewer.user.id };
   const admin = viewer.role === "admin";
   if (!admin && view.dialog) return yield* new Users.RoleForbidden(ref);
+  // A review's Save carries the revision read before anything it shows, so a change landing while
+  // the review is drawn makes that Save stale instead of passing under the newer revision.
+  const revision = view.dialog === "review" ? yield* teams.revision(ref.companyId) : "";
   const all = yield* teams.list(ref);
   const accounts = yield* users.list(ref.companyId);
   const status = draft?.status ?? refused?.status;
@@ -153,10 +156,10 @@ const render = Effect.fn("TeamsPage.render")(function* (
     .filter((user) => user.role === "admin" && user.deactivatedAt === null)
     .map(displayName)
     .sort((a, b) => a.localeCompare(b));
-  const meta = [
-    all.length === 0 ? "No teams" : plural(all.length, "team", "teams"),
-    ...(admin ? [] : [`Only admins change teams. Admins: ${listed(admins)}.`])
-  ];
+  // Members see whom to ask beside the open team, which a phone keeps on screen, or in the page's
+  // header when there is no team. Both headers' meta is trusted HTML, so every item is escaped.
+  const askAdmins = admin ? [] : [`Only admins change teams. Admins: ${listed(admins)}.`];
+  const count = all.length === 0 ? "No teams" : plural(all.length, "team", "teams");
   const actions = admin
     ? {
         actions: linkButton("New team", href({ teamId: view.teamId, dialog: "create" }), {
@@ -181,7 +184,7 @@ const render = Effect.fn("TeamsPage.render")(function* (
       status,
       ...indexPage({
         title: "Teams",
-        meta,
+        meta: [count, ...askAdmins].map(escapeHtml),
         ...actions,
         content: `<div class="box">${emptyState({ title: "No teams yet" })}</div>`
       })
@@ -361,7 +364,7 @@ const render = Effect.fn("TeamsPage.render")(function* (
     status,
     ...indexPage({
       title: "Teams",
-      meta,
+      meta: [escapeHtml(count)],
       ...actions,
       content: listDetail({
         id: "teams",
@@ -378,7 +381,9 @@ const render = Effect.fn("TeamsPage.render")(function* (
           current: team.id === selected.id
         })),
         title: selected.name,
-        meta: [plural(members.length, "person", "people"), ...gives(selected.id)],
+        meta: [plural(members.length, "person", "people"), ...gives(selected.id), ...askAdmins].map(
+          escapeHtml
+        ),
         ...(admin
           ? {
               actions:
@@ -508,7 +513,6 @@ const render = Effect.fn("TeamsPage.render")(function* (
           body: "",
           redirect: href({ teamId: selected.id, query: view.query })
         };
-      const revision = yield* teams.revision(ref.companyId);
       const byId = new Map(people.map((person) => [person.id, person]));
       const result = Roster.preview({
         teamId: selected.id,
@@ -583,7 +587,11 @@ const render = Effect.fn("TeamsPage.render")(function* (
               body: result.breaking
                 .map(
                   (stop) =>
-                    `<p>${escapeHtml(`${result.breaking.length === 1 ? "" : `${stop.patch.title}: `}${stop.owner.name} owns it, and it builds with `)}<span class="code">${escapeHtml(stop.connection.label)}</span>${escapeHtml(` through ${selected.name}.`)}</p>`
+                    `<p>${escapeHtml(`${result.breaking.length === 1 ? "" : `${stop.patch.title}: `}${stop.owner.name} owns it, and it builds with `)}${listed(
+                      stop.connections.map(
+                        (lost) => `<span class="code">${escapeHtml(lost.label)}</span>`
+                      )
+                    )}${escapeHtml(` through ${selected.name}.`)}</p>`
                 )
                 .join("")
             });

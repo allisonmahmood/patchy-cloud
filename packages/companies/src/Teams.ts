@@ -175,6 +175,15 @@ export const make = Effect.gen(function* () {
           AND m.user_id = ANY(${userIds}::text[])
         ORDER BY m.user_id, m.team_id`
   });
+  // Ordered by id, so two transactions locking overlapping people take them in the same order.
+  const lockUsers = SqlSchema.findAll({
+    Request: Schema.Struct({ companyId: Schema.String, userIds: Schema.Array(Schema.String) }),
+    Result: Schema.Struct({ id: Schema.String, active: Schema.Boolean }),
+    execute: ({ companyId, userIds }) =>
+      sql`SELECT id, deactivated_at IS NULL AS active FROM users
+        WHERE company_id = ${companyId} AND id = ANY(${userIds}::text[])
+        ORDER BY id FOR KEY SHARE`
+  });
   const activeViewer = SqlSchema.findAll({
     Request: Schema.Struct({ companyId: Schema.String, actorId: Schema.String }),
     Result: Schema.Struct({ id: Schema.String }),
@@ -292,14 +301,6 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* admin(input);
         const team = yield* requireTeam(input);
-        if (input.revision !== undefined) {
-          // Locked to the commit, after the company row, as every team change takes them.
-          const [row] = yield* sql<{ readonly revision: string }>`SELECT revision::text
-            FROM companies_directory WHERE company_id = ${input.companyId} FOR UPDATE`;
-          const current = row?.revision ?? "0";
-          if (current !== input.revision)
-            return yield* new TeamsChanged({ companyId: input.companyId, revision: current });
-        }
         const adding = new Set(input.add);
         const removing = new Set(input.remove);
         const changes = [
@@ -310,12 +311,30 @@ export const make = Effect.gen(function* () {
             .filter((id) => !removing.has(id))
             .map((userId) => ({ userId, added: true }))
         ];
+        // Every user row the save writes against, the actor's history row included, is locked
+        // before the directory row, the order a claims refresh takes them: its user, then the
+        // directory through the users trigger. The other order deadlocks against one.
+        const locked = new Map(
+          (yield* lockUsers({
+            companyId: input.companyId,
+            userIds: [input.actorId, ...changes.map((change) => change.userId)]
+          }).pipe(Effect.catchTags(dieOnSchemaError))).map((user) => [user.id, user.active])
+        );
+        if (input.revision !== undefined) {
+          // Locked to the commit, after the company and user rows.
+          const [row] = yield* sql<{ readonly revision: string }>`SELECT revision::text
+            FROM companies_directory WHERE company_id = ${input.companyId} FOR UPDATE`;
+          const current = row?.revision ?? "0";
+          if (current !== input.revision)
+            return yield* new TeamsChanged({ companyId: input.companyId, revision: current });
+        }
+        const refused = changes.find((change) =>
+          change.added ? locked.get(change.userId) !== true : !locked.has(change.userId)
+        );
+        if (refused !== undefined)
+          return yield* new UserNotFound({ companyId: input.companyId, userId: refused.userId });
         const edited: { readonly userId: string; readonly added: boolean }[] = [];
         for (const change of changes) {
-          const [target] = yield* sql<{ active: boolean }>`SELECT deactivated_at IS NULL AS active
-            FROM users WHERE company_id = ${input.companyId} AND id = ${change.userId} FOR KEY SHARE`;
-          if (target === undefined || (change.added && !target.active))
-            return yield* new UserNotFound({ companyId: input.companyId, userId: change.userId });
           const rows = change.added
             ? yield* sql`INSERT INTO company_team_members(company_id, team_id, user_id)
                 VALUES (${input.companyId}, ${input.teamId}, ${change.userId}) ON CONFLICT DO NOTHING RETURNING user_id`

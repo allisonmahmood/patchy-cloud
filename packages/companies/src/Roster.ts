@@ -58,11 +58,14 @@ export interface Kept {
   readonly through: readonly string[];
 }
 
-/** A live patch that stops: its owner leaves the only team through which it builds with a connection. */
+/**
+ * A live patch that stops: its owner leaves the only team through which it builds with these
+ * connections, one or more.
+ */
 export interface Breaking {
   readonly patch: ReachConnection["usedBy"][number];
   readonly owner: Person;
-  readonly connection: ReachConnection;
+  readonly connections: readonly ReachConnection[];
 }
 
 export interface Preview {
@@ -127,14 +130,17 @@ export const preview = (input: {
           }))
       };
     }),
-    breaking: input.remove.flatMap((person) =>
-      own.connections
-        .filter((connection) => !reaches(person, connection))
-        .flatMap((connection) =>
-          connection.usedBy
-            .filter((patch) => patch.ownerId === person.id)
-            .map((patch) => ({ patch, owner: person, connection }))
-        )
-    )
+    // A patch has one owner, so grouping each removed person's losses by patch counts each once.
+    breaking: input.remove.flatMap((person) => {
+      const byPatch = new Map<string, Breaking>();
+      for (const connection of own.connections.filter((item) => !reaches(person, item)))
+        for (const patch of connection.usedBy.filter((used) => used.ownerId === person.id))
+          byPatch.set(patch.href, {
+            patch,
+            owner: person,
+            connections: [...(byPatch.get(patch.href)?.connections ?? []), connection]
+          });
+      return [...byPatch.values()];
+    })
   };
 };

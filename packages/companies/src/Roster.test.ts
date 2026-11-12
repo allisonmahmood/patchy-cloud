@@ -98,17 +98,25 @@ describe("a roster change's preview", () => {
     expect(ids(rowan?.loses ?? [])).toEqual(["attio/crm"]);
   });
 
-  it("warns of each live patch whose owner builds with a connection only through this team", () => {
+  it("warns once of each live patch whose owner builds with connections only through this team", () => {
+    const leadScorer = { title: "Lead scorer", href: "/patches/lead-scorer", ownerId: "leo" };
     const result = Roster.preview({
       teamId: "sales",
       add: [],
       remove: [person("leo", ["sales"]), person("mia", ["sales", "leads"])],
-      reach,
+      reach: {
+        ...reach,
+        connections: [...reach.connections, connection("pidgeon/mail", ["sales"], [leadScorer])]
+      },
       teamNames
     });
     // Mia keeps building through Leadership; a connection open to the company names no team.
     expect(
-      result.breaking.map((stop) => [stop.patch.title, stop.owner.id, stop.connection.id])
-    ).toEqual([["Lead scorer", "leo", "attio/crm"]]);
+      result.breaking.map((stop) => [
+        stop.patch.title,
+        stop.owner.id,
+        stop.connections.map((lost) => lost.id)
+      ])
+    ).toEqual([["Lead scorer", "leo", ["attio/crm", "pidgeon/mail"]]]);
   });
 });

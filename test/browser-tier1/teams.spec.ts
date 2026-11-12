@@ -39,3 +39,20 @@ for (const [screen, viewport] of [
     await review.click();
     await expect(page.getByRole("dialog", { name: "Save changes to Design?" })).toBeVisible();
   });
+
+test("a member on a phone still sees whom to ask on a team's own screen", async ({
+  page,
+  context,
+  instance
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const created = await context.request.post(`${instance.origin}/settings/company/teams/create`, {
+    headers: { origin: instance.origin },
+    form: { name: "Design" }
+  });
+  expect(created.ok()).toBe(true);
+  const team = new URL(created.url()).searchParams.get("team") ?? "";
+  await instance.session(context, "colleague");
+  await page.goto(`${instance.origin}/settings/company/teams?team=${team}`);
+  await expect(page.getByText(/Only admins change teams/)).toBeVisible();
+});

@@ -1,6 +1,9 @@
 import { assert, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
 import { NodeCryptography } from "@patchy/core";
 import * as Testing from "@patchy/sql/testing";
@@ -46,6 +49,34 @@ const setup = Effect.fn(function* (handle: string) {
     admin: yield* add("Ben", "admin"),
     member: yield* add("Cleo", "member")
   };
+});
+// Waits until `count` sessions on this test's database wait on a lock, for three real seconds at most.
+const lockWaits = (count: number) =>
+  Effect.flatMap(SqlClient.SqlClient, (sql) =>
+    sql`SELECT pid FROM pg_stat_activity
+      WHERE datname = current_database() AND wait_event_type = 'Lock'`.pipe(
+      Effect.repeat({ until: (rows) => rows.length === count }),
+      Effect.timeout("3 seconds"),
+      TestClock.withLive
+    )
+  );
+// Runs `change` in a transaction left open, holding its row locks, until the returned effect
+// commits it. The transaction rolls back if the case ends first.
+const hold = Effect.fn("hold")(function* <A, E>(change: Effect.Effect<A, E>) {
+  const sql = yield* SqlClient.SqlClient;
+  const ran = yield* Deferred.make<void>();
+  const commit = yield* Deferred.make<void>();
+  const fiber = yield* sql
+    .withTransaction(
+      Effect.gen(function* () {
+        yield* change;
+        yield* Deferred.succeed(ran, undefined);
+        yield* Deferred.await(commit);
+      })
+    )
+    .pipe(Effect.forkScoped);
+  yield* Deferred.await(ran);
+  return Deferred.succeed(commit, undefined).pipe(Effect.andThen(Fiber.join(fiber)));
 });
 const services = Layer.mergeAll(Companies.layer, Users.layer, Directory.layer, Teams.layer).pipe(
   Layer.provideMerge(Testing.layer()),
@@ -191,6 +222,51 @@ it.layer(services)("Teams", (it) => {
           "TeamNotFound"
         );
       })
+  );
+
+  it.effect(
+    "a guarded save racing a claims refresh for its actor or one of its people lands both",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const teams = yield* Teams.Teams;
+        const users = yield* Users.Users;
+        const { company } = yield* setup("teams-lock-order");
+        for (const refreshed of ["actor", "person"] as const) {
+          // Ids fix the order the save locks people in: the actor, the refreshed person, then the
+          // held one, whom the save adds first.
+          const id = (at: "a" | "b" | "c") => `usr_lock_${refreshed}_${at}`;
+          const [actor, person, held] = [id("a"), id("b"), id("c")];
+          yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role) VALUES
+            (${actor}, ${actor}, ${company.id}, ${`${actor}@example.com`}, 'Actor', 'admin'),
+            (${person}, ${person}, ${company.id}, ${`${person}@example.com`}, 'Person', 'member'),
+            (${held}, ${held}, ${company.id}, ${`${held}@example.com`}, 'Held', 'member')`;
+          const ref = { companyId: company.id, actorId: actor };
+          const team = yield* teams.create({ ...ref, name: `Lock order ${refreshed}` });
+          const revision = yield* teams.revision(company.id);
+          const release = yield* hold(sql`SELECT id FROM users WHERE id = ${held} FOR UPDATE`);
+          const save = yield* teams
+            .setMemberships({ ...ref, teamId: team.id, add: [held, person], revision })
+            .pipe(Effect.forkScoped);
+          yield* lockWaits(1);
+          // A changed email takes the user row outright, then the directory through its trigger.
+          const who = refreshed === "actor" ? actor : person;
+          const email = `${who}@moved.example.com`;
+          const refresh = yield* users
+            .refreshClaims({
+              clerkUserId: who,
+              email,
+              name: refreshed === "actor" ? "Actor" : "Person"
+            })
+            .pipe(Effect.forkScoped);
+          yield* lockWaits(2);
+          yield* release;
+          assert.strictEqual(yield* Fiber.join(save), 2);
+          assert.strictEqual((yield* Fiber.join(refresh))?.user.email, email);
+          assert.deepStrictEqual(yield* teams.members({ ...ref, teamId: team.id }), [person, held]);
+          assert.strictEqual(BigInt(yield* teams.revision(company.id)), BigInt(revision) + 2n);
+        }
+      }).pipe(Effect.scoped)
   );
 
   it.effect(
