@@ -8,12 +8,14 @@
  */
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import {
+  AudienceRefused,
   BadRequest,
   Behind,
   Conflict,
@@ -410,6 +412,18 @@ const canonicalJson = (json: unknown) =>
 
 const rejected = (code: typeof PublishRefused.Type.code, error: string) =>
   refuse(PublishRefused, { ok: false, code, error });
+/**
+ * A request naming an `audience`, which clients released with team audiences send. This release
+ * sets sharing only by `scope`; ignoring the audience could open a patch to the whole company.
+ */
+const audienceRefused = (body: unknown, next: string) =>
+  Predicate.hasProperty(body, "audience")
+    ? refuse(AudienceRefused, {
+        ok: false,
+        code: "upgrade_required",
+        error: `This Patchy release can't set a patch's audience yet. ${next}`
+      })
+    : undefined;
 const keyConflict = () =>
   refuse(PublishKeyConflict, {
     ok: false,
@@ -619,6 +633,11 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           });
           const previous = yield* replay();
           if (previous !== undefined) return previous;
+          const audience = audienceRefused(
+            json,
+            "Publish without --share or --team, or with the patchy CLI from this release."
+          );
+          if (audience !== undefined) return audience;
           if (isPatchId(key.patchId)) {
             yield* WideEvents.enrich({ patchId: key.patchId });
             const admission = yield* patches
@@ -1160,9 +1179,15 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
       .handleRaw("share", ({ params }) =>
         Effect.gen(function* () {
           const identity = yield* CurrentIdentity;
-          const payload = yield* readBody(maxShareBodyBytes).pipe(
-            Effect.flatMap(decodeShare),
-            Effect.catchTags(bodyFailures)
+          const body = yield* readBody(maxShareBodyBytes).pipe(Effect.catchTags(bodyFailures));
+          if (HttpServerResponse.isHttpServerResponse(body)) return body;
+          const audience = audienceRefused(
+            body,
+            "Change its sharing with the patchy CLI from this release."
+          );
+          if (audience !== undefined) return audience;
+          const payload = yield* decodeShare(body).pipe(
+            Effect.catchTags({ MalformedBody: bodyFailures.MalformedBody })
           );
           if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
           const shared = yield* patches
