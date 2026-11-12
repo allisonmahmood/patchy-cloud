@@ -19,7 +19,7 @@ import {
 } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { describe, expect } from "vitest";
-import { Users } from "@patchy/companies";
+import { Terms, Users } from "@patchy/companies";
 import { NodeCryptography } from "@patchy/core";
 import * as Testing from "@patchy/sql/testing";
 import { realNode } from "../runtimes.js";
@@ -1144,6 +1144,21 @@ it.layer(
         const retired = yield* users.findByEmail(first.publisher.email);
         expect(retired?.deactivatedAt).not.toBeNull();
         expect((yield* users.findByEmail(second.publisher.email))?.deactivatedAt).toBeFalsy();
+      })
+  );
+
+  it.effect(
+    "starts every run's people past the terms prompt, as its checks open pages as them",
+    () =>
+      Effect.gen(function* () {
+        const users = yield* Users.Users;
+        const { scenario } = yield* loadScenario(repo, "team");
+        expect(scenario.people.some((person) => person.termsPending === true)).toBe(true);
+        const run = yield* seedRun(scenario, "ccccc3");
+        for (const person of run.people)
+          expect(
+            yield* users.hasAcceptedTerms({ userId: person.id, revisions: Terms.current })
+          ).toBe(true);
       })
   );
 
