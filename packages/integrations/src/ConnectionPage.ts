@@ -357,7 +357,12 @@ const index = Effect.fn("ConnectionPage.index")(function* (
 const catalogue = Effect.fn("ConnectionPage.catalogue")(function* (
   viewer: RequireSession.Viewer["Service"]
 ) {
-  const connections = yield* (yield* ConnectionStore.ConnectionStore).list(viewer.company.id);
+  // Members count only the connections they can build with, as on Integrations itself.
+  const reader = viewer.role === "admin" ? undefined : viewer.user.id;
+  const connections = yield* (yield* ConnectionStore.ConnectionStore).list(
+    viewer.company.id,
+    reader
+  );
   const now = yield* Clock.currentTimeMillis;
   const admins = viewer.role === "admin" ? [] : ((yield* directory(viewer))?.admins ?? []);
   return {

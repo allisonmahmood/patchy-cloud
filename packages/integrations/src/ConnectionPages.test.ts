@@ -357,6 +357,14 @@ it.layer(services)("company connection pages", (it) => {
           headers: { cookie: cookie(member) }
         });
         assert.notInclude(yield* Effect.promise(() => listed.text()), "postgres/audience-page");
+        // The catalogue counts only what each person can build with.
+        const counted = (user: Users.User) =>
+          Effect.flatMap(
+            send("/settings/integrations/connect", { headers: { cookie: cookie(user) } }),
+            (response) => Effect.promise(() => response.text())
+          );
+        assert.match(yield* counted(owner.user), /1 connected/);
+        assert.notMatch(yield* counted(member), /\d+ connected/);
         yield* (yield* Teams.Teams).setMemberships({
           companyId: owner.company.id,
           actorId: owner.user.id,
