@@ -453,6 +453,38 @@ try {
     patchId: first.patchId
   });
 
+  console.log("[packed-cli-e2e] hiding a team patch from a colleague's patchy list");
+  await checkedCall(() => seedOwnerTeam("Packed reviewers"));
+  const teamShare = await runCli(
+    cliPath,
+    ["share", "--patch", first.patchId, "teams", "--team", "packed reviewers", "--json"],
+    { cwd: consumerDir, env: cliEnv }
+  );
+  const teamShared = JSON.parse(teamShare.stdout);
+  assert.equal(Object.keys(teamShared)[0], "audience", "--json leads with the audience");
+  assert.deepEqual(teamShared.audience, {
+    kind: "teams",
+    teams: [{ id: "team_packed_reviewers", name: "Packed reviewers" }]
+  });
+  // Clients released before team audiences read a scope they know.
+  assert.equal(teamShared.scope, "company");
+  const listed = async (token) =>
+    JSON.parse(
+      (
+        await runCli(cliPath, ["list", "--json"], {
+          cwd: consumerDir,
+          env: { ...cliEnv, PATCHY_API_TOKEN: token },
+          sensitiveValues: [token]
+        })
+      ).stdout
+    ).patches.map((patch) => patch.id);
+  assert.ok(
+    !(await listed(foreignToken)).includes(first.patchId),
+    "outside the team, it is absent"
+  );
+  assert.ok((await listed(DEV_SEED.token)).includes(first.patchId), "on the team, it is listed");
+
+  // `share company` sends the whole audience, so it widens a patch open to teams.
   console.log("[packed-cli-e2e] taking the cached-file patch back inside the company");
   const companyShare = await runCli(cliPath, ["share", fixtureArgument, "company"], {
     cwd: consumerDir,
@@ -475,6 +507,7 @@ try {
     ok: true,
     patchId: first.patchId,
     scope: "public",
+    audience: { kind: "public" },
     publicUrl: first.address
   });
   for (const version of publicVersions) {
@@ -493,14 +526,14 @@ try {
   assert.equal(freshUpload.stderr, "", "--json success must leave stderr empty");
   const fresh = JSON.parse(freshUpload.stdout);
   assert.equal(fresh.ok, true);
-  assert.equal(fresh.scope, "company", "a new upload without --share defaults to company");
+  assert.equal(fresh.scope, "company", "an explicit Company audience stays company-scoped");
   assert.equal(fresh.versionNumber, 1);
   assert.notEqual(fresh.patchId, first.patchId);
   assert.equal(fresh.name, "review-artifact-2", "a new same-file patch must get an available name");
   assert.equal(fresh.address, `${publicBaseUrl}/${DEV_SEED.companyHandle}/${fresh.name}`);
   assert.equal(fresh.publicUrl, fresh.address);
 
-  console.log("[packed-cli-e2e] validating the default-company publish's login door");
+  console.log("[packed-cli-e2e] validating the Company publish's login door");
   for (const url of [fresh.address, `${fresh.address}/~v/1`]) {
     assertViewerDoor(await fetchViewer(url));
   }
@@ -1504,7 +1537,8 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
   assert.equal(new URL(dev.guestUrl).hostname, "127.0.0.1");
   assert.notEqual(new URL(dev.guestUrl).origin, new URL(dev.url).origin);
   assert.notEqual(new URL(dev.guestUrl).origin, new URL(dev.colleagueUrl).origin);
-  assert.ok(dev.logPath.startsWith(path.join(dir, ".patchy", "dev") + path.sep));
+  const devLogRoot = await checkedCall(() => realpath(path.join(dir, ".patchy", "dev")));
+  assert.ok(dev.logPath.startsWith(devLogRoot + path.sep));
   assert.equal(dev.stop, `pnpm patchy dev stop --api-url '${publicBaseUrl}'`);
 
   // A BrowserServer exposes the owned process, so the existing signal/process-group
@@ -1690,6 +1724,7 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
     "description",
     "descriptionUpdatedAt",
     "scope",
+    "audience",
     "name",
     "address",
     "publicUrl",
@@ -1727,6 +1762,7 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
       description: "Exercise disposable notes end to end",
       descriptionUpdatedAt: published.descriptionUpdatedAt,
       scope: "company",
+      audience: { kind: "company" },
       name: "tier1-notes",
       address: `${publicBaseUrl}/${DEV_SEED.companyHandle}/tier1-notes`,
       publicUrl: `${publicBaseUrl}/${DEV_SEED.companyHandle}/tier1-notes`,
@@ -2027,6 +2063,25 @@ async function startPostgres() {
     databaseUrl: `postgresql://postgres:postgres@127.0.0.1:${reservation.port}/patchy`
   };
   return postgres.databaseUrl;
+}
+
+/** A team holding only the seed's user, as an admin makes in Settings. */
+async function seedOwnerTeam(name) {
+  const client = new pg.Client({ connectionString: postgres.databaseUrl });
+  await client.connect();
+  try {
+    await client.query(
+      `INSERT INTO company_teams (id, company_id, name) VALUES ('team_packed_reviewers', $1, $2)`,
+      [DEV_SEED.companyId, name]
+    );
+    await client.query(
+      `INSERT INTO company_team_members (company_id, team_id, user_id)
+       VALUES ($1, 'team_packed_reviewers', $2)`,
+      [DEV_SEED.companyId, DEV_SEED.userId]
+    );
+  } finally {
+    await client.end();
+  }
 }
 
 async function seedOtherUserToken() {

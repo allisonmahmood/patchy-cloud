@@ -474,23 +474,38 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
       })
     );
   }
+  const find: LoadedVersions.LoadedVersions["Service"]["find"] = (patchId, requestedVersion) => {
+    if (requestedVersion !== undefined)
+      return Effect.succeed(
+        patchId === version.patchId && requestedVersion === version.versionId
+          ? Option.some({ ...currentVersion, patchTier: currentVersion.manifest.tier })
+          : Option.none()
+      );
+    return Effect.succeed(
+      Option.map(Option.fromUndefinedOr(versions.get(patchId)), (loaded) => ({
+        ...loaded,
+        patchTier: loaded.manifest.tier
+      }))
+    );
+  };
+  // Who opens each shared source, as the instance would decide: the developer every one, since
+  // generation read them as them; the guest none, since a source's rows are its company's; any
+  // colleague, on none of the developer's teams, those open to the whole company.
+  const teamOnly = new Set(
+    Object.values(prepared.metadata.shared).flatMap((entry) =>
+      entry.companyWide === false ? [entry.declaration.patchId] : []
+    )
+  );
+  const opens = (patchId: string, userId: string) =>
+    patchId === version.patchId ||
+    userId === prepared.identity.user.id ||
+    (userId !== DevMembers.guest.id && !teamOnly.has(patchId));
   const loaded = Layer.succeed(
     LoadedVersions.LoadedVersions,
     LoadedVersions.LoadedVersions.of({
-      find: (patchId, requestedVersion) => {
-        if (requestedVersion !== undefined)
-          return Effect.succeed(
-            patchId === version.patchId && requestedVersion === version.versionId
-              ? Option.some({ ...currentVersion, patchTier: currentVersion.manifest.tier })
-              : Option.none()
-          );
-        return Effect.succeed(
-          Option.map(Option.fromUndefinedOr(versions.get(patchId)), (loaded) => ({
-            ...loaded,
-            patchTier: loaded.manifest.tier
-          }))
-        );
-      }
+      findForViewer: (patchId, viewer) =>
+        opens(patchId, viewer.userId) ? find(patchId) : Effect.succeed(Option.none()),
+      find
     })
   );
   const connections = new Map<string, ConnectionStoreDev.DevConnection>();

@@ -6,6 +6,7 @@ import { canvas } from "./canvas.js";
 import { changelog } from "./changelog.js";
 import { checklist } from "./checklist.js";
 import { containers } from "./containers.js";
+import { directoryCards } from "./directory-cards.js";
 import { detail } from "./detail.js";
 import { dialogs } from "./dialogs.js";
 import { disclosures } from "./disclosures.js";
@@ -61,6 +62,7 @@ export const chunks = {
   dialogs,
   steps,
   tiles,
+  directoryCards,
   flowParts,
   appShell,
   doors,

@@ -33,6 +33,7 @@ import { behindTheScenes, changeEntry } from "./changelog.js";
 import { choiceLinks } from "./choice-links.js";
 import { computerMark } from "./computer-mark.js";
 import { copyButton } from "./copy-button.js";
+import { directoryCards } from "./directory-cards.js";
 import { disclosure } from "./disclosure.js";
 import { checklist } from "./checklist.js";
 import {
@@ -660,6 +661,9 @@ const homeParts = demo(
     ["Rest", "flat on a hairline: the mark, then the name over its kind and owner"],
     ["Hover (fine pointer)", "an ink edge and a lift"],
     ["Narrow", "two a row; on a phone the name alone"]
+  ])}${stateTable("Directory card", [
+    ["Desktop", "a flat card with a mark, name, count and optional decorative preview"],
+    ["Phone", "one compact link per row, with previews hidden and the name free to wrap"]
   ])}${stateTable("Copy button", [
     ["Without script", "not there, so nothing offers a copy that can't happen"],
     ["With script", "its label, then Copied"],
@@ -1020,7 +1024,7 @@ const flowParts = demo(
 const system = indexPage({
   title: "The system",
   meta: ["Every first-party page composes these parts and one of five templates"],
-  content: `${templatesSection}${type}${colours}${buttons}${fields}${choices}${checklistDemo}${status}${feedback}${navigation}${lists}${wideParts}${homeParts}${detailParts}${headers}${cards}${disclosures}${changes}${marks}${setupSteps}${flowParts}${doorParts}<script defer src="${copyScriptPath}"></script>`
+  content: `${templatesSection}${type}${colours}${buttons}${fields}${choices}${checklistDemo}${status}${feedback}${navigation}${lists}${wideParts}${homeParts}${detailParts}${headers}${cards}${directoryCards([{ name: "Design", href: "#rows", meta: "4 people", mark: patch("design"), preview: avatar("ada", "Ada Park"), action: "Open team" }])}${disclosures}${changes}${marks}${setupSteps}${flowParts}${doorParts}<script defer src="${copyScriptPath}"></script>`
 });
 
 const sampleRows = ["kudos", "new-business", "spend"].map((name) => [

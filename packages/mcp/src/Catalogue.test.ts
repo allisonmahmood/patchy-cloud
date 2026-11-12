@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 import { agentTools, openPatchAnswer, type HandlerDescriptors } from "@patchy/api";
+import { Teams } from "@patchy/companies";
 import { Patches } from "@patchy/patches";
 import { at, call, company, door, harness, objectAt, publish, type Person } from "./test/door.js";
 
@@ -127,6 +128,55 @@ it.layer(harness)("the catalogue", (it) => {
             catalogueContinued: false,
             resultBytes: Buffer.byteLength(String(at(response.json, "result.content.0.text")))
           });
+        }
+      })
+  );
+
+  it.effect(
+    "finds and opens a team patch only for people on one of its teams, admins included",
+    () =>
+      Effect.gen(function* () {
+        const acme = yield* company("teams", [
+          ["Priya Shah", "admin"],
+          ["Ben Okafor", "member"],
+          ["Cleo Diaz", "member"],
+          ["Ada Lin", "admin"]
+        ]);
+        const [priya, ben, cleo, ada] = acme.people as [Person, Person, Person, Person];
+        const teams = yield* Teams.Teams;
+        const actor = { companyId: acme.id, actorId: priya.id };
+        const sales = yield* teams.create({ ...actor, name: "Sales" });
+        yield* teams.setMemberships({
+          ...actor,
+          teamId: sales.id,
+          userIds: [priya.id, ben.id],
+          added: true
+        });
+        const board = yield* publish(acme.id, priya, "sales-board", { handlers: deals });
+        yield* publish(acme.id, priya, "company-board", { handlers: deals });
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`UPDATE patches SET scope = 'teams' WHERE id = ${board.patchId}`;
+        yield* sql`INSERT INTO patch_audience_teams (patch_id, company_id, team_id)
+          VALUES (${board.patchId}, ${acme.id}, ${sales.id})`;
+        const send = yield* door("https://cloud.example", "203.0.113.31");
+        const open = (person: Person) =>
+          send(call(person.token, "open_patch", { patch: "sales-board" }));
+        for (const person of [priya, ben]) {
+          assert.deepStrictEqual(names(found(yield* send(call(person.token, "find_patches")))), [
+            "company-board",
+            "sales-board"
+          ]);
+          assert.strictEqual(
+            at((yield* open(person)).json, "result.structuredContent.name"),
+            "sales-board"
+          );
+        }
+        // Someone on none of its teams, an admin among them, can't find it or open it.
+        for (const person of [cleo, ada]) {
+          assert.deepStrictEqual(names(found(yield* send(call(person.token, "find_patches")))), [
+            "company-board"
+          ]);
+          assert.include((yield* open(person)).event, { code: "not_found", outcome: "refused" });
         }
       })
   );

@@ -2,7 +2,7 @@ import { assert } from "@effect/vitest";
 import { Analytics } from "@patchy/analytics";
 import { Session } from "@patchy/auth";
 import { clerkEnv, signedInCookies, signSession } from "@patchy/auth/testing";
-import { Companies, Users } from "@patchy/companies";
+import { Companies, Teams, Users } from "@patchy/companies";
 import { RuntimeLog } from "@patchy/runtime";
 import * as Testing from "@patchy/sql/testing";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -24,6 +24,7 @@ import type * as ImapSource from "../imap/Source.js";
 import * as ImapTest from "./imap.js";
 import * as SqlConnectionStore from "../SqlConnectionStore.js";
 import { NodeCryptography } from "@patchy/core";
+import * as PatchVisibilityTest from "./patchVisibility.js";
 
 /**
  * The connections pages as a signed-in person sees them, over a migrated database and `pidgeon`:
@@ -72,6 +73,8 @@ export const services = (
         Redacted.make("test:AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=")
       )
     ),
+    Layer.provideMerge(PatchVisibilityTest.layer),
+    Layer.provideMerge(Teams.layer),
     Layer.provideMerge(Testing.layer()),
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env))),
     Layer.provideMerge(NodeCryptography.layer)

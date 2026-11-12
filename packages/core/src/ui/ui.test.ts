@@ -115,6 +115,7 @@ const shownAt = {
   region: "Region",
   attentionRow: "Attention row",
   usualTiles: "Usual tile",
+  directoryCards: "Directory card",
   choiceLinks: "Choice link",
   canList: "Can list",
   flowOutcome: "Flow outcome",
@@ -228,7 +229,35 @@ describe("the field family", () => {
   });
 });
 
+describe("directory cards", () => {
+  it("escapes destination text and URLs while keeping decorative previews out of the link name", () => {
+    const html = Ui.directoryCards([
+      {
+        name: "Design <studio>",
+        href: '/teams?name="design"&active=1',
+        meta: "4 people & collaborators",
+        mark: "<span>mark</span>",
+        preview: "<span>AP</span>",
+        action: "Open <team>"
+      }
+    ]);
+    expect(html).toContain("Design &lt;studio&gt;");
+    expect(html).toContain('href="/teams?name=&quot;design&quot;&amp;active=1"');
+    expect(html).toContain("4 people &amp; collaborators");
+    expect(html).toContain('class="directory-card-preview" aria-hidden="true"><span>AP</span>');
+    expect(html).toContain("Open &lt;team&gt;");
+  });
+});
+
 describe("buttons", () => {
+  it("escapes native submit overrides for a POST save inside a GET search form", () => {
+    expect(
+      button("Add", { formAction: '/teams/add?name="<studio>"&team=1', formMethod: "post" })
+    ).toContain(
+      'formaction="/teams/add?name=&quot;&lt;studio&gt;&quot;&amp;team=1" formmethod="post"'
+    );
+    expect(button("Search")).not.toContain("formmethod");
+  });
   it("draw each kind and say a pending press can't be repeated", () => {
     expect(button("Save", { kind: "primary", size: "sm" })).toBe(
       '<button class="btn btn-primary btn-sm" type="submit">Save</button>'

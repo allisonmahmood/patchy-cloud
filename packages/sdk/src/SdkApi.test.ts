@@ -36,7 +36,7 @@ import {
 } from "@patchy/api";
 import type { Snapshot } from "@patchy/api/postgres-snapshot";
 import { Analytics } from "@patchy/analytics";
-import { Looks } from "@patchy/companies";
+import { Teams, Looks } from "@patchy/companies";
 import { Patches } from "@patchy/patches";
 import { ConnectionStore } from "@patchy/integrations";
 import { ContentStore, FilesystemContentStore } from "@patchy/content-store";
@@ -449,6 +449,88 @@ const failureSource = Effect.fn("sdk.failureSource")(function* (patchId: string)
 });
 
 it.layer(layer)("SDK company generation", (it) => {
+  it.effect("refuses restricted and missing patch ids identically during generation", () =>
+    Effect.gen(function* () {
+      const admin = Fixtures.identities.admin;
+      const team = yield* (yield* Teams.Teams).create({
+        companyId: identity.company.id,
+        actorId: admin.user.id,
+        name: "SDK private id"
+      });
+      yield* (yield* Teams.Teams).setMemberships({
+        companyId: identity.company.id,
+        actorId: admin.user.id,
+        teamId: team.id,
+        userIds: [admin.user.id],
+        added: true
+      });
+      const input = Fixtures.recordInput(admin, {
+        audience: { kind: "teams", teamIds: [team.id] }
+      });
+      yield* Fixtures.record(input);
+      for (const patchId of [input.patchId, "sdkmissing01"]) {
+        const error = yield* Generation.generate(
+          identity.company.id,
+          { ...generateRequest(), patchId },
+          identity.user.id
+        ).pipe(Effect.flip);
+        assert.instanceOf(error, Generation.PatchNotOpenable);
+      }
+      yield* Generation.generate(
+        identity.company.id,
+        { ...generateRequest(), patchId: input.patchId },
+        admin.user.id
+      );
+    })
+  );
+  it.effect(
+    "direct generation uses its required viewer and follows connection membership changes",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient;
+        const admin = Fixtures.identities.admin;
+        const team = yield* (yield* Teams.Teams).create({
+          companyId: identity.company.id,
+          actorId: admin.user.id,
+          name: "Generation access"
+        });
+        const id = "sdk-viewer-required";
+        yield* sql`INSERT INTO connections(id, company_id, integration, handle, description, mode, status, display, credentials, key_id, credential_revision, metadata_revision, created_by)
+      VALUES (${id}, ${identity.company.id}, 'postgres', 'generation-teams', 'Generation fixture', 'company', 'connected', ${sql.json({ host: "db.example.test", port: 5432, database: "fixture", role: "reader" })}, 'unused', 'unused', 1, 1, ${admin.user.id})`;
+        yield* sql`INSERT INTO connection_snapshots(connection_id, company_id, integration, revision, snapshot)
+      VALUES (${id}, ${identity.company.id}, 'postgres', 1, ${sql.json({ version: 1, relations: [], enums: [], exclusions: [] })})`;
+        const store = yield* ConnectionStore.ConnectionStore;
+        yield* store.setAudience({
+          companyId: identity.company.id,
+          userId: admin.user.id,
+          id,
+          audience: { kind: "teams", teamIds: [team.id] }
+        });
+        const payload = generateRequest({
+          ...Fixtures.manifest,
+          tier: 2,
+          uses: { limited: { kind: "postgres", handle: "generation-teams" } }
+        });
+        const generate = Generation.generate(identity.company.id, payload, identity.user.id);
+        assert.instanceOf(yield* generate.pipe(Effect.flip), Generation.ConnectionNotConnected);
+        yield* (yield* Teams.Teams).setMemberships({
+          companyId: identity.company.id,
+          actorId: admin.user.id,
+          teamId: team.id,
+          userIds: [identity.user.id],
+          added: true
+        });
+        assert.deepEqual((yield* generate).uses, [{ alias: "limited", id, revision: 1 }]);
+        yield* (yield* Teams.Teams).setMemberships({
+          companyId: identity.company.id,
+          actorId: admin.user.id,
+          teamId: team.id,
+          userIds: [identity.user.id],
+          added: false
+        });
+        assert.instanceOf(yield* generate.pipe(Effect.flip), Generation.ConnectionNotConnected);
+      })
+  );
   it.effect("refuses module paths and invalid stems before generating imports", () =>
     Effect.gen(function* () {
       const client = yield* HttpClient.HttpClient;
@@ -751,7 +833,7 @@ it.layer(layer)("SDK company generation", (it) => {
   );
 
   it.effect(
-    "generates the current connection snapshot without credential access and rejects disconnected and restricted connections",
+    "generates the current connection snapshot without credential access and rejects disconnected connections",
     () =>
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient;
@@ -783,18 +865,16 @@ it.layer(layer)("SDK company generation", (it) => {
           enums: [],
           exclusions: []
         };
-        // A later release restricts a connection to teams; this one lets no one build with it.
-        for (const [id, handle, status, audience] of [
-          ["sdk-connected", "warehouse", "connected", "company"],
-          ["sdk-disconnected", "archive", "disconnected", "company"],
-          ["sdk-restricted", "pipeline", "connected", "teams"]
+        for (const [id, handle, status] of [
+          ["sdk-connected", "warehouse", "connected"],
+          ["sdk-disconnected", "archive", "disconnected"]
         ]) {
           yield* sql`INSERT INTO connections
           (id, company_id, integration, handle, description, mode, status, display, credentials,
-           key_id, credential_revision, metadata_revision, created_by, audience_kind)
+           key_id, credential_revision, metadata_revision, created_by)
           VALUES (${id}, ${identity.company.id}, 'postgres', ${handle}, 'SDK fixture', 'company', ${status},
             ${sql.json({ host: "db.example.com", port: 5432, database: "sales", role: "reader" })},
-            'not-a-valid-ciphertext', 'missing-key', 1, 4, ${identity.user.id}, ${audience})`;
+            'not-a-valid-ciphertext', 'missing-key', 1, 4, ${identity.user.id})`;
           yield* sql`INSERT INTO connection_snapshots
           (connection_id, company_id, integration, revision, snapshot)
           VALUES (${id}, ${identity.company.id}, 'postgres', 4, ${sql.json(snapshot)})`;
@@ -848,23 +928,21 @@ it.layer(layer)("SDK company generation", (it) => {
           output.files.find(({ path }) => path === "fixtures/postgres-warehouse.sql")!.contents,
           "contacts"
         );
-        for (const handle of ["archive", "pipeline"]) {
-          const refused = yield* client.execute(
-            HttpClientRequest.post("/api/sdk/generate").pipe(
-              HttpClientRequest.bearerToken(identity.machine.id),
-              HttpClientRequest.bodyJsonUnsafe({
-                ...generateRequest(),
-                manifest: {
-                  ...Fixtures.manifest,
-                  tier: 2,
-                  uses: { sales: { kind: "postgres", handle } }
-                }
-              })
-            )
-          );
-          assert.strictEqual(refused.status, 422, handle);
-          assert.include(yield* refused.json, { code: "connection_not_connected" });
-        }
+        const refused = yield* client.execute(
+          HttpClientRequest.post("/api/sdk/generate").pipe(
+            HttpClientRequest.bearerToken(identity.machine.id),
+            HttpClientRequest.bodyJsonUnsafe({
+              ...generateRequest(),
+              manifest: {
+                ...Fixtures.manifest,
+                tier: 2,
+                uses: { sales: { kind: "postgres", handle: "archive" } }
+              }
+            })
+          )
+        );
+        assert.strictEqual(refused.status, 422);
+        assert.include(yield* refused.json, { code: "connection_not_connected" });
       })
   );
 
@@ -1159,7 +1237,8 @@ it.layer(layer)("SDK company generation", (it) => {
             id: `${patchId}/logos`,
             revision: 1
           },
-          definition: { description: "Company logos keyed by filename.", shared: true }
+          definition: { description: "Company logos keyed by filename.", shared: true },
+          companyWide: true
         });
         const shared = output.metadata.shared.contacts!;
         if (!("tables" in shared)) throw new Error("Expected shared table metadata.");
@@ -1195,6 +1274,27 @@ it.layer(layer)("SDK company generation", (it) => {
             path
           );
         const sql = yield* SqlClient.SqlClient;
+        // Once only a team can open the source, generation says so, for dev's colleague.
+        yield* sql`INSERT INTO company_teams (id, company_id, name)
+          VALUES ('team_sdk_source', ${identity.company.id}, 'SDK source readers')`;
+        yield* sql`INSERT INTO company_team_members (company_id, team_id, user_id)
+          VALUES (${identity.company.id}, 'team_sdk_source', ${identity.user.id})`;
+        yield* sql`UPDATE patches SET scope = 'teams' WHERE id = ${patchId}`;
+        yield* sql`INSERT INTO patch_audience_teams (patch_id, company_id, team_id)
+          VALUES (${patchId}, ${identity.company.id}, 'team_sdk_source')`;
+        const restricted = yield* Generation.generate(
+          identity.company.id,
+          {
+            ...generateRequest(),
+            manifest: {
+              ...Fixtures.manifest,
+              tier: 2,
+              uses: { assets: { kind: "sharedStore", patchId, store: "logos" } }
+            }
+          },
+          identity.user.id
+        );
+        assert.isFalse(restricted.metadata.shared.assets?.companyWide);
         yield* sql`UPDATE patches SET disabled_at = now(), disabled_reason = 'test' WHERE id = ${patchId}`;
         const refused = yield* client.execute(
           HttpClientRequest.post("/api/sdk/generate").pipe(
@@ -1211,14 +1311,18 @@ it.layer(layer)("SDK company generation", (it) => {
         );
         assert.strictEqual(refused.status, 422);
         assert.include(yield* refused.json, { code: "patch_not_openable" });
-        const error = yield* Generation.generate(identity.company.id, {
-          ...generateRequest(),
-          manifest: {
-            ...Fixtures.manifest,
-            tier: 2,
-            uses: { assets: { kind: "sharedStore", patchId, store: "logos" } }
-          }
-        }).pipe(Effect.flip);
+        const error = yield* Generation.generate(
+          identity.company.id,
+          {
+            ...generateRequest(),
+            manifest: {
+              ...Fixtures.manifest,
+              tier: 2,
+              uses: { assets: { kind: "sharedStore", patchId, store: "logos" } }
+            }
+          },
+          identity.user.id
+        ).pipe(Effect.flip);
         assert.instanceOf(error, Generation.PatchNotOpenable);
         if (error._tag === "SdkPatchNotOpenable") {
           assert.instanceOf(error.cause, Patches.PatchNotOpenable);
@@ -1279,7 +1383,8 @@ it.layer(layer)("SDK company generation", (it) => {
         }),
         { ...generateRequest(), patchId }
       ];
-      for (const payload of requests) yield* Generation.generate(foreign.company.id, payload);
+      for (const payload of requests)
+        yield* Generation.generate(foreign.company.id, payload, foreign.user.id);
       // Generation must ask with the caller's company, never the source's.
       const api = yield* sdkOver(Layer.empty);
       for (const payload of requests) {
@@ -1444,10 +1549,11 @@ it.layer(layer)("SDK company generation", (it) => {
           Layer.succeed(Patches.Patches, replaced.patches ?? patches),
           Layer.succeed(ConnectionStore.ConnectionStore, replaced.connections ?? connections)
         );
-        const error = yield* Generation.generate(identity.company.id, payload).pipe(
-          Effect.provide(dependencies),
-          Effect.flip
-        );
+        const error = yield* Generation.generate(
+          identity.company.id,
+          payload,
+          identity.user.id
+        ).pipe(Effect.provide(dependencies), Effect.flip);
         const response = yield* (yield* sdkOver(dependencies)).generate({
           payload,
           responseMode: "response-only"
@@ -1484,14 +1590,18 @@ it.layer(layer)("SDK company generation", (it) => {
         });
         const dependencies = Layer.succeed(Patches.Patches, {
           ...patches,
-          find: () => Effect.fail(sqlError),
+          findForViewer: () => Effect.fail(sqlError),
           sharedTable: () => Effect.fail(sqlError)
         });
         for (const operation of [
-          Generation.generate(identity.company.id, {
-            ...generateRequest(),
-            patchId: "sdksqlfail01"
-          }),
+          Generation.generate(
+            identity.company.id,
+            {
+              ...generateRequest(),
+              patchId: "sdksqlfail01"
+            },
+            identity.user.id
+          ),
           Generation.generate(
             identity.company.id,
             generateRequest({
@@ -1500,7 +1610,8 @@ it.layer(layer)("SDK company generation", (it) => {
               uses: {
                 contacts: { kind: "sharedTable", patchId: "sdksqlfail01", table: "contacts" }
               }
-            })
+            }),
+            identity.user.id
           )
         ]) {
           const exit = yield* operation.pipe(Effect.provide(dependencies), Effect.exit);
@@ -1525,10 +1636,11 @@ it.layer(layer)("SDK company generation", (it) => {
           ),
           Layer.fresh
         );
-        const exit = yield* Generation.generate(identity.company.id, payload).pipe(
-          Effect.provide(isolated),
-          Effect.exit
-        );
+        const exit = yield* Generation.generate(
+          identity.company.id,
+          payload,
+          identity.user.id
+        ).pipe(Effect.provide(isolated), Effect.exit);
         assert.isTrue(Exit.isFailure(exit));
         if (Exit.isFailure(exit)) {
           assert.isTrue(Cause.hasDies(exit.cause));

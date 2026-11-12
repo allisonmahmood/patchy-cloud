@@ -104,6 +104,9 @@ it.effect(
     }).pipe(
       Effect.provideService(HttpServerRequest.HttpServerRequest, request),
       Effect.provideService(LoadedVersions.LoadedVersions, {
+        findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+          return this.find(patchId);
+        },
         find: () => Effect.succeed(Option.some({ ...version, patchTier: 1 }))
       }),
       Effect.provide(Limits.layer),
@@ -175,6 +178,9 @@ it.effect(
           })
       }),
       Effect.provideService(LoadedVersions.LoadedVersions, {
+        findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+          return this.find(patchId);
+        },
         find: () => Effect.succeed(Option.some({ ...version, patchTier: 2 }))
       }),
       Effect.provide(Limits.layer),
@@ -197,6 +203,9 @@ it.effect(
         }
       ).pipe(
         Effect.provideService(LoadedVersions.LoadedVersions, {
+          findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+            return this.find(patchId);
+          },
           find: () =>
             Effect.sync(() =>
               Option.some({ ...version, manifest: { ...version.manifest, tier: 1 }, patchTier })
@@ -255,6 +264,9 @@ it.effect("a public version reaches no data, even one that declared the member d
       }
     ).pipe(
       Effect.provideService(LoadedVersions.LoadedVersions, {
+        findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+          return this.find(patchId);
+        },
         find: () =>
           Effect.succeed(
             Option.some({
@@ -328,6 +340,9 @@ it.effect("reports unavailable host wiring for an admitted server call", () =>
   }).pipe(
     Effect.provideService(HttpServerRequest.HttpServerRequest, request),
     Effect.provideService(LoadedVersions.LoadedVersions, {
+      findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+        return this.find(patchId);
+      },
       find: () => Effect.succeed(Option.some({ ...version, patchTier: 2 }))
     }),
     Effect.provide(Limits.layer),

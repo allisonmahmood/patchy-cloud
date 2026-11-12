@@ -689,11 +689,11 @@ it.layer(services, { timeout: "60 seconds" })("SDK orchestration / real PostgreS
           .withTransaction(
             Effect.gen(function* () {
               yield* platform`SELECT id FROM patches WHERE id = ${original.patchId} FOR UPDATE`;
-              yield* patches.setScope(
-                original.patchId,
-                { userId: uploader.user.id, admin: false },
-                "public"
-              );
+              yield* patches.setSharing({
+                patchId: original.patchId,
+                actor: { userId: uploader.user.id, admin: false },
+                audience: { kind: "public" }
+              });
               yield* Deferred.succeed(scopePid, yield* backendPid(platform));
               yield* scopeHeld.pause;
             })
@@ -711,7 +711,7 @@ it.layer(services, { timeout: "60 seconds" })("SDK orchestration / real PostgreS
         assert.deepStrictEqual(nextResult.unused.columns, ["notes.label"]);
         assert.deepStrictEqual(nextResult.unused.stores, ["images"]);
         const final = Option.getOrThrow(yield* patches.find(original.patchId));
-        assert.strictEqual(final.patch.scope, "public");
+        assert.strictEqual(final.patch.audience.kind, "public");
         assert.strictEqual(final.patch.currentVersionId, nextResult.versionId);
         assert.strictEqual(final.version.id, nextResult.versionId);
         assert.strictEqual(yield* content.read(final.version), "<p>after locked scope change</p>");

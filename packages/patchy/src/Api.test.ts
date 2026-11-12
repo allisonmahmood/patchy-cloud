@@ -45,6 +45,15 @@ describe("isDefinitivePublishRefusal", () => {
         "patch_deleted"
       ] as const
     ).map((code) => ({ refusal: refusal(409, { code }) })),
+    ...(
+      [
+        "invalid_audience_teams",
+        "audience_excludes_owner",
+        "owner_access_lost",
+        "connection_access_denied",
+        "upgrade_required"
+      ] as const
+    ).map((code) => ({ refusal: refusal(400, { code }) })),
     { refusal: refusal(403, { code: "not_owner" }) },
     { refusal: refusal(404, { error: Api.PATCH_NOT_FOUND }), update: true }
   ])("clears $refusal.status $refusal.code", ({ refusal, update = false }) => {

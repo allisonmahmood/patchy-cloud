@@ -41,7 +41,12 @@ export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =
             companyId: identity.company.id,
             lookup: { integration, handle }
           });
-        const found = yield* connections.detail(identity.company.id, integration, handle);
+        const found = yield* connections.detail(
+          identity.company.id,
+          integration,
+          handle,
+          identity.user.id
+        );
         return HttpServerResponse.jsonUnsafe(encodeDetail(found), noStore);
       }).pipe(
         Effect.catchTags({
@@ -63,9 +68,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =
           const shown: ReadonlyArray<Integration> = integrations.filter((integration) =>
             asked.includes(integration)
           );
-          // A connection restricted to teams is no one's to build with in this release.
-          const rows = (yield* connections.list(identity.company.id)).filter(
-            (row) => shown.includes(row.integration) && !row.restricted
+          const rows = (yield* connections.list(identity.company.id, identity.user.id)).filter(
+            (row) => shown.includes(row.integration)
           );
           return HttpServerResponse.jsonUnsafe(
             encodeConnections({

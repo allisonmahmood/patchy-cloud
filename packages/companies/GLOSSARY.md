@@ -25,7 +25,7 @@ The role every user has who is not an admin. A member builds — publishes patch
 _Avoid_: viewer (the [Auth](../auth/GLOSSARY.md) identity, whatever the user's role), builder (a description, not a role), guest
 
 **Admin**:
-A user with the role that manages the company's invitations, roles, deactivation, reactivation, guests, [connections](../integrations/GLOSSARY.md), look and agent access, and every [patch](../patches/GLOSSARY.md) in the company except publishing it. A company always has at least one active admin, and the last one can neither be demoted nor deactivated.
+A user with the role that manages the company's invitations, roles, deactivation, reactivation, guests, teams, [connections](../integrations/GLOSSARY.md), look and agent access, and every [patch](../patches/GLOSSARY.md) in the company except publishing it. Managing a patch is not opening it: its content stays behind its audience. A company always has at least one active admin, and the last one can neither be demoted nor deactivated.
 _Avoid_: owner (patches have owners; companies have admins), operator (Patchy, never a company role), superadmin
 
 **Guest**:
@@ -68,9 +68,17 @@ _Avoid_: sample page, style guide, preview (the file `patchy look preview` write
 A throwaway page an agent builds while capturing a look, from the candidate's `look.css`, the brief's recipes and the logo, so the person approves how their tools will look rather than only the specimen. It stays local and is never published; a gap it finds in the brief is fixed in the brief.
 _Avoid_: mockup, demo patch
 
-**Group**:
-A named set of users used to grant access, never a container that owns patches or connections. Its future access model is recorded in [the product](../../docs/product.md#users-admins-groups).
-_Avoid_: team, department (labels, not concepts), role (what an admin has; a group is who), space
+**Team**:
+A named, company-owned set of people, with a stable identity across renames. People may belong to several teams. Admins manage every membership, other admins' and their own included. Members see every team and its roster, read-only. Teams own no patches or connections. An admin deletes a team only while no patch or connection audience names it, in any state; its memberships go with it and its membership changes stay. There is no restore: the way back is a new team.
+_Avoid_: group, department, role, space
+
+**Team membership**:
+One company person belonging to one team. Removing it leaves their other memberships intact; adding it again joins the same team. Membership requires a recorded assignment for every role, admins included. An inactive person has no effective team membership.
+_Avoid_: team role, ownership
+
+**Membership change**:
+An attributable addition or removal of one person from one team, by any admin, themselves included. The change and its authority revision become effective together; repeating an existing state creates no new change. It keeps the team's name, so it outlives the team.
+_Avoid_: access log, patch history
 
 **Invite**:
 An invitation for one email address to join a company with a role: Clerk sends the email and Patchy owns the invitation, which expires after Clerk's default 30 days unless revoked or consumed sooner; resend replaces the emailed invitation and renews its expiry, while expired invitations remain visible for admins to resend or revoke. Several companies may invite the same address, each at most once while pending (including expired invitations), matched case-insensitively at sign-in; an email already belonging to a user is refused as already in a company.
@@ -107,3 +115,5 @@ _Avoid_: freeze, lock, deactivate (an admin's act on a user)
 **Operator**:
 Patchy, running the platform, rather than a role inside a company or the driver of the CLI. Its future surfaces are its own login and dashboards, outside the company product and the `patchy` CLI.
 _Avoid_: admin (a company role), superuser, staff, the CLI's user
+
+Outside guests hold named grants on individual patches. Companies' roles and team memberships apply to people inside the company.

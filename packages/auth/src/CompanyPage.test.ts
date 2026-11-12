@@ -16,7 +16,7 @@ import { ConnectionError, SqlError } from "effect/sql/SqlError";
 import { Authorization as AuthorizationTag, PatchyApi } from "@patchy/api";
 import { Analytics } from "@patchy/analytics";
 import { Limits } from "@patchy/limits";
-import { Companies, CompanyPage, InviteMail, Users } from "@patchy/companies";
+import { Companies, CompanyPage, InviteMail, Teams, Users } from "@patchy/companies";
 import * as Testing from "@patchy/sql/testing";
 import * as AgentConnections from "./AgentConnections.js";
 import * as AuthApi from "./AuthApi.js";
@@ -141,6 +141,7 @@ const services = Layer.mergeAll(
   Session.layer,
   Companies.layer,
   Users.layer,
+  Teams.layer,
   InviteMail.layerRecording
 ).pipe(
   Layer.provideMerge(Authorization.layer),

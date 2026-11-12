@@ -83,8 +83,12 @@ const setupState = Effect.fn("HomePages.setupState")(function* () {
     const published = yield* patches.publishedWith(
       bound === undefined ? machines.map((machine) => machine.id) : [bound.id]
     );
+    // An owner who lost access to it still sees it landed, with the way back; one that went to
+    // someone else since is no longer theirs to show.
     const [row] = Option.isSome(published)
-      ? yield* patches.read({ ...access, state: "all", patchRef: published.value })
+      ? yield* patches
+          .read({ ...access, state: "all", patchRef: published.value, managed: true })
+          .pipe(Effect.catchTags({ PatchUnavailable: () => Effect.succeed([]) }))
       : [];
     const state: SetupState = row === undefined ? { kind: "connected" } : { kind: "live", row };
     return { connected: true, setupLink, state };
@@ -153,12 +157,15 @@ const guestCounts = Effect.fn("HomePages.guestCounts")(function* (
     !rows.some(
       (row) =>
         row.patch.state === "live" &&
-        row.patch.scope === "company" &&
+        row.patch.audience.kind !== "public" &&
         row.owner.id === viewer.user.id
     )
   )
     return counts;
-  for (const guest of yield* (yield* GuestGrants.GuestGrants).companyGuests(viewer.company.id))
+  for (const guest of yield* (yield* GuestGrants.GuestGrants).companyGuests(
+    viewer.company.id,
+    viewer.user.id
+  ))
     for (const patch of guest.patches)
       if (patch.state === "live") counts.set(patch.name, (counts.get(patch.name) ?? 0) + 1);
   return counts;

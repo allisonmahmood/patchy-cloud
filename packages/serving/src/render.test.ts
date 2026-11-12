@@ -98,7 +98,7 @@ describe("patch pages", () => {
     companyHandle: DEV_SEED.companyHandle,
     name: "render-fixture",
     ownerUserId: DEV_SEED.userId,
-    scope: "public",
+    audience: { kind: "public" },
     title: "",
     currentVersionId: "ver_1",
     repoOrg: null,

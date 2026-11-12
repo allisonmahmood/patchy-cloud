@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- The mailbox owner's client and digests compare real bytes.
+import { Teams } from "@patchy/companies";
 import { createHash, randomBytes } from "node:crypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -105,7 +106,12 @@ const services = Layer.mergeAll(
   AttioSource.layer,
   Sessions.layer.pipe(Layer.provideMerge(Source.layer.pipe(Layer.provide(network)))),
   // The patch reads only its own tables and store: no other version to find.
-  Layer.succeed(LoadedVersions.LoadedVersions, { find: () => Effect.succeed(Option.none()) })
+  Layer.succeed(LoadedVersions.LoadedVersions, {
+    findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+      return this.find(patchId);
+    },
+    find: () => Effect.succeed(Option.none())
+  })
 ).pipe(
   Layer.provideMerge(InvocationCapabilities.layer),
   Layer.provideMerge(CompanyTesting.layer()),
@@ -470,7 +476,7 @@ it.layer(services, { timeout: "300 seconds", excludeTestServices: true })(
             return status === false ? 0 : Number(status.uidValidity);
           });
 
-          const store = yield* SqlConnectionStore.make;
+          const store = yield* SqlConnectionStore.make.pipe(Effect.provide(Teams.layer));
           const connection = yield* store.connect({
             integration: "imap",
             ...who,

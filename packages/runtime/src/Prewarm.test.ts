@@ -66,6 +66,9 @@ const harness = Effect.gen(function* () {
         ).pipe(Effect.asVoid)
     }),
     Effect.provideService(LoadedVersions.LoadedVersions, {
+      findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+        return this.find(patchId);
+      },
       find: (patchId, versionId) =>
         Effect.succeed(
           Option.some({

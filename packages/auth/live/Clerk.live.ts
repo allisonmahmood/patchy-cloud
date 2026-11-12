@@ -9,7 +9,7 @@ import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Analytics } from "@patchy/analytics";
-import { Companies, InviteMail, Users } from "@patchy/companies";
+import { Companies, InviteMail, Teams, Users } from "@patchy/companies";
 import { Limits } from "@patchy/limits";
 import * as Testing from "@patchy/sql/testing";
 import * as AgentConnections from "../src/AgentConnections.js";
@@ -37,6 +37,7 @@ const services = Layer.mergeAll(
   Session.layer,
   Companies.layer,
   Users.layer,
+  Teams.layer,
   InviteMail.layer
 ).pipe(
   Layer.provideMerge(DeviceLogins.layer),

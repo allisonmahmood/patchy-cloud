@@ -105,7 +105,9 @@ const history = {
   retired: Schema.optionalKey(Ago),
   deleted: Schema.optionalKey(Ago),
   /** People at other companies than its owner's, by key, whom `up` shares it with as its owner. */
-  guests: Schema.optionalKey(Schema.Array(Slug))
+  guests: Schema.optionalKey(Schema.Array(Slug)),
+  /** Existing scenario teams that receive access atomically with publication. */
+  teams: Schema.optionalKey(Schema.NonEmptyArray(Slug))
 };
 
 /** A patch repo, initialized at `tier` and overlaid with `patches/<repo>/`. */
@@ -222,6 +224,11 @@ export const Scenario = Schema.Struct({
     Schema.Array(Schema.Struct({ name: Schema.NonEmptyString, handle: Slug }))
   ),
   people: Schema.NonEmptyArray(Person),
+  teams: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({ key: Slug, name: Schema.NonEmptyString, members: Schema.Array(Slug) })
+    )
+  ),
   /** The admin the environment's CLI publishes as. */
   publisher: Slug,
   /**
@@ -305,6 +312,18 @@ export const loadScenario = Effect.fn("loadScenario")(function* (worktree: strin
   const scenario = yield* decodeScenario(yield* fs.readFileString(file)).pipe(
     Effect.mapError((error) => new ScenarioInvalid({ name, problem: error.message }))
   );
+  for (const team of scenario.teams ?? []) {
+    if (
+      team.members.some(
+        (key) =>
+          !scenario.people.some((person) => person.key === key && person.company === undefined)
+      )
+    )
+      return yield* new ScenarioInvalid({
+        name,
+        problem: "team members must be people at the scenario company."
+      });
+  }
   const keys = new Set(scenario.people.map((person) => person.key));
   const emails = new Set(scenario.people.map((person) => person.email.toLowerCase()));
   if (keys.size !== scenario.people.length || emails.size !== scenario.people.length)
@@ -350,6 +369,18 @@ export const loadScenario = Effect.fn("loadScenario")(function* (worktree: strin
     const owner = people.get(patch.owner ?? scenario.publisher);
     if (owner === undefined)
       return yield* invalid(`${key} is owned by ${patch.owner}, who isn't one of its people.`);
+    if (patch.teams !== undefined) {
+      const selected = patch.teams.map((key) =>
+        (scenario.teams ?? []).find((team) => team.key === key)
+      );
+      if (selected.some((team) => team === undefined))
+        return yield* invalid(`${key} names a team that isn't in the scenario.`);
+      if (
+        owner.company !== undefined ||
+        !selected.some((team) => team?.members.includes(owner.key))
+      )
+        return yield* invalid(`${key}'s owner must belong to one of its audience teams.`);
+    }
     const insider = (patch.guests ?? []).find((guest) => {
       const person = people.get(guest);
       return person === undefined || home(person) === home(owner);
@@ -477,6 +508,16 @@ export const seedScenario = Effect.fn("seedScenario")(function* (scenario: Scena
             deactivated_at = ${person.deactivated === true ? sql`users.deactivated_at` : sql`NULL`}`;
         if (person.termsPending !== true) yield* acceptCurrentTerms(userId);
         if (person.key === scenario.publisher) yield* allowPublishing(scenario, person);
+      }
+      for (const team of scenario.teams ?? []) {
+        const teamId = `team_env_${scenario.company.handle}_${team.key}`;
+        const companyId = `cmp_env_${scenario.company.handle}`;
+        yield* sql`INSERT INTO company_teams(id, company_id, name) VALUES (${teamId}, ${companyId}, ${team.name}) ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name`;
+        for (const key of team.members) {
+          const person = scenario.people.find((person) => person.key === key)!;
+          const { userId } = ids(scenario, person);
+          yield* sql`INSERT INTO company_team_members(company_id, team_id, user_id) VALUES (${companyId}, ${teamId}, ${userId}) ON CONFLICT DO NOTHING`;
+        }
       }
       if (scenario.company.agentAccess === true) {
         const publisher = scenario.people.find((person) => person.key === scenario.publisher)!;

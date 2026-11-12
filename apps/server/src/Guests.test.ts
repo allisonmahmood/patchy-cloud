@@ -338,6 +338,44 @@ const dialog = (html: string) => {
   return html.slice(start);
 };
 
+it.layer(layer())("People All guests", (it) => {
+  it.effect("includes guests once in All with search and live removal counts", () =>
+    Effect.gen(function* () {
+      const { guest, member } = yield* peopleWithGuests("all-people");
+      const all = yield* page(admin, "/company");
+      assert.match(all.replace(/<[^>]*>/g, " "), /All\s+3\b/);
+      assert.match(all.replace(/<[^>]*>/g, " "), /Guests\s+1\b/);
+      assert.strictEqual(
+        all.split(`<span class="row-name">${guest.user.name}</span>`).length - 1,
+        1
+      );
+      assert.include(all, "2 patches");
+      assert.include(all, '<span class="row-desc show-sm">Guest</span>');
+      const removal = `/settings/people/guests/${guest.user.id}/remove`;
+      assert.include(all, removal);
+      const memberAll = yield* page(member, "/company");
+      assert.notInclude(memberAll, removal);
+      for (const query of [guest.user.name, guest.user.email]) {
+        const searched = yield* page(admin, `/company?q=${encodeURIComponent(query)}`);
+        assert.include(searched, guest.user.email);
+        assert.strictEqual(searched.split('<span class="row-name">').length - 1, 1);
+      }
+      assert.notInclude(yield* page(admin, "/company?show=admins"), guest.user.email);
+      const guests = yield* page(admin, "/company?show=guests");
+      assert.include(guests, guest.user.email);
+      assert.notInclude(guests, '<span class="row-name">Max</span>');
+      yield* people(admin, removal, "POST");
+      const after = yield* page(admin, "/company");
+      assert.notInclude(after, guest.user.email);
+      assert.match(after.replace(/<[^>]*>/g, " "), /All\s+2\b/);
+      assert.match(
+        (yield* page(admin, "/company?show=guests")).replace(/<[^>]*>/g, " "),
+        /Guests\s+0\b/
+      );
+    })
+  );
+});
+
 it.layer(layer())("People's guests", (it) => {
   it.effect("lists each guest's patches here to every member, with Remove for admins only", () =>
     Effect.gen(function* () {

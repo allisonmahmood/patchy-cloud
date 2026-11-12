@@ -1,4 +1,5 @@
 // First: the harness keeps Node's own fetch before anything replaces it.
+import { Teams } from "@patchy/companies";
 import * as Live from "./pidgeonHarness.js";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { assert, describe, it } from "@effect/vitest";
@@ -77,7 +78,12 @@ const runtime = Layer.effect(
   )
 ).pipe(
   Layer.provide(
-    Layer.succeed(LoadedVersions.LoadedVersions, { find: () => Effect.succeed(Option.none()) })
+    Layer.succeed(LoadedVersions.LoadedVersions, {
+      findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+        return this.find(patchId);
+      },
+      find: () => Effect.succeed(Option.none())
+    })
   )
 );
 const routes = HttpApiBuilder.layer(HttpApi.make("patchy").add(DevReadsGroup)).pipe(
@@ -110,6 +116,7 @@ const door = HttpRouter.serve(routes, { disableLogger: true, disableListenLog: t
   Layer.provideMerge(
     CredentialKeys.layerFromKeys(Redacted.make(`test:${Buffer.alloc(32, 7).toString("base64")}`))
   ),
+  Layer.provideMerge(Teams.layer),
   Layer.provideMerge(Testing.layer()),
   Layer.merge(swept),
   Layer.provideMerge(NodeCryptography.layer)

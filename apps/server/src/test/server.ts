@@ -1,3 +1,4 @@
+import { Teams } from "@patchy/companies";
 /**
  * The whole server for its tests: over a fresh migrated database and an
  * ephemeral port, configured as the test spells it. `HttpClient` points at
@@ -41,6 +42,7 @@ export const server = (
       return Server.layer.pipe(
         Layer.provide([network, mail]),
         Layer.provideMerge(NodeHttpServer.layerTest),
+        Layer.provideMerge(Teams.layer),
         Layer.provideMerge(Testing.layer()),
         Layer.provide(
           ConfigProvider.layer(
@@ -71,6 +73,7 @@ export const html = (title: string) =>
   `<!doctype html><html><head><title>${title}</title></head><body><p>${title}</p></body></html>`;
 
 export const publishBody = (body: Record<string, unknown>) => ({
+  ...(body.patchId ? {} : { scope: "company" }),
   manifest: {
     manifestVersion: MANIFEST_VERSION,
     release: CURRENT_RELEASE,

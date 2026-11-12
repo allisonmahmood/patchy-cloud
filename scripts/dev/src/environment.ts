@@ -1159,8 +1159,19 @@ const materialize = Effect.fn("materialize")(function* (
         yield* fs.copyFile(sourceOf(path, scenarioDir, patch), file);
         yield* Console.error(`  ${patch.name}: publish`);
       }
-      const flags =
-        "repo" in patch ? [] : ["--name", patch.name, "--description", patch.description];
+      const flags = [
+        ...("repo" in patch ? [] : ["--name", patch.name, "--description", patch.description]),
+        ...(patch.teams === undefined
+          ? []
+          : [
+              "--share",
+              "teams",
+              ...patch.teams.flatMap((key) => [
+                "--team",
+                `team_env_${scenario.company.handle}_${key}`
+              ])
+            ])
+      ];
       // Each publish is a new version, even of the same files.
       let published = yield* decodePublish(yield* cli(`Publishing ${key}`, "publish", flags));
       for (let version = 2; version <= (patch.versions ?? 1); version++)

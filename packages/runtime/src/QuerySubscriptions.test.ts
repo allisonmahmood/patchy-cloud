@@ -296,3 +296,64 @@ it.effect(
       });
     }).pipe(Effect.provide(NodeCryptography.layer))
 );
+
+// A shared read traces the company's membership, since team changes move who may open its source.
+const sharedFiles = {
+  kind: "sharedStore" as const,
+  patchId: "filesource",
+  store: "assets",
+  id: "filesource/assets",
+  revision: 1
+};
+for (const declaration of [shared, sharedFiles])
+  it.effect(`fences a ${declaration.kind} read on membership without a members declaration`, () =>
+    Effect.gen(function* () {
+      let revision = 1;
+      let changeDuringQuery = true;
+      const readers = yield* QuerySubscriptions.make.pipe(
+        Effect.provideService(SubscriptionReads.SubscriptionReads, {
+          admit: () => Effect.die("Unexpected direct admission"),
+          read: () => Effect.die("Unexpected direct read"),
+          revisions: (_companyId, keys) =>
+            Effect.succeed(
+              Object.fromEntries(
+                keys.map((key) => [key, key === memberDirectory ? String(revision) : "0"])
+              )
+            )
+        }),
+        Effect.provideService(Invocation.Invocation, {
+          call: (_args, _binding, observation) =>
+            Effect.sync(() => {
+              observation?.onDependency(`patch:${declaration.patchId}`);
+              observation?.onDependency(memberDirectory);
+              observation?.onSnapshot({});
+              if (changeDuringQuery) revision++;
+              return { ok: true as const, value: "shared" };
+            })
+        })
+      );
+      const sharing = {
+        ...binding,
+        manifest: { ...binding.manifest, uses: { source: declaration } }
+      };
+      const input = {
+        binding: sharing,
+        op: "server.call",
+        args: { handler: "demo.read", args: {} }
+      };
+      assert.include(yield* readers.read(input).pipe(Effect.flip), { code: "source_unavailable" });
+      changeDuringQuery = false;
+      assert.deepStrictEqual(yield* readers.read(input), {
+        result: "shared",
+        vector: { [`patch:${declaration.patchId}`]: "0", [memberDirectory]: "2" }
+      });
+      // A resumed subscription keeps its membership fence, and drops another company's.
+      assert.deepStrictEqual(
+        yield* readers.admit({
+          ...input,
+          dependencies: [memberDirectory, "members:another-company"]
+        }),
+        [memberDirectory]
+      );
+    }).pipe(Effect.provide(NodeCryptography.layer))
+  );

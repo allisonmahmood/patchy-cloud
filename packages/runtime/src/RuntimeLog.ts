@@ -117,19 +117,17 @@ export class RuntimeLog extends Context.Service<
       readonly correlationId: string;
     }) => Effect.Effect<Call | null, SqlError>;
     /**
-     * A connection's latest calls made from no patch or from a patch this release can open. A
-     * patch open to teams is a later release's audience, which this one opens for nobody, and a
-     * reclaimed patch can't say whether it was one, so calls from either are left out.
+     * A connection's latest calls made from no patch or from one of `patchIds`, the patches its
+     * reader can open. A call from any other patch, including one since reclaimed, is left out
+     * before the limit.
      */
     readonly recent: (input: {
       readonly companyId: string;
       readonly connectionId: string;
+      readonly patchIds: ReadonlyArray<string>;
       readonly limit?: number;
     }) => Effect.Effect<ReadonlyArray<Call>, SqlError>;
-    /**
-     * When each connection's newest call began, among the calls `recent` would show; a connection
-     * with none of those has no entry.
-     */
+    /** When each connection's newest call began; connections never called have no entry. */
     readonly latest: (input: {
       readonly companyId: string;
       readonly connectionIds: ReadonlyArray<string>;
@@ -172,19 +170,19 @@ export const make = Effect.gen(function* () {
       companyId: Schema.String,
       connectionId: Schema.String,
       limit: Schema.Int,
-      now: Schema.Number
+      now: Schema.Number,
+      patchIds: Schema.Array(Schema.String)
     }),
     Result: Call,
-    execute: ({ companyId, connectionId, limit, now }) => sql`
+    execute: ({ companyId, connectionId, limit, now, patchIds }) => sql`
       SELECT ${columns(now)}
       FROM runtime_calls
       WHERE company_id = ${companyId} AND connection_id = ${connectionId} AND ${known}
-        AND (patch_id IS NULL OR EXISTS (SELECT 1 FROM patches p
-          WHERE p.id = runtime_calls.patch_id AND p.scope <> 'teams'))
+        AND (patch_id IS NULL OR patch_id = ANY(${patchIds}::text[]))
       ORDER BY at DESC, id DESC LIMIT ${limit}`
   });
 
-  // One index probe per connection, reading past only rows `recent` leaves out.
+  // One index probe per connection, reading past only rows of kinds this release skips.
   const latestCalls = SqlSchema.findAll({
     Request: Schema.Struct({
       companyId: Schema.String,
@@ -199,8 +197,6 @@ export const make = Effect.gen(function* () {
             SELECT at FROM runtime_calls
             WHERE company_id = $1 AND connection_id = connection.id
               AND credential_kind = ANY($3::text[])
-              AND (patch_id IS NULL OR EXISTS (SELECT 1 FROM patches p
-                WHERE p.id = runtime_calls.patch_id AND p.scope <> 'teams'))
             ORDER BY at DESC, id DESC LIMIT 1
           ) AS newest`,
         [companyId, connectionIds, credentialKinds]

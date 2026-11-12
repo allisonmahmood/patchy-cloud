@@ -44,7 +44,11 @@ const person = (key: string, role: "member" | "admin" = "member") =>
     return id;
   });
 
-const ref = (userId: string) => ({ companyId: DEV_SEED.companyId, userId });
+const ref = (userId: string) => ({
+  companyId: DEV_SEED.companyId,
+  actorId: DEV_SEED.userId,
+  userId
+});
 
 const connect = (userId: string) =>
   AgentConnections.AgentConnections.use((connections) =>

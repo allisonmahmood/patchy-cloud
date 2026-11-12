@@ -25,7 +25,7 @@ An admin changing a patch's owner to an active member of the same company, inclu
 _Avoid_: transfer (a patch never moves companies), republish, claim
 
 **Sharing scope**:
-Who may open a patch: `company` means signed-in colleagues in its company, and its [guests](../companies/GLOSSARY.md) at its current version; `public` means anyone with the link to its current version, without signing in. Older versions stay behind the company door; new patches default to company sharing, and the owner or an admin may change a live patch's scope without publishing.
+The patch audience as clients released before team audiences read it: `company` for a Company or team audience, `public` for Public. Only the wire carries it; code reads the patch audience.
 _Avoid_: visibility, token scope (a publishing key does not grant reading access)
 
 **Guest grant**:
@@ -33,7 +33,7 @@ One person's access to one patch of another company, written by Share, the owner
 _Avoid_: invitation (no acceptance step), membership, permission (a grant has none)
 
 **Openable patch**:
-A patch in the credential's company, within its sharing reach and neither disabled nor gone, eligible for discovery and inventory reads in any lifecycle state. Today every company member has that reach; openability grants neither ownership nor permission to serve an off patch.
+A patch in the credential's company, within its sharing reach and neither disabled nor gone, eligible for discovery and inventory reads in any lifecycle state. The persisted audience and current membership determine that reach; roles and ownership do not grant content access. Openability grants neither ownership nor permission to serve an off patch.
 _Avoid_: serving (requires live), publishable (requires the live patch's owner), manageable (owner or admin)
 
 **Patch repo**:
@@ -135,3 +135,23 @@ _Avoid_: patch limit (the per-minute one), storage quota (this counts patches, n
 **Patch event**:
 A committed publish, update or owner deletion, attributed to the user who acted; reclamation belongs to the instance. Events contain ids, sizes, counts and states, never content, a filename, a URL or an address.
 _Avoid_: audit log, activity feed
+
+**Patch audience**:
+Who may open a patch: everyone at its company, anyone with the link to its current version (Public, for a page), or the people on any of one to 100 [teams](../companies/GLOSSARY.md). It must include the owner. A first publish commits it with the version and defaults to Company; later publishes keep it. The owner, or an admin, changes it without publishing, on a live, retired or recently deleted patch. Guest grants add to it. Roles and ownership never let anyone past it to content.
+_Avoid_: scope (the wire's two-valued reading of it), visibility, permissions
+
+**Content access**:
+Opening a patch: its page, description, versions, log, `pull` and agent tools. Only its audience and guest grants give it.
+_Avoid_: management (what admins have without it)
+
+**Management access**:
+What an admin has to every patch of their company, and an owner to theirs while they can open it: its title, owner, audience, state, guests and dependants, and changing its owner, audience, sharing and lifecycle. Its flows show the act's impact on the sources and connections the patch uses, by their identities, states and reach counts, never their content. Serving another version needs content access. An admin gets content access as anyone does, by joining one of its teams.
+_Avoid_: oversight view, recovery view (one card serves both)
+
+**Stuck owner**:
+An owner who can no longer open their patch, so can neither publish to it nor manage it. They still see it and are told to ask an admin, who reassigns it to someone who can open it.
+_Avoid_: orphaned patch (it still has an owner)
+
+**Owner history**:
+On a patch's card, for its owner and admins: every audience change someone other than the owner made, and every admin added, by anyone, to a team its audience named at that moment. Each entry is kept as it happened, so a later demotion or audience change never hides it.
+_Avoid_: audit log

@@ -6,7 +6,7 @@ import * as WideEvents from "@patchy/analytics/wide-events";
 import { Session } from "@patchy/auth";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { clerkEnv } from "@patchy/auth/testing";
-import { Companies, Users } from "@patchy/companies";
+import { Companies, Users, Teams } from "@patchy/companies";
 import { NodeCryptography } from "@patchy/core";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import {
@@ -89,7 +89,7 @@ const connected = (handle: string) =>
       mailboxes: [mailbox()]
     });
     const source = Source.layer.pipe(Layer.provide(ImapTest.network(served, certs)));
-    const store = yield* SqlConnectionStore.make.pipe(Effect.provide(source));
+    const store = yield* SqlConnectionStore.make.pipe(Effect.provide([source, Teams.layer]));
     const connection = yield* store.connect({
       integration: "imap",
       ...who,
@@ -215,8 +215,7 @@ const tier1 = Layer.mergeAll(
   credentials,
   RuntimeTest.versions(patchId, versionId, () => ({
     mail: { kind: "imap" as const, ...declared, revision: 1 }
-  })),
-  RuntimeTest.storedPatch(patchId)
+  }))
 )
   .pipe(
     Layer.provideMerge(Testing.layer()),
@@ -311,7 +310,11 @@ it.layer(tier1)("IMAP from a tier 2 action's callbacks", (it) => {
 
         // Recent calls name the operation and its outcome; nothing holds mail or the password.
         const log = yield* RuntimeLog.RuntimeLog;
-        const calls = yield* log.recent({ companyId: who.companyId, connectionId: connection.id });
+        const calls = yield* log.recent({
+          companyId: who.companyId,
+          connectionId: connection.id,
+          patchIds: [patchId]
+        });
         assert.includeMembers(
           calls.map((recent) => recent.op),
           [

@@ -1,3 +1,4 @@
+import { Teams } from "@patchy/companies";
 /**
  * Users and machines added to the seeded template. Production Patches never
  * imports Auth: handlers receive identities from the bearer middleware.
@@ -92,6 +93,7 @@ export const publishInput = (
 ): Content.PublishInput => ({
   ...publishRecord(),
   ...noProvenance,
+  audience: undefined,
   patchId: null,
   companyId: identity.company.id,
   ownerUserId: identity.user.id,
@@ -114,6 +116,7 @@ export const recordInput = (
   return {
     ...publishRecord(),
     ...noProvenance,
+    audience: undefined,
     intent: "create",
     patchId,
     versionId,
@@ -252,7 +255,8 @@ export const integrations = SqlConnectionStore.layer.pipe(
       PidgeonSource.layer,
       AttioSource.layer,
       ImapSource.layer.pipe(Layer.provide(ImapNetwork.layer)),
-      RuntimeLog.layer
+      RuntimeLog.layer,
+      Teams.layer
     )
   )
 );
@@ -263,10 +267,12 @@ export const resourceChanges = Layer.effect(
 ).pipe(Layer.provideMerge(Wakes.layer));
 
 /** The seeded template with the additional users and machines above. */
-export const database = Layer.mergeAll(Layer.effectDiscard(seed), Tables.layer, integrations).pipe(
-  Layer.provideMerge(CompanyTesting.layer()),
-  Layer.provideMerge(resourceChanges)
-);
+export const database = Layer.mergeAll(
+  Layer.effectDiscard(seed),
+  Tables.layer,
+  integrations,
+  Teams.layer
+).pipe(Layer.provideMerge(CompanyTesting.layer()), Layer.provideMerge(resourceChanges));
 
 /** The server side of the bearer middleware: the credential is the machine's id. */
 export const authorization = Layer.succeed(

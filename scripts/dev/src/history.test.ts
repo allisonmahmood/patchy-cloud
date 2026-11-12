@@ -8,7 +8,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { TestClock } from "effect/testing";
 import { expect } from "vitest";
 import { AgentConnections, MachineTokens } from "@patchy/auth";
-import { Companies, Users } from "@patchy/companies";
+import { Companies, Users, Teams } from "@patchy/companies";
 import { NodeCryptography } from "@patchy/core";
 import {
   AttioSource,
@@ -53,6 +53,7 @@ it.layer(
         Redacted.make("test:AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=")
       )
     ),
+    Layer.provideMerge(Teams.layer),
     Layer.provideMerge(Testing.layer()),
     Layer.provideMerge(NodeCryptography.layer),
     Layer.provideMerge(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer))
@@ -173,9 +174,12 @@ it.layer(
           { handler: "deals.update", outcome: "unknown_outcome" }
         ]);
         // Timesheets' running call is running at its connection too, until its deadline.
+        const patchIds = yield* sql<{ readonly id: string }>`
+        SELECT id FROM patches WHERE company_id = ${allison.companyId}`;
         const warehouse = yield* (yield* RuntimeLog.RuntimeLog).recent({
           companyId: allison.companyId,
-          connectionId: "conn_env_brightline_postgres_warehouse"
+          connectionId: "conn_env_brightline_postgres_warehouse",
+          patchIds: patchIds.map((patch) => patch.id)
         });
         expect(warehouse.map((call) => call.outcome)).toEqual(["pending", "success", "success"]);
         // Holiday rota: retired 2 days ago, which is its last change.

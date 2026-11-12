@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Disposable Postgres, OpenSSL certificates and thread-local TLS trust exercise the real transport.
+import { Teams } from "@patchy/companies";
 import { execFile } from "node:child_process";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, Socket } from "node:net";
@@ -274,7 +275,8 @@ it.layer(Layer.merge(services, Layer.effect(TlsSource, tlsPostgres)), {
             PostHogSource.layer,
             PidgeonSource.layer,
             AttioSource.layer,
-            ImapTest.offline
+            ImapTest.offline,
+            Teams.layer
           ])
         );
         const connection = yield* connections.connect({
@@ -422,7 +424,8 @@ it.layer(Layer.merge(services, Layer.effect(TlsSource, tlsPostgres)), {
             PostHogSource.layer,
             PidgeonSource.layer,
             AttioSource.layer,
-            ImapTest.offline
+            ImapTest.offline,
+            Teams.layer
           ])
         );
         const connection = yield* connections.connect({

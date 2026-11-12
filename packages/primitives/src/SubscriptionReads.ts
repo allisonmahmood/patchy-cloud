@@ -112,10 +112,14 @@ const makeReader = Effect.fn("SubscriptionReads.makeReader")(function* (lifecycl
   });
   const read = Effect.fn("SubscriptionReads.read")(function* (input: SubscriptionReads.Input) {
     const dependency = yield* dependencies(input);
-    const patchKeys = dependency.keys.filter((key) => key.startsWith("patch:"));
-    const resourceKeys = dependency.keys.filter((key) => !key.startsWith("patch:"));
+    const patchKeys = dependency.keys.filter(
+      (key) => key.startsWith("patch:") || key.startsWith("members:")
+    );
+    const resourceKeys = dependency.keys.filter(
+      (key) => !key.startsWith("patch:") && !key.startsWith("members:")
+    );
     // Platform lifecycle is outside the company snapshot. A changed fence refuses this run.
-    const before = yield* lifecycle(input.binding.companyId, patchKeys);
+    const before = yield* revisions(input.binding.companyId, patchKeys);
     const snapshot = yield* withCompany(
       input.binding.companyId,
       Effect.gen(function* () {
@@ -140,7 +144,7 @@ const makeReader = Effect.fn("SubscriptionReads.makeReader")(function* (lifecycl
         })
       )
     );
-    const after = yield* lifecycle(input.binding.companyId, patchKeys);
+    const after = yield* revisions(input.binding.companyId, patchKeys);
     const changed = patchKeys.find((key) => before[key] !== after[key]);
     if (changed !== undefined) return yield* new LifecycleChanged({ resource: changed });
     return { result: snapshot.result, vector: { ...snapshot.vector, ...before } };
@@ -162,6 +166,7 @@ export const make: Effect.Effect<
   Dependencies | SqlClient.SqlClient
 > = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  // Audience and lifecycle changes advance the same patch revision.
   const find = SqlSchema.findAll({
     Request: Schema.Struct({ companyId: Schema.String, patchIds: Schema.Array(Schema.String) }),
     Result: ResourceRevisions.RevisionRow,

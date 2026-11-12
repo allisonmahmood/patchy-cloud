@@ -213,12 +213,16 @@ export const reach = Effect.fn("Calls.reach")(
 
 /**
  * What every company callback of an agent's call checks first, read now on the database's
- * clock: the connection still works, its person is still theirs, and their company still
- * allows agents. It answers the person as they are now, so a role change shows at once.
+ * clock: the connection still works, its person is still theirs, their company still allows
+ * agents, and the patch's audience still admits them. It answers the person as they are now,
+ * so a role change shows at once.
  */
-const recheck = Effect.fn("Calls.recheck")(function* (identity: AgentConnections.AgentIdentity) {
-  // Both reads at once, so a callback waits for one round trip.
-  const [current, access] = yield* Effect.all(
+const recheck = Effect.fn("Calls.recheck")(function* (
+  identity: AgentConnections.AgentIdentity,
+  patchId: string
+) {
+  // Every read at once, so a callback waits for one round trip.
+  const [current, access, admitted] = yield* Effect.all(
     [
       (yield* AgentConnections.AgentConnections)
         .current(identity.agentConnection.id)
@@ -227,7 +231,10 @@ const recheck = Effect.fn("Calls.recheck")(function* (identity: AgentConnections
         // A company outlives every live connection of its people.
         Effect.catchTags({ CompanyNotFound: Effect.die }),
         Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))
-      )
+      ),
+      (yield* Patches.Patches)
+        .admitsMember(patchId, identity.company.id, identity.user.id)
+        .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })))
     ],
     { concurrency: "unbounded" }
   );
@@ -235,7 +242,8 @@ const recheck = Effect.fn("Calls.recheck")(function* (identity: AgentConnections
     current === null ||
     current.user.id !== identity.user.id ||
     current.company.id !== identity.company.id ||
-    !access.on
+    !access.on ||
+    !admitted
   )
     return yield* new Runtime.AccessDenied({});
   return personOf(current);
@@ -255,10 +263,15 @@ export const invoke = Effect.fn("Calls.invoke")(function* (
 ): Effect.fn.Return<
   ServerCallReply,
   Runtime.RuntimeError,
-  AgentConnections.AgentConnections | Companies.Companies | Cryptography.Cryptography
+  | AgentConnections.AgentConnections
+  | Companies.Companies
+  | Cryptography.Cryptography
+  | Patches.Patches
 > {
   if (Option.isNone(invocation)) return yield* new Runtime.InvocationUnavailable();
-  const services = yield* Effect.context<AgentConnections.AgentConnections | Companies.Companies>();
+  const services = yield* Effect.context<
+    AgentConnections.AgentConnections | Companies.Companies | Patches.Patches
+  >();
   return yield* Invocation.callAgent({
     version: target.version,
     person: personOf(identity),
@@ -266,7 +279,7 @@ export const invoke = Effect.fn("Calls.invoke")(function* (
     tool: target.tool,
     args: target.args,
     ...options,
-    recheck: recheck(identity).pipe(Effect.provideContext(services))
+    recheck: recheck(identity, target.version.patchId).pipe(Effect.provideContext(services))
   }).pipe(Effect.provideService(Invocation.Invocation, invocation.value));
 });
 

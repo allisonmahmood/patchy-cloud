@@ -6,7 +6,7 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Analytics } from "@patchy/analytics";
-import { Companies, InviteMail, Users } from "@patchy/companies";
+import { Companies, InviteMail, Teams, Users } from "@patchy/companies";
 import { Limits } from "@patchy/limits";
 import * as Testing from "@patchy/sql/testing";
 import * as AgentConnections from "./AgentConnections.js";
@@ -79,6 +79,7 @@ const services = Layer.mergeAll(
   DevPersonas.layer,
   Companies.layer,
   Users.layer,
+  Teams.layer,
   InviteMail.layerRecording
 ).pipe(
   Layer.provideMerge(DeviceLogins.layer),

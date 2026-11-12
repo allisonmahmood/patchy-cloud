@@ -115,11 +115,17 @@ const version: LoadedVersions.LoadedVersion = {
 const dependencies = Layer.mergeAll(
   Users.layer,
   Companies.layer,
-  Layer.succeed(GrantedGuests.GrantedGuests, { host: () => Effect.succeed(Option.none()) }),
+  Layer.succeed(GrantedGuests.GrantedGuests, {
+    member: () => Effect.succeed(true),
+    host: () => Effect.succeed(Option.none())
+  }),
   OperatingLimits.layer,
   RuntimeLog.layer,
   Limits.layer,
   Layer.succeed(LoadedVersions.LoadedVersions, {
+    findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+      return this.find(patchId);
+    },
     find: () => Effect.succeed(Option.some({ ...version, patchTier: version.manifest.tier }))
   })
 )

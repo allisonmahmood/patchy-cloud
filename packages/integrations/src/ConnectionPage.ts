@@ -7,12 +7,14 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import { Analytics } from "@patchy/analytics";
 import { Integration, integrations } from "@patchy/api";
 import type { RequireSession } from "@patchy/auth";
-import { Users } from "@patchy/companies";
+import { Teams, Users } from "@patchy/companies";
+import { checkbox, choiceGroup, radio } from "@patchy/core";
 import { ContractLimits } from "@patchy/limits";
 import { RuntimeLog } from "@patchy/runtime";
 import * as ConnectFrame from "./ConnectFrame.js";
 import * as ConnectionStore from "./ConnectionStore.js";
 import * as View from "./ConnectionsView.js";
+import * as PatchVisibility from "./PatchVisibility.js";
 import * as PostgresPage from "./postgres/Page.js";
 import * as PostHogPage from "./posthog/Page.js";
 import * as PidgeonKeys from "./pidgeon/Keys.js";
@@ -126,7 +128,7 @@ interface About {
  * its name, in its integration's words. An Attio key a check found writable and an IMAP login a
  * server refused name whose check or login it was, from `people`.
  */
-const integrationAbout = (
+const about = (
   connection: ConnectionStore.Connection,
   people: ReadonlyMap<string, string>,
   now: number
@@ -170,16 +172,6 @@ const integrationAbout = (
         tag: PidgeonPage.tag(connection)
       };
   }
-};
-/** What `integrationAbout` says, with a connection restricted to teams saying so beside its name. */
-const about = (
-  connection: ConnectionStore.Connection,
-  people: ReadonlyMap<string, string>,
-  now: number
-): About => {
-  const known = integrationAbout(connection, people, now);
-  if (!connection.restricted) return known;
-  return { ...known, tag: [known.tag, "Restricted to teams"].filter(Boolean).join(" · ") };
 };
 /** What a snapshot lets patches read, in its integration's words. */
 const readsOf = (metadata: ConnectionStore.Metadata) =>
@@ -232,6 +224,7 @@ const results = {
   disconnect: "Paused. Patches can't read it until an admin resumes it.",
   reconnect: "Tested and resumed. Its revision is unchanged.",
   description: "Description updated.",
+  audience: "Audience changed.",
   "block-guests": "Guests blocked. Patches that use this connection turn their guests away.",
   "allow-guests": "Guests allowed. Patches that use this connection admit their guests again.",
   delete: "Disconnected. Its credentials are gone and its name is free; its snapshots are kept."
@@ -314,11 +307,6 @@ const directory = Effect.fn("ConnectionPage.directory")(function* (
   );
 });
 
-/** Members see the connections patches can use; admins also see the ones restricted to teams. */
-const shownTo =
-  (viewer: RequireSession.Viewer["Service"]) => (connection: ConnectionStore.Connection) =>
-    viewer.role === "admin" || !connection.restricted;
-
 const index = Effect.fn("ConnectionPage.index")(function* (
   viewer: RequireSession.Viewer["Service"],
   query: URLSearchParams,
@@ -326,8 +314,11 @@ const index = Effect.fn("ConnectionPage.index")(function* (
 ) {
   const store = yield* ConnectionStore.ConnectionStore;
   const admin = viewer.role === "admin";
-  const connections = (yield* store.list(viewer.company.id)).filter(shownTo(viewer));
-  const usage = yield* store.usage(viewer.company.id);
+  // Admins see every connection and every patch using it; members, what they can build with and
+  // the patches they can open.
+  const reader = admin ? undefined : viewer.user.id;
+  const connections = yield* store.list(viewer.company.id, reader);
+  const usage = yield* store.usage(viewer.company.id, reader);
   const now = yield* Clock.currentTimeMillis;
   // Members can see connection status, but must never read the call log.
   const lastCalls: View.LastCalls | undefined = admin
@@ -365,9 +356,7 @@ const index = Effect.fn("ConnectionPage.index")(function* (
 const catalogue = Effect.fn("ConnectionPage.catalogue")(function* (
   viewer: RequireSession.Viewer["Service"]
 ) {
-  const connections = (yield* (yield* ConnectionStore.ConnectionStore).list(
-    viewer.company.id
-  )).filter(shownTo(viewer));
+  const connections = yield* (yield* ConnectionStore.ConnectionStore).list(viewer.company.id);
   const now = yield* Clock.currentTimeMillis;
   const admins = viewer.role === "admin" ? [] : ((yield* directory(viewer))?.admins ?? []);
   return {
@@ -426,13 +415,21 @@ const connectionView = Effect.fn("ConnectionPage.connectionView")(function* (
 ) {
   const store = yield* ConnectionStore.ConnectionStore;
   const connection = yield* store.get(viewer.company.id, id);
-  if (!shownTo(viewer)(connection))
+  // A member reads only the connections they can build with, and the patches they can open.
+  const reader = viewer.role === "admin" ? undefined : viewer.user.id;
+  if (reader !== undefined && !(yield* store.canUse(viewer.company.id, id, reader)))
     return yield* new ConnectionStore.ConnectionNotFound({
       companyId: viewer.company.id,
       lookup: { id }
     });
   const page = pages[connection.integration];
-  const usage = (yield* store.usage(viewer.company.id)).get(id) ?? ConnectionStore.unused;
+  const usage = (yield* store.usage(viewer.company.id, reader)).get(id) ?? ConnectionStore.unused;
+  const audience = yield* store.audience(viewer.company.id, id);
+  const teamNames = new Map((yield* teamsOf(viewer)).map((team) => [team.id, team.name]));
+  const builders =
+    audience.kind === "company"
+      ? `People at ${viewer.company.name}`
+      : audience.teamIds.flatMap((teamId) => teamNames.get(teamId) ?? []).join(", ");
   // Deactivated people keep their names: they still added connections and made calls. A
   // directory that cannot be read leaves the page and its actions working, without names.
   const known = yield* directory(viewer);
@@ -462,6 +459,7 @@ const connectionView = Effect.fn("ConnectionPage.connectionView")(function* (
       description: connection.description,
       status: connection.status,
       blockGuests: connection.blockGuests,
+      builders,
       testedAt: connection.lastTestedAt,
       addedBy:
         known === null
@@ -524,15 +522,21 @@ const connectionPage = Effect.fn("ConnectionPage.connectionPage")(function* (
           Effect.catchTags({ ConnectionNotFound: () => Effect.succeed(null) })
         )
       : null;
-  // Members can see safe connection metadata, but must never read the call log. A log or its
-  // names that cannot be read leave administration working.
+  // Members can see safe connection metadata, but must never read the call log. A patch's calls
+  // are its content, shown only to an admin who can open it now; calls from no patch, such as the
+  // admins' own and `patchy dev`'s, stay. A log or its names that cannot be read leave
+  // administration working.
   const calls =
     admin && tab === "calls"
       ? yield* Effect.gen(function* () {
           const list = yield* (yield* RuntimeLog.RuntimeLog).recent({
             companyId: viewer.company.id,
             connectionId: id,
-            limit: View.RECENT_CALLS
+            limit: View.RECENT_CALLS,
+            patchIds: yield* (yield* PatchVisibility.PatchVisibility).openableIds(
+              viewer.company.id,
+              viewer.user.id
+            )
           });
           const versions = yield* store.versions(
             viewer.company.id,
@@ -597,8 +601,8 @@ const inUse = (usage: ConnectionStore.Usage): View.Notice => ({
 
 /**
  * A change that needs its own form or a second look, as a dialog over the connection's Settings:
- * Replace key, Change project or Point elsewhere, Change access, Pause and Disconnect. Edit
- * description's old address opens Settings with its field in focus.
+ * Replace key, Change project or Point elsewhere, Change access, Who can build with it, Pause and
+ * Disconnect. Edit description's old address opens Settings with its field in focus.
  */
 const confirmationPage = Effect.fn("ConnectionPage.confirmationPage")(function* (
   viewer: RequireSession.Viewer["Service"],
@@ -608,6 +612,10 @@ const confirmationPage = Effect.fn("ConnectionPage.confirmationPage")(function* 
     readonly description?: string | undefined;
     readonly submitted?: Submitted;
     readonly notice?: View.Notice;
+    /** The audience a refused or warned save asked for, drawn again as it was. */
+    readonly audience?: AudienceChoice;
+    /** The live patches that save would cut off, to submit again past. */
+    readonly cutOff?: ReadonlyArray<string>;
   } = {}
 ) {
   if (action === "description")
@@ -620,6 +628,62 @@ const confirmationPage = Effect.fn("ConnectionPage.confirmationPage")(function* 
   // Disconnect is offered only while nothing declares the connection; a stale link says why.
   if (action === "delete" && view.declared)
     return yield* connectionPage(viewer, id, "settings", inUse(view), { loaded });
+  if (action === "audience") {
+    const teams = yield* teamsOf(viewer);
+    const chosen =
+      form.audience ??
+      (yield* (yield* ConnectionStore.ConnectionStore)
+        .audience(viewer.company.id, id)
+        .pipe(
+          Effect.map((current): AudienceChoice =>
+            current.kind === "company"
+              ? { kind: "company", teamIds: [] }
+              : { kind: "teams", teamIds: current.teamIds }
+          )
+        ));
+    const error = form.notice?.code === "invalid_connection_audience" ? form.notice : undefined;
+    const overlay = View.renderDialog({
+      connection: view,
+      action,
+      actions: page.actions,
+      form: {
+        title: "Who can build with it",
+        fields: `${choiceGroup({
+          id: "connection-audience",
+          legend: "Who can build with it",
+          hideLegend: true,
+          ...(error === undefined ? {} : { error: error.message }),
+          choices: (aria) =>
+            `${radio({ name: "audience", value: "company", label: `People at ${viewer.company.name}`, checked: chosen.kind === "company", aria })}${radio({ name: "audience", value: "teams", label: "Selected teams", checked: chosen.kind === "teams", aria })}`
+        })}${
+          teams.length === 0
+            ? ""
+            : choiceGroup({
+                id: "connection-teams",
+                legend: "Teams",
+                choices: teams
+                  .map((team) =>
+                    checkbox({
+                      name: "teamIds",
+                      value: team.id,
+                      label: team.name,
+                      checked: chosen.teamIds.includes(team.id)
+                    })
+                  )
+                  .join("")
+              })
+        }${form.cutOff === undefined ? "" : '<input type="hidden" name="acknowledged" value="1">'}`,
+        submit: form.cutOff === undefined ? "Save" : "Save anyway",
+        ...(form.cutOff === undefined ? {} : { warning: View.cutOffWarning(form.cutOff) })
+      },
+      ...(form.notice === undefined || error !== undefined ? {} : { notice: form.notice })
+    });
+    return yield* connectionPage(viewer, id, "settings", undefined, {
+      overlay,
+      loaded,
+      status: form.notice?.status
+    });
+  }
   const credentials =
     action === "rotate" || action === "retarget" || action === "access" ? page[action] : undefined;
   if ((action === "retarget" || action === "access") && credentials === undefined)
@@ -724,13 +788,48 @@ const refusal = (error: ConnectionStore.ConnectionError): View.Notice => ({
   status: error.status
 });
 
-/** The submitted form, or null when its body cannot be read. */
+/** The submitted form, a repeated field as its values in order, or null when it cannot be read. */
 const formBody = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
   return yield* request.urlParamsBody.pipe(
-    Effect.map((params): Readonly<Record<string, unknown>> => Object.fromEntries(params)),
+    Effect.map((params): Readonly<Record<string, string | ReadonlyArray<string>>> => {
+      const fields = new Map<string, string | ReadonlyArray<string>>();
+      for (const [key, value] of params) {
+        if (typeof value !== "string") continue;
+        const had = fields.get(key);
+        fields.set(
+          key,
+          had === undefined ? value : [...(typeof had === "string" ? [had] : had), value]
+        );
+      }
+      return Object.fromEntries(fields);
+    }),
     Effect.catchTags({ HttpServerError: () => Effect.succeed(null) })
   );
+});
+
+/** What an audience form asked for, kept as it was so a refusal or warning can draw it again. */
+interface AudienceChoice {
+  readonly kind: string | undefined;
+  readonly teamIds: ReadonlyArray<string>;
+}
+const audienceChoice = (
+  form: Readonly<Record<string, string | ReadonlyArray<string>>> | null
+): AudienceChoice => {
+  const teamIds = form?.teamIds ?? [];
+  return {
+    kind: typeof form?.audience === "string" ? form.audience : undefined,
+    teamIds: typeof teamIds === "string" ? [teamIds] : teamIds
+  };
+};
+
+/** The company's teams, for the audience form and the page's words; none to someone gone. */
+const teamsOf = Effect.fn("ConnectionPage.teamsOf")(function* (
+  viewer: RequireSession.Viewer["Service"]
+) {
+  return yield* (yield* Teams.Teams)
+    .list({ companyId: viewer.company.id, actorId: viewer.user.id })
+    .pipe(Effect.catchTags({ RoleForbidden: () => Effect.succeed([]) }));
 });
 
 /** The store reports each change with its commit; a refusal or rollback reports nothing. */
@@ -796,6 +895,7 @@ const act = Effect.fn("ConnectionPage.act")(function* (
 ) {
   const form = yield* formBody;
   const submitted = submittedOf(form);
+  const chosen = audienceChoice(form);
   /** The page the change came from, with its refusal and a typed description kept. */
   const refused = (notice: View.Notice) =>
     Effect.gen(function* () {
@@ -804,6 +904,8 @@ const act = Effect.fn("ConnectionPage.act")(function* (
         case "retarget":
         case "access":
           return yield* confirmationPage(viewer, id, kind, { submitted, notice });
+        case "audience":
+          return yield* confirmationPage(viewer, id, kind, { audience: chosen, notice });
         case "description":
           return yield* connectionPage(viewer, id, "settings", notice, {
             description: text(form?.description)
@@ -851,6 +953,23 @@ const act = Effect.fn("ConnectionPage.act")(function* (
       if (!Redacted.isRedacted(credentials)) return yield* refused(credentials);
       if (kind === "retarget") yield* store.retarget({ ...input, credentials });
       else yield* store.rotate({ ...input, credentials });
+    } else if (kind === "audience") {
+      const audience: ConnectionStore.Audience | undefined =
+        chosen.kind === "company"
+          ? { kind: "company" }
+          : chosen.kind === "teams" && chosen.teamIds.length > 0
+            ? { kind: "teams", teamIds: chosen.teamIds }
+            : undefined;
+      if (audience === undefined) return yield* new ConnectionStore.InvalidConnectionAudience({});
+      // Narrowing that cuts off live patches says which, as Pause does, and saves once asked again.
+      const cutOff = yield* store
+        .setAudience({ ...input, audience, acknowledged: form.acknowledged === "1" })
+        .pipe(
+          Effect.as(undefined),
+          Effect.catchTags({ ConnectionCutsOff: (refused) => Effect.succeed(refused.patches) })
+        );
+      if (cutOff !== undefined)
+        return yield* confirmationPage(viewer, id, kind, { audience: chosen, cutOff });
     } else if (kind === "description") {
       const fields = yield* decodeDescription(form);
       yield* store.describe({ ...input, description: fields.description });
@@ -893,7 +1012,9 @@ const act = Effect.fn("ConnectionPage.act")(function* (
                   label: "Point it elsewhere instead"
                 }
               }
-            : refusal(error)
+            : error._tag === "SqlError"
+              ? { message: "Company service unavailable.", code: "source_unavailable", status: 503 }
+              : refusal(error)
       )
     )
   );

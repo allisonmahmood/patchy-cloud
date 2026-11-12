@@ -42,6 +42,9 @@ const gatedVersionId = "ver_eeeeeeeeeeeeeeeeeeeeeeee";
 const rollbackVersionId = "ver_ffffffffffffffffffffffff";
 const decodeMetadata = Schema.decodeUnknownEffect(Schema.NullOr(FileMetadata));
 const versions = Layer.succeed(LoadedVersions.LoadedVersions, {
+  findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+    return this.find(patchId);
+  },
   find: (patch, version = versionId) =>
     Effect.succeed(
       patch !== patchId ||
@@ -72,7 +75,10 @@ const versions = Layer.succeed(LoadedVersions.LoadedVersions, {
 });
 const dependencies = Layer.mergeAll(
   versions,
-  Layer.succeed(GrantedGuests.GrantedGuests, { host: () => Effect.succeed(Option.none()) }),
+  Layer.succeed(GrantedGuests.GrantedGuests, {
+    member: () => Effect.succeed(true),
+    host: () => Effect.succeed(Option.none())
+  }),
   Limits.layer,
   OperatingLimits.layer,
   RuntimeLog.layer,

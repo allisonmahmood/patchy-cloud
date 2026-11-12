@@ -53,6 +53,31 @@ export class LastAdmin extends Schema.TaggedError<LastAdmin>()("LastAdmin", {
   }
 }
 
+export class RoleForbidden extends Schema.TaggedError<RoleForbidden>()("RoleForbidden", {
+  companyId: Schema.String,
+  actorId: Schema.String
+}) {
+  override get message() {
+    return "Only an admin can do this.";
+  }
+}
+
+/**
+ * Locks the company row and refuses unless `actorId` is one of its active admins. Call it first
+ * in a transaction, before any patch or user row, so administration and the publish and sharing
+ * paths that take the same row serialize. It leaves foreign-key checks on the row unblocked.
+ */
+export const lockAdministrator = Effect.fn("Users.lockAdministrator")(function* (input: {
+  readonly companyId: string;
+  readonly actorId: string;
+}) {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`SELECT id FROM companies WHERE id = ${input.companyId} FOR NO KEY UPDATE`;
+  const admins = yield* sql`SELECT 1 FROM users WHERE company_id = ${input.companyId}
+    AND id = ${input.actorId} AND role = 'admin' AND deactivated_at IS NULL`;
+  if (admins.length === 0) return yield* new RoleForbidden(input);
+});
+
 export interface UserRef {
   readonly companyId: string;
   readonly userId: string;

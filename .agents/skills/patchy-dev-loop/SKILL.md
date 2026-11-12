@@ -279,3 +279,5 @@ template or CLI messages helps builders. `--calibrate` checks the judges
 against labelled builds after a change to their prompts or rubrics. It needs bubblewrap, both harnesses signed
 in on this machine and Playwright's Chromium; DEVELOPMENT's **Measuring how agents build** has
 the rest. Results land in `.local/evals/<suite>/`, `scorecard.md` first.
+
+Brightline has two admins, Allison and Robin, and seeded Design and Engineering teams. Its `design-review` page is owned by Allison and shared only with Design: Priya can open it, Marcus (Engineering only) cannot. Patch entries may name existing scenario team keys in `teams`; publication sets that audience with the first version.

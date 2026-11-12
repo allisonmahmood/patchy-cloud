@@ -78,9 +78,11 @@ export const make = Effect.gen(function* () {
       if (declaration.kind === "sharedTable") {
         allowed.add(`table:${declaration.patchId}:${declaration.table}`);
         allowed.add(`patch:${declaration.patchId}`);
+        allowed.add(`members:${binding.companyId}`);
       } else if (declaration.kind === "sharedStore") {
         allowed.add(`store:${declaration.patchId}:${declaration.store}`);
         allowed.add(`patch:${declaration.patchId}`);
+        allowed.add(`members:${binding.companyId}`);
       } else if (declaration.kind === "members") allowed.add(`members:${binding.companyId}`);
     }
     // Resume keys are untrusted. Only fence declared resources; callbacks still
@@ -95,9 +97,11 @@ export const make = Effect.gen(function* () {
     // before invocation, then keep only the sources actually attempted by the guest.
     const sources = new Set<string>();
     for (const declaration of Object.values(binding.manifest.uses))
-      if (declaration.kind === "sharedTable" || declaration.kind === "sharedStore")
+      if (declaration.kind === "sharedTable" || declaration.kind === "sharedStore") {
         sources.add(`patch:${declaration.patchId}`);
-      else if (declaration.kind === "members") sources.add(`members:${binding.companyId}`);
+        // Shared-source admission traces membership even without a directory read.
+        sources.add(`members:${binding.companyId}`);
+      } else if (declaration.kind === "members") sources.add(`members:${binding.companyId}`);
     const before = yield* reads.revisions(binding.companyId, [...sources]);
     const attempted = new Set<string>();
     let watermark: Readonly<Record<string, string>> = {};

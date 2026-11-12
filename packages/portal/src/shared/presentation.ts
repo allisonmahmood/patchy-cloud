@@ -10,6 +10,7 @@ import {
   menuNewTab,
   patchTitle
 } from "@patchy/core";
+import type { ReportedAudience } from "@patchy/api";
 import type { Patches } from "@patchy/patches";
 import type { InvocationLog } from "@patchy/runtime";
 
@@ -50,9 +51,30 @@ export const byTitle = (company: string) => (a: Patches.ReadPatch, b: Patches.Re
   patchTitle(a.patch, company).localeCompare(patchTitle(b.patch, company)) ||
   a.patch.name.localeCompare(b.patch.name);
 
-/** Whether the viewer may manage this patch: its owner, or any admin. */
-export const manages = (row: Patches.ReadPatch, viewer: Viewer) =>
-  viewer.role === "admin" || row.owner.id === viewer.user.id;
+/** Admins hand a patch to someone else, from Settings, Share and the menus alike. */
+export const canReassign = (viewer: Viewer) => viewer.role === "admin";
+
+/** Whether the viewer may manage this patch: any admin, or its owner while they can open it. */
+export const manages = (row: Pick<Patches.ReadPatch, "access">) => row.access.canManage;
+
+/** Names in a phrase, as plain text: "Design", "Design and Sales", "Design, Ops and Sales". */
+const plainList = (names: readonly string[]) =>
+  names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+
+/** Who can open a patch, in a list's Access column: Company, Public, or its teams. */
+export const accessLabel = (audience: ReportedAudience) => {
+  if (audience.kind !== "teams") return audience.kind === "public" ? "Public" : "Company";
+  const names = audience.teams.map((team) => team.name);
+  return names.length <= 2 ? plainList(names) : `${names[0]} and ${names.length - 1} more teams`;
+};
+
+/** Who can open a patch, as a sentence says it. */
+export const audienceText = (audience: ReportedAudience, company: string) =>
+  audience.kind === "public"
+    ? "Anyone on the internet. No sign-in."
+    : audience.kind === "company"
+      ? `Everyone at ${company}`
+      : `People on ${plainList(audience.teams.map((team) => team.name))}`;
 
 /**
  * A colleague's live patch the viewer has never opened, which Home and All patches mark with
@@ -65,7 +87,7 @@ export const unopened = (
 ) => row.patch.state === "live" && row.owner.id !== viewer.user.id && !opens.has(row.patch.id);
 
 /** A patch's card at `/patches/<name>`, or one of its pages under it. */
-export const cardPath = (patch: Patches.Patch, action = "") =>
+export const cardPath = (patch: Pick<Patches.Patch, "name">, action = "") =>
   `/patches/${encodeURIComponent(patch.name)}${action ? `/${action}` : ""}`;
 
 /** The log filtered to its failed entries. */
@@ -103,7 +125,7 @@ export const failuresCell = (
       : `<span class="muted">${summary.calls === 0 ? "No calls yet" : "None"}</span>`;
 
 /** A live patch's address, relative to the instance. */
-export const patchAddress = (patch: Patches.Patch) =>
+export const patchAddress = (patch: Pick<Patches.Patch, "name" | "companyHandle">) =>
   `/${encodeURIComponent(patch.companyHandle)}/${encodeURIComponent(patch.name)}`;
 
 /** `here`, the page a menu is on, with the Share dialog for patch `name` open over it. */
@@ -130,7 +152,7 @@ export const openItems = (
   const title = patchTitle(patch, viewer.company.name);
   const live = patch.state === "live";
   return [
-    ...(live
+    ...(live && row.access.canOpen
       ? [
           menuNewTab(patchAddress(patch), title),
           menuCopy(
@@ -140,7 +162,7 @@ export const openItems = (
           )
         ]
       : []),
-    ...(live && manages(row, viewer)
+    ...(live && manages(row)
       ? [menuLink(shareHref(here, patch.name), "Share…", false, title)]
       : []),
     ...(about ? [menuLink(cardPath(patch), "About this patch", false, title)] : [])

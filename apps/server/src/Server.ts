@@ -20,6 +20,7 @@ import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import { Analytics, WideEventsPostHog } from "@patchy/analytics";
 import { PatchyApi } from "@patchy/api";
@@ -43,7 +44,16 @@ import {
   Session,
   ViewerApi
 } from "@patchy/auth";
-import { Companies, CompanyPage, InviteMail, LookApi, Looks, Users } from "@patchy/companies";
+import {
+  Companies,
+  CompanyPage,
+  InviteMail,
+  LookApi,
+  Looks,
+  Teams,
+  TeamsPage,
+  Users
+} from "@patchy/companies";
 import {
   Inventory,
   PgCompanyDatabases,
@@ -75,12 +85,14 @@ import {
 import { Limits, OperatingLimits } from "@patchy/limits";
 import { ChangeKeys, Door } from "@patchy/mcp";
 import {
+  ConnectionVisibility,
   Content,
   LoadedVersions,
   DeletionSweep,
   GuestGrants,
   Patches,
-  PatchesApi
+  PatchesApi,
+  Audiences
 } from "@patchy/patches";
 import { Fonts, Gallery, PortalPages } from "@patchy/portal";
 import { Tables, TableOperations, Files, Members, SubscriptionReads } from "@patchy/primitives";
@@ -175,13 +187,19 @@ const resourceChanges = Layer.effect(
 );
 
 /**
- * Runtime's doors admit a patch's guests by Patches' grants, which Runtime cannot depend on.
- * Runtime loads only live patches, so its loaded version says all the rule needs of the patch.
+ * Runtime's doors admit members by a patch's current audience and guests by its grants, both
+ * Patches' decisions, which Runtime cannot depend on.
  */
 const grantedGuests = Layer.effect(
   GrantedGuests.GrantedGuests,
-  Effect.map(GuestGrants.GuestGrants, (grants) =>
-    GrantedGuests.GrantedGuests.of({
+  Effect.gen(function* () {
+    const grants = yield* GuestGrants.GuestGrants;
+    const patches = yield* Patches.Patches;
+    return GrantedGuests.GrantedGuests.of({
+      member: (loaded, userId) =>
+        patches
+          .admitsMember(loaded.patchId, loaded.companyId, userId)
+          .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))),
       host: (loaded, userId) =>
         grants
           .host({
@@ -192,8 +210,8 @@ const grantedGuests = Layer.effect(
             version: { tier: loaded.manifest.tier, manifest: loaded.manifest }
           })
           .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })))
-    })
-  )
+    });
+  })
 );
 
 /** People's Patches column comes from Patches, which Companies cannot depend on. */
@@ -223,6 +241,44 @@ const companyGuests = Layer.effect(
     list: grants.companyGuests,
     removeAll: grants.revokeAll
   }))
+);
+
+/**
+ * A refused team deletion names what uses the team, which Patches and Integrations know and
+ * Companies cannot read. Only admins delete teams, and they see every connection.
+ */
+const teamUses = Layer.effect(
+  TeamsPage.Uses,
+  Effect.gen(function* () {
+    const patches = yield* Patches.Patches;
+    const sql = yield* SqlClient.SqlClient;
+    return Effect.fn("Hosting.teamUses")(
+      function* (team: Teams.TeamRef) {
+        const using = new Set(yield* Audiences.patchesUsingTeam(team.companyId, team.teamId));
+        const visible = (yield* patches
+          .list({
+            companyId: team.companyId,
+            userId: team.actorId,
+            state: "all",
+            managed: true,
+            canOpen: () => true
+          })
+          .pipe(Effect.catchTags({ PatchUnavailable: Effect.die, WrongState: Effect.die })))
+          .filter((row) => row.access.canManage && using.has(row.patch.id))
+          .map((row) => row.patch.name);
+        const connections = yield* SqlConnectionStore.connectionsUsingTeam(
+          team.companyId,
+          team.teamId
+        );
+        return {
+          patches: visible,
+          connections: connections.map(({ integration, handle }) => `${integration}/${handle}`),
+          hidden: using.size - visible.length
+        };
+      },
+      Effect.provideService(SqlClient.SqlClient, sql)
+    );
+  })
 );
 
 /** The services over a migrated database, with stdout events and optional PostHog delivery. */
@@ -310,7 +366,7 @@ const services = Layer.mergeAll(
       // IMAP sessions that published patches and the dev door share.
       Layer.provideMerge(
         SqlConnectionStore.layer.pipe(
-          Layer.provide([CredentialKeys.layer, PostgresSource.layer]),
+          Layer.provide([CredentialKeys.layer, PostgresSource.layer, Teams.layer]),
           Layer.provideMerge(PostHogSource.layer),
           Layer.provideMerge(PidgeonSource.layer),
           Layer.provideMerge(AttioSource.layer),
@@ -327,6 +383,9 @@ const services = Layer.mergeAll(
   Layer.provideMerge(InvocationLog.layer),
   Layer.provideMerge(resourceChanges),
   Layer.provideMerge(WakesPostgres.layer),
+  Layer.provideMerge(ConnectionVisibility.layer),
+  // Patches, guest grants, connections and the portal each read teams through this one.
+  Layer.provideMerge(Teams.layer),
   Layer.provide(migrated)
 );
 
@@ -449,7 +508,7 @@ const app = Layer.mergeAll(
  */
 export const layer = Layer.mergeAll(
   HttpRouter.serve(app, { disableLogger: true, disableListenLog: true }).pipe(
-    Layer.provide([ownedPatches, companyGuests])
+    Layer.provide([ownedPatches, companyGuests, teamUses])
   ),
   sweeper,
   Layer.effectContext(

@@ -32,6 +32,26 @@ const autofocused = (html: string) =>
   );
 
 it.layer(socket)("the Share dialog on a socket", (it) => {
+  it.effect("lets an admin reach existing reassignment from the owner row", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const patch = yield* publish(workspace.owner, "change-owner");
+      const path = `/patches?share=${patch.name}`;
+      assert.notInclude(yield* (yield* request(path, workspace.owner)).text, "Change owner…");
+      const html = shareDialog(yield* (yield* request(path, workspace.admin)).text);
+      assert.isTrue(
+        links(html).some(
+          (link) =>
+            link.href === `${cardPath(patch.name)}/reassign` && link.text === "Change owner…"
+        )
+      );
+      const confirmation = yield* (yield* request(
+        `${cardPath(patch.name)}/reassign`,
+        workspace.admin
+      )).text;
+      assert.include(confirmation, "New owner");
+    })
+  );
   it.effect(
     "asks in the Share dialog before a patch goes public, without publishing a version",
     () =>
@@ -45,8 +65,8 @@ it.layer(socket)("the Share dialog on a socket", (it) => {
         const fields: FormFields = { ...formFields(dialog, scopePath), scope: "public" };
         assert.deepStrictEqual(fields, {
           expectedPatchId: patch.patchId,
+          expectedLifecycleRevision: before.patch.lifecycleRevision,
           back: "/patches",
-          expectedScope: "company",
           scope: "public"
         });
         // General access offers the internet to a page, and asks before it applies it. Focus
@@ -65,13 +85,13 @@ it.layer(socket)("the Share dialog on a socket", (it) => {
         assert.include(text(shareDialog(confirm)), "Make Scope &lt;save&gt; public?");
         assert.include(confirm, 'name="confirm" value="public">Make public</button>');
         assert.deepStrictEqual(formFields(confirm, scopePath), fields);
-        // Its Cancel goes back to the dialog, and starts focused; Done leaves the asking behind.
+        // Its Cancel goes back to the dialog, and starts focused; Close leaves the asking behind.
         assert.include(
           shareDialog(confirm),
           `<a class="btn btn-quiet" href="/patches?share=${patch.name}" autofocus>Cancel</a>`
         );
         assert.isTrue(
-          links(confirm).some((link) => link.href === "/patches" && link.text === "Done")
+          links(confirm).some((link) => link.href === "/patches" && link.text === "Close")
         );
         assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
         assert.deepStrictEqual(reported(patch.patchId), []);
@@ -98,7 +118,7 @@ it.layer(socket)("the Share dialog on a socket", (it) => {
         assert.include(landed.html, '<option value="public" selected>');
         assert.include(text(landed.html), "Anyone with the link can open it without signing in.");
         const saved = yield* readPatch(workspace.owner, patch.patchId);
-        assert.strictEqual(saved.patch.scope, "public");
+        assert.strictEqual(saved.patch.audience.kind, "public");
         assert.deepStrictEqual(reported(patch.patchId), [
           {
             name: "patch.shared",
@@ -127,7 +147,8 @@ it.layer(socket)("the Share dialog on a socket", (it) => {
         const back = yield* post(scopePath, workspace.owner, {
           ...fields,
           scope: "company",
-          expectedScope: "public"
+          expectedScope: "public",
+          expectedLifecycleRevision: saved.patch.lifecycleRevision
         });
         assert.strictEqual(back.status, 303);
         assert.strictEqual(
@@ -135,7 +156,7 @@ it.layer(socket)("the Share dialog on a socket", (it) => {
           "Scope &lt;save&gt; is open to people at Northwind"
         );
         assert.strictEqual(
-          (yield* readPatch(workspace.owner, patch.patchId)).patch.scope,
+          (yield* readPatch(workspace.owner, patch.patchId)).patch.audience.kind,
           "company"
         );
       })
@@ -159,7 +180,7 @@ it.layer(socket)("the Share dialog on a socket", (it) => {
         back: "/patches?show=pages"
       });
       assert.isTrue(
-        links(dialog).some((link) => link.href === "/patches?show=pages" && link.text === "Done")
+        links(dialog).some((link) => link.href === "/patches?show=pages" && link.text === "Close")
       );
       // A member gets the page without it.
       assert.notInclude(forms(yield* (yield* request(opened, workspace.member)).text), addPath);
@@ -201,12 +222,11 @@ it.layer(socket)("the Share dialog on a socket", (it) => {
         303
       );
       // Public, its guests keep their grants, and focus starts on General access, never Remove.
-      yield* (yield* Patches.Patches).setScope(
-        patch.patchId,
-        actor(workspace.owner),
-        "public",
-        "company"
-      );
+      yield* (yield* Patches.Patches).setSharing({
+        patchId: patch.patchId,
+        actor: actor(workspace.owner),
+        audience: { kind: "public" }
+      });
       const open = shareDialog(yield* (yield* request(opened, workspace.owner)).text);
       assert.deepStrictEqual(autofocused(open), ["share-scope"]);
       assert.include(
@@ -225,12 +245,11 @@ it.layer(socket)("the Share dialog on a socket", (it) => {
       assert.deepStrictEqual(autofocused(lateDialog), ["share-email"]);
       assert.include(lateDialog, 'value="nobody@nowhere.example"');
       assert.include(text(lateDialog), "nobody@nowhere.example isn’t on Patchy yet");
-      yield* (yield* Patches.Patches).setScope(
-        patch.patchId,
-        actor(workspace.owner),
-        "company",
-        "public"
-      );
+      yield* (yield* Patches.Patches).setSharing({
+        patchId: patch.patchId,
+        actor: actor(workspace.owner),
+        audience: { kind: "company" }
+      });
       // Another patch's dialog suggests them, as someone shared with before.
       const suggesting = yield* (yield* request(`/?share=${other.name}`, workspace.admin)).text;
       assert.include(
@@ -323,7 +342,6 @@ it.layer(socket)("the Share dialog on a socket", (it) => {
         yield* (yield* request(`${cardPath(patch.name)}?share=${patch.name}`, workspace.owner)).text
       );
       assert.notInclude(dialog, 'value="public"');
-      assert.include(text(dialog), "Tools can’t be public.");
       assert.notInclude(dialog, "Make public");
       const refused = yield* post(`${cardPath(patch.name)}/scope`, workspace.owner, {
         expectedPatchId: patch.patchId,
@@ -341,7 +359,7 @@ it.layer(socket)("the Share dialog on a socket", (it) => {
       // The control it focuses is described by the refusal, and marked refused.
       assert.match(
         refusedDialog,
-        /<select[^>]*id="share-scope"[^>]*aria-describedby="share-scope-reason share-scope-refusal" aria-invalid="true"/
+        /<select[^>]*id="share-scope"[^>]*aria-describedby="share-scope-refusal" aria-invalid="true"/
       );
       assert.include(
         refusedDialog,
@@ -373,7 +391,10 @@ it.layer(socket)("the Share dialog on a socket", (it) => {
         confirm: "public"
       });
       assert.strictEqual(shared.status, 303);
-      assert.strictEqual((yield* readPatch(workspace.owner, patch.patchId)).patch.scope, "public");
+      assert.strictEqual(
+        (yield* readPatch(workspace.owner, patch.patchId)).patch.audience.kind,
+        "public"
+      );
     })
   );
 });

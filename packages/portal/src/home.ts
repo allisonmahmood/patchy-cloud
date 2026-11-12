@@ -42,10 +42,10 @@ import {
   failuresCell,
   failuresColumn,
   firstClause,
+  accessLabel,
   manages,
   openItems,
   patchAddress,
-  shareHref,
   unopened
 } from "./shared/presentation.js";
 
@@ -76,11 +76,18 @@ const when = (iso: string, now: number) => {
 /**
  * Home's one-line notice after someone's first publication: "<title> is live", or "Your welcome
  * page is live", with Open and Copy link. Home shows it for the day after, and the guide's watch
- * puts it in Home's notices when the publication lands while Home is open.
+ * puts it in Home's notices when the publication lands while Home is open. One its owner can't
+ * open any more says so, with the way to its card.
  */
 export const renderPublishedNote = (row: Row, company: string, publicBaseUrl: string): string => {
   const { patch } = row;
   const title = patchTitle(patch, company);
+  if (!row.access.canOpen)
+    return notice({
+      tone: "info",
+      title: `You can’t open ${title}`,
+      action: linkButton("View patch", cardPath(patch), { size: "sm", ariaLabel: `View ${title}` })
+    });
   const url = `${publicBaseUrl.replace(/\/+$/u, "")}${patchAddress(patch)}`;
   return notice({
     tone: "info",
@@ -164,12 +171,12 @@ export const renderHome = (input: HomeInput): Template => {
   // so New leaves public pages out.
   const fresh = (entry: Row) =>
     dotted(entry) &&
-    entry.patch.scope !== "public" &&
+    entry.patch.audience.kind !== "public" &&
     now - epoch(entry.patch.createdAt) < NEW_WINDOW;
   const menu = (entry: Row, list: string) =>
     rowMenu(`${list}-${entry.patch.id}`, title(entry), [
       ...openItems(entry, viewer, input.publicBaseUrl, "/"),
-      ...(manages(entry, viewer)
+      ...(manages(entry)
         ? [menuLink(cardPath(entry.patch, "settings"), "Settings", false, title(entry))]
         : [])
     ]);
@@ -255,7 +262,7 @@ export const renderHome = (input: HomeInput): Template => {
               ? emptyState({
                   title: "No patches yet",
                   body: `What ${company} builds shows up here.`,
-                  ...(viewer.role === "admin"
+                  ...(viewer.role !== "member"
                     ? { action: linkButton("Invite people", "/settings/people", { size: "sm" }) }
                     : {})
                 })
@@ -329,17 +336,18 @@ export const renderHome = (input: HomeInput): Template => {
         })
       : "";
 
-  // Yours: A–Z, never re-sorted, with who can open each, its failures and Share in view.
+  // Yours: A–Z, never re-sorted, with who can open each, its failures and the action menu.
   const yours = live.filter(mine).sort(byTitle);
   const tools = yours.some((entry) => !isPage(entry));
   const access = (entry: Row) => {
-    if (entry.patch.scope === "public") return "Public";
+    const audience = accessLabel(entry.audience);
+    if (entry.audience.kind === "public") return audience;
     const guests = input.guests.get(entry.patch.name) ?? 0;
     return guests === 0
-      ? "Company"
+      ? audience
       : input.turnedAway.has(entry.patch.id)
-        ? `Company · ${plural(guests, "guest can’t", "guests can’t")} open it`
-        : `Company + ${plural(guests, "guest", "guests")}`;
+        ? `${audience} · ${plural(guests, "guest can’t", "guests can’t")} open it`
+        : `${audience} + ${plural(guests, "guest", "guests")}`;
   };
   const yoursSection = yours.length
     ? region({
@@ -357,7 +365,7 @@ export const renderHome = (input: HomeInput): Template => {
             patchCell(entry),
             escapeHtml(access(entry)),
             ...(tools ? [failuresCell(entry.patch, calls?.get(entry.patch.id))] : []),
-            `<div class="btn-group btn-group-end"><span class="hide-sm">${linkButton("Share", shareHref("/", entry.patch.name), { kind: "quiet", size: "sm", icon: "share", ariaLabel: `Share ${title(entry)}` })}</span>${menu(entry, "yours")}</div>`
+            menu(entry, "yours")
           ])
         })
       })

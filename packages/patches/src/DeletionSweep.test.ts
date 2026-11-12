@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { assert, it } from "@effect/vitest";
-import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -290,36 +289,6 @@ it.layer(services)("DeletionSweep", (it) => {
         assert.strictEqual((yield* sweep).deleted, 1);
         assert.deepStrictEqual(yield* keys(prefix), []);
       })
-  );
-
-  it.effect("reclaims a deleted team patch with every row that names it", () =>
-    Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      const companyId = uploader.company.id;
-      const { patchId } = yield* publish("team-budget");
-      // A later release opened it to a team, kept its owner history, then deleted it.
-      const at = (yield* Clock.currentTimeMillis) / 1000;
-      yield* sql`INSERT INTO company_teams (id, company_id, name)
-        VALUES ('team_sweep', ${companyId}, 'Budget')`;
-      yield* sql`UPDATE patches SET scope = 'teams', deleted_at = to_timestamp(${at})
-        WHERE id = ${patchId}`;
-      yield* sql`INSERT INTO patch_audience_teams (patch_id, company_id, team_id)
-        VALUES (${patchId}, ${companyId}, 'team_sweep')`;
-      yield* sql`INSERT INTO patch_audience_changes (patch_id, actor_id, before, after, created_at)
-        VALUES (${patchId}, ${uploader.user.id}, '{"kind":"company"}', '{"kind":"teams"}', to_timestamp(${at}))`;
-      yield* sql`INSERT INTO patch_admin_additions (patch_id, actor_id, user_id, team_name, created_at)
-        VALUES (${patchId}, ${uploader.user.id}, ${uploader.user.id}, 'Budget', to_timestamp(${at}))`;
-      yield* TestClock.adjust(30 * DAY);
-      yield* sweep;
-      assert.deepStrictEqual(
-        yield* sql`SELECT
-          (SELECT count(*)::int FROM patches WHERE id = ${patchId}) AS patches,
-          (SELECT count(*)::int FROM patch_audience_teams WHERE patch_id = ${patchId}) AS audience,
-          (SELECT count(*)::int FROM patch_audience_changes WHERE patch_id = ${patchId}) AS changes,
-          (SELECT count(*)::int FROM patch_admin_additions WHERE patch_id = ${patchId}) AS additions`,
-        [{ patches: 0, audience: 0, changes: 0, additions: 0 }]
-      );
-    })
   );
 
   it.effect("leaves a partly reclaimed patch's files to the orphan sweep, sparing others", () =>

@@ -20,7 +20,6 @@ import {
   RuntimeLog
 } from "@patchy/runtime";
 import * as Callbacks from "../../../runtime/src/test/callbacks.js";
-import * as RuntimeTest from "../test/runtime.js";
 import * as Testing from "@patchy/sql/testing";
 import * as ConnectionStore from "../ConnectionStore.js";
 import * as ConnectionStoreDev from "../ConnectionStoreDev.js";
@@ -107,6 +106,9 @@ const binding = {
   }
 };
 const versions = Layer.succeed(LoadedVersions.LoadedVersions, {
+  findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+    return this.find(patchId);
+  },
   find: (patch, version) =>
     Effect.succeed(
       patch === patchId && (version === undefined || version === versionId)
@@ -122,8 +124,7 @@ const services = Layer.mergeAll(
   Limits.layer,
   OperatingLimits.layer,
   RuntimeLog.layer,
-  versions,
-  RuntimeTest.storedPatch(patchId)
+  versions
 )
   .pipe(
     Layer.provideMerge(Testing.layer()),
@@ -228,7 +229,8 @@ it.layer(services)("declared Postgres from a tier 2 action", (it) => {
           assert.strictEqual(nulCall?.sql, "SELECT 1\uFFFD");
           const recent = yield* log.recent({
             companyId: DEV_SEED.companyId,
-            connectionId: declaration.id
+            connectionId: declaration.id,
+            patchIds: [patchId]
           });
           assert.deepStrictEqual(
             recent.filter((call) => call.op !== "postgres.query").map((call) => call.sql),

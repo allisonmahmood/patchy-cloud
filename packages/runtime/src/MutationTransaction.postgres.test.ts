@@ -81,7 +81,12 @@ const services = Layer.mergeAll(
   Layer.provideMerge(TestWakes.layer),
   Layer.provideMerge(TestMemberDirectory.layer),
   Layer.provideMerge(
-    Layer.succeed(LoadedVersions.LoadedVersions, { find: () => Effect.succeed(Option.none()) })
+    Layer.succeed(LoadedVersions.LoadedVersions, {
+      findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+        return this.find(patchId);
+      },
+      find: () => Effect.succeed(Option.none())
+    })
   )
 );
 const setup = Effect.fnUntraced(function* (patchId: string) {
@@ -458,7 +463,8 @@ it.layer(services)("Mutation SERIALIZABLE acceptance", (it) => {
         );
         const anotherViewer = {
           ...fixture.binding,
-          identity: { ...viewer, user: { ...viewer.user, id: "usr_other" } }
+          identity: { ...viewer, user: { ...viewer.user, id: "usr_other" } },
+          reauthorize: Effect.succeed({ ...viewer, user: { ...viewer.user, id: "usr_other" } })
         };
         assert.strictEqual(
           (yield* quiet.call(key, fixture.id, anotherViewer).pipe(Effect.flip)).code,

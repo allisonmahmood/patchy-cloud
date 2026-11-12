@@ -1224,7 +1224,7 @@ Check an HTML file locally as publish would, without publishing: it must carry e
 patchy validate ./plan.html
 ```
 
-### `patchy publish [file] [--name <name>] [--share company|public] [--patch <patch-id>] [--new] [--description <text>] [--force] [--allow-behind] [--dry-run] [--api-url <url>]`
+### `patchy publish [file] [--name <name>] [--share company|public|teams] [--team <name-or-id>]… [--patch <patch-id>] [--new] [--description <text>] [--force] [--allow-behind] [--dry-run] [--api-url <url>]`
 
 First recover the pending publish in this mode's instance-scoped attempt directory. Otherwise check the executing CLI release against `GET /api/release`; a different release is `release_mismatch`, exit 1, naming the instance's install line, since rerunning the installer is how a global CLI upgrades. Then check the file as `validate` does, and publish it with a tier 1 manifest, empty `tables`, `files` and `uses`, and no `sdkImports`. File mode never reads `patchy.json`. On success it prints the address, patch ID, tier, version number, provisioned and unused resources, and sharing scope. The JSON response includes `name`, `address`, `scope: "company" | "public"`, `tier`, `schemaRevision`, `provisioned`, `unused` and `warnings`. `publicUrl` equals `address`; the scope, not that field name, controls who may read it.
 
@@ -1415,7 +1415,7 @@ access. For `connection_not_connected`, an admin resumes it at
 Connection secrets belong only in the admin's browser connect or replace form,
 never CLI arguments or an agent transcript.
 
-Without `--share`, a new patch defaults to `company` and an update preserves the patch's current scope. An explicit `--share company` or `--share public` sets it in either direction while publishing the new version:
+Without `--share`, a new patch is open to the company and an update keeps its audience. `--share company`, `--share public` or `--share teams --team <name>` sets it in any direction while publishing the new version ([Patch audiences](#patch-audiences)):
 
 ```sh
 patchy publish ./plan.html --share public --json
@@ -1423,13 +1423,13 @@ patchy publish ./plan.html                 # updates content, stays public
 patchy publish ./plan.html --share company # updates content, takes it back inside
 ```
 
-### `patchy share <file> <company|public>` or `patchy share --patch <patch-id> <company|public>`
+### `patchy share <file> <company|public|teams> [--team <name-or-id>]… [--force]` or `patchy share --patch <patch-id> <company|public|teams> [--team <name-or-id>]… [--force]`
 
 Change an existing patch's sharing without publishing a version, or its [guests](#guests-patchy-share-file---add-email---remove-email-or-user-id-or---list). Name the file it was published from to use the CLI's per-instance cache, or pass `--patch <patch-id>`; one or the other, not both. Only the owner user can change sharing, through any of their machine tokens. Company membership or an admin role alone does not grant that right.
 
-From a published repo, `patchy share company|public` uses `patchy.json` without
+From a published repo, `patchy share company|public|teams` uses `patchy.json` without
 a file or `--patch`. An unpublished repo is a local refusal.
-`patchy share --share company|public` selects the same scope explicitly.
+`patchy share --share company|public|teams` selects the same audience explicitly.
 
 Sharing a served tier 2 version publicly is `tier2_not_public`, exit 2, through
 both the CLI and portal. The instance reads the served version, not local config.
@@ -1450,7 +1450,9 @@ patchy share --patch k7f2m9x1a3b8 company --json
 # {"ok":true,"patchId":"k7f2m9x1a3b8","scope":"company","publicUrl":"https://pages.example.com/acme/plan"}
 ```
 
-Share uses the same credential chain as publish. With no key it exits 1 (`local`), `Run: patchy login`; a missing cached file target is also `local`. A same-company non-owner receives `not_owner`, a non-live patch receives `wrong_state`, and a foreign or gone patch answers 404. Each is `rejected`, exit 2.
+Narrowing a source to selected teams returns `has_dependants` (exit 2) before changing anything when declared dependants are within your management authority. Review the reported tools, then repeat with `--force` to accept possible shared-read failures. JSON refusals carry the same `dependants` array. Widening access and changes without visible dependants need no acknowledgement.
+
+Share uses the same credential chain as publish. With no key it exits 1 (`local`), `Run: patchy login`; a missing cached file target is also `local`. A same-company non-owner receives `not_owner`. Sharing changes work on retired patches and on deleted ones inside their recovery window; guest changes need a live patch and otherwise receive `wrong_state`. A foreign or gone patch, or one past its recovery window, answers 404. Each is `rejected`, exit 2.
 
 #### Guests: `patchy share [file] --add <email>`, `--remove <email-or-user-id>` or `--list`
 
@@ -1806,7 +1808,8 @@ without `--json`, it is one line on stderr, and usage may precede it on stdout.
 - `--wait <seconds>` — on `login --complete`, poll for up to this long (default 60); zero polls once and returns immediately if still pending.
 - `--token-stdin` — on `auth set`, read exactly one non-empty token from redirected stdin. This is the explicit automation path and is rejected when stdin is a terminal.
 - `--name <name>` — on file-mode `publish`, set or rename the patch; repo mode uses `patchy.config.ts`.
-- `--share company|public` — on `publish`, explicitly set who may read the patch. Without it, creates default to company and updates preserve scope.
+- `--share company|public|teams` — on `publish` and `share`, set who may open the patch; `teams` takes the teams named by `--team`. Without it, creates are open to the company and updates keep their audience.
+- `--team <name-or-id>` — with `--share teams`, a team that can open the patch, by name or id; repeat it for each team. Alone it means `--share teams`.
 - `--new` — on `publish`, always create a new patch with a server-generated ID instead of updating the one previously published from this path. It cannot be combined with `--patch`.
 - `--patch <patch-id>` — on `publish`, update a specific existing patch. This is update-only and never creates a new patch. It cannot be combined with `--new`.
 - `--patch <patch-id>`: on `share`, `retire`, `delete`, `restore`, `rollback` and `describe`, name the patch instead of using the repo id or file cache. It cannot be combined with a file argument. On `logs`, read that patch's log instead of the repo's.
@@ -1929,6 +1932,23 @@ and the tier- and declaration-driven removal rules.
 ## Security
 
 Report vulnerabilities privately by following the [security policy](https://github.com/allisonmahmood/patchy-cloud/blob/main/SECURITY.md).
+
+## Patch audiences
+
+A first publish is open to the company unless the person names another audience; later publishes keep it. The audience is Company, Public where the patch may be public, or one or more teams, and it must include the owner. Named guests at other companies are granted separately and stay through audience changes.
+
+```sh
+patchy audiences --json
+patchy publish ./plan.html --share teams --team Design --team Engineering --json
+patchy share --patch <patch-id> company --json
+patchy share --patch <patch-id> --add guest@example.com --json
+```
+
+`patchy audiences` lists the company's teams. `--team` takes a team's name or id, repeats for each team, and alone means `--share teams`; an unknown team exits 1 before anything is sent. The CLI always sends the whole audience, so `share company` widens a patch open to teams.
+
+Publish, share and `list` report `audience` (`kind`, and for teams each team's `id` and `name`), first under `--json`; receipts name the teams. `scope` stays `company` or `public` for CLIs released before team audiences, so a team patch reports `company`. Those CLIs' `share company` on a team patch is refused with `upgrade_required` instead of widening it. Refusals of a chosen audience exit 2 with `invalid_audience_teams` or `audience_excludes_owner`. An owner who lost access gets `owner_access_lost` and should ask an admin to restore their team access or reassign the patch, not publish a replacement. Each of these clears the saved attempt.
+
+A publish or share warns when the audience reaches people the patch's shared sources don't, whose reads then fail, or lets people use a team-only connection they aren't on through its handlers.
 
 ## License
 

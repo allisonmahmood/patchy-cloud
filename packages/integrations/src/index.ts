@@ -27,3 +27,4 @@ export * as ImapNetwork from "./imap/Network.js";
 export * as ImapOperations from "./imap/Operations.js";
 export * as ImapSessions from "./imap/Sessions.js";
 export { migrations } from "./migrations.js";
+export * as PatchVisibility from "./PatchVisibility.js";

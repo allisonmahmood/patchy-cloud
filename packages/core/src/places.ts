@@ -5,6 +5,7 @@
  * of them is open; the switcher lists them as places of their own.
  */
 const settingsPlaces = [
+  { href: "/settings/company/teams", label: "Teams", section: "teams" },
   { href: "/settings/people", label: "People", section: "people" },
   { href: "/settings/integrations", label: "Integrations", section: "integrations" },
   { href: "/settings/agent-access", label: "Agent access", section: "agent-access" }

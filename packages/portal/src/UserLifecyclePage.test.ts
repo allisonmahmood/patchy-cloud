@@ -11,7 +11,7 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as SqlClient from "effect/sql/SqlClient";
 import { Analytics } from "@patchy/analytics";
 import { PUBLIC_BASE_URL } from "@patchy/auth/testing";
-import { Users } from "@patchy/companies";
+import { Teams, Users } from "@patchy/companies";
 import { Patches } from "@patchy/patches";
 import { Wakes } from "@patchy/runtime";
 import {
@@ -936,6 +936,75 @@ it.layer(socket)("user lifecycle pages on a socket", (it) => {
         }
         assert.deepStrictEqual(lifecycleEvents(workspace.id), []);
         assert.deepStrictEqual(lifecycleEvents(foreign.id), []);
+      })
+  );
+  it.effect(
+    "retires and restores all of a person's patches, a team patch the admin can't open included",
+    () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const teams = yield* Teams.Teams;
+        const patches = yield* Patches.Patches;
+        const sql = yield* SqlClient.SqlClient;
+        const teamOf = Effect.fn("UserLifecyclePageTest.teamOf")(function* (
+          name: string,
+          person: Person
+        ) {
+          const viewer = { companyId: workspace.id, actorId: workspace.admin.id };
+          const team = yield* teams.create({ ...viewer, name });
+          yield* teams.setMemberships({
+            ...viewer,
+            teamId: team.id,
+            userIds: [person.id],
+            added: true
+          });
+          return { kind: "teams" as const, teamIds: [team.id] };
+        });
+        const shared = yield* publishSource(workspace.owner, "everyone-source");
+        const finance = yield* publish(workspace.owner, "finance-only");
+        yield* patches.setSharing({
+          patchId: finance.patchId,
+          actor: actor(workspace.owner),
+          audience: yield* teamOf("Lifecycle finance", workspace.owner)
+        });
+        // A colleague's patch the admin can't open reads the Company patch.
+        const reader = yield* publishDependant(workspace.member, "hidden-reader", shared.patchId);
+        yield* patches.setSharing({
+          patchId: reader.patchId,
+          actor: actor(workspace.member),
+          audience: yield* teamOf("Lifecycle readers", workspace.member)
+        });
+        const owned = [shared.patchId, finance.patchId];
+        const states = Effect.map(
+          sql<{ readonly retired: boolean }>`SELECT retired_at IS NOT NULL AS retired
+            FROM patches WHERE id IN ${sql.in(owned)}`,
+          (rows) => rows.map((row) => row.retired)
+        );
+
+        const deactivate = userPath(workspace.owner, "deactivate");
+        const retiring = yield* (yield* choose(deactivate, workspace.admin, { choice: "all" }))
+          .text;
+        assert.sameMembers(inputValues(retiring, "patch", "hidden"), owned);
+        assert.include(text(retiring), "1 patch you can’t open.");
+        assert.lengthOf(inputs(retiring, "ack", "checkbox"), 1);
+        const retired = yield* post(deactivate, workspace.admin, {
+          choice: "confirm",
+          patch: owned,
+          ack: "1"
+        });
+        assert.strictEqual(retired.status, 303);
+        assert.deepStrictEqual(yield* states, [true, true]);
+
+        const reactivate = userPath(workspace.owner, "reactivate");
+        const restoring = yield* (yield* choose(reactivate, workspace.admin, { choice: "all" }))
+          .text;
+        assert.sameMembers(inputValues(restoring, "patch", "hidden"), owned);
+        const restored = yield* post(reactivate, workspace.admin, {
+          choice: "confirm",
+          patch: owned
+        });
+        assert.strictEqual(restored.status, 303);
+        assert.deepStrictEqual(yield* states, [false, false]);
       })
   );
 });

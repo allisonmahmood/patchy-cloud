@@ -6,7 +6,14 @@ import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as ConnectionStore from "../ConnectionStore.js";
-import { operation, type DevRead, type Target } from "../definition.js";
+import {
+  connectionRecheck,
+  operation,
+  ownerCheck,
+  ViewerRefusal,
+  type DevRead,
+  type Target
+} from "../definition.js";
 import * as Mapping from "./Mapping.js";
 import * as Source from "./Source.js";
 
@@ -77,6 +84,7 @@ export class TooManyRows extends Schema.TaggedError<TooManyRows>()("PostHogTooMa
 }
 
 export const Errors = Schema.Union([
+  ViewerRefusal,
   ConnectionNotDeclared,
   ConnectionRefused,
   ShapeMismatch,
@@ -129,7 +137,8 @@ const connect = Effect.fn("PostHogOperations.connect")(function* (
       companyId,
       lookup: { id: declared.id }
     });
-  yield* ConnectionStore.usable(connection);
+  if (connection.status !== "connected")
+    return yield* new ConnectionStore.ConnectionNotConnected({});
   const secret = yield* connections
     .poolCredentials(
       companyId,
@@ -274,7 +283,7 @@ const query = operation({
     if (!Object.hasOwn(binding.manifest.uses, args.connection) || declaration?.kind !== "posthog")
       return yield* new ConnectionNotDeclared({});
     if (
-      binding.scope !== "company" ||
+      binding.scope === "public" ||
       binding.identity === null ||
       binding.principal === null ||
       binding.identity.company.id !== binding.companyId ||
@@ -283,8 +292,21 @@ const query = operation({
       return yield* new Runtime.AccessDenied({});
     // The caller's own deadline bounds the wait for a slot, so a refused wait is never a timeout.
     const deadline = binding.deadline ?? (yield* Clock.currentTimeMillis) + DEADLINE_MS;
+    // The patch's owner must be able to build with the connection now, and again once the call
+    // holds its slot.
+    yield* ownerCheck(binding, declaration.id);
     return yield* read(
-      { companyId: binding.companyId, connection: declaration, deadline, recheck: Effect.void },
+      {
+        companyId: binding.companyId,
+        connection: declaration,
+        deadline,
+        recheck: connectionRecheck(binding, declaration.id).pipe(
+          Effect.provideService(
+            ConnectionStore.ConnectionStore,
+            yield* ConnectionStore.ConnectionStore
+          )
+        )
+      },
       args
     ).pipe(
       Effect.catchTags({

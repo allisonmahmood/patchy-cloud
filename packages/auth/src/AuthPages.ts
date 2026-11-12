@@ -12,6 +12,8 @@ import * as WideEvents from "@patchy/analytics/wide-events";
 import type { AppShell } from "@patchy/core";
 import {
   CompanyPage,
+  type Teams,
+  TeamsPage,
   Join,
   Terms,
   Users,
@@ -182,6 +184,17 @@ const errors = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServerResponse, 
     const session = yield* Session.Session;
     return yield* app.pipe(
       Effect.catchTags({
+        RoleForbidden: () =>
+          Effect.succeed(
+            doorResponse(
+              {
+                title: "Access refused",
+                body: "<p>You no longer have permission to do that. Nothing changed.</p>",
+                status: 403
+              },
+              session
+            )
+          ),
         SessionError: () => Effect.succeed(unavailableDoor("sign-in", { signOut: true }, session)),
         SqlError: () => Effect.succeed(unavailableDoor("patchy", { signOut: true }, session)),
         HttpServerError: () =>
@@ -210,6 +223,7 @@ export const layer: Layer.Layer<
       | Session.Session
       | Companies.Companies
       | Users.Users
+      | Teams.Teams
       | InviteMail.InviteMail
       | SqlClient.SqlClient
       | DeviceLogins.DeviceLogins
@@ -328,6 +342,46 @@ export const layer: Layer.Layer<
                 )
               )
             )
+          )
+        );
+      }
+      for (const action of ["view", "create", "rename", "add", "remove", "delete"] as const) {
+        const show = Effect.gen(function* () {
+          const viewer = yield* RequireSession.Viewer;
+          const session = yield* Session.Session;
+          const page = yield* TeamsPage.handle(viewer, action);
+          if ("redirect" in page && page.redirect) {
+            const response = HttpServerResponse.redirect(page.redirect, {
+              status: 303,
+              headers: { "cache-control": "private, no-store" }
+            });
+            return "receipt" in page && page.receipt
+              ? Receipt.set(response, {
+                  userId: viewer.user.id,
+                  text: page.receipt,
+                  publicBaseUrl: session.publicBaseUrl
+                })
+              : response;
+          }
+          return pageResponse(
+            {
+              ...page,
+              app: {
+                viewer,
+                section: "teams",
+                ...("overlay" in page && page.overlay ? { overlay: page.overlay } : {})
+              }
+            },
+            session
+          );
+        });
+        yield* router.add(
+          action === "view" ? "GET" : "POST",
+          action === "view" ? TeamsPage.path : `${TeamsPage.path}/${action}`,
+          errors(
+            action === "view"
+              ? RequireSession.withViewer(show)
+              : RequireSession.sameOrigin(RequireSession.withViewer(show))
           )
         );
       }

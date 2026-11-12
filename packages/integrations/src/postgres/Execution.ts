@@ -11,6 +11,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Pg from "pg";
 import * as ConnectionStore from "../ConnectionStore.js";
+import type { ViewerRefusal } from "../definition.js";
 import * as Source from "./Source.js";
 import * as SourceClient from "./SourceClient.js";
 import * as SourceNetwork from "./SourceNetwork.js";
@@ -91,12 +92,14 @@ export const Errors = Schema.Union([
   AccessDenied,
   SourceUnavailable
 ]);
-export type ExecutionError = typeof Errors.Type;
+export type ExecutionError = typeof Errors.Type | typeof ViewerRefusal.Type;
 export interface QueryInput {
   readonly companyId: string;
   readonly declaration: typeof PostgresDeclaration.Type;
   readonly text: string;
   readonly parameters: ReadonlyArray<typeof PostgresParameter.Type>;
+  /** The caller checked again once the call holds a backend, before anything is sent. */
+  readonly recheck?: Effect.Effect<void, ExecutionError>;
 }
 export interface QueryResult {
   readonly fields: ReadonlyArray<{ readonly name: string; readonly dataTypeID: number }>;
@@ -400,11 +403,7 @@ export const makeWithClient = Effect.fn("Postgres.makeWithClient")(function* <R>
             : new SourceUnavailable({ stage: "access", cause: Redacted.make(cause) })
         )
       );
-    if (
-      connection.handle !== input.declaration.handle ||
-      connection.status !== "connected" ||
-      connection.restricted
-    )
+    if (connection.handle !== input.declaration.handle || connection.status !== "connected")
       return yield* new AccessDenied({});
     return connection;
   });
@@ -526,6 +525,8 @@ export const makeWithClient = Effect.fn("Postgres.makeWithClient")(function* <R>
           const reserved = entry;
           const ready = yield* restore(
             Effect.gen(function* () {
+              // The caller and the patch's owner, once the call holds its backend.
+              yield* input.recheck ?? Effect.void;
               if (reserved.client === undefined) {
                 const settings = yield* reserved.credentials;
                 reserved.settings = settings;

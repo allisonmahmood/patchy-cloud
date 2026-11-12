@@ -18,7 +18,7 @@ import { PostgresDeclaration } from "@patchy/api";
 import { Session } from "@patchy/auth";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { clerkEnv, signedInCookies, signSession } from "@patchy/auth/testing";
-import { Companies, Users } from "@patchy/companies";
+import { Teams, Companies, Users } from "@patchy/companies";
 import { RuntimeLog } from "@patchy/runtime";
 import * as Testing from "@patchy/sql/testing";
 import * as ConnectionPages from "./ConnectionPages.js";
@@ -33,6 +33,8 @@ import * as AttioSource from "./attio/Source.js";
 import * as ImapTest from "./test/imap.js";
 import { Snapshot } from "@patchy/api/postgres-snapshot";
 import { NodeCryptography } from "@patchy/core";
+import * as PatchVisibility from "./PatchVisibility.js";
+import * as PatchVisibilityTest from "./test/patchVisibility.js";
 
 const env = clerkEnv();
 const base = env.PATCHY_PUBLIC_BASE_URL!;
@@ -145,6 +147,8 @@ const services = Layer.mergeAll(
   Layer.provideMerge(
     CredentialKeys.layerFromKeys(Redacted.make("test:AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="))
   ),
+  Layer.provideMerge(PatchVisibilityTest.layer),
+  Layer.provideMerge(Teams.layer),
   Layer.provideMerge(Testing.layer()),
   Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env))),
   Layer.provideMerge(NodeCryptography.layer)
@@ -304,6 +308,70 @@ const storePatch = Effect.fn(function* (
 });
 
 it.layer(services)("company connection pages", (it) => {
+  it.effect(
+    "narrows an audience as an admin, past a warning naming the live patches it cuts off",
+    () =>
+      Effect.gen(function* () {
+        const owner = yield* createCompany("connection-audience-page");
+        const member = yield* addUser(owner, "reader");
+        const { connection, path } = yield* connect(owner.user, "audience-page");
+        const team = yield* (yield* Teams.Teams).create({
+          companyId: owner.company.id,
+          actorId: owner.user.id,
+          name: "Design & Engineering"
+        });
+        // A live patch whose owner isn't on the team.
+        yield* storeVersion({ company: owner.company, user: member }, "readers-desk", 1, [
+          connection
+        ]);
+        yield* SqlClient.SqlClient.use(
+          (sql) =>
+            sql`UPDATE patches SET current_version_id = ${`${owner.company.handle}-readers-desk-v1`} WHERE id = ${`${owner.company.handle}-readers-desk`}`
+        );
+        const store = yield* ConnectionStore.ConnectionStore;
+        const audience = store.audience(owner.company.id, connection.id);
+        const narrow = { audience: "teams", teamIds: team.id };
+        assert.equal((yield* send(`${path}/audience`, post(member, narrow))).status, 403);
+        // A refused save draws the form again as it was submitted.
+        const refused = yield* send(`${path}/audience`, post(owner.user, { audience: "teams" }));
+        assert.equal(refused.status, 422);
+        assert.match(
+          yield* Effect.promise(() => refused.text()),
+          /name="audience" value="teams"[^>]* checked/
+        );
+        const warned = yield* send(`${path}/audience`, post(owner.user, narrow));
+        assert.equal(warned.status, 200);
+        assert.include(yield* Effect.promise(() => warned.text()), "/patches/readers-desk");
+        assert.deepEqual(yield* audience, { kind: "company" });
+        assert.equal(
+          (yield* send(`${path}/audience`, post(owner.user, { ...narrow, acknowledged: "1" })))
+            .status,
+          303
+        );
+        assert.deepEqual(yield* audience, { kind: "teams", teamIds: [team.id] });
+        // Saving it again cuts nobody off who could build with it, so it saves at once.
+        assert.equal((yield* send(`${path}/audience`, post(owner.user, narrow))).status, 303);
+        assert.equal((yield* send(path, { headers: { cookie: cookie(member) } })).status, 404);
+        const listed = yield* send("/settings/integrations", {
+          headers: { cookie: cookie(member) }
+        });
+        assert.notInclude(yield* Effect.promise(() => listed.text()), "postgres/audience-page");
+        yield* (yield* Teams.Teams).setMemberships({
+          companyId: owner.company.id,
+          actorId: owner.user.id,
+          teamId: team.id,
+          userIds: [member.id],
+          added: true
+        });
+        assert.equal((yield* send(path, { headers: { cookie: cookie(member) } })).status, 200);
+        // Widening cuts nobody off, so it saves at once.
+        assert.equal(
+          (yield* send(`${path}/audience`, post(owner.user, { audience: "company" }))).status,
+          303
+        );
+        assert.deepEqual(yield* audience, { kind: "company" });
+      })
+  );
   it.effect("lets only an admin block guests from a connection, and shows everyone which", () =>
     Effect.gen(function* () {
       const owner = yield* createCompany("connections-blocking");
@@ -497,7 +565,8 @@ it.layer(services)("company connection pages", (it) => {
           assert.notInclude(html, forbidden);
         const recent = yield* audit.recent({
           companyId: owner.company.id,
-          connectionId: connection.id
+          connectionId: connection.id,
+          patchIds: [begin.patchId]
         });
         // A member's pages, including refusals, never read the call log.
         const guarded = {
@@ -525,9 +594,11 @@ it.layer(services)("company connection pages", (it) => {
           assert.notInclude(memberHtml, "Last call");
         }
         assert.deepStrictEqual(
-          (yield* audit.recent({ companyId: owner.company.id, connectionId: connection.id })).map(
-            (call) => call.id
-          ),
+          (yield* audit.recent({
+            companyId: owner.company.id,
+            connectionId: connection.id,
+            patchIds: [begin.patchId]
+          })).map((call) => call.id),
           recent.map((call) => call.id)
         );
       })
@@ -964,44 +1035,6 @@ it.layer(services)("company connection pages", (it) => {
       })
   );
   it.effect(
-    "neither names nor counts a patch open to teams in a connection's usage, yet keeps it in use",
-    () =>
-      Effect.gen(function* () {
-        const owner = yield* createCompany("connections-usage-teams");
-        const shared = yield* connect(owner.user, "shared");
-        const hidden = yield* connect(owner.user, "hidden");
-        yield* storeVersion(owner, "revenue", 1, [shared.connection], { current: true });
-        yield* storeVersion(owner, "plan", 1, [shared.connection, hidden.connection], {
-          current: true
-        });
-        yield* storeVersion(owner, "old-plan", 1, [hidden.connection], { current: true });
-        // A later release opens both to teams, and one is since deleted; this one opens neither.
-        const sql = yield* SqlClient.SqlClient;
-        const [plan, oldPlan] = ["plan", "old-plan"].map(
-          (name) => `${owner.company.handle}-${name}`
-        );
-        yield* sql`UPDATE patches SET scope = 'teams' WHERE id IN (${plan}, ${oldPlan})`;
-        yield* sql`UPDATE patches SET deleted_at = now() WHERE id = ${oldPlan}`;
-
-        const store = yield* ConnectionStore.ConnectionStore;
-        const usage = yield* store.usage(owner.company.id);
-        assert.deepStrictEqual(usage.get(shared.connection.id), {
-          usedBy: ["revenue"],
-          olderVersions: 0,
-          retired: 0,
-          deleted: 0,
-          disabled: 0,
-          declaredBy: [],
-          declared: true
-        });
-        assert.isUndefined(usage.get(hidden.connection.id));
-        const refused = yield* store
-          .delete({ companyId: owner.company.id, userId: owner.user.id, id: hidden.connection.id })
-          .pipe(Effect.flip);
-        assert.strictEqual(refused._tag, "ConnectionInUse");
-      })
-  );
-  it.effect(
     "names the live patches using a connection once each, by the rule that guards deletion",
     () =>
       Effect.gen(function* () {
@@ -1176,6 +1209,40 @@ it.layer(services)("company connection pages", (it) => {
         .split("<tr><td><time")
         .find((item) => item.includes("<code>guest-call</code>"));
       assert.include(row, `<td>${guest.user.name}</td>`);
+    })
+  );
+  it.effect("shows only the calls of patches the admin can open, and calls from no patch", () =>
+    Effect.gen(function* () {
+      const owner = yield* createCompany("connections-hidden-calls");
+      const { connection, path } = yield* connect(owner.user, "warehouse");
+      const audit = yield* RuntimeLog.RuntimeLog;
+      const call = (correlationId: string, patchId: string | null) =>
+        audit.begin({
+          companyId: owner.company.id,
+          patchId,
+          versionId: patchId === null ? null : `${patchId}-version`,
+          userId: owner.user.id,
+          credentialKind: patchId === null ? "admin" : "session",
+          op: "postgres.query",
+          resource: null,
+          connectionId: connection.id,
+          correlationId,
+          sql: `SELECT '${correlationId}-sql'`,
+          deadlineMs: 15_000
+        });
+      yield* call("open-call", "open-patch");
+      yield* call("finance-call", "finance-patch");
+      yield* call("admin-call", null);
+      const opening = PatchVisibility.PatchVisibility.of({
+        openableIds: () => Effect.succeed(["open-patch"])
+      });
+      const response = yield* send(`${path}/calls`, {
+        headers: { cookie: cookie(owner.user) }
+      }).pipe(Effect.provideService(PatchVisibility.PatchVisibility, opening));
+      const html = yield* Effect.promise(() => response.text());
+      for (const shown of ["open-call", "open-call-sql", "admin-call", "admin-call-sql"])
+        assert.include(html, shown);
+      for (const hidden of ["finance-call", "finance-patch"]) assert.notInclude(html, hidden);
     })
   );
   it.effect("keeps a connection's page and actions when the company directory cannot be read", () =>

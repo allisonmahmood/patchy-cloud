@@ -1,3 +1,4 @@
+import { Teams } from "@patchy/companies";
 import { assert, it } from "@effect/vitest";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { NodeCryptography } from "@patchy/core";
@@ -70,8 +71,8 @@ const setup = (handle: string) =>
     });
     const source = Source.layer.pipe(Layer.provide(ImapTest.network(served, certs)));
     // Two host processes: each its own store and source, sharing only the database.
-    const store = yield* SqlConnectionStore.make.pipe(Effect.provide(source));
-    const other = yield* SqlConnectionStore.make.pipe(Effect.provide(source));
+    const store = yield* SqlConnectionStore.make.pipe(Effect.provide([source, Teams.layer]));
+    const other = yield* SqlConnectionStore.make.pipe(Effect.provide([source, Teams.layer]));
     const connection = yield* store.connect({
       integration: "imap",
       ...who,
@@ -115,7 +116,8 @@ it.layer(fixture)("IMAP connections", (it) => {
       assert.notInclude(row!.display, "the-right-password");
       const [call] = yield* (yield* RuntimeLog.RuntimeLog).recent({
         companyId: who.companyId,
-        connectionId: id
+        connectionId: id,
+        patchIds: []
       });
       assert.deepInclude(call, { op: "imap.connect", outcome: "success", deadlineMs: 30_000 });
     })
@@ -282,7 +284,7 @@ it.layer(fixture)("IMAP connections", (it) => {
         "posthog",
         "pidgeon",
         "attio"
-      ]).pipe(Effect.provide(ImapTest.offline));
+      ]).pipe(Effect.provide([ImapTest.offline, Teams.layer]));
       assert.notInclude(
         (yield* before.list(who.companyId)).map((item) => item.id),
         id

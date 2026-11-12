@@ -47,7 +47,8 @@ const load = Effect.fn("PidgeonCalls.load")(function* (
       companyId,
       lookup: { id: declared.id }
     });
-  yield* ConnectionStore.usable(connection);
+  if (connection.status !== "connected")
+    return yield* new ConnectionStore.ConnectionNotConnected({});
   const secret = yield* connections.poolCredentials(
     companyId,
     {

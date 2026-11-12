@@ -20,9 +20,9 @@ import {
   Session
 } from "@patchy/auth";
 import { ago, type Cryptography, escapeHtml } from "@patchy/core";
-import type { Companies, Users } from "@patchy/companies";
+import { Teams, type Companies, type Users } from "@patchy/companies";
 import type { Feedback } from "@patchy/feedback";
-import type { ConnectionStore } from "@patchy/integrations";
+import type { ConnectionStore, PatchVisibility } from "@patchy/integrations";
 import type { Limits } from "@patchy/limits";
 import { GuestGrants, Patches } from "@patchy/patches";
 import { InvocationLog, Prewarm } from "@patchy/runtime";
@@ -35,6 +35,7 @@ export type PortalServices =
   | Session.Session
   | Companies.Companies
   | Users.Users
+  | Teams.Teams
   | Patches.Patches
   | GuestGrants.GuestGrants
   | MachineTokens.MachineTokens
@@ -44,7 +45,8 @@ export type PortalServices =
   | Feedback.Feedback
   | Analytics.Analytics
   | Limits.Limits
-  | SqlClient.SqlClient;
+  | SqlClient.SqlClient
+  | PatchVisibility.PatchVisibility;
 
 /** A surface's routes: they need only the portal's services and answer every failure themselves. */
 export type Routes = Layer.Layer<
@@ -183,6 +185,13 @@ export interface Sharing {
   readonly notice?: string;
   readonly refused?: { readonly email: string; readonly refusal: ShareRefusal };
   readonly confirmPublic?: boolean;
+  /** What General access's refused form chose, drawn again as it was. */
+  readonly submitted?: { readonly scope: string; readonly teamIds: readonly string[] };
+  /** The live patches a narrowing would leave without readers, which Save now acknowledges. */
+  readonly narrowing?: {
+    readonly dependants: readonly { readonly patchId: string; readonly name: string }[];
+    readonly hiddenCount: number;
+  };
 }
 
 /** The Share dialog `url` asks for, if it asks, and whether it asks about going public. */
@@ -248,9 +257,11 @@ export interface PagesBehind {
 }
 
 /**
- * The Share dialog over a page, for a live patch among `rows` the viewer manages; none otherwise,
- * so a stale or foreign `?share=` shows just the page. It shows the receipt its last form left,
- * which the page behind then leaves out, and why the patch's guests can't open it, if they can't.
+ * The Share dialog over a page, for a patch among `rows` the viewer manages that can still change
+ * its audience: live, retired, or deleted inside its recovery window. None otherwise, so a stale
+ * or foreign `?share=` shows just the page. It shows the receipt its last form left, which the
+ * page behind then leaves out, why the patch's guests can't open it, and who its audience reaches
+ * that its sources and connections don't.
  */
 export const shareOverlay = Effect.fn("Portal.shareOverlay")(function* (
   rows: readonly Patches.ReadPatch[],
@@ -259,7 +270,22 @@ export const shareOverlay = Effect.fn("Portal.shareOverlay")(function* (
   if (sharing === undefined) return undefined;
   const { viewer, session } = yield* context;
   const row = rows.find((candidate) => candidate.patch.name === sharing.name);
-  if (row === undefined || row.patch.state !== "live" || !manages(row, viewer)) return undefined;
+  if (
+    row === undefined ||
+    !manages(row) ||
+    (row.patch.state === "deleted" &&
+      (row.patch.purgeAt === null ||
+        Date.parse(row.patch.purgeAt) <= (yield* Clock.currentTimeMillis)))
+  )
+    return undefined;
+  // Someone deactivated since this request began gets the page alone.
+  const teams = yield* (yield* Teams.Teams)
+    .list({ companyId: viewer.company.id, actorId: viewer.user.id })
+    .pipe(
+      Effect.map(Option.some),
+      Effect.catchTags({ RoleForbidden: () => Effect.succeed(Option.none()) })
+    );
+  if (Option.isNone(teams)) return undefined;
   const grants = yield* GuestGrants.GuestGrants;
   const guests = yield* grants.guests(row.patch.id);
   // Why its guests can't open it now, read only while it has any.
@@ -271,15 +297,22 @@ export const shareOverlay = Effect.fn("Portal.shareOverlay")(function* (
           .pipe(Effect.catchTags({ ConnectionStorageFailed: Effect.die }))).get(row.patch.id);
   return renderShareDialog({
     row,
+    teams: teams.value,
     viewer,
     publicBaseUrl: session.publicBaseUrl,
     back: pagePath(sharing.at),
     guests,
     suggestions: yield* grants.sharedBefore(viewer.company.id),
+    reach: yield* (yield* Patches.Patches).reach(row.patch.id, {
+      companyId: viewer.company.id,
+      userId: viewer.user.id
+    }),
     ...(blocked === undefined ? {} : { turnedAway: blocked }),
     ...(viewer.receipt === undefined ? {} : { receipt: viewer.receipt }),
     ...(sharing.notice === undefined ? {} : { notice: sharing.notice }),
     ...(sharing.refused === undefined ? {} : { refused: sharing.refused }),
+    ...(sharing.submitted === undefined ? {} : { submitted: sharing.submitted }),
+    ...(sharing.narrowing === undefined ? {} : { narrowing: sharing.narrowing }),
     ...(sharing.confirmPublic === true ? { confirmPublic: true } : {})
   });
 });
@@ -303,10 +336,7 @@ export const callSummary = Effect.fn("Portal.callSummary")(function* (
 ) {
   const viewer = yield* RequireSession.Viewer;
   const managed = rows.filter(
-    (row) =>
-      row.patch.state === "live" &&
-      row.tier >= 2 &&
-      (viewer.role === "admin" || row.owner.id === viewer.user.id)
+    (row) => row.patch.state === "live" && row.tier >= 2 && row.access.canOpen && manages(row)
   );
   if (managed.length === 0) return undefined;
   const counts = yield* (yield* InvocationLog.InvocationLog).calls({
@@ -326,13 +356,7 @@ export const turnedAway = Effect.fn("Portal.turnedAway")(function* (
   rows: readonly Patches.ReadPatch[]
 ) {
   const { viewer } = yield* context;
-  if (
-    !rows.some(
-      (row) =>
-        row.patch.state === "live" && (viewer.role === "admin" || row.owner.id === viewer.user.id)
-    )
-  )
-    return undefined;
+  if (!rows.some((row) => row.patch.state === "live" && manages(row))) return undefined;
   return yield* (yield* GuestGrants.GuestGrants)
     .unavailableToGuests(viewer.company.id)
     .pipe(Effect.catchTags({ ConnectionStorageFailed: Effect.die }));
@@ -365,4 +389,15 @@ export const prewarm = Effect.fn("Portal.prewarm")(function* (
     viewerId: viewer.user.id,
     candidates
   });
+});
+
+/**
+ * The patch a form posted to `/patches/<name>/<act>` acts on: one the viewer can open, or one they
+ * manage or own without opening it, whose content is left out.
+ */
+export const actionSelection = Effect.fn("Portal.actionSelection")(function* (name: string) {
+  const { access } = yield* context;
+  return (yield* (yield* Patches.Patches).read({ ...access, state: "all", managed: true })).find(
+    (row) => row.patch.name === name
+  );
 });

@@ -1,3 +1,4 @@
+import { Teams } from "@patchy/companies";
 import { assert, it } from "@effect/vitest";
 import { imapReads, type ImapRead } from "@patchy/api";
 import { DEV_SEED } from "@patchy/auth/seed";
@@ -146,7 +147,7 @@ const outputs: { readonly [K in ImapRead]: (value: unknown) => Outputs[K] } = {
 /** A connected mailbox, and a way to call each read on it as a patch's viewer would. */
 const connected = (server: LiveServer, handle: string) =>
   Effect.gen(function* () {
-    const store = yield* SqlConnectionStore.make;
+    const store = yield* SqlConnectionStore.make.pipe(Effect.provide(Teams.layer));
     const connection = yield* store.connect({
       integration: "imap",
       ...who,

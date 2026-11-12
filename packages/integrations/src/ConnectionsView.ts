@@ -503,6 +503,8 @@ export interface Connection extends Usage {
   readonly status: "connected" | "disconnected";
   /** Whether patches that declare it turn their guests away. */
   readonly blockGuests: boolean;
+  /** Who may build patches with it, in words: the company, or its teams by name. */
+  readonly builders: string;
   readonly testedAt: string | null;
   readonly addedBy: string;
   /** The integration's facts about where it reads from, as label and value. */
@@ -865,6 +867,7 @@ const overview = (
     body: `${facts([
       ...connection.facts.map(([label, value]) => [label, escapeHtml(value)] as const),
       ["Used by", usedByFact(connection)],
+      ["Who can build", escapeHtml(connection.builders)],
       ["Guests", connection.blockGuests ? "Blocked" : "Allowed"],
       ["Added by", escapeHtml(connection.addedBy)]
     ])}${input.admin ? "" : `<p class="meta">${escapeHtml(`Only admins can change it.${input.admins.length === 0 ? "" : ` Admins: ${listed(input.admins)}.`}`)}</p>`}`
@@ -957,6 +960,11 @@ const settings = (
               control: linkButton(`${actions.access}…`, path("access"), { size: "sm" })
             })
           ]),
+      settingRow({
+        title: "Who can build with it",
+        description: connection.builders,
+        control: linkButton("Change…", path("audience"), { size: "sm" })
+      }),
       settingRow({
         title: "Guests",
         description: connection.blockGuests
@@ -1075,14 +1083,26 @@ export const renderConnection = (input: {
 
 // ---------- dialogs over Settings ----------
 
+/** The live patches a narrower audience cuts off, as the warning its save asks past. */
+export const cutOffWarning = (patches: ReadonlyArray<string>) =>
+  noticeBox({
+    tone: "warning",
+    title: "These patches stop reaching it on their next call",
+    body: rows(
+      patches.map((patch) => row({ name: patch, href: `/patches/${encodeURIComponent(patch)}` })),
+      true
+    )
+  });
+
 export type Confirmation =
-  "rotate" | "retarget" | "access" | "description" | "disconnect" | "delete";
+  "rotate" | "retarget" | "access" | "audience" | "description" | "disconnect" | "delete";
 
 /**
  * A change that needs its own form or a second look, as a dialog over the connection's Settings:
- * Replace key, Change project or Point elsewhere, Change access, Pause and Disconnect. Each has its
- * own address and works without script; a refusal draws it again with what was typed, never a
- * secret. The integration supplies a credentials form's title, meaning and fields.
+ * Replace key, Change project or Point elsewhere, Change access, Who can build with it, Pause and
+ * Disconnect. Each has its own address and works without script; a refusal draws it again with
+ * what was typed, never a secret. The integration supplies a credentials form's title, meaning
+ * and fields.
  */
 export const renderDialog = (input: {
   readonly connection: Connection;
@@ -1090,10 +1110,12 @@ export const renderDialog = (input: {
   readonly actions: Actions;
   readonly form?: {
     readonly title: string;
-    readonly consequence: string;
+    readonly consequence?: string;
     readonly fields: string;
     /** The submit button's label, where testing first isn't what it does. */
     readonly submit?: string;
+    /** Trusted HTML: a warning the form must be submitted again past, in a refusal's place. */
+    readonly warning?: string;
   };
   /** The integration's own words for what pausing or disconnecting does, where they differ. */
   readonly consequences?: Partial<Record<"delete" | "disconnect", string>>;
@@ -1112,7 +1134,7 @@ export const renderDialog = (input: {
     linkButton("Cancel", back, { kind: "quiet", autofocus: autofocus && refusal === "" });
   const credentials = (submit: string) => ({
     title: input.form?.title ?? label,
-    body: `<p class="prose">${escapeHtml(input.form?.consequence ?? "")}</p>${input.form?.fields ?? ""}${refusal}`,
+    body: `${input.form?.consequence === undefined ? "" : `<p class="prose">${escapeHtml(input.form.consequence)}</p>`}${input.form?.fields ?? ""}${input.form?.warning ?? refusal}`,
     foot: `${cancel(false)}${button(input.form?.submit ?? submit, { kind: "primary" })}`
   });
   const affected =
@@ -1129,7 +1151,7 @@ export const renderDialog = (input: {
       ? credentials(`Test and ${input.actions.rotate.toLowerCase()}`)
       : action === "retarget"
         ? credentials(`Test and ${(input.actions.retarget ?? "point it elsewhere").toLowerCase()}`)
-        : action === "access"
+        : action === "access" || action === "audience"
           ? credentials(input.actions.access ?? "Change access")
           : action === "disconnect"
             ? {

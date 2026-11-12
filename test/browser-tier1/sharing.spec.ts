@@ -1,3 +1,4 @@
+import { DEV_SEED } from "@patchy/auth/seed";
 import { test, expect, prepare } from "./fixtures.js";
 import { loadDialog } from "./dialog.js";
 
@@ -20,7 +21,7 @@ test("an owner shares a page from its menu, and the guest opens it from Home and
   await expect(page).toHaveURL(`${instance.origin}/patches?share=${patch.name}`);
   await expect(dialog.getByRole("status")).toHaveText(`Shared ${title} with Jo Rivera`);
   await expect(dialog.getByText("guest@pine.example · Pine Studio")).toBeVisible();
-  await dialog.getByRole("link", { name: "Done" }).click();
+  await dialog.getByRole("link", { name: "Close", exact: true }).last().click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
 
   // Someone new to Patchy meets the Final step first.
@@ -45,7 +46,7 @@ test("an owner shares a page from its menu, and the guest opens it from Home and
   expect((await page.goto(patch.address))?.status()).toBe(404);
 });
 
-test("a row of All patches opens its patch from anywhere on it, while its Share and menu stay pressable", async ({
+test("a row of All patches opens its patch from anywhere on it, while its menu actions stay pressable", async ({
   page,
   instance
 }) => {
@@ -54,7 +55,8 @@ test("a row of All patches opens its patch from anywhere on it, while its Share 
 
   await page.goto(`${instance.origin}/patches`);
   const row = page.getByRole("row").filter({ hasText: title });
-  await loadDialog(page, () => row.getByRole("link", { name: `Share ${title}` }).click());
+  await row.getByRole("button", { name: `Actions for ${title}` }).click();
+  await loadDialog(page, () => page.getByRole("link", { name: `Share…, ${title}` }).click());
   await expect(page.getByRole("dialog", { name: `Share ${title}` })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page).toHaveURL(`${instance.origin}/patches`);
@@ -107,3 +109,77 @@ test("without script, Share is a page: Copy link waits for script, and going pub
     await context.close();
   }
 });
+
+for (const javaScriptEnabled of [true, false])
+  test(`an owner shares with teams and back with script ${javaScriptEnabled ? "on" : "off"}`, async ({
+    browser,
+    instance
+  }) => {
+    const context = await browser.newContext({ javaScriptEnabled });
+    try {
+      await prepare(context, instance);
+      const created = await context.request.post(
+        `${instance.origin}/settings/company/teams/create`,
+        {
+          headers: { origin: instance.origin },
+          form: { name: "Design" }
+        }
+      );
+      expect(created.ok()).toBe(true);
+      const teamId = new URL(created.url()).searchParams.get("team")!;
+      const joined = await context.request.post(
+        `${instance.origin}/settings/company/teams/add?team=${teamId}`,
+        {
+          headers: { origin: instance.origin },
+          form: { userId: DEV_SEED.userId }
+        }
+      );
+      expect(joined.ok()).toBe(true);
+      const engineering = await context.request.post(
+        `${instance.origin}/settings/company/teams/create`,
+        {
+          headers: { origin: instance.origin },
+          form: { name: "Engineering" }
+        }
+      );
+      expect(engineering.ok()).toBe(true);
+      const patch = await instance.publish();
+      const page = await context.newPage();
+      await page.goto(`${instance.origin}/patches?share=${patch.name}`);
+      const scope = page.getByLabel("General access");
+      const team = page.getByRole("checkbox", { name: "Design", exact: true });
+      const access = page.getByRole("group", { name: "Who has access" });
+      const patchRow = page
+        .getByRole("row", { includeHidden: true })
+        .filter({ hasText: "Tier one acceptance" });
+      await expect(access).toContainText("People at Patchy Dev");
+      await scope.selectOption("teams");
+      await team.check();
+      // Unsaved controls never claim that access already changed.
+      await expect(access).toContainText("People at Patchy Dev");
+      const save = page.getByRole("button", { name: "Save", exact: true });
+      await expect(save).toHaveAttribute("form", "share-access-form");
+      await save.click();
+      await expect(access).toContainText("Design");
+      await expect(access).not.toContainText("People at Patchy Dev");
+      await expect(patchRow).toContainText("Design");
+      await page.reload();
+      await expect(scope).toHaveValue("teams");
+      await expect(team).toBeChecked();
+      const engineeringChoice = page.getByRole("checkbox", { name: "Engineering", exact: true });
+      await engineeringChoice.check();
+      await page.getByRole("button", { name: "Save", exact: true }).click();
+      await expect(access).toContainText("Engineering");
+      await expect(patchRow).toContainText("Design and Engineering");
+      await engineeringChoice.uncheck();
+      await page.getByRole("button", { name: "Save", exact: true }).click();
+      await expect(access).toContainText("Design");
+      await expect(access).not.toContainText("Engineering");
+      await scope.selectOption("company");
+      await page.getByRole("button", { name: "Save", exact: true }).click();
+      await expect(access).toContainText("People at Patchy Dev");
+      await expect(access).not.toContainText("Design");
+    } finally {
+      await context.close();
+    }
+  });

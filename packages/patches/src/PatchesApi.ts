@@ -8,15 +8,15 @@
  */
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import {
-  AudienceRefused,
   BadRequest,
+  AudienceRefused,
+  AudienceOptions,
   Behind,
   Conflict,
   CurrentIdentity,
@@ -86,11 +86,12 @@ import {
   type HandlerDescriptors,
   type RepoFile
 } from "@patchy/api";
-import { Companies, Looks, Users } from "@patchy/companies";
+import { Companies, Looks, Teams, Users } from "@patchy/companies";
 import { Cryptography, documentTitle } from "@patchy/core";
 import { ConnectionStore } from "@patchy/integrations";
 import { Limits } from "@patchy/limits";
 import { InvocationLog } from "@patchy/runtime";
+import * as Audiences from "./Audiences.js";
 import * as Content from "./Content.js";
 import * as GuestGrants from "./GuestGrants.js";
 import * as Patches from "./Patches.js";
@@ -103,6 +104,7 @@ const databaseUnavailable = () =>
     code: "source_unavailable",
     error: "Company database is unavailable."
   });
+const encodeAudienceOptions = Schema.encodeSync(AudienceOptions);
 const encodeInventory = Schema.encodeSync(PatchInventory);
 const encodeSummaries = Schema.encodeSync(Schema.Array(PatchSummary));
 const encodeDetail = Schema.encodeSync(PatchDetail);
@@ -141,7 +143,7 @@ const pageFilename = (original: string | null) => {
   return `${stem === "" ? "index" : stem}.html`;
 };
 const readHeaders = { "cache-control": "private, no-store" };
-const summary = (row: Patches.ReadPatch, userId: string, publicBaseUrl: string) =>
+const summary = (row: Patches.ListedPatch, userId: string, publicBaseUrl: string) =>
   new PatchSummary({
     id: row.patch.id,
     name: row.patch.name,
@@ -149,7 +151,8 @@ const summary = (row: Patches.ReadPatch, userId: string, publicBaseUrl: string) 
     owner: row.owner,
     mine: row.owner.id === userId,
     tier: row.tier,
-    scope: row.patch.scope,
+    scope: Audiences.scopeOf(row.patch.audience),
+    audience: row.audience,
     description: row.patch.description,
     state: row.patch.state,
     retiredAt: row.patch.retiredAt,
@@ -191,7 +194,20 @@ const lifecycleFailure = <S extends Schema.Top & Schema.Codec<{ readonly code: s
   code: S["Type"]["code"],
   fields: Omit<S["~type.make.in"], "ok" | "code">
 ) => Effect.succeed(refuse(schema, { ok: false, code, ...fields }));
+const audienceRefusal = (code: (typeof AudienceRefused.Type)["code"], error: string) =>
+  refuse(AudienceRefused, { ok: false, code, error });
+const audienceRefused = (code: (typeof AudienceRefused.Type)["code"], error: string) =>
+  Effect.succeed(audienceRefusal(code, error));
+/** `UpgradeRequired` says which CLI describes the audience, so it is answered where that's known. */
+const audienceFailures = {
+  InvalidAudienceTeams: (error: Audiences.InvalidAudienceTeams) =>
+    audienceRefused("invalid_audience_teams", error.message),
+  AudienceExcludesOwner: (error: Audiences.AudienceExcludesOwner) =>
+    audienceRefused("audience_excludes_owner", error.message)
+};
 const lifecycleFailures = {
+  OwnerAccessLost: (error: Patches.OwnerAccessLost) =>
+    audienceRefused("owner_access_lost", error.message),
   NotOwner: (error: Patches.NotOwner) =>
     lifecycleFailure(NotOwner, "not_owner", { error: error.message, owner: error.owner }),
   WrongState: (error: Patches.WrongState) =>
@@ -206,7 +222,8 @@ const lifecycleFailures = {
   HasDependants: (error: Patches.HasDependants) =>
     lifecycleFailure(HasDependants, "has_dependants", {
       error: error.message,
-      dependants: error.dependants
+      dependants: error.dependants,
+      ...(error.hiddenCount === undefined ? {} : { hiddenCount: error.hiddenCount })
     }),
   SourcesOff: (error: Patches.SourcesOff) =>
     lifecycleFailure(SourcesOff, "sources_off", { error: error.message, sources: error.sources }),
@@ -255,6 +272,7 @@ const patchGuest = (guest: GuestGrants.Guest) =>
   });
 /** Who may manage the patch: the owner check every guest act makes first. */
 const managerFailures = {
+  OwnerAccessLost: lifecycleFailures.OwnerAccessLost,
   NotOwner: lifecycleFailures.NotOwner,
   PatchUnavailable: ownerFailures.PatchUnavailable,
   SqlError: Effect.die
@@ -412,18 +430,6 @@ const canonicalJson = (json: unknown) =>
 
 const rejected = (code: typeof PublishRefused.Type.code, error: string) =>
   refuse(PublishRefused, { ok: false, code, error });
-/**
- * A request naming an `audience`, which clients released with team audiences send. This release
- * sets sharing only by `scope`; ignoring the audience could open a patch to the whole company.
- */
-const audienceRefused = (body: unknown, next: string) =>
-  Predicate.hasProperty(body, "audience")
-    ? refuse(AudienceRefused, {
-        ok: false,
-        code: "upgrade_required",
-        error: `This Patchy release can't set a patch's audience yet. ${next}`
-      })
-    : undefined;
 const keyConflict = () =>
   refuse(PublishKeyConflict, {
     ok: false,
@@ -451,6 +457,7 @@ const requestOrigin = Effect.map(HttpServerRequest.HttpServerRequest, (request) 
 
 export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
   Effect.gen(function* () {
+    const teamService = yield* Teams.Teams;
     const cryptography = yield* Cryptography.Cryptography;
     const content = yield* Content.Content;
     const patches = yield* Patches.Patches;
@@ -472,6 +479,17 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
     const currentRelease = yield* PatchesConfig.release;
     const livePatchesPerUser = yield* PatchesConfig.livePatchesPerUser;
     const tier2Enabled = yield* PatchesConfig.tier2Enabled;
+    const upgradeRequired = (error: Audiences.UpgradeRequired) =>
+      audienceRefusal(
+        "upgrade_required",
+        `${error.message} Install patchy ${currentRelease} with the installer at ${publicBaseUrl.replace(/\/+$/, "")}/llms.txt, or in a patch repo run pnpm patchy refresh, then run it again.`
+      );
+    /** The company's team names by id, for reporting audiences; none for a deactivated reader. */
+    const teamNames = (identity: CurrentIdentity["Service"]) =>
+      teamService.list({ companyId: identity.company.id, actorId: identity.user.id }).pipe(
+        Effect.map((teams) => new Map(teams.map((team) => [team.id, team.name]))),
+        Effect.catchTags({ RoleForbidden: () => Effect.succeed(new Map<string, string>()) })
+      );
 
     const readOne = Effect.fn("PatchesApi.readOne")(function* (
       patchRef: string,
@@ -611,13 +629,6 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             })
           );
           if (HttpServerResponse.isHttpServerResponse(json)) return json;
-          // Before any replay, too: a publish a later release stored with its audience is that
-          // release's to answer, and its stored response names a patch this one opens for nobody.
-          const audience = audienceRefused(
-            json,
-            "Publish without --share or --team, or with the patchy CLI from this release."
-          );
-          if (audience !== undefined) return audience;
           const key = yield* decodeKey(json).pipe(
             Effect.catchTags({
               MalformedBody: (error) => Effect.succeed(malformedPublish(error))
@@ -630,9 +641,6 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               .replay(identity.user.id, key.publishKey)
               .pipe(Effect.catchTags({ SqlError: Effect.die }));
             if (Option.isNone(stored)) return undefined;
-            // Its answer names a patch this release opens for nobody. A retry of it, a create's
-            // included, answers as if that patch weren't there, and publishes nothing.
-            if (stored.value.hidden) return notFound();
             if (stored.value.payloadDigest !== digest) return keyConflict();
             const published = decodeReplayIds(stored.value.response);
             if (Option.isSome(published)) yield* WideEvents.enrich(published.value);
@@ -653,6 +661,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               })
               .pipe(
                 Effect.catchTags({
+                  OwnerAccessLost: lifecycleFailures.OwnerAccessLost,
                   NotOwner: lifecycleFailures.NotOwner,
                   PatchRetired: lifecycleFailures.PatchRetired,
                   PatchDeleted: lifecycleFailures.PatchDeleted,
@@ -778,8 +787,17 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           // Before the version is recorded, so the stored response a same-key retry replays has it.
           warnings.push(...(yield* lookWarnings(metadata.look, identity.company)));
           warnings.push(...(yield* agentAccessWarnings(manifest.handlers, identity.company)));
+          // An audience replaces the scope an earlier client sends; that scope alone may not widen
+          // a patch open to teams, which `record` checks under the patch lock.
+          const audience =
+            payload.audience ?? (payload.scope === undefined ? undefined : { kind: payload.scope });
           warnings.push(
-            ...(yield* guestWarnings(patchId, payload.scope, manifest, identity.company))
+            ...(yield* guestWarnings(
+              patchId,
+              audience === undefined ? undefined : Audiences.scopeOf(audience),
+              manifest,
+              identity.company
+            ))
           );
           const recorded = yield* content
             .publish({
@@ -787,7 +805,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               companyId: identity.company.id,
               ownerUserId: identity.user.id,
               machineTokenId: identity.machine.id,
-              scope: payload.scope,
+              audience,
+              scopeOnly: payload.audience === undefined && payload.scope !== undefined,
               force: payload.force,
               description: metadata.description ?? manifest.description,
               title,
@@ -813,6 +832,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             .pipe(
               Effect.catchTags({
                 ...lifecycleFailures,
+                ...audienceFailures,
+                UpgradeRequired: (error) => replayOrRespond(upgradeRequired(error)),
                 ...tierFailures,
                 PatchUnavailable: () => replayOrRespond(notFound()),
                 PatchConflict: () =>
@@ -845,6 +866,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
                   replayOrRespond(rejected("has_primitives", error.message)),
                 PatchNotOpenable: (error) =>
                   replayOrRespond(rejected("patch_not_openable", error.message)),
+                ConnectionAccessDenied: (error) =>
+                  replayOrRespond(audienceRefusal("connection_access_denied", error.message)),
                 ConnectionNotConnected: (error) =>
                   replayOrRespond(rejected("connection_not_connected", error.message)),
                 StaleGenerated: (error) =>
@@ -1134,8 +1157,11 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             );
           if (HttpServerResponse.isHttpServerResponse(card)) return card;
           yield* WideEvents.enrich(Patches.eventFields(card.patch));
+          // The log is content: an admin outside the audience, or an owner who lost access, can
+          // manage the patch but not read it, and hears what any unopenable patch answers.
+          if (!card.access.canOpen) return notFound();
           // Ownership is read now, so reassignment moves who may read the log, as in the portal.
-          if (identity.role !== "admin" && card.owner.id !== identity.user.id)
+          if (identity.role === "member" && card.owner.id !== identity.user.id)
             return refuse(NotOwner, {
               ok: false,
               code: "not_owner",
@@ -1159,7 +1185,9 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           const connections = page.entries.some((entry) =>
             entry.tree.some((step) => step.connectionId !== null)
           )
-            ? yield* connectionStore.list(identity.company.id).pipe(Effect.orElseSucceed(() => []))
+            ? yield* connectionStore
+                .list(identity.company.id, identity.user.id)
+                .pipe(Effect.orElseSucceed(() => []))
             : [];
           const names: LogNames = {
             versions: new Map(card.versions.map((version) => [version.id, version.versionNumber])),
@@ -1181,30 +1209,63 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           );
         })
       )
+      .handleRaw("audienceOptions", () =>
+        Effect.gen(function* () {
+          const identity = yield* CurrentIdentity;
+          const names = yield* teamNames(identity);
+          return HttpServerResponse.jsonUnsafe(
+            encodeAudienceOptions(
+              new AudienceOptions({
+                ok: true,
+                teams: [...names].map(([id, name]) => ({ id, name }))
+              })
+            ),
+            { headers: readHeaders }
+          );
+        }).pipe(Effect.catchTags({ SqlError: Effect.die }))
+      )
       .handleRaw("share", ({ params }) =>
         Effect.gen(function* () {
           const identity = yield* CurrentIdentity;
-          const body = yield* readBody(maxShareBodyBytes).pipe(Effect.catchTags(bodyFailures));
-          if (HttpServerResponse.isHttpServerResponse(body)) return body;
-          const audience = audienceRefused(
-            body,
-            "Change its sharing with the patchy CLI from this release."
-          );
-          if (audience !== undefined) return audience;
-          const payload = yield* decodeShare(body).pipe(
-            Effect.catchTags({ MalformedBody: bodyFailures.MalformedBody })
+          const payload = yield* readBody(maxShareBodyBytes).pipe(
+            Effect.flatMap(decodeShare),
+            Effect.catchTags(bodyFailures)
           );
           if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
+          const audience =
+            payload.audience ?? (payload.scope === undefined ? undefined : { kind: payload.scope });
+          if (audience === undefined)
+            return refuse(BadRequest, { ok: false, error: "Send an audience to share with." });
           const shared = yield* patches
-            .setScope(params.patchId, { userId: identity.user.id, admin: false }, payload.scope)
-            .pipe(Effect.catchTags({ ...ownerFailures, ...tierFailures }));
+            .setSharing({
+              patchId: params.patchId,
+              actor: { userId: identity.user.id, admin: false },
+              audience,
+              scopeOnly: payload.audience === undefined,
+              force: payload.force
+            })
+            .pipe(
+              Effect.catchTags({
+                ...ownerFailures,
+                ...tierFailures,
+                ...audienceFailures,
+                UpgradeRequired: (error) => Effect.succeed(upgradeRequired(error)),
+                HasDependants: lifecycleFailures.HasDependants
+              })
+            );
           if (HttpServerResponse.isHttpServerResponse(shared)) return shared;
-          yield* WideEvents.enrich(Patches.eventFields(shared));
+          yield* WideEvents.enrich(Patches.eventFields(shared.patch));
           return new Shared({
             ok: true,
             patchId: params.patchId,
-            scope: shared.scope,
-            publicUrl: Patches.address(publicBaseUrl, shared.companyHandle, shared.name)
+            scope: Audiences.scopeOf(shared.patch.audience),
+            audience: shared.audience,
+            publicUrl: Patches.address(
+              publicBaseUrl,
+              shared.patch.companyHandle,
+              shared.patch.name
+            ),
+            ...(shared.warnings.length === 0 ? {} : { warnings: shared.warnings })
           });
         })
       )

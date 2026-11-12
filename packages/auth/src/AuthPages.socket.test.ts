@@ -8,7 +8,7 @@ import * as Cookies from "effect/http/Cookies";
 import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { CookieJar } from "tough-cookie";
-import { Companies, InviteMail, Users } from "@patchy/companies";
+import { Companies, InviteMail, Teams, Users } from "@patchy/companies";
 import { Analytics } from "@patchy/analytics";
 import { Limits } from "@patchy/limits";
 import * as AgentConnections from "./AgentConnections.js";
@@ -72,7 +72,13 @@ const layer = HttpRouter.serve(Layer.mergeAll(AuthPages.layer, receiptProbes), {
 }).pipe(
   Layer.provideMerge(NodeHttpServer.layerTest),
   Layer.provideMerge(
-    Layer.mergeAll(localRevocation, Companies.layer, Users.layer, InviteMail.layerRecording)
+    Layer.mergeAll(
+      localRevocation,
+      Companies.layer,
+      Users.layer,
+      Teams.layer,
+      InviteMail.layerRecording
+    )
   ),
   Layer.provideMerge(DeviceLogins.layer),
   Layer.provideMerge(MachineTokens.layer),

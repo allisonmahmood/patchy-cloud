@@ -4,12 +4,12 @@ import * as MemberDirectory from "../MemberDirectory.js";
 
 const unexpected = Effect.die("Unexpected member-directory access in a table-only test");
 
-/** Non-directory suites must fail if their code starts reading company members. */
+/** Non-directory suites allow fixed authority revisions but refuse reading company members. */
 export const layer = Layer.succeed(MemberDirectory.MemberDirectory, {
   list: () => unexpected,
   search: () => unexpected,
   get: () => unexpected,
   getMany: () => unexpected,
   candidates: () => unexpected,
-  revision: () => unexpected
+  revision: () => Effect.succeed("0")
 });

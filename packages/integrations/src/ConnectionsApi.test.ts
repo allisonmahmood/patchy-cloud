@@ -1,3 +1,4 @@
+import { Teams } from "@patchy/companies";
 import { assert, it } from "@effect/vitest";
 import { Authorization, PatchyApi, authorizationClient } from "@patchy/api";
 import { Authorization as BearerAuthorization, MachineTokens } from "@patchy/auth";
@@ -102,7 +103,12 @@ const layer = Layer.mergeAll(ConnectionsApi.layer, HttpServer.layerServices).pip
       ])
     )
   ),
-  Layer.provideMerge(Layer.effectDiscard(seed).pipe(Layer.provideMerge(Testing.layer()))),
+  Layer.provideMerge(
+    Layer.effectDiscard(seed).pipe(
+      Layer.provideMerge(Teams.layer),
+      Layer.provideMerge(Testing.layer())
+    )
+  ),
   Layer.provideMerge(NodeCryptography.layer)
 );
 const client = (token: string) =>
@@ -117,6 +123,67 @@ const memberClient = Effect.gen(function* () {
 });
 
 it.layer(layer)("connections group", (it) => {
+  it.effect(
+    "hides connection metadata on direct requests and restores discovery through a team grant",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const store = yield* ConnectionStore.ConnectionStore;
+        const team = yield* (yield* Teams.Teams).create({
+          companyId: DEV_SEED.companyId,
+          actorId: DEV_SEED.userId,
+          name: "API connection audience"
+        });
+        yield* sql`INSERT INTO connections(id, company_id, integration, handle, description, mode, status, display, credentials, key_id, credential_revision, metadata_revision, created_by)
+      SELECT 'conn_audience_api', company_id, integration, 'restricted-api', description, mode, status, display, credentials, key_id, credential_revision, metadata_revision, created_by FROM connections WHERE id = 'conn_warehouse'`;
+        yield* store.setAudience({
+          companyId: DEV_SEED.companyId,
+          userId: DEV_SEED.userId,
+          id: "conn_audience_api",
+          audience: { kind: "teams", teamIds: [team.id] }
+        });
+        const api = yield* memberClient;
+        assert.equal(
+          (yield* api.listConnections({ query: {} })).connections.some(
+            (row) => row.id === "conn_audience_api"
+          ),
+          false
+        );
+        const denied = yield* api.getIntegrationConnection({
+          params: { integration: "postgres", handle: "restricted-api" },
+          responseMode: "response-only"
+        });
+        assert.equal(denied.status, 404);
+        assert.notInclude(yield* denied.text, "private-db");
+        yield* (yield* Teams.Teams).setMemberships({
+          companyId: DEV_SEED.companyId,
+          actorId: DEV_SEED.userId,
+          teamId: team.id,
+          userIds: ["connections-member"],
+          added: true
+        });
+        assert.equal(
+          (yield* api.listConnections({ query: {} })).connections.some(
+            (row) => row.id === "conn_audience_api"
+          ),
+          true
+        );
+        yield* (yield* Teams.Teams).setMemberships({
+          companyId: DEV_SEED.companyId,
+          actorId: DEV_SEED.userId,
+          teamId: team.id,
+          userIds: ["connections-member"],
+          added: false
+        });
+        assert.equal(
+          (yield* api.listConnections({ query: {} })).connections.some(
+            (row) => row.id === "conn_audience_api"
+          ),
+          false
+        );
+        yield* sql`DELETE FROM connections WHERE id = 'conn_audience_api'`;
+      })
+  );
   it.effect(
     "lists both states for a member, with safe declaration hints and offered integrations only under all",
     () =>

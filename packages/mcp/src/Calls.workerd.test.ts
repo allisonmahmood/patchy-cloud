@@ -299,7 +299,8 @@ it.layer(services, { excludeTestServices: true, timeout: 90_000 })(
           ]);
           const [logged] = yield* (yield* RuntimeLog.RuntimeLog).recent({
             companyId: acme.id,
-            connectionId: warehouse.id
+            connectionId: warehouse.id,
+            patchIds: [deals.patchId]
           });
           assert.include(logged, { userId: ben.id, outcome: "success" });
 

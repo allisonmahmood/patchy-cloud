@@ -17,8 +17,8 @@ import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
 import * as HttpApiSecurity from "effect/http-api/HttpApiSecurity";
 import * as OpenApi from "effect/http-api/OpenApi";
 import {
-  AudienceRefused,
   BadRequest,
+  AudienceRefused,
   Conflict,
   DeviceLoginGone,
   DeviceLoginPoll,
@@ -77,6 +77,7 @@ import {
   StartDeviceLoginRequest,
   Unauthorized,
   PublishCreated,
+  AudienceOptions,
   PublishRequest,
   PublishUpdated,
   PublishRefused,
@@ -160,7 +161,8 @@ const protectedErrors = [BadRequest, NotFound, RateLimited] as const;
  */
 const patchRouteErrors = [...protectedErrors, RequestTargetTooLong] as const;
 const patchParams = { patchId: Schema.String };
-const ownerRouteErrors = [...patchRouteErrors, NotOwner, WrongState] as const;
+// A 400 decodes as the first schema it fits, so the coded one comes before `BadRequest`.
+const ownerRouteErrors = [AudienceRefused, ...patchRouteErrors, NotOwner, WrongState] as const;
 const readParams = { patchRef: Schema.String };
 const readQuery = { state: Schema.optionalKey(PatchStateFilter) };
 /** A bare query flag is true; clients encode booleans as true/false. */
@@ -263,12 +265,18 @@ export class ViewerGroup extends HttpApiGroup.make("viewer", { topLevel: true })
 
 export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true })
   .add(
+    HttpApiEndpoint.get("audienceOptions", "/patches/audiences", {
+      success: AudienceOptions
+    }).annotateMerge(
+      describe(
+        "Every team in the company, by id and name, for choosing an audience. The audience must still include the owner."
+      )
+    ),
     HttpApiEndpoint.post("publish", "/publish", {
       payload: PublishRequest,
       success: [PublishCreated, PublishUpdated],
       error: [
         PatchQuotaExceeded,
-        // A 400 decodes as the first schema it fits, so the coded one comes before `BadRequest`.
         AudienceRefused,
         ...protectedErrors,
         PublishKeyConflict,
@@ -351,10 +359,10 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "HTML bundles are stored raw, without validation or transformation. " +
           "Each artifact uses `PATCHY_MAX_BUNDLE_BYTES` " +
           "(10 MiB), with oversized artifacts refused as 413. Creates spend the per-token create limit " +
-          "and live-patch quota; updates do not. Omitted scope defaults to company on creates " +
-          "and remains unchanged on updates. A body naming `audience`, as clients released with team audiences send, " +
-          "answers 400 `upgrade_required` before any replay: this release sets sharing only by `scope`. " +
-          "A replay whose patch that release has since opened to teams answers 404, as the patch does, and publishes nothing. `manifest.name` is an exact company-scoped name " +
+          "and live-patch quota; updates do not. `audience` is Company, Public or named teams; omitted, a create is open to the company and an update keeps its audience. " +
+          "It commits with the version, so a team patch is never briefly company-wide, and every publish reports it in `audience` with each team's name; `scope` stays `company` or `public` for older clients, so a team patch reports `company`. " +
+          "`scope` without `audience`, as older clients send, answers 400 `upgrade_required` for a patch open to teams. Named guest grants are separate from the audience. " +
+          "Warnings name who the audience reaches that the patch's shared sources or team-only connections don't. `manifest.name` is an exact company-scoped name " +
           "(3–32 lowercase letters, digits or hyphens, starting and ending with a letter or digit); " +
           "another patch's current name, or any name of a retired or deleted patch, answers 409 `name_taken` on create or rename. " +
           "`patches` and `connections` are reserved names and answer 422 `reserved_name` on create. " +
@@ -506,8 +514,9 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
     }).annotateMerge(
       describe(
         "Read one page of a patch's log, newest first: the portal's Log tab for the agent that builds the " +
-          "patch. Its current owner and company admins read it in any lifecycle state; another member " +
-          "answers 403 `not_owner` naming the owner, and unknown, unopenable, foreign and gone patches 404. " +
+          "patch. Its current owner and company admins read it in any lifecycle state while they can open it; " +
+          "another member answers 403 `not_owner` naming the owner, and unknown, unopenable, foreign and gone " +
+          "patches 404, an admin outside its audience and an owner who lost access included. " +
           "Each entry is a top-level handler call with its version number, handler and kind, initiating " +
           "viewer and the `agent` they called through (null for their page's call), outcome and code, timings, correlation id, `ctx.log` lines (including a thrown error's " +
           "message and stack) and up to 50 retained steps: nested handlers and the operations each made, " +
@@ -523,21 +532,23 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
       params: patchParams,
       payload: ShareRequest,
       success: Shared,
-      error: [AudienceRefused, ...ownerRouteErrors, Tier2NotPublic, PayloadTooLarge]
+      error: [...ownerRouteErrors, Tier2NotPublic, HasDependants, PayloadTooLarge]
     }).annotateMerge(
       describe(
-        "Change the sharing scope of a patch owned by the bearer token's user, without publishing a version. " +
+        "Change a patch's audience without publishing a version. `audience` selects Company, Public or named teams, which must include the owner; named guest grants are kept. " +
+          "`scope` alone, as older clients send, still moves a Company or Public patch but answers 400 `upgrade_required` for one open to teams. The response reports `audience` with team names, `scope` as older clients read it, and `warnings` as publish does. " +
+          "Narrowing to teams answers 409 `has_dependants` while live patches read its tables or stores; those the owner can open are named and `hiddenCount` counts the others. Retry with `force: true` after reviewing the impact. " +
           "`company` requires a company member's browser session; `public` lets anyone with the link open the current version. " +
           "Only the current version of a public patch is public; older versions stay behind the company door. " +
           "Public sharing while the served version is tier 2 answers `tier2_not_public`. " +
-          "A same-company non-owner answers 403 `not_owner`, including an admin's machine token; another company " +
-          "answers 404. Only live patches permit scope changes, otherwise `wrong_state`. The current public version may be cached for 60 seconds " +
+          "A non-owner within the audience answers 403 `not_owner`, including an admin's machine token; people outside the audience or company " +
+          "answers 404. Retired patches, and deleted ones inside their recovery window, take sharing changes too, so an audience can stop naming a team; " +
+          "a patch past its window answers 404. The current public version may be cached for 60 seconds " +
           "at both `/<company>/<name>` and `/<company>/<name>/~v/<current n>`; older versions and company patches are " +
           "`private, no-store` and answer 401 without a session. " +
           "The JSON body is bounded at 1.5 MiB; the larger bundle cap applies only to publishing. " +
           "An oversized declared body answers 413; " +
-          "streaming bodies are cut off at the cap. A body naming `audience`, as clients released with team audiences send, " +
-          "answers 400 `upgrade_required`, since this release sets sharing only by `scope`. Rejected requests leave the scope unchanged."
+          "streaming bodies are cut off at the cap. Rejected requests leave the scope unchanged."
       )
     ),
     HttpApiEndpoint.get("listGuests", "/patches/:patchId/guests", {
