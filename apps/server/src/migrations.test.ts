@@ -457,3 +457,27 @@ it.layer(Testing.emptyLayer(before("0029_tier_zero_is_tier_one")))("the tier 0 f
       })
   );
 });
+
+it.layer(Testing.emptyLayer(before("0041_connection_audiences")))(
+  "the connection audience upgrade",
+  (it) => {
+    it.effect("leaves every existing connection open to its whole company", () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`INSERT INTO companies(id, handle, name) VALUES ('cmp_audience', 'audience', 'Audience')`;
+        yield* sql`INSERT INTO users(id, clerk_user_id, company_id, email, name, role)
+          VALUES ('usr_audience', 'clerk_audience', 'cmp_audience', 'audience@example.test', 'Ada', 'admin')`;
+        yield* sql`INSERT INTO connections(id, company_id, integration, handle, description, mode, status,
+            display, credentials, key_id, credential_revision, metadata_revision, created_by)
+          VALUES ('conn_audience', 'cmp_audience', 'postgres', 'warehouse', '', 'company', 'connected',
+            '{}', 'sealed', 'key', 1, 1, 'usr_audience')`;
+        yield* migrate(migrations);
+        assert.deepStrictEqual(
+          yield* sql`SELECT id, audience_kind AS "audienceKind" FROM connections`,
+          [{ id: "conn_audience", audienceKind: "company" }]
+        );
+        assert.deepStrictEqual(yield* sql`SELECT * FROM connection_team_grants`, []);
+      })
+    );
+  }
+);

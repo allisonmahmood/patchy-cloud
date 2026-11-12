@@ -4,8 +4,9 @@
  * directory's revision counter. Squashed into one baseline before launch;
  * id 9 adds each person's What's new marker, id 10 the company look, id 15
  * names the people stored without one, id 16 records the look's latest restore, id 20
- * adds the agent access switch, id 36 records who accepted which terms and id 38 stores each
- * person's single-key shortcut setting.
+ * adds the agent access switch, id 36 records who accepted which terms, id 38 stores each
+ * person's single-key shortcut setting and id 39 adds teams, their members and the history
+ * of membership changes.
  */
 import { ddl, type Migrations } from "@patchy/sql";
 
@@ -156,5 +157,42 @@ export const migrations: Migrations = {
   // new user starts on; only the person's own choice turns it off, and the same route turns it on.
   "0038_single_key_shortcuts": ddl(
     `ALTER TABLE users ADD COLUMN single_key_shortcuts BOOLEAN NOT NULL DEFAULT true`
+  ),
+  // Teams, their members and the history of membership changes. Patch and connection audiences
+  // reference company_teams without ON DELETE, so a team still in use can't be deleted. Its
+  // memberships go with it; history keeps the team's id and name and outlives it.
+  "0039_company_teams": ddl(
+    `CREATE TABLE company_teams (
+      id TEXT PRIMARY KEY,
+      company_id TEXT NOT NULL REFERENCES companies(id),
+      name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 100),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE (company_id, id)
+    )`,
+    `CREATE UNIQUE INDEX company_teams_name ON company_teams(company_id, lower(name))`,
+    `ALTER TABLE users ADD CONSTRAINT users_company_identity UNIQUE (company_id, id)`,
+    `CREATE TABLE company_team_members (
+      company_id TEXT NOT NULL,
+      team_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      PRIMARY KEY (company_id, team_id, user_id),
+      FOREIGN KEY (company_id, team_id) REFERENCES company_teams(company_id, id) ON DELETE CASCADE,
+      FOREIGN KEY (company_id, user_id) REFERENCES users(company_id, id)
+    )`,
+    `CREATE INDEX company_team_members_user ON company_team_members(company_id, user_id, team_id)`,
+    `CREATE TABLE company_team_changes (
+      company_id TEXT NOT NULL,
+      revision BIGINT NOT NULL,
+      team_id TEXT NOT NULL,
+      team_name TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      actor_id TEXT NOT NULL,
+      added BOOLEAN NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (company_id, revision, user_id),
+      FOREIGN KEY (company_id, user_id) REFERENCES users(company_id, id),
+      FOREIGN KEY (company_id, actor_id) REFERENCES users(company_id, id)
+    )`,
+    `CREATE INDEX company_team_changes_team ON company_team_changes(company_id, team_id, revision)`
   )
 };
