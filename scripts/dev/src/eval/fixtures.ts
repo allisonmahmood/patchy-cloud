@@ -14,6 +14,7 @@ import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Struct from "effect/Struct";
 import { layerFromUrl } from "@patchy/sql";
 import { readPlan } from "../state.js";
 import { ids, type Person, publisherToken, type Scenario, seedScenario } from "../scenario.js";
@@ -49,7 +50,8 @@ export const runEmail = (email: string, run: string) => {
 /**
  * The scenario's companies and people under a run's id. Its patches and
  * connections are left out: a run's fixtures are staged by the evaluator,
- * not by the scenario.
+ * not by the scenario. Its people all start past the terms prompt, since the
+ * task's checks open pages as them and no task is about the prompt.
  */
 export const namespaceScenario = (scenario: Scenario, run: string): Scenario => ({
   company: { ...scenario.company, handle: runHandle(scenario.company.handle, run) },
@@ -62,7 +64,7 @@ export const namespaceScenario = (scenario: Scenario, run: string): Scenario => 
         }))
       }),
   people: Arr.map(scenario.people, (person) => ({
-    ...person,
+    ...Struct.omit(person, ["termsPending"]),
     email: runEmail(person.email, run),
     ...(person.company === undefined ? {} : { company: runHandle(person.company, run) })
   })),

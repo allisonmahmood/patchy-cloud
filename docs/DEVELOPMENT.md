@@ -562,7 +562,8 @@ builds, two judges review what each run published.
 - **A run's identities.** Each run seeds its task's scenario again, every
   company handle suffixed with the run's id and every email plus-addressed with
   it, so runs share the instance without seeing each other's patches or
-  colliding on names. Its people are deactivated once it is graded.
+  colliding on names. Its people all start past the terms prompt, `termsPending`
+  or not, and are deactivated once it is graded.
 - **The unattended line.** Every task ends with the same sentence telling the
   builder nobody will answer questions. A run that ends on a question without
   publishing is `asked`.
