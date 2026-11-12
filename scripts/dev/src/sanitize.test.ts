@@ -164,6 +164,78 @@ it.layer(NodeServices.layer)("a sanitizer", (it) => {
     })
   );
 
+  it.effect(
+    "redacts a secret-named headers variable header by header, a colon in a value kept",
+    () =>
+      Effect.gen(function* () {
+        const sanitizer = yield* makeSanitizer({
+          stateDirs: [],
+          envs: [{ COOKIE_HEADERS: "X-Key: dummy-alpha\nX-Other: dummy:beta" }]
+        });
+        assert.strictEqual(
+          yield* sanitizer.redact("sent dummy-alpha, then dummy:beta"),
+          "sent [redacted], then [redacted]"
+        );
+      })
+  );
+
+  it.effect("takes a header line's value whole, commas and all, and nothing else of it", () =>
+    Effect.gen(function* () {
+      const sanitizer = yield* makeSanitizer({
+        stateDirs: [],
+        envs: [
+          {
+            ANTHROPIC_CUSTOM_HEADERS:
+              "X-Key: dummy-alpha,dummy-beta, X-Other: dummy-gamma\nX-Forwarded-For: 192.0.2.1, ::"
+          }
+        ]
+      });
+      assert.strictEqual(
+        yield* sanitizer.redact(
+          "401 for dummy-alpha,dummy-beta, X-Other: dummy-gamma at http://localhost:4000"
+        ),
+        "401 for [redacted] at http://localhost:4000"
+      );
+    })
+  );
+
+  it.effect(
+    "redacts the model provider's address, its credentials and its host as written, unless the host is this machine's or too short to name",
+    () =>
+      Effect.gen(function* () {
+        const redact = (address: string, text: string) =>
+          makeSanitizer({ stateDirs: [], envs: [{ ANTHROPIC_BASE_URL: address }] }).pipe(
+            Effect.flatMap((sanitizer) => sanitizer.redact(text))
+          );
+        assert.strictEqual(
+          yield* redact(
+            "https://user:dummy-pass@Models.Example.ts.net:8317/v1?region=eu",
+            "via https://user:dummy-pass@Models.Example.ts.net:8317/v1/messages, connect Models.Example.ts.net:8317, ENOTFOUND models.example.ts.net, password dummy-pass"
+          ),
+          "via https://[redacted]/v1/messages, connect [redacted], ENOTFOUND [redacted], password [redacted]"
+        );
+        assert.strictEqual(
+          yield* redact(
+            "http://127.0.0.1:8317",
+            "via http://127.0.0.1:8317, served on 127.0.0.1:8317 and 127.0.0.1:4000"
+          ),
+          "via [redacted], served on 127.0.0.1:8317 and 127.0.0.1:4000"
+        );
+        assert.strictEqual(
+          yield* redact("http://localhost.:8317", "served on localhost.:8317"),
+          "served on localhost.:8317"
+        );
+        assert.strictEqual(
+          yield* redact("https://h", "the handler at https://h returned healthy"),
+          "the handler at [redacted] returned healthy"
+        );
+        assert.strictEqual(
+          yield* redact("http://gpubox:8317", "connect gpubox:8317 failed; gpubox users are fine"),
+          "connect [redacted] failed; gpubox users are fine"
+        );
+      })
+  );
+
   it.effect("keeps a JSON report valid however short a secret is", () =>
     Effect.gen(function* () {
       const sanitizer = yield* makeSanitizer({ stateDirs: [], envs: [{ GH_TOKEN: "0" }] });
