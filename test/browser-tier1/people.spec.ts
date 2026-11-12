@@ -1,4 +1,5 @@
 import { test, expect, prepare } from "./fixtures.js";
+import { loadDialog } from "./dialog.js";
 
 test("an admin invites in a dialog over People, takes someone through deactivation and back, and switches agent access", async ({
   page,
@@ -8,14 +9,14 @@ test("an admin invites in a dialog over People, takes someone through deactivati
   const people = `${instance.origin}/settings/people`;
   await page.goto(people);
   const invite = page.getByRole("link", { name: "Invite people…" });
-  await invite.click();
+  await loadDialog(page, () => invite.click());
   await expect(page).toHaveURL(`${people}?invite=1`);
   const dialog = page.getByRole("dialog", { name: "Invite people" });
   const emails = dialog.getByRole("textbox", { name: "Emails" });
   await expect(emails).toBeFocused();
   // A refusal draws the dialog again with what was typed, the problem under the field.
   await emails.fill("not-an-address");
-  await dialog.getByRole("button", { name: "Send invites" }).click();
+  await loadDialog(page, () => dialog.getByRole("button", { name: "Send invites" }).click());
   await expect(emails).toHaveAttribute("aria-invalid", "true");
   await expect(emails).toHaveValue("not-an-address");
   await page.keyboard.press("Escape");
