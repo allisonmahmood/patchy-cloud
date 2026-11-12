@@ -1932,8 +1932,8 @@ it.layer(services)("pages in memory", (it) => {
 
   /**
    * One host's routes, built once so requests share its content documents, over the memory
-   * store with document reads counted. `beforeRead` runs inside each read, and `afterFind` after
-   * each retained-version lookup: a content request's last wait before the documents. Requests
+   * store with document reads counted. `beforeRead` runs inside each read, and `afterAdmit` after
+   * each audience check: a member's content request's last wait before the documents. Requests
    * run inside request events whose `contentLoad` and `contentEncoding` `loads` takes in order.
    */
   const host = Effect.fn(function* (
@@ -1948,7 +1948,7 @@ it.layer(services)("pages in memory", (it) => {
     const control = {
       reads: 0,
       beforeRead: Effect.void as Effect.Effect<void>,
-      afterFind: Effect.void as Effect.Effect<void>
+      afterAdmit: Effect.void as Effect.Effect<void>
     };
     const store = ContentStore.ContentStore.of({
       ...memory,
@@ -1963,8 +1963,7 @@ it.layer(services)("pages in memory", (it) => {
       Effect.map(Patches.make, (patches) =>
         Patches.Patches.of({
           ...patches,
-          findRetained: (...args) =>
-            patches.findRetained(...args).pipe(Effect.tap(() => control.afterFind))
+          admits: (...args) => patches.admits(...args).pipe(Effect.tap(() => control.afterAdmit))
         })
       )
     );
@@ -2052,19 +2051,19 @@ it.layer(services)("pages in memory", (it) => {
     Effect.gen(function* () {
       const { url, html } = yield* scripted("Joined once");
       const { control, request, loads } = yield* host();
-      let found = 0;
-      const bothFound = yield* Deferred.make<void>();
-      control.afterFind = Effect.suspend(() =>
-        ++found === 2 ? Deferred.succeed(bothFound, undefined) : Effect.void
+      let admitted = 0;
+      const bothAdmitted = yield* Deferred.make<void>();
+      control.afterAdmit = Effect.suspend(() =>
+        ++admitted === 2 ? Deferred.succeed(bothAdmitted, undefined) : Effect.void
       );
       const opened = yield* Deferred.make<void>();
       control.beforeRead = Deferred.await(opened);
-      // Neither request yields on its op budget: past its lookup, the second runs straight on
-      // to wait on the first one's read before this fiber's next turn.
+      // Neither request yields on its op budget: past its audience check, the second runs
+      // straight on to wait on the first one's read before this fiber's next turn.
       const both = yield* Effect.all([request(url), request(url)], {
         concurrency: "unbounded"
       }).pipe(Effect.provideService(Scheduler.PreventSchedulerYield, true), Effect.forkScoped);
-      yield* Deferred.await(bothFound);
+      yield* Deferred.await(bothAdmitted);
       yield* Effect.yieldNow;
       yield* Deferred.succeed(opened, undefined);
       for (const response of yield* Fiber.join(both)) {
@@ -2075,7 +2074,7 @@ it.layer(services)("pages in memory", (it) => {
       assert.sameMembers([(yield* loads)?.load, (yield* loads)?.load], ["read", "joined"]);
 
       // A failed read is a fault for this request (the server's 500), and the next one reads again.
-      control.afterFind = Effect.void;
+      control.afterAdmit = Effect.void;
       control.beforeRead = Effect.void;
       const missing = yield* scripted("Read again");
       const store = yield* ContentStore.ContentStore;
@@ -2289,13 +2288,13 @@ it.layer(services)("pages in memory", (it) => {
       yield* Queue.take(entered);
       yield* Fiber.interrupt(abandoned);
       // The retry waits on the abandoned load's work before it is allowed to finish.
-      const found = yield* Deferred.make<void>();
-      control.afterFind = Deferred.succeed(found, undefined).pipe(Effect.asVoid);
+      const admitted = yield* Deferred.make<void>();
+      control.afterAdmit = Deferred.succeed(admitted, undefined).pipe(Effect.asVoid);
       const retry = yield* request(url).pipe(
         Effect.provideService(Scheduler.PreventSchedulerYield, true),
         Effect.forkScoped
       );
-      yield* Deferred.await(found);
+      yield* Deferred.await(admitted);
       yield* Effect.yieldNow;
       yield* Deferred.succeed(opened, undefined);
       const retried = yield* Fiber.join(retry);
