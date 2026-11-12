@@ -1,4 +1,5 @@
 import type { Frame, Page } from "@playwright/test";
+import { frameDrawn } from "./drawn.js";
 import { test, expect } from "./fixtures.js";
 
 // Mod+Shift+K is Patchy's switcher key. The relay Serving puts first in a patch's document
@@ -83,6 +84,7 @@ test("a patch's own listeners and fields never hear the switcher key", async ({
   const log = watch(page);
   const patch = await instance.publish("company", listening, undefined, tier1);
   await page.goto(patch.address);
+  await frameDrawn(page);
   await field(page).click();
   await page.keyboard.press(chord);
   await page.keyboard.press("a");
@@ -109,6 +111,7 @@ test("the shell takes the relay's open at company scope and ignores it on a publ
   const log = watch(page);
   const company = await instance.publish("company", listening, undefined, tier1);
   await page.goto(company.address);
+  await frameDrawn(page);
   await field(page).click();
   await page.keyboard.press(chord);
   await settled(page);
@@ -120,6 +123,7 @@ test("the shell takes the relay's open at company scope and ignores it on a publ
   // Signed out: a member's copy of their own company's public patch loads their switcher.
   await instance.session(context, "none");
   await page.goto(open.address);
+  await frameDrawn(page);
   await field(page).click();
   await page.keyboard.press(chord);
   await settled(page);
@@ -250,6 +254,7 @@ test("a frame's open only ever opens the switcher; only the shell's own press to
 }) => {
   const patch = await instance.publish("company", listening, undefined, tier1);
   await page.goto(patch.address);
+  await frameDrawn(page);
   // A loaded switcher, recording whether it is open after each call.
   await page.evaluate(() => {
     const shell = window as Listening & { states?: boolean[] };
@@ -286,6 +291,7 @@ test("the relay holds the keys after the chord only where the shell says a switc
 }) => {
   const patch = await instance.publish("company", listening, undefined, tier1);
   await page.goto(patch.address);
+  await frameDrawn(page);
   // The page dispatches the shell's `available` itself, claiming the shell as its source: ignored.
   await patchFrame(page).evaluate(() =>
     dispatchEvent(
@@ -336,6 +342,7 @@ test("a document cut short inside a comment or tag still starts with the relay",
     const patch = await instance.publish("company", html, undefined, tier1);
     await page.goto(patch.address);
     await expect(page.locator("#patch")).toBeVisible();
+    await frameDrawn(page);
     // A listener the page adds later, behind the relay's.
     await patchFrame(page).evaluate(() => {
       const frame = window as Listening;
