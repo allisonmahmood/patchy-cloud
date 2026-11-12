@@ -964,6 +964,44 @@ it.layer(services)("company connection pages", (it) => {
       })
   );
   it.effect(
+    "neither names nor counts a patch open to teams in a connection's usage, yet keeps it in use",
+    () =>
+      Effect.gen(function* () {
+        const owner = yield* createCompany("connections-usage-teams");
+        const shared = yield* connect(owner.user, "shared");
+        const hidden = yield* connect(owner.user, "hidden");
+        yield* storeVersion(owner, "revenue", 1, [shared.connection], { current: true });
+        yield* storeVersion(owner, "plan", 1, [shared.connection, hidden.connection], {
+          current: true
+        });
+        yield* storeVersion(owner, "old-plan", 1, [hidden.connection], { current: true });
+        // A later release opens both to teams, and one is since deleted; this one opens neither.
+        const sql = yield* SqlClient.SqlClient;
+        const [plan, oldPlan] = ["plan", "old-plan"].map(
+          (name) => `${owner.company.handle}-${name}`
+        );
+        yield* sql`UPDATE patches SET scope = 'teams' WHERE id IN (${plan}, ${oldPlan})`;
+        yield* sql`UPDATE patches SET deleted_at = now() WHERE id = ${oldPlan}`;
+
+        const store = yield* ConnectionStore.ConnectionStore;
+        const usage = yield* store.usage(owner.company.id);
+        assert.deepStrictEqual(usage.get(shared.connection.id), {
+          usedBy: ["revenue"],
+          olderVersions: 0,
+          retired: 0,
+          deleted: 0,
+          disabled: 0,
+          declaredBy: [],
+          declared: true
+        });
+        assert.isUndefined(usage.get(hidden.connection.id));
+        const refused = yield* store
+          .delete({ companyId: owner.company.id, userId: owner.user.id, id: hidden.connection.id })
+          .pipe(Effect.flip);
+        assert.strictEqual(refused._tag, "ConnectionInUse");
+      })
+  );
+  it.effect(
     "names the live patches using a connection once each, by the rule that guards deletion",
     () =>
       Effect.gen(function* () {

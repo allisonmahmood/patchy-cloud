@@ -293,16 +293,16 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
     });
     /**
      * Every declaration of a connection in a stored version of one company's patches: the
-     * deletion rule, so `usage` and `delete` cannot disagree about what is unused.
+     * deletion rule, which `usage` also reads. Usage leaves out patches open to teams, a later
+     * release's audience this one opens for nobody, so it neither names nor counts them; they
+     * still keep a connection from being deleted.
      */
     const declarations = (companyId: string) => sql`patch_versions v
     JOIN patches p ON p.id = v.patch_id
     CROSS JOIN LATERAL jsonb_each(v.manifest->'uses') AS declaration
     WHERE p.company_id = ${companyId} AND declaration.value->>'kind' IN ${sql.in(known)}`;
-    // A patch is in one state: deleted, then disabled, then retired, else live. One open to teams,
-    // which this release opens for nobody, counts as disabled and is never named.
-    const disabled = sql`(p.disabled_at IS NOT NULL OR p.scope = 'teams')`;
-    const live = sql`p.deleted_at IS NULL AND NOT ${disabled} AND p.retired_at IS NULL`;
+    // A patch is in one state: deleted, then disabled, then retired, else live.
+    const live = sql`p.deleted_at IS NULL AND p.disabled_at IS NULL AND p.retired_at IS NULL`;
     const usageRows = SqlSchema.findAll({
       Request: Schema.String,
       Result: Schema.Struct({
@@ -318,15 +318,15 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       COALESCE(array_agg(DISTINCT p.name ORDER BY p.name)
         FILTER (WHERE ${live} AND v.id = p.current_version_id), '{}') AS "usedBy",
       COALESCE(array_agg(DISTINCT p.name ORDER BY p.name)
-        FILTER (WHERE NOT COALESCE(${live} AND v.id = p.current_version_id, false)
-          AND p.scope <> 'teams'), '{}') AS "declaredBy",
+        FILTER (WHERE NOT COALESCE(${live} AND v.id = p.current_version_id, false)), '{}') AS "declaredBy",
       (count(DISTINCT v.id)
         FILTER (WHERE ${live} AND v.id IS DISTINCT FROM p.current_version_id))::int AS "olderVersions",
-      (count(DISTINCT p.id) FILTER (WHERE p.deleted_at IS NULL AND NOT ${disabled}
+      (count(DISTINCT p.id) FILTER (WHERE p.deleted_at IS NULL AND p.disabled_at IS NULL
         AND p.retired_at IS NOT NULL))::int AS retired,
       (count(DISTINCT p.id) FILTER (WHERE p.deleted_at IS NOT NULL))::int AS deleted,
-      (count(DISTINCT p.id) FILTER (WHERE p.deleted_at IS NULL AND ${disabled}))::int AS disabled
-      FROM ${declarations(companyId)}
+      (count(DISTINCT p.id) FILTER (WHERE p.deleted_at IS NULL
+        AND p.disabled_at IS NOT NULL))::int AS disabled
+      FROM ${declarations(companyId)} AND p.scope <> 'teams'
       GROUP BY 1`
     });
     const versionRows = SqlSchema.findAll({
