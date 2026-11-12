@@ -34,6 +34,7 @@ import {
   type Mounted
 } from "./hotkeyRules.js";
 import { addSheetStyles, narrowest, sections, type Placed } from "./hotkeySheet.js";
+import { keepTabInModals } from "./modalTab.js";
 import {
   askShell,
   shortcutSetting,
@@ -784,6 +785,8 @@ function Sheet(props: {
         if (tap.current && event.target === event.currentTarget) props.onClose();
       },
       // Tab goes round the sheet's buttons; past the last it would leave the frame for Patchy's bar.
+      // They are all the sheet holds, so this holds while it scrolls too, where `keepTabInModals`
+      // leaves Tab to the browser.
       onKeyDown: (event: KeyboardEvent) => {
         if (event.key !== "Tab") return;
         const stops = [...(dialog.current?.querySelectorAll("button") ?? [])];
@@ -964,6 +967,9 @@ export function HotkeySheet<const S extends string = "?">(props: HotkeySheetProp
       .finally(() => setAsking((now) => now && "answered"));
   };
   useLayoutEffect(addSheetStyles, []);
+  // For the page's own dialogs, where it mounts the sheet without `patchy/preact` or the generated
+  // client.
+  useLayoutEffect(keepTabInModals, []);
   useLayoutEffect(() => getHotkeyManager().activateScope(sheetOpener), []);
   // Reads where the viewer is as it opens, before the sheet takes focus or holds anything back.
   const show = useCallback(() => {

@@ -276,11 +276,12 @@ async function use() {
   expect(typecheck({ "consumer.ts": source })).toEqual([]);
 });
 
-it("bundles the actual browser entry and generated template without Node, Effect, PGlite or executing config", async () => {
+// The generated template bundled for the browser against this package's entry, as a page bundles it.
+const bundleGeneratedClient = (tier?: 1 | 2) => {
   const clientPath = new URL("./client.ts", import.meta.url).pathname;
-  const result = await build({
+  return build({
     stdin: {
-      contents: generateClient(),
+      contents: generateClient(tier === undefined ? {} : { tier }),
       sourcefile: "generated-client.ts",
       resolveDir: new URL("./", import.meta.url).pathname,
       loader: "ts"
@@ -311,6 +312,10 @@ it("bundles the actual browser entry and generated template without Node, Effect
       }
     ]
   });
+};
+
+it("bundles the actual browser entry and generated template without Node, Effect, PGlite or executing config", async () => {
+  const result = await bundleGeneratedClient();
   expect(
     Object.keys(result.metafile!.inputs).filter((path) =>
       /node:|node_modules|effect|pglite|executeConfig/i.test(path)
@@ -318,3 +323,15 @@ it("bundles the actual browser entry and generated template without Node, Effect
   ).toEqual([]);
   expect(Object.values(result.metafile!.outputs).flatMap((output) => output.imports)).toEqual([]);
 });
+
+it.each([1, 2] as const)(
+  "the tier %i generated client brings the page what keeps Tab inside its modal dialogs",
+  async (tier) => {
+    const result = await bundleGeneratedClient(tier);
+    const inputs = Object.values(result.metafile!.outputs).flatMap((output) =>
+      Object.entries(output.inputs)
+    );
+    const helper = inputs.find(([path]) => path.endsWith("/modalTab.ts"));
+    expect(helper?.[1].bytesInOutput).toBeGreaterThan(0);
+  }
+);

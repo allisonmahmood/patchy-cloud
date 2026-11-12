@@ -276,9 +276,6 @@ way:
 - Register no Escape inside, and close from `onCancel`, as `HotkeySheet` does.
 - Or register Escape inside, and close from its `run`.
 
-The example shows opening and Escape. A dialog in a patch also keeps Tab inside, as the end
-of this section says.
-
 ```tsx
 function Dialog(props: { close: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -304,12 +301,21 @@ returns focus to where it was if that element can still take focus; if it has go
 disabled, focus falls to the page's body. Opening and closing in a layout effect keeps focus
 returning; a passive effect's cleanup runs after the dialog has left the page.
 
-`showModal()` makes the patch's page inert, not Patchy's page around its frame. Without more,
-Tab past a modal dialog's last tabbable element, Shift+Tab before its first, or either in a
-dialog with none, can leave the frame for the shell's controls or the browser's. Keys then go
-where focus went, so Escape can stop reaching the dialog, which stays open. So a modal dialog in
-a patch keeps Tab and Shift+Tab among the tabbable elements it has when the key is pressed, and
-on the dialog itself while it has none.
+Tab wraps in a plain modal dialog: in the one on top, Tab from its last control goes to its
+first, Shift+Tab from its first goes to its last, and a dialog with no controls keeps focus on
+itself. A plain dialog holds only ordinary containers and text, such as divs, paragraphs,
+headings, labels, lists, tables, images and drawing-only SVG, and controls Tab stops on once:
+buttons, links, selects, checkboxes, `<details>` with their own `<summary>` first, one-line text,
+search, email, URL, phone, password and number inputs, and elements given `tabindex="0"`. It has
+no popover, scrolling region, `display: contents`, `reading-flow`, CSS `interactivity: inert`
+outside an `inert` subtree, shadow root, custom element, positive `tabindex`, `tabindex` on an
+option, textarea, radio, editable content, or SVG with links, `<use>`, `<foreignObject>` or a
+`tabindex`, and no popover is open anywhere in the page. Write no Tab handling for a plain
+dialog; rows added while it is open count. A richer dialog keeps the browser's own Tab, which past
+an end leaves the patch's frame for Patchy's page, where Escape can stop reaching the dialog. A
+control that takes Tab itself with `preventDefault()`, such as an editor that indents, keeps it. A
+version built on an earlier release lets Tab leave from any modal dialog until it is built and
+published again with the current release.
 
 ## When a viewer turns single-key shortcuts off
 
@@ -380,11 +386,12 @@ viewer who finds it once learns Mod+/.
   depend on where it's mounted, such as `.hotkey-sheet …`, and set `--look-*` overrides on
   `:root` or `body`.
 - A sheet of your own is a modal dialog built from `useHotkeyList` and `hotkeyKeys` inside a
-  `HotkeyScope`. Focus moves into it as it opens, Tab stays inside it as under Native
-  `<dialog>`, and Escape closes it. Closing puts focus back where it was, or, when that element
-  has gone, in the dialog it was in, or on the page. `HotkeySheet` already does all of this and
-  runs each command from its button or its keys; build your own when its listing or look won't
-  do.
+  `HotkeyScope`, opened with `showModal()` and plain, so Tab stays inside it, as under Native
+  `<dialog>`.
+  Focus moves into it as it opens, and Escape closes it. Closing puts focus back where it was,
+  or, when that element has gone, in the dialog it was in, or on the page. `HotkeySheet` already
+  does all of this and runs each command from its button or its keys; build your own when its
+  listing or look won't do.
 
 ## Showing hotkeys
 

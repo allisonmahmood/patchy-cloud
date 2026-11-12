@@ -29,6 +29,7 @@ export { createServerClient, type ServerOnlyClient } from "./serverClient.js";
 export { isHandlerError } from "./handlerError.js";
 export type { HandlerErrorGuard, MutationUnknownOutcome } from "./server.js";
 export { createQueryRegistry } from "./queryRegistry.js";
+export { keepTabInModals } from "./modalTab.js";
 export type {
   QueryDriver,
   QueryFrame,

@@ -1,4 +1,8 @@
 import "./preact/runtime.js";
+import { keepTabInModals } from "./modalTab.js";
+
+// Every Preact page renders through this entry; pages may import no other Preact.
+keepTabInModals();
 
 export {
   Children,
