@@ -320,19 +320,20 @@ const index = Effect.fn("ConnectionPage.index")(function* (
   const connections = yield* store.list(viewer.company.id, reader);
   const usage = yield* store.usage(viewer.company.id, reader);
   const now = yield* Clock.currentTimeMillis;
-  // Members can see connection status, but must never read the call log.
+  // Members can see connection status, but must never read the call log. An admin's last call is
+  // the newest the Calls tab would show them.
   const lastCalls: View.LastCalls | undefined = admin
-    ? yield* (yield* RuntimeLog.RuntimeLog)
-        .latest({
+    ? yield* Effect.gen(function* () {
+        const latest = yield* (yield* RuntimeLog.RuntimeLog).latest({
           companyId: viewer.company.id,
-          connectionIds: connections.map((connection) => connection.id)
-        })
-        .pipe(
-          Effect.map(
-            (latest) => new Map([...latest].map(([id, at]) => [id, at.toISOString()] as const))
-          ),
-          Effect.catchTags({ SqlError: () => Effect.succeed("unavailable" as const) })
-        )
+          connectionIds: connections.map((connection) => connection.id),
+          patchIds: yield* (yield* PatchVisibility.PatchVisibility).openableIds(
+            viewer.company.id,
+            viewer.user.id
+          )
+        });
+        return new Map([...latest].map(([id, at]) => [id, at.toISOString()] as const));
+      }).pipe(Effect.catchTags({ SqlError: () => Effect.succeed("unavailable" as const) }))
     : undefined;
   const known = yield* directory(viewer);
   const people = known?.people ?? new Map<string, string>();

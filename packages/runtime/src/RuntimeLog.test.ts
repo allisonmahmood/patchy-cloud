@@ -46,7 +46,11 @@ it.layer(
         yield* TestClock.setTime(NOW);
         const log = yield* RuntimeLog.RuntimeLog;
         const connectionId = "recent-hidden";
-        const call = (correlationId: string, patchId: string | null) =>
+        const call = (
+          correlationId: string,
+          patchId: string | null,
+          connection: string = connectionId
+        ) =>
           log
             .begin({
               ...mutation(correlationId),
@@ -54,12 +58,13 @@ it.layer(
               patchId,
               versionId: patchId === null ? null : "ver_runtime",
               op: "postgres.query",
-              connectionId
+              connectionId: connection
             })
             .pipe(Effect.andThen(TestClock.adjust(1)));
         yield* call("from-open", "openpatch");
         yield* call("from-admin", null);
         for (const n of [1, 2, 3]) yield* call(`from-other-${n}`, "otherpatch");
+        yield* call("only-other", "otherpatch", "recent-only-hidden");
         const recent = yield* log.recent({
           companyId: DEV_SEED.companyId,
           connectionId,
@@ -69,6 +74,17 @@ it.layer(
         assert.deepStrictEqual(
           recent.map((found) => found.correlationId),
           ["from-admin", "from-open"]
+        );
+        // The newest call, too, is the newest of those.
+        assert.deepStrictEqual(
+          [
+            ...(yield* log.latest({
+              companyId: DEV_SEED.companyId,
+              connectionIds: [connectionId, "recent-only-hidden"],
+              patchIds: ["openpatch"]
+            }))
+          ],
+          [[connectionId, new Date(NOW + 1)]]
         );
       })
   );
@@ -163,11 +179,13 @@ it.layer(
       yield* call("latest-foreign", "latest-quiet", "foreign");
       const latest = yield* log.latest({
         companyId: DEV_SEED.companyId,
-        connectionIds: ["latest-busy", "latest-quiet"]
+        connectionIds: ["latest-busy", "latest-quiet"],
+        patchIds: [PATCH]
       });
       assert.deepStrictEqual([...latest], [["latest-busy", new Date(NOW + 1_000)]]);
       assert.strictEqual(
-        (yield* log.latest({ companyId: DEV_SEED.companyId, connectionIds: [] })).size,
+        (yield* log.latest({ companyId: DEV_SEED.companyId, connectionIds: [], patchIds: [PATCH] }))
+          .size,
         0
       );
     })
@@ -207,7 +225,13 @@ it.layer(
           ["known-session"]
         );
         assert.deepStrictEqual(
-          [...(yield* log.latest({ companyId, connectionIds: ["known", "only-unknown"] }))],
+          [
+            ...(yield* log.latest({
+              companyId,
+              connectionIds: ["known", "only-unknown"],
+              patchIds: [PATCH]
+            }))
+          ],
           [["known", new Date(NOW)]]
         );
         assert.isNull(yield* log.find({ companyId, correlationId: "known-later" }));
@@ -236,7 +260,13 @@ it.layer(
           ]
         );
         assert.deepStrictEqual(
-          [...(yield* log.latest({ companyId, connectionIds: ["known", "only-unknown"] }))],
+          [
+            ...(yield* log.latest({
+              companyId,
+              connectionIds: ["known", "only-unknown"],
+              patchIds: [PATCH]
+            }))
+          ],
           [["known", new Date(NOW + 2_000)]]
         );
       })

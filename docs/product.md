@@ -722,8 +722,8 @@ Patchy ships the **integration** — today Postgres, PostHog, Pidgeon, Attio and
 
 **Integrations**, at `/settings/integrations`, is one table of the company's connections across
 integrations: each row is titled with the name agents type (`postgres/warehouse`) beside its
-integration's mark, then its state, the live patches that use it and, for admins, its last call
-and a menu. A connection is **Connected**, a quiet dot; **Paused**, a badge, when an admin
+integration's mark, then its state, the live patches that use it and, for admins, its last call,
+the newest its Calls tab would show them, and a menu. A connection is **Connected**, a quiet dot; **Paused**, a badge, when an admin
 paused it; or **Needs attention**, a badge, when Patchy stopped it or something about it waits
 on an admin, in its integration's own words with its fix: an Attio key a check found writable,
 an IMAP login its mail server refused (its login pause), a Pidgeon key Patchy replaced but

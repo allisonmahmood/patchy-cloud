@@ -127,10 +127,14 @@ export class RuntimeLog extends Context.Service<
       readonly patchIds: ReadonlyArray<string>;
       readonly limit?: number;
     }) => Effect.Effect<ReadonlyArray<Call>, SqlError>;
-    /** When each connection's newest call began; connections never called have no entry. */
+    /**
+     * When each connection's newest call began, among the calls `recent` shows for the same
+     * `patchIds`; a connection with none of those has no entry.
+     */
     readonly latest: (input: {
       readonly companyId: string;
       readonly connectionIds: ReadonlyArray<string>;
+      readonly patchIds: ReadonlyArray<string>;
     }) => Effect.Effect<ReadonlyMap<string, Date>, SqlError>;
   }
 >()("@patchy/runtime/RuntimeLog") {}
@@ -182,14 +186,15 @@ export const make = Effect.gen(function* () {
       ORDER BY at DESC, id DESC LIMIT ${limit}`
   });
 
-  // One index probe per connection, reading past only rows of kinds this release skips.
+  // One index probe per connection, reading past only rows `recent` leaves out.
   const latestCalls = SqlSchema.findAll({
     Request: Schema.Struct({
       companyId: Schema.String,
-      connectionIds: Schema.Array(Schema.String)
+      connectionIds: Schema.Array(Schema.String),
+      patchIds: Schema.Array(Schema.String)
     }),
     Result: Schema.Struct({ connectionId: Schema.String, at: Schema.Date }),
-    execute: ({ companyId, connectionIds }) =>
+    execute: ({ companyId, connectionIds, patchIds }) =>
       sql.unsafe(
         `SELECT connection.id AS "connectionId", newest.at
           FROM unnest($2::text[]) AS connection(id)
@@ -197,9 +202,10 @@ export const make = Effect.gen(function* () {
             SELECT at FROM runtime_calls
             WHERE company_id = $1 AND connection_id = connection.id
               AND credential_kind = ANY($3::text[])
+              AND (patch_id IS NULL OR patch_id = ANY($4::text[]))
             ORDER BY at DESC, id DESC LIMIT 1
           ) AS newest`,
-        [companyId, connectionIds, credentialKinds]
+        [companyId, connectionIds, credentialKinds, patchIds]
       )
   });
 

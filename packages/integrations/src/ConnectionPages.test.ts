@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -1211,39 +1212,56 @@ it.layer(services)("company connection pages", (it) => {
       assert.include(row, `<td>${guest.user.name}</td>`);
     })
   );
-  it.effect("shows only the calls of patches the admin can open, and calls from no patch", () =>
-    Effect.gen(function* () {
-      const owner = yield* createCompany("connections-hidden-calls");
-      const { connection, path } = yield* connect(owner.user, "warehouse");
-      const audit = yield* RuntimeLog.RuntimeLog;
-      const call = (correlationId: string, patchId: string | null) =>
-        audit.begin({
-          companyId: owner.company.id,
-          patchId,
-          versionId: patchId === null ? null : `${patchId}-version`,
-          userId: owner.user.id,
-          credentialKind: patchId === null ? "admin" : "session",
-          op: "postgres.query",
-          resource: null,
-          connectionId: connection.id,
-          correlationId,
-          sql: `SELECT '${correlationId}-sql'`,
-          deadlineMs: 15_000
+  it.effect(
+    "shows only the calls of patches the admin can open, and calls from no patch, as the last call too",
+    () =>
+      Effect.gen(function* () {
+        const owner = yield* createCompany("connections-hidden-calls");
+        const { connection, path } = yield* connect(owner.user, "warehouse");
+        const { connection: closed } = yield* connect(owner.user, "ledger");
+        const audit = yield* RuntimeLog.RuntimeLog;
+        // Each call a second after the last, so each call's time names it on the index.
+        const call = Effect.fn(function* (
+          correlationId: string,
+          patchId: string | null,
+          connectionId: string = connection.id
+        ) {
+          yield* TestClock.adjust("1 second");
+          yield* audit.begin({
+            companyId: owner.company.id,
+            patchId,
+            versionId: patchId === null ? null : `${patchId}-version`,
+            userId: owner.user.id,
+            credentialKind: patchId === null ? "admin" : "session",
+            op: "postgres.query",
+            resource: null,
+            connectionId,
+            correlationId,
+            sql: `SELECT '${correlationId}-sql'`,
+            deadlineMs: 15_000
+          });
+          return `datetime="${new Date(yield* Clock.currentTimeMillis).toISOString()}"`;
         });
-      yield* call("open-call", "open-patch");
-      yield* call("finance-call", "finance-patch");
-      yield* call("admin-call", null);
-      const opening = PatchVisibility.PatchVisibility.of({
-        openableIds: () => Effect.succeed(["open-patch"])
-      });
-      const response = yield* send(`${path}/calls`, {
-        headers: { cookie: cookie(owner.user) }
-      }).pipe(Effect.provideService(PatchVisibility.PatchVisibility, opening));
-      const html = yield* Effect.promise(() => response.text());
-      for (const shown of ["open-call", "open-call-sql", "admin-call", "admin-call-sql"])
-        assert.include(html, shown);
-      for (const hidden of ["finance-call", "finance-patch"]) assert.notInclude(html, hidden);
-    })
+        yield* call("admin-call", null);
+        const lastShown = yield* call("open-call", "open-patch");
+        const newerHidden = yield* call("finance-call", "finance-patch");
+        const onlyHidden = yield* call("closed-call", "finance-patch", closed.id);
+        const opening = PatchVisibility.PatchVisibility.of({
+          openableIds: () => Effect.succeed(["open-patch"])
+        });
+        const read = (url: string) =>
+          send(url, { headers: { cookie: cookie(owner.user) } }).pipe(
+            Effect.flatMap((response) => Effect.promise(() => response.text())),
+            Effect.provideService(PatchVisibility.PatchVisibility, opening)
+          );
+        const html = yield* read(`${path}/calls`);
+        for (const shown of ["open-call", "open-call-sql", "admin-call", "admin-call-sql"])
+          assert.include(html, shown);
+        for (const hidden of ["finance-call", "finance-patch"]) assert.notInclude(html, hidden);
+        const index = yield* read("/settings/integrations");
+        assert.include(index, lastShown);
+        for (const hidden of [newerHidden, onlyHidden]) assert.notInclude(index, hidden);
+      })
   );
   it.effect("keeps a connection's page and actions when the company directory cannot be read", () =>
     Effect.gen(function* () {
