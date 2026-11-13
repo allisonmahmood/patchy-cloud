@@ -49,7 +49,7 @@
     "@effect/vitest": "catalog:",
     "@oxlint/plugins": "1.90.0",
     "@patchy/auth": "workspace:*",
-    "@playwright/test": "^1.63.0",
+    "@playwright/test": "^1.65.0",
     "@types/node": "^22",
     "@types/pg": "^8.23.1",
     "bun": "runtime:1.4.4",
