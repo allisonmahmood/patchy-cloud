@@ -217,8 +217,7 @@ it.live(
       assert.strictEqual((yield* agentDoor(guestOrigin)).status, 404);
       // The agent door reads a call as Patchy MCP does, and the shortcuts form as Patchy does:
       // one byte past either cap, streamed or declared, is refused without the rest, and closes.
-      // The agent door's refusal is the door's own: such a body carries arguments past the
-      // argument cap, so nothing ran.
+      // The agent door's refusal is the door's own: such a body is refused unread, so nothing ran.
       const tooLarge = {
         ok: true,
         person: identity.user.name,

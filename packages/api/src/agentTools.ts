@@ -451,9 +451,8 @@ export const toolRefusal = (error: ToolRefusal, text = error.message): ToolCallR
 });
 
 /**
- * Patchy MCP's refusal of a request body over `mcp.body.bytes`, which it never reads. The cap is
- * the argument cap and its envelope, so every body over it carries arguments over the argument
- * cap, and nothing ran.
+ * Patchy MCP's refusal of a request body over `mcp.body.bytes`, the argument cap and its
+ * envelope. The body is refused unread, so nothing ran, whatever its arguments were.
  */
 export const bodyTooLarge: ToolRefusal = {
   code: "too_large",

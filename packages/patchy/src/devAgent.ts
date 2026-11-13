@@ -69,8 +69,8 @@ const replied = (
 });
 
 /**
- * A request whose body was over Patchy MCP's cap, answered as the door answers one, unread: its
- * arguments were over the argument cap, so nothing ran.
+ * A request whose body was over Patchy MCP's cap, answered as the door answers one: refused
+ * unread, so nothing ran.
  */
 export const tooLarge = (dev: Dev, mount: Mount): AgentReply =>
   replied(dev.binding(), mount, toolRefusal(bodyTooLarge));
