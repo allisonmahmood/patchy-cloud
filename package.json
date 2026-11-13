@@ -57,7 +57,7 @@
     "embedded-postgres": "18.4.0-beta.17",
     "esbuild": "0.28.2",
     "lint-staged": "^17.6.0",
-    "minimatch": "^10.2.6",
+    "minimatch": "^11.0.8",
     "npm": "12.2.2",
     "oxlint": "1.93.0",
     "oxlint-tsgolint": "7.0.2006",
