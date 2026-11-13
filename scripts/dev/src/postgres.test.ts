@@ -46,8 +46,9 @@ const untilGroupEmpty = (leader: number, polls: number) =>
   );
 
 /**
- * Stops the probe's process group and waits until it is empty: an interrupt first, on which
- * Postgres shuts down and frees its shared memory, then SIGKILL for whatever ignored it.
+ * Stops the probe's process group: an interrupt first, on which Postgres shuts down and frees
+ * its shared memory, then SIGKILL for whatever ignored it. Each wait for the group to empty is
+ * bounded, so a group that outlives both is left behind rather than hanging the run.
  */
 const stopGroup = (leader: number) =>
   Effect.sync(() => signalGroup(leader, "SIGINT")).pipe(
