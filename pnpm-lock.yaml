@@ -648,13 +648,13 @@ importers:
         version: 0.5.10
       '@preact/signals':
         specifier: 2.11.4
-        version: 2.11.4(preact@11.1.0)
+        version: 2.11.4(preact@11.2.0)
       '@preact/signals-core':
         specifier: 1.14.5
         version: 1.14.5
       preact:
-        specifier: 11.1.0
-        version: 11.1.0
+        specifier: 11.2.0
+        version: 11.2.0
     devDependencies:
       '@babel/parser':
         specifier: 8.1.2
@@ -712,7 +712,7 @@ importers:
         version: 0.19.0(patch_hash=bcb3b09693350b2aa37d3aa60001ef9a9a22ab740f3a81c638195b0ca7fe0e1d)
       '@tanstack/preact-hotkeys':
         specifier: 0.17.1
-        version: 0.17.1(preact@11.1.0)
+        version: 0.17.1(preact@11.2.0)
       '@types/css-tree':
         specifier: ^3.2.0
         version: 3.2.0
@@ -2941,8 +2941,8 @@ packages:
       rxjs:
         optional: true
 
-  preact@11.1.0:
-    resolution: {integrity: sha512-hz1VsjWx5pSYPDVEzb9w+XyOmQpP1qW/ZEaMiYm+C8ykJr8KP+TKGZIbCW0QmZ/Yr/jg3XkZoziEWn9iWHZ9Mw==}
+  preact@11.2.0:
+    resolution: {integrity: sha512-/HfHI/7N84e6GrWBJ3J280z3mLaRJiDcSvj/A+y/4AbLnND/1UlGHe1sR6oYuTGwId0nP7dqDU9OnLxMPZ7xBg==}
     peerDependencies:
       preact-render-to-string: '>=6.7.0'
     peerDependenciesMeta:
@@ -3768,10 +3768,10 @@ snapshots:
 
   '@preact/signals-core@1.14.5': {}
 
-  '@preact/signals@2.11.4(preact@11.1.0)':
+  '@preact/signals@2.11.4(preact@11.2.0)':
     dependencies:
       '@preact/signals-core': 1.14.5
-      preact: 11.1.0
+      preact: 11.2.0
 
   '@redis/bloom@6.2.1(@redis/client@6.2.1)':
     dependencies:
@@ -4015,16 +4015,16 @@ snapshots:
     dependencies:
       '@tanstack/store': 0.11.2
 
-  '@tanstack/preact-hotkeys@0.17.1(preact@11.1.0)':
+  '@tanstack/preact-hotkeys@0.17.1(preact@11.2.0)':
     dependencies:
       '@tanstack/hotkeys': 0.19.0(patch_hash=bcb3b09693350b2aa37d3aa60001ef9a9a22ab740f3a81c638195b0ca7fe0e1d)
-      '@tanstack/preact-store': 0.13.5(preact@11.1.0)
-      preact: 11.1.0
+      '@tanstack/preact-store': 0.13.5(preact@11.2.0)
+      preact: 11.2.0
 
-  '@tanstack/preact-store@0.13.5(preact@11.1.0)':
+  '@tanstack/preact-store@0.13.5(preact@11.2.0)':
     dependencies:
       '@tanstack/store': 0.11.2
-      preact: 11.1.0
+      preact: 11.2.0
 
   '@tanstack/query-core@5.104.0': {}
 
@@ -4529,7 +4529,7 @@ snapshots:
     dependencies:
       '@posthog/core': 1.67.1
 
-  preact@11.1.0: {}
+  preact@11.2.0: {}
 
   process-warning@5.1.1: {}
 
