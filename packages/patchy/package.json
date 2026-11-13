@@ -81,7 +81,7 @@
   },
   "devDependencies": {
     "@babel/parser": "8.0.8",
-    "@babel/types": "8.0.8",
+    "@babel/types": "8.1.0",
     "@effect/platform-node": "catalog:",
     "@effect/sql-pglite": "catalog:",
     "@effect/vitest": "catalog:",
