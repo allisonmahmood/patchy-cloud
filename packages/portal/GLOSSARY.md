@@ -17,7 +17,7 @@ Home's first section, shown only when something is wrong, each row saying what b
 _Avoid_: alerts, warnings, inbox
 
 **Pinned patches**:
-Personal shortcuts to live company patches, pages and tools together, saved through **Pin patch** / **Unpin patch** in the patch menu. They appear in pin order in the shared sidebar and in its phone Menu. The list scrolls after roughly five rows, without limiting how many can be pinned. It is absent without pins; an inaccessible or off patch is hidden until it becomes available again. Titles and addresses follow the current patch, and reclamation removes its pins.
+Personal shortcuts to live company patches, pages and tools together, saved through **Pin patch** / **Unpin patch** in the patch menu. They appear in pin order under the sidebar's places, and in its phone Menu, each opening its patch, with Unpin patch in its menu. There is no limit: up to five always show, and past five the list scrolls once the sidebar runs out of room, while the phone Menu shows them all. It is absent without pins; an inaccessible or off patch is hidden until it becomes available again. Titles and addresses follow the current patch, and reclamation removes its pins. Pinning and unpinning leave a receipt naming the patch.
 _Avoid_: favorites, company pins, pinned pages (tools can be pinned too)
 
 **Your usual**:

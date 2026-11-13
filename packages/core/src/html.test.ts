@@ -92,6 +92,45 @@ describe("htmlPage app body", () => {
     );
   });
 
+  it("lists the viewer's pins under the places, in the order given, each with its way out", () => {
+    const pinned = (shell: Partial<AppShell["viewer"]>) => {
+      const html = htmlPage({
+        title: "Home",
+        app: { viewer: { ...viewer, ...shell }, section: "home" },
+        body: ""
+      });
+      return html.match(/<nav class="app-pins"[\s\S]*?<\/nav>/)?.[0] ?? "";
+    };
+    // No pins, no section.
+    expect(pinned({})).toBe("");
+    expect(pinned({ pins: [] })).toBe("");
+    const pins = pinned({
+      page: "/patches?show=tools",
+      pins: [
+        {
+          id: "pat_2",
+          name: "kudos",
+          title: 'Kudos <b> & "co"',
+          href: "/northwind/kudos",
+          tier: 2
+        },
+        { id: "pat_1", name: "handbook", title: "Handbook", href: "/northwind/handbook", tier: 1 }
+      ]
+    });
+    // A tool wears its monogram and a page its sheet, as everywhere else.
+    expect(pins).toMatch(
+      /^<nav class="app-pins" aria-labelledby="app-pins-label"><p class="app-pins-label" id="app-pins-label">Pinned<\/p><ul class="app-pin-list"><li class="app-pin"><a class="app-pin-link" href="\/northwind\/kudos"><span class="mono[^"]*" aria-hidden="true">KU<\/span><span class="app-pin-name">Kudos &lt;b&gt; &amp; &quot;co&quot;<\/span><\/a>/
+    );
+    expect(pins).toContain(
+      '<a class="app-pin-link" href="/northwind/handbook"><span class="page-mark" aria-hidden="true"></span><span class="app-pin-name">Handbook</span></a>'
+    );
+    expect(pins.indexOf("/northwind/kudos")).toBeLessThan(pins.indexOf("/northwind/handbook"));
+    // Unpin posts as this person and comes back to the page it was pressed on.
+    expect(pins).toContain(
+      '<form method="post" action="/patches/pat_1/unpin"><input type="hidden" name="user" value="usr_sam"><input type="hidden" name="return" value="/patches?show=tools"><button class="menu-item" type="submit" aria-label="Unpin patch, Handbook">Unpin patch</button></form>'
+    );
+  });
+
   it("searches patches from the sidebar, offers New patch under it, and lights Home on Home", () => {
     const html = htmlPage({ title: "Home", app: { viewer, section: "home" }, body: "<p>Home</p>" });
     const body = html.slice(html.indexOf("<body>"));

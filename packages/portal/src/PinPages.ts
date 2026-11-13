@@ -2,10 +2,11 @@
 import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
-import { RequireSession, returnPath } from "@patchy/auth";
+import { Receipt, RequireSession, returnPath } from "@patchy/auth";
 import { patchTitle } from "@patchy/core";
 import { Patches } from "@patchy/patches";
 import { context, errorPage, errors, pageErrors, type Routes } from "./shared/handlers.js";
@@ -48,10 +49,26 @@ const setPinned = Effect.fn("PinPages.setPinned")(function* (pinned: boolean) {
       "This page was open for another account. Nothing changed."
     );
   const params = yield* HttpRouter.params;
-  yield* (yield* Patches.Patches).setPinned(access, params.patchId ?? "", pinned);
-  return HttpServerResponse.redirect(returnPath(form.get("return"), session.publicBaseUrl) ?? "/", {
-    status: 303,
-    headers: { "cache-control": "private, no-store" }
+  const patches = yield* Patches.Patches;
+  const patchId = params.patchId ?? "";
+  yield* patches.setPinned(access, patchId, pinned);
+  const response = HttpServerResponse.redirect(
+    returnPath(form.get("return"), session.publicBaseUrl) ?? "/",
+    { status: 303, headers: { "cache-control": "private, no-store" } }
+  );
+  // The receipt names the patch only while they can open it: a pin outlives their access, and
+  // its title may have changed since.
+  const found = (yield* patches.findForViewer(patchId, access)).pipe(
+    Option.filter(({ patch }) => access.canOpen(patch))
+  );
+  return Option.match(found, {
+    onNone: () => response,
+    onSome: ({ patch }) =>
+      Receipt.set(response, {
+        userId: viewer.user.id,
+        text: `${pinned ? "Pinned" : "Unpinned"} ${patchTitle(patch, viewer.company.name)}`,
+        publicBaseUrl: session.publicBaseUrl
+      })
   });
 });
 

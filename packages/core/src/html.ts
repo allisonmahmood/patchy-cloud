@@ -235,14 +235,18 @@ function nav(section: AppShell["section"]): string {
     .join("");
 }
 
-/** Pins share the folding navigation; only the list scrolls when it grows past five rows. */
+/**
+ * The viewer's pinned patches, under the places and inside the folding menu: each opens its patch,
+ * and its menu unpins it, coming back to this page. Nothing without pins.
+ */
 function pinnedNavigation(viewer: AppShell["viewer"]): string {
   if (!viewer.pins?.length) return "";
-  const items = viewer.pins.map((patch) => {
-    const fields = `<input type="hidden" name="user" value="${escapeAttribute(viewer.user.id)}"><input type="hidden" name="return" value="${escapeAttribute(viewer.page ?? "/")}">`;
-    return `<li class="app-pin"><a class="app-pin-link" href="${escapeAttribute(patch.href)}">${patchMark(patch.name, patch.tier)}<span>${escapeHtml(patch.title)}</span></a>${rowMenu(`pin-${patch.id}`, patch.title, [menuPost(`/patches/${encodeURIComponent(patch.id)}/unpin`, "Unpin patch", fields, false, patch.title)])}</li>`;
-  });
-  return `<section class="app-pins" aria-labelledby="pinned-heading"><h2 id="pinned-heading">Pinned</h2><ul class="app-pin-list" tabindex="0" aria-label="Pinned patches">${items.join("")}</ul></section>`;
+  const fields = `<input type="hidden" name="user" value="${escapeAttribute(viewer.user.id)}"><input type="hidden" name="return" value="${escapeAttribute(viewer.page ?? "/")}">`;
+  const items = viewer.pins.map(
+    (patch) =>
+      `<li class="app-pin"><a class="app-pin-link" href="${escapeAttribute(patch.href)}">${patchMark(patch.name, patch.tier)}<span class="app-pin-name">${escapeHtml(patch.title)}</span></a>${rowMenu(`pin-${patch.id}`, patch.title, [menuPost(`/patches/${encodeURIComponent(patch.id)}/unpin`, "Unpin patch", fields, false, patch.title)])}</li>`
+  );
+  return `<nav class="app-pins" aria-labelledby="app-pins-label"><p class="app-pins-label" id="app-pins-label">Pinned</p><ul class="app-pin-list">${items.join("")}</ul></nav>`;
 }
 
 /**

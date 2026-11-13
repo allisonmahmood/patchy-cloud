@@ -1,11 +1,19 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { TestClock } from "effect/testing";
-import { actor, company, post, publish, publishTier2, request, socket } from "./test/fixtures.js";
+import {
+  actor,
+  company,
+  post,
+  publish,
+  publishTier2,
+  receiptAfter,
+  request,
+  socket
+} from "./test/fixtures.js";
 import { Patches } from "@patchy/patches";
 
-const sidebar = (html: string) =>
-  html.match(/<section class="app-pins"[\s\S]*?<\/section>/)?.[0] ?? "";
+const sidebar = (html: string) => html.match(/<nav class="app-pins"[\s\S]*?<\/nav>/)?.[0] ?? "";
 
 it.layer(socket)("Personal pins", (it) => {
   it.effect(
@@ -24,7 +32,13 @@ it.layer(socket)("Personal pins", (it) => {
           );
           yield* TestClock.adjust(1);
         }
-        yield* post(`/patches/${page.patchId}/pin`, member, { user: member.id });
+        // Pinning again changes nothing, and says what is pinned, by its title.
+        const again = yield* post(`/patches/${tool.patchId}/pin`, member, {
+          user: member.id,
+          return: "/patches"
+        });
+        assert.strictEqual(again.headers.location, "/patches");
+        assert.strictEqual(yield* receiptAfter(again, member), "Pinned tracker");
         for (const path of ["/", "/patches", "/patches/handbook"]) {
           const pins = sidebar(yield* (yield* request(path, member)).text);
           assert.strictEqual((pins.match(/class="app-pin"/g) ?? []).length, 7);
@@ -46,6 +60,13 @@ it.layer(socket)("Personal pins", (it) => {
         assert.notInclude(sidebar(yield* (yield* request("/", member)).text), "handbook");
         yield* patches.restore(page.patchId, actor(owner));
         assert.include(sidebar(yield* (yield* request("/", member)).text), "handbook");
+        assert.strictEqual(
+          yield* receiptAfter(
+            yield* post(`/patches/${tool.patchId}/unpin`, member, { user: member.id }),
+            member
+          ),
+          "Unpinned tracker"
+        );
         for (const id of ids) yield* post(`/patches/${id}/unpin`, member, { user: member.id });
         assert.strictEqual(sidebar(yield* (yield* request("/", member)).text), "");
       })
