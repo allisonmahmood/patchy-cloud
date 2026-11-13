@@ -1,4 +1,4 @@
-// @effect-diagnostics globalFetch:off globalFetchInEffect:off preferSchemaOverJson:off -- wall-clock abort bounds inspection under TestClock; JSON encodes a typed request and the unknown reply is Schema-decoded.
+// @effect-diagnostics globalFetch:off globalFetchInEffect:off globalJsonInEffect:off -- wall-clock abort bounds inspection under TestClock; JSON encodes a typed request and the unknown reply is Schema-decoded.
 import * as GuestProtocol from "@patchy/api/guest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";

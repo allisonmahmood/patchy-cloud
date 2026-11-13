@@ -37,7 +37,7 @@
           "anyUnknownInErrorContext": "off",
           "unknownInEffectCatch": "off",
           "multipleEffectProvide": "off",
-          "preferSchemaOverJson": "off",
+          "globalJsonInEffect": "off",
           "instanceOfSchema": "off",
           "deterministicKeys": "off",
           "nodeBuiltinImport": "off",

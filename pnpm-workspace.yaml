@@ -13,7 +13,7 @@ catalog:
   "@effect/sql-pg": 4.0.5
   "@effect/sql-pglite": 4.0.5
   "@effect/vitest": 4.0.5
-  "@effect/tsgo": 0.62.0
+  "@effect/tsgo": 0.68.1
 # Wait one day before resolving new releases so compromised versions have time to be removed.
 minimumReleaseAge: 1440
 # When pnpm manages its own version it records itself as a first lockfile
