@@ -2020,7 +2020,7 @@ function assertViewerDoor(viewer) {
 async function startPostgres() {
   if (postgres) return postgres.databaseUrl;
   // Imported here, not at the top: embedded-postgres installs process-exiting
-  // signal handlers (async-exit-hook) the moment it loads, which would pre-empt
+  // signal handlers (exit-hook) the moment it loads, which would pre-empt
   // this harness's own signal latch and cleanup. Only a process that starts
   // Postgres pays that, and it takes the handlers back out — `cleanup` stops
   // Postgres itself.
