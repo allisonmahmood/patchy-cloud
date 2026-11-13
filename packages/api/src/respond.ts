@@ -114,15 +114,18 @@ export class BodyTooLarge extends Schema.TaggedError<BodyTooLarge>()("BodyTooLar
   }
 }
 
-/** Closes the connection once the current request's answer is sent. */
-const closeAfterAnswer = HttpEffect.appendPreResponseHandler((_request, response) =>
+/**
+ * Closes the connection once the current request's answer is sent. Every refusal of a body by its
+ * size runs it first, whatever answer it gives: Effect's server would otherwise keep the
+ * connection and go on reading the unread rest, waiting on a sender that may never finish.
+ */
+export const closeAfterAnswer = HttpEffect.appendPreResponseHandler((_request, response) =>
   Effect.succeed(HttpServerResponse.setHeader(response, "connection", "close"))
 );
 
 /**
  * `read`, a read of the request body, capped at `maxBytes`. A body that crosses the cap fails the
- * read as the platform does, and the connection closes once the answer is sent: the server would
- * otherwise go on reading the rest, waiting on a sender that may never finish.
+ * read as the platform does, and closes the connection after the answer (`closeAfterAnswer`).
  */
 export const capBody =
   (maxBytes: number) =>
@@ -145,13 +148,14 @@ export const capBody =
  * blank body is `{}`; the route's schema decides whether it is valid.
  * A declared length over the cap is refused before the body is read; a body
  * that fails to read — the cap hit mid-stream, or the client gone — is
- * malformed, since there is no whole body to decode. Hitting the cap
- * mid-stream also closes the connection after the answer (`capBody`).
+ * malformed, since there is no whole body to decode. Either size refusal
+ * closes the connection after the answer (`closeAfterAnswer`).
  */
 export const readBody = (maxBytes: number) =>
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     if (Number(request.headers["content-length"]) > maxBytes) {
+      yield* closeAfterAnswer;
       return yield* new BodyTooLarge({ maxBytes });
     }
     const text = yield* request.text.pipe(

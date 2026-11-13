@@ -6,6 +6,7 @@ import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiTest from "effect/http-api/HttpApiTest";
 import * as HttpBody from "effect/http/HttpBody";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpServer from "effect/http/HttpServer";
 import * as SqlClient from "effect/sql/SqlClient";
 import { RuntimeGroup, runtimeOperations, WIRE_VERSION } from "@patchy/api";
 import { PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
@@ -14,6 +15,7 @@ import { Limits } from "@patchy/limits";
 import { client, headers, patchId, versionId, publicVersionId } from "./test/fixtures.js";
 import * as Fixtures from "./test/fixtures.js";
 import { me } from "./me.js";
+import { stalledUpload } from "../../../test/socket.js";
 import * as Runtime from "./Runtime.js";
 
 it.layer(Fixtures.layer())("runtime HTTP admission", (it) => {
@@ -454,6 +456,54 @@ it.effect("reserved PUT enforces browser headers and its viewer limit before ref
       if (attempt === 3) assert.isAbove(Number(response.headers["retry-after"]), 0);
     }
   }).pipe(Effect.provide(Fixtures.socket), Effect.provide(Fixtures.layer()))
+);
+
+it.effect("a size refusal answers 413, then closes a connection whose body never finishes", () =>
+  Effect.gen(function* () {
+    const server = yield* HttpServer.HttpServer;
+    if (server.address._tag === "UnixPathAddress") return assert.fail("Expected a TCP listener");
+    const { port } = server.address;
+    const runtime = yield* Runtime.Runtime;
+    const fields = (values: Readonly<Record<string, string>>) =>
+      Object.entries(values)
+        .map(([name, value]) => `${name}: ${value}`)
+        .join("\n");
+    const call = `POST /api/runtime/call HTTP/1.1\nhost: 127.0.0.1\ncontent-type: application/json`;
+    const stage = `PUT /api/runtime/staged-files/${patchId}/${Fixtures.tier2VersionId} HTTP/1.1\n${fields(
+      {
+        host: "127.0.0.1",
+        ...headers({ userId: DEV_SEED.userId }),
+        cookie: signedInCookies(),
+        origin: PUBLIC_BASE_URL,
+        "content-type": "image/png"
+      }
+    )}`;
+    // Past each cap by less than the 256 KiB Effect's server would read on its own before closing.
+    for (const [head, body] of [
+      [call, { chunked: runtime.maxCallBytes + 1_024 }],
+      [stage, { chunked: 64 }],
+      [stage, { declared: 64 }]
+    ] as const) {
+      const answer = yield* Effect.promise(() => stalledUpload(port, head, body));
+      assert.strictEqual(answer.status, 413, `${head.split("\n")[0]} ${JSON.stringify(body)}`);
+      assert.isDefined(answer.closedAfterMs, `${head.split("\n")[0]} ${JSON.stringify(body)}`);
+    }
+  }).pipe(
+    Effect.provide(Fixtures.socket),
+    Effect.provide(
+      Fixtures.layer(
+        {
+          me,
+          "files.stage": {
+            kind: "read",
+            transport: "bytes-put",
+            run: () => Effect.die("An oversized stage must not reach its handler.")
+          }
+        },
+        { "files.stage.bytes": 4 }
+      )
+    )
+  )
 );
 
 it.effect("the HTTP success boundary refuses a handler value that is not JSON", () =>

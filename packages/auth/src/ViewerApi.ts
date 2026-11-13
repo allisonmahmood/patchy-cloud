@@ -14,7 +14,8 @@ import {
   refuse,
   ShortcutsRequest,
   ShortcutsSetting,
-  capBody
+  capBody,
+  closeAfterAnswer
 } from "@patchy/api";
 import { Users } from "@patchy/companies";
 import * as Receipt from "./Receipt.js";
@@ -62,9 +63,12 @@ const setShortcuts = (form: ShortcutsRequest, back: string) =>
  */
 const readSetting = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
-  // A declared overflow is answered; one that streams past the bound loses its connection.
-  if (Number(request.headers["content-length"]) > MAX_FORM_BYTES)
+  // A declared overflow answers 413 and one that streams past the bound 400; either closes the
+  // connection after the answer.
+  if (Number(request.headers["content-length"]) > MAX_FORM_BYTES) {
+    yield* closeAfterAnswer;
     return refuse(PayloadTooLarge, { ok: false, error: "Request body is too large." }, noStore);
+  }
   const form = yield* readForm;
   const session = yield* Session.Session;
   const back = returnPath(form.return ?? null, session.publicBaseUrl) ?? "/";
