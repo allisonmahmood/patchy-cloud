@@ -6,7 +6,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { patchRefusal, toolAnswer } from "@patchy/api";
+import { bodyTooLarge, patchRefusal, toolAnswer, toolRefusal } from "@patchy/api";
 import { birth } from "./devState.js";
 import { identity, runCli, servers, tempDir } from "./test/cli.js";
 
@@ -185,6 +185,28 @@ describe("patchy dev agent", () => {
       from: "patchy",
       retryAfterSeconds: 1
     });
+  });
+
+  it("exits 2 with the door's too_large for a call past its body cap, which never ran", async () => {
+    const dev = await running();
+    // What the dev server answers a body past Patchy MCP's cap, unread.
+    dev.reply(200, answered(toolRefusal(bodyTooLarge)));
+    const args = JSON.stringify({ text: "x".repeat(1_114_112) });
+    const json = await dev.run(["addNote", "-", "--json"], args);
+    expect(json).toMatchObject({ status: 2, stdout: "" });
+    expect(JSON.parse(json.stderr)).toEqual({
+      ok: false,
+      error: bodyTooLarge.message,
+      kind: "rejected",
+      code: "too_large",
+      from: "patchy"
+    });
+    const text = await dev.run(["addNote", "-"], args);
+    expect(text).toMatchObject({ status: 2, stdout: "" });
+    expect(text.stderr.trim().split("\n")).toEqual([
+      "Server build 3 answered as Builder via patchy dev.",
+      bodyTooLarge.message
+    ]);
   });
 
   it("exits 1 for local problems, before asking when the arguments are wrong", async () => {

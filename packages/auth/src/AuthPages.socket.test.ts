@@ -8,7 +8,7 @@ import * as Cookies from "effect/http/Cookies";
 import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { CookieJar } from "tough-cookie";
-import { Companies, InviteMail, Teams, Users } from "@patchy/companies";
+import { Companies, InviteMail, Teams, TeamsPage, Users } from "@patchy/companies";
 import { Analytics } from "@patchy/analytics";
 import { Limits } from "@patchy/limits";
 import * as AgentConnections from "./AgentConnections.js";
@@ -146,6 +146,43 @@ it.layer(layer)("auth pages on a socket", (it) => {
       assert.strictEqual(answer.status, 400);
       // Closed within the adapter's half-second grace, rather than held open for more body.
       assert.isDefined(answer.closedAfterMs);
+    })
+  );
+
+  it.effect("refuses each company form one byte past its cap, streamed or declared", () =>
+    Effect.gen(function* () {
+      const server = yield* HttpServer.HttpServer;
+      if (server.address._tag === "UnixPathAddress") return assert.fail("Expected a TCP listener");
+      const { port } = server.address;
+      // The seeded admin manages the company; the door is for someone in none yet.
+      const admin = signedInCookies();
+      const newcomer = signedInCookies(
+        signSession({ sub: "user_socket_newcomer", email: "newcomer@example.com" })
+      );
+      for (const [path, cookie, maxBytes] of [
+        ["/join", newcomer, 4_096],
+        ["/settings/agent-access", admin, 1_024],
+        ["/settings/people/invites", admin, 233_596],
+        ["/settings/people/invites/inv_unread/resend", admin, 1_024],
+        ["/settings/people/users/usr_unread/role", admin, 1_024],
+        [`${TeamsPage.path}/create`, admin, 1_048_576]
+      ] as const) {
+        const head = [
+          `POST ${path} HTTP/1.1`,
+          "host: 127.0.0.1",
+          `origin: ${PUBLIC_BASE_URL}`,
+          `cookie: ${cookie}`,
+          "content-type: application/x-www-form-urlencoded"
+        ].join("\n");
+        // The rest of either body never arrives, so only a refusal at the cap answers at all.
+        for (const body of [{ chunked: maxBytes + 1 }, { declared: maxBytes + 1 }]) {
+          const label = `${path} ${JSON.stringify(body)}`;
+          const answer = yield* Effect.promise(() => stalledUpload(port, head, body));
+          assert.strictEqual(answer.status, 400, label);
+          assert.include(answer.body, "Invalid form", label);
+          assert.isDefined(answer.closedAfterMs, label);
+        }
+      }
     })
   );
 

@@ -5,7 +5,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import { Analytics } from "@patchy/analytics";
-import { Integration, integrations } from "@patchy/api";
+import { Integration, capBody, integrations } from "@patchy/api";
 import type { RequireSession } from "@patchy/auth";
 import { Teams, Users } from "@patchy/companies";
 import { checkbox, choiceGroup, radio } from "@patchy/core";
@@ -794,10 +794,20 @@ const refusal = (error: ConnectionStore.ConnectionError): View.Notice => ({
   status: error.status
 });
 
-/** The submitted form, a repeated field as its values in order, or null when it cannot be read. */
+/**
+ * Every form here. The longest is Postgres's: a connection string of up to 16,384 characters, up
+ * to 9 bytes each once percent-encoded (147,456 bytes), beside a handle and a description.
+ */
+const MAX_FORM_BYTES = 262_144;
+
+/**
+ * The submitted form, a repeated field as its values in order, or null when it cannot be read or
+ * is larger than `MAX_FORM_BYTES`.
+ */
 const formBody = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
   return yield* request.urlParamsBody.pipe(
+    capBody(MAX_FORM_BYTES),
     Effect.map((params): Readonly<Record<string, string | ReadonlyArray<string>>> => {
       const fields = new Map<string, string | ReadonlyArray<string>>();
       for (const [key, value] of params) {

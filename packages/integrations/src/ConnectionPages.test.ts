@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -36,6 +37,7 @@ import { Snapshot } from "@patchy/api/postgres-snapshot";
 import { NodeCryptography } from "@patchy/core";
 import * as PatchVisibility from "./PatchVisibility.js";
 import * as PatchVisibilityTest from "./test/patchVisibility.js";
+import { stalledUpload } from "../../../test/socket.js";
 
 const env = clerkEnv();
 const base = env.PATCHY_PUBLIC_BASE_URL!;
@@ -1005,6 +1007,40 @@ it.layer(services)("company connection pages", (it) => {
         "connected"
       );
     })
+  );
+
+  it.effect("refuses a form one byte past its cap, streamed or declared, on a socket", () =>
+    Effect.gen(function* () {
+      const owner = yield* createCompany("connections-socket");
+      const server = yield* HttpServer.HttpServer;
+      if (server.address._tag === "UnixPathAddress") return assert.fail("Expected a TCP listener");
+      const { port } = server.address;
+      const head = [
+        `POST ${connectPath} HTTP/1.1`,
+        "host: 127.0.0.1",
+        `origin: ${origin}`,
+        `cookie: ${cookie(owner.user)}`,
+        "content-type: application/x-www-form-urlencoded"
+      ].join("\n");
+      // Every form here reads through one reader; the rest of either body never arrives.
+      for (const body of [{ chunked: 262_145 }, { declared: 262_145 }]) {
+        const answer = yield* Effect.promise(() => stalledUpload(port, head, body));
+        assert.strictEqual(answer.status, 400, JSON.stringify(body));
+        assert.include(answer.body, "The form could not be read.", JSON.stringify(body));
+        assert.isDefined(answer.closedAfterMs, JSON.stringify(body));
+      }
+      assert.deepStrictEqual(
+        yield* (yield* ConnectionStore.ConnectionStore).list(owner.company.id),
+        []
+      );
+    }).pipe(
+      Effect.provide(
+        HttpRouter.serve(ConnectionPages.layer, {
+          disableLogger: true,
+          disableListenLog: true
+        }).pipe(Layer.provideMerge(NodeHttpServer.layerTest))
+      )
+    )
   );
 
   it.effect(

@@ -2,8 +2,9 @@ import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { Identity, RuntimeStreamFrame } from "@patchy/api";
+import { Identity, RuntimeStreamFrame, bodyTooLarge, toolRefusal } from "@patchy/api";
 import { switcherRelay } from "@patchy/core";
+import { registry } from "@patchy/limits/registry";
 import {
   brokerScript,
   brokerSrc,
@@ -29,6 +30,7 @@ import type { Prepared } from "./devPreparation.js";
 import { RELEASE, MANIFEST_VERSION, WIRE_VERSION } from "./release.js";
 import toolchain from "./toolchain.json" with { type: "json" };
 import { NodeCryptography } from "@patchy/core";
+import { stalledUpload } from "../../../test/socket.js";
 
 const identity = new Identity({
   user: { id: "local-user", email: "local@example.test", name: "Local" },
@@ -213,6 +215,69 @@ it.live(
         );
       assert.strictEqual((yield* agentDoor(colleagueOrigin)).status, 200);
       assert.strictEqual((yield* agentDoor(guestOrigin)).status, 404);
+      // The agent door reads a call as Patchy MCP does, and the shortcuts form as Patchy does:
+      // one byte past either cap, streamed or declared, is refused without the rest, and closes.
+      // The agent door's refusal is the door's own: such a body is refused unread, so nothing ran.
+      const tooLarge = {
+        ok: true,
+        person: identity.user.name,
+        // This patch is tier 1, so no server build has answered yet.
+        build: 0,
+        rebuildFailed: false,
+        answer: toolRefusal(bodyTooLarge)
+      };
+      const { host, port } = new URL(origin);
+      for (const [head, maxBytes, status, refusal] of [
+        [
+          `POST /~dev/agent HTTP/1.1\nhost: ${host}\nx-patchy-dev: ${record!.nonce}\ncontent-type: application/json`,
+          registry["mcp.body.bytes"].default,
+          200,
+          tooLarge
+        ],
+        [
+          `POST /api/me/shortcuts HTTP/1.1\nhost: ${host}\norigin: ${origin}\ncontent-type: application/x-www-form-urlencoded`,
+          4_096,
+          400,
+          "Send value=on or value=off."
+        ]
+      ] as const) {
+        for (const body of [{ chunked: maxBytes + 1 }, { declared: maxBytes + 1 }]) {
+          const label = `${head.split("\n")[0]} ${JSON.stringify(body)}`;
+          const answer = yield* Effect.promise(() => stalledUpload(Number(port), head, body));
+          assert.strictEqual(answer.status, status, label);
+          assert.deepStrictEqual(
+            status === 200 ? JSON.parse(answer.body) : answer.body,
+            refusal,
+            label
+          );
+          assert.isDefined(answer.closedAfterMs, label);
+        }
+      }
+      // The CLI's own client, sending a call past the cap as `patchy dev agent` does, reads that
+      // refusal though the server answers before reading the body; a malformed call within the
+      // cap stays a bad request.
+      const agentCall = (request: HttpClientRequest.HttpClientRequest) =>
+        Effect.gen(function* () {
+          const response = yield* (yield* HttpClient.HttpClient).execute(
+            request.pipe(HttpClientRequest.setHeader("x-patchy-dev", record!.nonce))
+          );
+          return { status: response.status, text: yield* response.text };
+        }).pipe(Effect.provide(NodeHttpClient.layerUndici));
+      const overCap = yield* agentCall(
+        HttpClientRequest.post(`${origin}/~dev/agent`).pipe(
+          HttpClientRequest.bodyJsonUnsafe({
+            call: { tool: "addNote", args: { text: "x".repeat(1_114_112) } }
+          })
+        )
+      );
+      assert.strictEqual(overCap.status, 200);
+      assert.deepStrictEqual(JSON.parse(overCap.text), tooLarge);
+      const malformed = yield* agentCall(
+        HttpClientRequest.post(`${origin}/~dev/agent`).pipe(
+          HttpClientRequest.bodyText("{", "application/json")
+        )
+      );
+      assert.deepStrictEqual(malformed, { status: 400, text: "Bad request" });
       // Dev holds the page to its own patch as production does: the directory is a handler's.
       for (const [target, viewerId] of [
         [origin, identity.user.id],
