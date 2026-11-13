@@ -42,7 +42,7 @@
     "format:check": "bun fmt --check"
   },
   "devDependencies": {
-    "@babel/parser": "8.0.8",
+    "@babel/parser": "8.1.2",
     "@effect/platform-node": "catalog:",
     "@effect/sql-pg": "catalog:",
     "@effect/tsgo": "catalog:",
