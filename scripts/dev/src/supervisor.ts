@@ -7,7 +7,6 @@
  *
  * Every log line lands in `.local/dev/dev.log` with one `[service]` prefix.
  */
-import EmbeddedPostgres from "embedded-postgres";
 import * as Cause from "effect/Cause";
 import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
@@ -37,6 +36,21 @@ import { PG_FLAGS, PG_PASSWORD, PG_USER } from "./postgres.js";
 import { bun, realNode } from "./runtimes.js";
 import { loadScenario, seedScenario } from "./scenario.js";
 import { FAILED, layout, writeEnv, writePlan } from "./state.js";
+
+/**
+ * embedded-postgres without the SIGINT and SIGTERM handlers it installs as it loads. Those stop
+ * its clusters and force the process out within five seconds, which can cut this scope's own
+ * teardown short, the server's SIGTERM-then-SIGKILL included. `NodeRuntime.runMain` turns both
+ * signals into interruption instead, and the scope stops Postgres. Its exit and hangup hooks stay.
+ */
+const loadEmbeddedPostgres = Effect.promise(async () => {
+  const listening = new Set([...process.listeners("SIGINT"), ...process.listeners("SIGTERM")]);
+  const { default: EmbeddedPostgres } = await import("embedded-postgres");
+  for (const signal of ["SIGINT", "SIGTERM"] as const)
+    for (const listener of process.listeners(signal))
+      if (!listening.has(listener)) process.removeListener(signal, listener);
+  return EmbeddedPostgres;
+});
 
 export class PostgresError extends Schema.TaggedError<PostgresError>()("PostgresError", {
   stage: Schema.Literals(["start", "create-database"]),
@@ -125,6 +139,7 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
 
   // Postgres: initdb once per state dir, then a normal start/stop pair. The
   // durability flags are off because a dev database is disposable.
+  const EmbeddedPostgres = yield* loadEmbeddedPostgres;
   const postgres = new EmbeddedPostgres({
     databaseDir: files.postgresDir,
     port: plan.ports.postgres,
