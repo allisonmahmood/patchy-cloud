@@ -300,8 +300,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: pnpm test:rollback-rehearsal
 
-  # Tier 1 and 2 pages in desktop Chromium, and focus.spec.ts in Firefox, against an isolated
-  # server; `pnpm test:browser` and `pnpm test:browser:firefox`.
+  # Tier 1 and 2 pages in desktop Chromium, against an isolated server; `pnpm test:browser`.
   browser:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -319,14 +318,27 @@ jobs:
         uses: ./.github/actions/playwright
       - name: Exercise tier 1 and 2 pages in desktop Chromium
         run: pnpm test:browser
+
+  # The same pages in Firefox, in a job of its own beside the Chromium one: each browser builds
+  # what it runs and passes or fails by itself; `pnpm test:browser:firefox`.
+  browser-firefox:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.22.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
       - name: Install Firefox
         uses: ./.github/actions/playwright
         with:
           browser: firefox
-      # focus.spec.ts alone, on what the Chromium step built.
-      - name: Exercise the shell's focus hand-back in Firefox
-        env:
-          PATCHY_TIER1_SKIP_BUILD: "1"
+      - name: Exercise tier 1 and 2 pages in Firefox
         run: pnpm test:browser:firefox
 
   dependency-review:

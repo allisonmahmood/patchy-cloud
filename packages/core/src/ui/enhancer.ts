@@ -10,9 +10,9 @@ export const uiScriptTag = `<script defer src="${uiScriptPath}"></script>`;
  * - **Dialogs** (`[data-dialog]`, a URL drawn over its page): focus starts on its `autofocus`
  *   control, else its first field. Escape and its close link close one that has a `data-close`
  *   page: reached by a link on this site, closing goes back in history to that page, whichever it
- *   was, past any refused submission the dialog was drawn again for, so neither closing nor Back
- *   revisits it, and Back from a refused submission goes there too; loaded any other way, it goes
- *   to its own page. A dialog without `data-close`, such as the Final step, closes only by its
+ *   was, past any submission the dialog was drawn again for, refused or taken, so neither closing
+ *   nor Back revisits it, and Back from one goes there too, whether the browser gave the redrawn
+ *   dialog a history entry of its own or not; loaded any other way, it goes to its own page. A dialog without `data-close`, such as the Final step, closes only by its
  *   own actions. Without script it is a page and its close link does the same.
  * - **Focus return**: closing a dialog puts focus back on the link that opened it, or on the
  *   button of the menu that link sits in.
@@ -151,9 +151,9 @@ export const uiScript = `(() => {
   };
   addEventListener("pageshow", returnFocus);
 
-  // The dialog chain: how many history entries this dialog has taken since a link on this site
-  // opened it, counting each refused submission it was drawn again for, and that link. Kept in
-  // the entry's own state, so a reload or a step back and forward finds it again.
+  // The dialog chain: that link, how many history entries this dialog has taken since a link on
+  // this site opened it (depth), and how many times it has been drawn (step). Kept in the entry's
+  // own state, so a reload or a step back and forward finds it again.
   const CHAIN = "patchy:dialog";
   const dialog = document.querySelector("[data-dialog]");
   if (!(dialog instanceof HTMLElement)) return write(CHAIN, null);
@@ -165,15 +165,22 @@ export const uiScript = `(() => {
   if (close === undefined) return write(CHAIN, null);
   const from = document.referrer === "" ? null : new URL(document.referrer);
   const came = from !== null && from.origin === location.origin ? from.pathname + from.search : null;
-  let chain = history.state?.patchyDialog ?? null;
+  // A record the release before wrote has no step or length. Its depth orders it, and with no
+  // length to compare its next page counts no new entry: a close that falls short keeps going.
+  const known = (record) => record && { ...record, step: record.step ?? record.depth, length: record.length ?? history.length };
+  let chain = known(history.state?.patchyDialog ?? null);
   // Found in the entry's state: a reload or a step back or forward, not a fresh open.
   const restored = chain !== null;
   if (chain === null) {
     const opener = read(LAST);
-    const previous = read(CHAIN);
+    const previous = known(read(CHAIN));
     if (opener !== null && came === opener.page && new URL(opener.to).href.split("#")[0] === location.href.split("#")[0])
-      chain = { opener, depth: 1 };
-    else if (previous !== null && came === previous.at) chain = { opener: previous.opener, depth: previous.depth + 1 };
+      chain = { opener, depth: 1, step: 1 };
+    // Drawn again for a submission. That takes a new entry, except in Firefox when the answer
+    // redirects to the dialog's own address, which replaces the dialog's entry instead: only a
+    // history whose length changed is sure to hold one more.
+    else if (previous !== null && came === previous.at)
+      chain = { opener: previous.opener, depth: previous.depth + (history.length === previous.length ? 0 : 1), step: previous.step + 1 };
     if (chain !== null) history.replaceState({ ...(history.state ?? {}), patchyDialog: chain }, "");
   }
   // Reached from a page on this site, closing goes back past every entry the dialog took, to
@@ -186,14 +193,17 @@ export const uiScript = `(() => {
       history.go(-chain.depth);
     } else location.assign(new URL(close, location.href).href);
   };
-  // A step back from a refused submission lands on an earlier entry of the same chain, which the
-  // later one has left in storage: that closes the dialog too, on to the page that opened it.
-  // Shown again from the back-forward cache, the page settles the same way.
+  // A step back from a submission lands on an earlier entry of the same chain, which the later
+  // one has left in storage: that closes the dialog too, on to the page that opened it. So does a
+  // close that fell short of that page, its depth counted low: a history at its longest takes a
+  // new entry without growing. Shown again from the back-forward cache, the page settles the same
+  // way.
   const settle = (traversed) => {
-    const later = read(CHAIN);
-    if (traversed && chain !== null && later !== null && later.depth > chain.depth && JSON.stringify(later.opener) === JSON.stringify(chain.opener))
+    const mine = (opener) => chain !== null && JSON.stringify(opener) === JSON.stringify(chain.opener);
+    const later = known(read(CHAIN));
+    if (traversed && (mine(read(RETURN)) || (later !== null && later.step > chain?.step && mine(later.opener))))
       return leave();
-    write(CHAIN, chain === null ? null : { ...chain, at: here() });
+    write(CHAIN, chain === null ? null : { ...chain, at: here(), length: history.length });
   };
   settle(restored);
   addEventListener("pageshow", (event) => {

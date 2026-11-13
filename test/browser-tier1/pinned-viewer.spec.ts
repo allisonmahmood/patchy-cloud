@@ -6,10 +6,6 @@ import { RuntimeSubscriptionRequest } from "../../packages/api/src/index.js";
 import * as Schema from "effect/Schema";
 
 test.use({ tls: true, ignoreHTTPSErrors: true });
-test.skip(
-  ({ browserName }) => browserName !== "chromium",
-  "Pinned documents target Chromium desktop."
-);
 
 const isMe = (request: Request) =>
   new URL(request.url()).pathname === "/api/runtime/call" && request.postDataJSON()?.op === "me";

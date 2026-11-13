@@ -162,6 +162,12 @@ export function createStreamStatus(
       showStarting();
     }, 2_000);
   };
+  // Try again gives up focus before the cover closes. Left on it, Firefox goes on counting it
+  // focused after focus moves to the frame, and the cover can't take focus when it next opens.
+  const closeCover = () => {
+    retryButton.blur();
+    cover.close();
+  };
   const clearStarting = () => {
     starting = false;
     failed = false;
@@ -169,7 +175,7 @@ export function createStreamStatus(
     startingTimer = undefined;
     stopTicking();
     if (cover.open) {
-      cover.close();
+      closeCover();
       // Focus stays in an open switcher, which returns it to the frame when it closes.
       if (!hidden && !switcherOpen(document)) frame.focus();
     }
@@ -278,7 +284,7 @@ export function createStreamStatus(
         clearTimeout(startingTimer);
         startingTimer = undefined;
         stopTicking();
-        if (cover.open) cover.close();
+        if (cover.open) closeCover();
       } else scheduleStarting();
     },
     ready() {

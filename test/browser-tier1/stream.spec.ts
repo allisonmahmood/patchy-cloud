@@ -13,10 +13,6 @@ import { RuntimeSubscriptionRequest, type RuntimeFailure } from "../../packages/
 import * as Schema from "effect/Schema";
 
 test.use({ tls: true, ignoreHTTPSErrors: true });
-test.skip(
-  ({ browserName }) => browserName !== "chromium",
-  "Stream acceptance targets Chromium desktop."
-);
 
 const decodeSubscriptionRequest = Schema.decodeUnknownSync(RuntimeSubscriptionRequest);
 
@@ -610,23 +606,16 @@ test("seven company documents stay connected simultaneously over HTTP/2 TLS ingr
 }) => {
   const patch = await instance.publish();
   const pages = await Promise.all(Array.from({ length: 7 }, () => context.newPage()));
-  const streamResponses: Array<{ protocol: string | undefined; status: number }> = [];
-  for (const page of pages) {
-    const cdp = await context.newCDPSession(page);
-    await cdp.send("Network.enable");
-    cdp.on("Network.responseReceived", ({ response }) => {
-      if (new URL(response.url).pathname === "/api/runtime/stream") {
-        streamResponses.push({ protocol: response.protocol, status: response.status });
-      }
-    });
-  }
   const frames = await Promise.all(pages.map((page) => open(page, patch)));
   await expect
     .poll(async () => Promise.all(frames.map(generations)))
     .toEqual(Array.from({ length: 7 }, () => [expect.any(String)]));
-  expect(streamResponses).toEqual(
-    Array.from({ length: 7 }, () => ({ protocol: "h2", status: 200 }))
-  );
+  // The ingress says which protocol each stream came over, whatever the browser.
+  expect(
+    instance.runtimeRequests
+      .filter((request) => request.path.startsWith("/api/runtime/stream?"))
+      .map((request) => request.httpVersion)
+  ).toEqual(Array.from({ length: 7 }, () => "2.0"));
   expect(instance.streamConnections.size).toBe(7);
   // A new committed version must reach all seven still-open streams, not seven sequential opens.
   await instance.publish("company", instance.html, patch.patchId);

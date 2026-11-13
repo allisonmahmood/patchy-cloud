@@ -2,10 +2,6 @@ import type { FixtureWindow } from "./fixture-client.js";
 import { test, expect, open, prepare } from "./fixtures.js";
 
 test.use({ tls: true, ignoreHTTPSErrors: true });
-test.skip(
-  ({ browserName }) => browserName !== "chromium",
-  "Subscriptions target Chromium desktop."
-);
 
 test("a colleague's write updates the subscribed screen and reconnect catches a missed write", async ({
   page,

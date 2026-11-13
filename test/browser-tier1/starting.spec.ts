@@ -7,7 +7,6 @@ import { test, expect, open } from "./fixtures.js";
 import type { Instance } from "./instance.js";
 
 // Real server artifacts, Runtime streams and workerd calls. Ingress only delays or drops bytes.
-test.skip(({ browserName }) => browserName !== "chromium", "Tier 2 targets Chromium desktop.");
 
 async function publish(instance: Instance) {
   const server = await build({

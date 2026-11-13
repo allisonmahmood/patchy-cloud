@@ -151,18 +151,28 @@ test("the shell ignores switcher messages from anywhere but its frame's relay", 
     await page.evaluate(() => {
       const frame = document.getElementById("patch") as HTMLIFrameElement;
       const open = { patchy: "switcher", v: 1, kind: "open" };
-      const post = (source: MessageEventSource | null, origin: string, data: unknown = open) =>
-        dispatchEvent(new MessageEvent("message", { data, source, origin }));
+      const post = (source: MessageEventSource | null, origin: string, data: unknown = open) => {
+        try {
+          dispatchEvent(new MessageEvent("message", { data, source, origin }));
+        } catch (error) {
+          // Firefox won't build a message event that names another origin's window as its
+          // source, so there such a forgery is never made; built or not, nothing comes of it.
+          if (!(error instanceof TypeError && navigator.userAgent.includes("Firefox"))) throw error;
+        }
+      };
       post(window, "null");
       post(frame.contentWindow, location.origin);
       post(frame.contentWindow, "null", { ...open, v: 2 });
       post(frame.contentWindow, "null", { ...open, kind: "menu" });
       post(frame.contentWindow, "null", { ...open, patchy: "elsewhere" });
-      const spoofed = (window as Listening).patchySwitcher;
-      post(frame.contentWindow, "null");
-      return [spoofed, (window as Listening).patchySwitcher];
+      return (window as Listening).patchySwitcher;
     })
-  ).toEqual([undefined, true]);
+  ).toBeUndefined();
+  // The real pair is the frame's own message.
+  await patchFrame(page).evaluate(() =>
+    parent.postMessage({ patchy: "switcher", v: 1, kind: "open" }, "*")
+  );
+  await expect.poll(() => requested(page)).toBe(true);
 });
 
 test("the frame takes no click or Tab until the patch's relay says hello, and the shell holds the key", async ({
@@ -293,15 +303,20 @@ test("the relay holds the keys after the chord only where the shell says a switc
   await page.goto(patch.address);
   await frameDrawn(page);
   // The page dispatches the shell's `available` itself, claiming the shell as its source: ignored.
-  await patchFrame(page).evaluate(() =>
-    dispatchEvent(
-      new MessageEvent("message", {
-        data: { patchy: "switcher", v: 1, kind: "available" },
-        source: parent,
-        origin: "null"
-      })
-    )
-  );
+  await patchFrame(page).evaluate(() => {
+    try {
+      dispatchEvent(
+        new MessageEvent("message", {
+          data: { patchy: "switcher", v: 1, kind: "available" },
+          source: parent,
+          origin: "null"
+        })
+      );
+    } catch (error) {
+      // Or never built: Firefox won't name another origin's window as a message's source.
+      if (!(error instanceof TypeError && navigator.userAgent.includes("Firefox"))) throw error;
+    }
+  });
   await field(page).click();
   await page.keyboard.press(chord);
   await page.keyboard.press("a");

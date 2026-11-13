@@ -109,7 +109,9 @@ ${SPECIMEN_BODY}
  * shorter than the frame, and frees the specimen from a look's full-height `main` so frames
  * shrink as well as grow. The frame's height is the specimen's offset in its document, its
  * border box, and what a look puts below it on the body and root, plus the frame's border, the
- * divider between panes. Without JavaScript, each frame stays 100vh and scrolls on its own.
+ * divider between panes. A fitted frame has nowhere to scroll, so a specimen's same-page link
+ * scrolls the page around it to its target: Chromium does that itself, Firefox scrolls only the
+ * frame. Without JavaScript, each frame stays 100vh and scrolls on its own.
  */
 const FIT_FRAMES = `addEventListener("load", () => {
   for (const frame of document.querySelectorAll("iframe")) {
@@ -133,13 +135,17 @@ const FIT_FRAMES = `addEventListener("load", () => {
       const border = frame.offsetHeight - frame.clientHeight;
       frame.style.height = Math.ceil(top + view.scrollY + height + below) + border + "px";
     }).observe(specimen, { box: "border-box" });
+    view.addEventListener("click", (event) => {
+      const link = event.target.closest?.('a[href^="#"]');
+      if (link) view.document.getElementById(link.getAttribute("href").slice(1))?.scrollIntoView();
+    });
   }
 });`;
 
 // Each frame enforces this policy as well as its specimen's own, which allows no script. The
 // hash is the frames script's SHA-256; a test recomputes it from the page, so editing the script
 // means updating it.
-const COMPARE_CSP = `${CSP}; script-src 'sha256-6plY3Jpq7wbi1Oq2k91JTs/EAXKzPj8wdOy3dzmJ6L0='`;
+const COMPARE_CSP = `${CSP}; script-src 'sha256-ttqPsGUx6QnwQryJIBS93qKt71E0vMRzCbWT58M2AQw='`;
 
 /**
  * The preview file: one specimen, or two side by side. Each of two sits in its own frame, so

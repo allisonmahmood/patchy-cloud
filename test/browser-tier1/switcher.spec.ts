@@ -375,7 +375,8 @@ const copies = async (page: Page, text: string) => {
 
 test("text selected in the shell's own content is what Copy copies, until the keys go back to the patch", async ({
   page,
-  instance
+  instance,
+  browserName
 }) => {
   const { names, heard } = await openOffering(page, instance);
   await dragAcross(page, names.filter({ hasText: "report.csv" }));
@@ -387,8 +388,15 @@ test("text selected in the shell's own content is what Copy copies, until the ke
   await field(page).click();
   expect(await selection(page)).toBe("report.csv");
   for (const typed of [1, 2]) {
-    await patchFrame(page).evaluate(() => parent.focus());
-    await expect.poll(() => patchFrame(page).evaluate(() => window.document.hasFocus())).toBe(true);
+    // The fall is desktop Chrome's, staged as in the test above. Firefox sends a window no blur
+    // when its frame takes focus, so its shell can't tell the keys had gone into the patch, and
+    // leaves them with the selection after a fall staged this way.
+    if (browserName === "chromium") {
+      await patchFrame(page).evaluate(() => parent.focus());
+      await expect
+        .poll(() => patchFrame(page).evaluate(() => window.document.hasFocus()))
+        .toBe(true);
+    }
     await page.keyboard.press("x");
     await expect.poll(heard).toEqual(Array<string>(typed).fill("keydown x"));
   }
@@ -401,7 +409,7 @@ test("across a tab and back, the shell keeps the keys for text it shows selected
 }) => {
   test.skip(
     test.info().project.use.channel !== "chromium",
-    "Playwright's headless shell keeps every tab focused, so it has no tab to come back from."
+    "Playwright keeps every tab focused, so there is no tab to come back from; only desktop Chromium lets its DevTools protocol turn that off."
   );
   /** The person switches to another tab and back, with the browser's own focus, not the test's. */
   const switchTabs = async () => {
@@ -838,8 +846,6 @@ test("a member leaves their company's public patch with the key; anyone else's s
 });
 
 test.describe("over the starting cover", () => {
-  test.skip(({ browserName }) => browserName !== "chromium", "Tier 2 targets Chromium desktop.");
-
   /** A tier 2 patch, so it has a starting cover while its tools start. */
   const publishTool = async (instance: Instance) => {
     const server = await build({
@@ -893,6 +899,9 @@ export default createGuest({ rows: { count: query({ args: {}, result: t.number()
     await expect(cover).toBeHidden();
     await expect(search(page)).toBeFocused();
     await page.keyboard.press("Escape");
+    // Firefox hands the frame focus once Escape's own event is over, on a timer the paused clock
+    // holds.
+    await page.clock.runFor(1);
     await expect.poll(() => page.evaluate(() => window.document.activeElement?.id)).toBe("patch");
   });
 

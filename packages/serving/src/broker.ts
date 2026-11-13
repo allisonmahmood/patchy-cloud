@@ -852,8 +852,10 @@ function mount(frame: HTMLIFrameElement): void {
   // a press on the frame element is the one meant for the frame. So is a window that comes back
   // to text the person selected in the shell, as when they select it and switch tabs: only when
   // the shell held the keys as its window last lost focus, not once they went into the patch, by
-  // a click or the shell's own hand-off. And only text they can see and copy: a selection left in
-  // content since hidden, such as a folded-away download card, copies nothing and holds nothing.
+  // a click or the shell's own hand-off. Firefox sends a window no blur when its frame takes
+  // focus, so there the shell never learns they went, and a selection still showing keeps the keys
+  // on any such return. And only text they can see and copy: a selection left in content since
+  // hidden, such as a folded-away download card, copies nothing and holds nothing.
   let pressedShell = false;
   let keysLeftForFrame = false;
   window.addEventListener(

@@ -33,8 +33,8 @@ one-second check that the packed harness reaps orphaned processes, the packed CL
 end to end, and the packed Preact runtime), `install` (the installer and CLI on
 this machine: each platform's install line, a Node switch, an earlier install
 moving, setup's links, a saved key and a file publish against a stub, and the
-old-Node refusal), `tier2-smoke` (the packed tier 2 journey) and `browser` (tier 1
-and 2 pages in desktop Chromium, and `focus.spec.ts` in Firefox). CI runs `install` on Linux, macOS and Windows against
+old-Node refusal), `tier2-smoke` (the packed tier 2 journey), `browser` (tier 1
+and 2 pages in desktop Chromium) and `browser-firefox` (the same pages in Firefox). CI runs `install` on Linux, macOS and Windows against
 one release packed on Linux, switching between Node 22.22.0 and 26.11.1. Locally
 it needs only Node and the release `pnpm --filter patchy build` packs, and it
 uses this Node for both sides, so its switch changes only the npm prefix; pass
@@ -100,13 +100,12 @@ For a focused loop:
 - `pnpm typecheck:tests` checks every test and harness file in one program,
   about three seconds when warm. Package `src` is checked by `pnpm typecheck`.
 - `pnpm exec playwright test -c playwright.tier1.config.ts --project=chromium <spec>`
-  runs one browser spec.
-- `test/browser-tier1/focus.spec.ts` also runs in Firefox, the tier 1 config's `firefox`
-  project, with `pnpm test:browser:firefox`; nothing else does. Firefox won't hand a patch's
-  frame focus during the key event that pressed one of the shell's buttons, so the shell's
-  hand-back tries again once that event is over, and only Firefox needs that second try. The
-  project turns Fission isolation on, as Firefox ships it. CI's `browser` job and `pnpm verify`
-  run it after the Chromium suite.
+  runs one browser spec; `--project=firefox` runs it in Firefox.
+- The tier 1 config has two projects, `chromium` (`pnpm test:browser`) and `firefox`
+  (`pnpm test:browser:firefox`), and every spec runs in both. The `firefox` project turns
+  Fission isolation on, as Firefox ships it. CI runs them side by side as the `browser` and
+  `browser-firefox` jobs, each building what it runs, so Firefox passes or fails by itself;
+  `pnpm verify` runs one after the other. Safari isn't run.
 
 Every vitest run builds core's browser scripts and the shell broker and stages
 the packed CLI release once before its workers start; `pnpm dev` builds the same
@@ -129,11 +128,15 @@ takes seconds.
   migrated and seeded once. Teardown drops that database and every company database
   it placed. If a database, role, role setting or connection outlives its test, the
   next test fails, so a spec closes any client it opens itself.
-- The tier 1 browser suite runs desktop Chromium in new headless mode
+- The tier 1 browser suite's `chromium` project runs desktop Chromium in new headless mode
   (`channel: "chromium"`). Playwright's default headless build, `chrome-headless-shell`,
   keeps a patch's sandboxed frame in the shell's process, so focus and keyboard checks
   can pass there and fail in Chrome. A script that launches its own browser for such a
   check passes the same channel.
+- A browser spec passes in both projects. Where the two browsers rightly differ, the spec says
+  how beside the line that differs. A skip names what the other browser lacks, as the steps
+  that drive Chromium's DevTools protocol do (another layout's keys, an input method, a
+  dragged touch, the accessibility tree); "unsupported" is never the reason.
 - `tsconfig.test.json` keeps Effect's correctness rules and turns off the style
   rules that steer production code toward Effect services.
 - A test that fails with no code cause is flaky. CI does not retry, and a test

@@ -24,8 +24,9 @@ Production runs every release through the Deploy workflow, with tier 2 on the
 ECS fleet; each release gets a What's new entry in the portal
 ([Operations](docs/OPERATIONS.md#deploying)). Version revocation is unresolved on
 [#425](https://github.com/allisonmahmood/patchy-cloud/issues/425): the `revoked`
-frame exists, but no revocation operation does. Chromium desktop is the supported
-browser. Tier 3, execution without a viewer, is next.
+frame exists, but no revocation operation does. Desktop Chromium-based browsers
+and Firefox are supported; Safari is untested, and mobile is outside this release.
+Tier 3, execution without a viewer, is next.
 
 Patches have names at `/<company>/<patch>`, belong to users, and are shared with the company by default. Tier 1 may be public; tier 2 cannot. Tier 1 code acts as the viewer through the shell broker, never holding their login. It can read and write its own tables and files, and nothing else: other patches' shared tables and stores, the member directory and connections are tier 2's. A public tier 1 page reaches no data. Tier 2 callbacks act as the patch for its own resources and recheck the viewer for company data. Publish provisions resources additively in a Postgres database per company, preserving omitted definitions and data.
 
@@ -94,7 +95,7 @@ A Turborepo monorepo managed with pnpm. [AGENTS.md](AGENTS.md) is the guide to w
 - `examples/plan.html` — a Patchy-styled starter patch.
 - `scenarios/` — companies, people and patches that `pnpm dev up` builds local environments from (`scripts/dev`).
 
-`pnpm check` runs format, lint, typecheck, the infrastructure synth and the offline tests. `pnpm verify` adds every acceptance suite CI runs except live Clerk; install Chromium and Firefox first with `pnpm exec playwright install --with-deps chromium firefox`. [`pnpm test:clerk`](docs/DEVELOPMENT.md#live-tiers) runs the live Clerk tiers with development keys.
+`pnpm check` runs format, lint, typecheck, the infrastructure synth and the offline tests. `pnpm verify` adds every acceptance suite CI runs except live Clerk, the browser suite in Chromium and in Firefox; install both first with `pnpm exec playwright install --with-deps chromium firefox`. [`pnpm test:clerk`](docs/DEVELOPMENT.md#live-tiers) runs the live Clerk tiers with development keys.
 
 ## Security
 

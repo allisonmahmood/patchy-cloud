@@ -9,7 +9,6 @@ import { test, expect, prepare } from "./fixtures.js";
 import { manifest, type Instance, type Published } from "./instance.js";
 
 // These tests publish real server artifacts and run them on the supervised workerd executor.
-test.skip(({ browserName }) => browserName !== "chromium", "Tier 2 targets Chromium desktop.");
 const packageRoot = fileURLToPath(new URL("../../packages/patchy", import.meta.url));
 const query = {
   kind: "query",
@@ -430,10 +429,12 @@ test("authorised handles display blob images, reauthorise and queue trusted shel
   ).toBe(count + 2);
   await frame.evaluate(() => (window as unknown as FileProbeWindow).fileProbe.clear());
   await expect(frame.getByRole("img")).toHaveCount(0);
+  // Asked for under a new fragment each time, an address the browser hasn't drawn: Firefox goes
+  // on drawing an image it has already decoded from an address, revoked or not.
   const loads = (url: string) =>
     frame.evaluate(async (url) => {
       const image = new Image();
-      image.src = url;
+      image.src = `${url}#${Math.random()}`;
       try {
         await image.decode();
         return true;
