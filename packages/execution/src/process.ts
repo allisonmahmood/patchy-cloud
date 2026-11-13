@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalFetch:off globalFetchInEffect:off globalTimers:off globalTimersInEffect:off globalDate:off preferSchemaOverJson:off -- direct child ownership and wall-clock startup work under TestClock; JSON encodes validated callback config and pinned compatibility flags.
+// @effect-diagnostics nodeBuiltinImport:off globalFetch:off globalFetchInEffect:off globalTimers:off globalTimersInEffect:off globalDate:off globalJsonInEffect:off -- direct child ownership and wall-clock startup work under TestClock; JSON encodes validated callback config and pinned compatibility flags.
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 import { chown, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";

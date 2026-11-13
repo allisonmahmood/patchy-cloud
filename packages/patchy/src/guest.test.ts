@@ -1,4 +1,4 @@
-// @effect-diagnostics preferSchemaOverJson:off -- exercise the guest's raw HTTP JSON request and response boundary.
+// @effect-diagnostics globalJsonInEffect:off -- exercise the guest's raw HTTP JSON request and response boundary.
 import { assert, it } from "@effect/vitest";
 import { limitRefusal } from "@patchy/api";
 import type * as GuestProtocol from "@patchy/api/guest";

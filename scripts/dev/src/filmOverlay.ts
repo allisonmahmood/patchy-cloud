@@ -1,4 +1,4 @@
-// @effect-diagnostics globalTimers:off globalDate:off preferSchemaOverJson:off -- this runs inside the recorded page, not in Effect.
+// @effect-diagnostics globalTimers:off globalDate:off globalJsonInEffect:off -- this runs inside the recorded page, not in Effect.
 /**
  * The film overlay, injected into every frame of a recorded page. It is
  * plain browser code: `film.ts` sends it as source, so nothing here may rely
