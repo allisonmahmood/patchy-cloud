@@ -4,7 +4,6 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
@@ -30,18 +29,36 @@ const alive = (pid: number) => {
   }
 };
 
-/** SIGKILLs whichever of `pids` still run, and waits until none does. */
-const killAndWait = (pids: ReadonlyArray<number>) => {
-  const owned = pids.filter((pid) => pid > 0);
-  return Effect.sync(() => {
-    for (const pid of owned) if (alive(pid)) process.kill(pid, "SIGKILL");
-    return owned.some(alive);
-  }).pipe(
+/** Signals every process in the group `leader` leads; false once the group is empty. */
+const signalGroup = (leader: number, signal: NodeJS.Signals | 0) => {
+  try {
+    process.kill(-leader, signal);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const untilGroupEmpty = (leader: number, polls: number) =>
+  Effect.sync(() => signalGroup(leader, 0)).pipe(
     Effect.flatMap((running) => (running ? Effect.fail("still running") : Effect.void)),
-    Effect.retry({ schedule: Schedule.spaced("50 millis"), times: 100 }),
+    Effect.retry({ schedule: Schedule.spaced("50 millis"), times: polls })
+  );
+
+/**
+ * Stops the probe's process group and waits until it is empty: an interrupt first, on which
+ * Postgres shuts down and frees its shared memory, then SIGKILL for whatever ignored it.
+ */
+const stopGroup = (leader: number) =>
+  Effect.sync(() => signalGroup(leader, "SIGINT")).pipe(
+    Effect.andThen(untilGroupEmpty(leader, 60)),
+    Effect.catch(() =>
+      Effect.sync(() => signalGroup(leader, "SIGKILL")).pipe(
+        Effect.andThen(untilGroupEmpty(leader, 100))
+      )
+    ),
     Effect.ignore
   );
-};
 
 /** Starts a cluster in its second argument, prints the postmaster's pid, then exits 5 with it running. */
 const exitWithClusterRunning = `
@@ -78,12 +95,13 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("embedded Postgres s
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
         const databaseDir = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-pg-exit-" });
         const probe = spawn(
           process.execPath,
           nodeArgs(exitWithClusterRunning, embeddedPostgres, databaseDir),
-          { stdio: ["ignore", "pipe", "pipe"] }
+          // Its own process group, which initdb and Postgres join, so the finalizer can reach a
+          // cluster that has not written postmaster.pid yet.
+          { stdio: ["ignore", "pipe", "pipe"], detached: true }
         );
         const output = { stdout: "", stderr: "" };
         probe.stdout.on("data", (chunk) => (output.stdout += chunk));
@@ -95,13 +113,8 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("embedded Postgres s
         // Registered before anything waits and after the directory, so a run that fails or times
         // out still stops the probe and its cluster, and the directory goes only after both. It
         // runs after the assertions, so it can never be what stopped Postgres.
-        yield* Effect.addFinalizer(() =>
-          fs.readFileString(path.join(databaseDir, "postmaster.pid")).pipe(
-            Effect.map((pidFile) => Number(pidFile.split("\n")[0])),
-            Effect.orElseSucceed(() => 0),
-            Effect.flatMap((cluster) => killAndWait([probe.pid ?? 0, cluster]))
-          )
-        );
+        const leader = probe.pid;
+        yield* Effect.addFinalizer(() => (leader === undefined ? Effect.void : stopGroup(leader)));
 
         const code = yield* Effect.promise(() => closed);
         const postmaster = Number(output.stdout.trim());
