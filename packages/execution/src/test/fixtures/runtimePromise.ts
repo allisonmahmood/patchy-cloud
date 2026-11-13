@@ -87,11 +87,13 @@ const named = (prefix: string, names: string) =>
     .map((name) => `${prefix}:${name}`);
 
 // workerd's other built-in modules: every name the 1.20260924.1 and 1.20261112.1 binaries embed
-// under the prefixes a JavaScript Worker's registry holds, leaving out the internal: names of
-// workerd's Python runtime. Most never load for a guest; they are here because their arrival
-// matters. A finite list notices only the names it holds, so an engine move checks the new
-// release's registry against it.
+// under the prefixes a JavaScript Worker's registry holds. Of the internal: names only
+// unsafe-eval is registered for JavaScript; the rest belong to workerd's Python runtime and are
+// left out. Most never load for a guest; they are here because their arrival matters. A finite
+// list notices only the names it holds, so an engine move checks the new release's registry
+// against it.
 const workerdBuiltins = [
+  "internal:unsafe-eval",
   ...named(
     "cloudflare",
     "ai br durable-objects email node pipelines sockets vectorize workers workflows"
