@@ -363,13 +363,14 @@ export const makeAccess = Effect.gen(function* () {
 });
 
 /**
- * A UUIDv7 over `bytes`, 16 random bytes: the 48-bit `millis`, the version and variant, and the
- * other 74 bits left random. Effect's `uuidV7` counts within a millisecond instead, which would
- * make an id reveal the one minted before it.
+ * A UUIDv7 over `bytes`, 16 random bytes: the 48-bit `millis`, clamped to the field as Effect 4.0
+ * did, the version and variant, and the other 74 bits left random. Effect's `uuidV7` counts within
+ * a millisecond instead, which would make an id reveal the one minted before it.
  */
 const uuidV7 = (millis: number, bytes: Uint8Array): string => {
+  const timestamp = Math.min(Math.max(0, Math.trunc(millis)), 2 ** 48 - 1);
   for (let index = 0; index < 6; index++)
-    bytes[index] = Math.floor(millis / 2 ** (40 - 8 * index)) % 256;
+    bytes[index] = Math.floor(timestamp / 2 ** (40 - 8 * index)) % 256;
   bytes[6] = (bytes[6]! & 0x0f) | 0x70;
   bytes[8] = (bytes[8]! & 0x3f) | 0x80;
   const hex = Buffer.from(bytes).toString("hex");

@@ -2,7 +2,6 @@
  * The viewer group: what a signed-in person's browser changes about their own use of Patchy,
  * admitted by their session and the same-origin check, as Patchy's own forms are.
  */
-import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
@@ -14,7 +13,8 @@ import {
   PayloadTooLarge,
   refuse,
   ShortcutsRequest,
-  ShortcutsSetting
+  ShortcutsSetting,
+  capBody
 } from "@patchy/api";
 import { Users } from "@patchy/companies";
 import * as Receipt from "./Receipt.js";
@@ -25,7 +25,7 @@ import { pageResponse, returnPath } from "./page.js";
 /** The value and a page path to land back on. */
 const MAX_FORM_BYTES = 4_096;
 const readForm = HttpServerRequest.schemaBodyUrlParams(ShortcutsRequest).pipe(
-  Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(MAX_FORM_BYTES))
+  capBody(MAX_FORM_BYTES)
 );
 const encodeSetting = Schema.encodeSync(ShortcutsSetting);
 const noStore = { "cache-control": "private, no-store" };

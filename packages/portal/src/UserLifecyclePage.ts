@@ -1,7 +1,6 @@
 // Owns deactivating and reactivating a person at `/settings/people/users/<id>/<action>`: a Flow
 // page choosing what happens to their patches, and the confirmation when that changes any, at the
 // same address with the choice in its query. What other surfaces need is in `shared/`.
-import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
@@ -10,6 +9,7 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as UrlParams from "effect/http/UrlParams";
+import { capBody } from "@patchy/api";
 import { pageResponse, RequireSession, Session } from "@patchy/auth";
 import { Users } from "@patchy/companies";
 import {
@@ -299,10 +299,7 @@ const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: string, acti
     return refuse("Only an admin can manage this company. Nothing was done.", 403);
   const submission =
     request.method === "POST"
-      ? yield* request.urlParamsBody.pipe(
-          Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(65_536)),
-          Effect.result
-        )
+      ? yield* request.urlParamsBody.pipe(capBody(65_536), Effect.result)
       : Result.succeed(UrlParams.empty);
   if (Result.isFailure(submission))
     return refuse("Check the submitted form and try again. Nothing was done.", 422);
