@@ -66,9 +66,9 @@ export function parseBoundedFragment(
 
 /**
  * parse5's default tree, built under the depth, attribute and repair bounds. Most tags scan the
- * stack of open elements, so the stack is what depth counts.
+ * stack of open elements, so the stack is what depth counts. Exported for its test only.
  */
-function boundedTreeAdapter(): parse5.TreeAdapter<parse5.DefaultTreeAdapterMap> {
+export function boundedTreeAdapter(): parse5.TreeAdapter<parse5.DefaultTreeAdapterMap> {
   const tree = parse5.defaultTreeAdapter;
   let depth = 0;
   let repairWork = 0;
@@ -78,9 +78,11 @@ function boundedTreeAdapter(): parse5.TreeAdapter<parse5.DefaultTreeAdapterMap> 
   /**
    * Finds a node among its siblings for error recovery to move it, searching from the end and
    * paying for every sibling after it, each of which the search passes and the move shifts.
-   * Misplaced table content goes just before the open table, its parent's last child, and parse5
-   * moves the children of an element closed out of order from the last one back, so both cost next
-   * to nothing. The bound stops any move that would pass a long list instead.
+   * parse5 8.1 makes every such move at the end of a list: misplaced table content goes just before
+   * the open table, its parent's last child, and the children of an element closed out of order
+   * leave last child first. No known input reaches the bound on 8.1. It stays because parse5 before
+   * 8.1 moved those children front first, so a short page could cost the square of a block's
+   * children, and a parser release that does so again is stopped here.
    */
   const locate = (
     siblings: parse5.DefaultTreeAdapterMap["childNode"][],
