@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
+import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -361,10 +362,24 @@ export const makeAccess = Effect.gen(function* () {
   return { withTable, withSharedTable };
 });
 
+/**
+ * A UUIDv7 over `bytes`, 16 random bytes: the 48-bit `millis`, the version and variant, and the
+ * other 74 bits left random. Effect's `uuidV7` counts within a millisecond instead, which would
+ * make an id reveal the one minted before it.
+ */
+const uuidV7 = (millis: number, bytes: Uint8Array): string => {
+  for (let index = 0; index < 6; index++)
+    bytes[index] = Math.floor(millis / 2 ** (40 - 8 * index)) % 256;
+  bytes[6] = (bytes[6]! & 0x0f) | 0x70;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = Buffer.from(bytes).toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+};
+
 export const make = Effect.gen(function* () {
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   // Row ids are UUIDv7: time-ordered on the Effect clock, so inserts stay index-friendly.
-  const newId = crypto.randomUUIDv7().pipe(Effect.orDie);
+  const newId = Effect.zipWith(Clock.currentTimeMillis, random.randomBytes(16), uuidV7);
   const { withTable, withSharedTable } = yield* makeAccess;
   const settings = yield* config;
   const wakes = yield* Wakes.Wakes;

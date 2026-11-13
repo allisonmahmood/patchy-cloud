@@ -3,7 +3,7 @@ import type * as PgConnection from "@effect/sql-pg/PgConnection";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -167,7 +167,7 @@ export const placementLayer = Layer.fresh(OperatingLimits.layer).pipe(
 
 export const make = Effect.gen(function* () {
   const cryptography = yield* Cryptography.Cryptography;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const changes = yield* ResourceChanges.ResourceChanges;
   const platform = yield* PlacementClient;
   const limits = yield* OperatingLimits.OperatingLimits;
@@ -269,7 +269,7 @@ export const make = Effect.gen(function* () {
               );
               yield* Inventory.initialize.pipe(
                 Effect.provideService(SqlClient.SqlClient, data),
-                Effect.provideService(Crypto.Crypto, crypto),
+                Effect.provideService(SecureRandom.SecureRandom, random),
                 Effect.mapError(
                   (cause) =>
                     new CompanyDatabases.CompanyDatabaseError({
@@ -743,6 +743,7 @@ export const make = Effect.gen(function* () {
     const retained = yield* SqlClient.make({
       acquirer: Effect.succeed(connection),
       compiler: PgClient.makeCompiler(),
+      driver: "pg",
       spanAttributes: []
     }).pipe(Effect.provideService(Reactivity.Reactivity, reactivity));
     const retainedContext = Context.make(SqlClient.SqlClient, retained).pipe(

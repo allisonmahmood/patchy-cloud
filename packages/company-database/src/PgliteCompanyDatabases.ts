@@ -1,7 +1,7 @@
 import * as PgliteClient from "@effect/sql-pglite/PgliteClient";
 import { protocol, type PGliteInterface } from "@electric-sql/pglite";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -29,7 +29,7 @@ export const make = Effect.fn("PgliteCompanyDatabases.make")(function* (
   options: Options,
   dispose: () => Effect.Effect<void>
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const changes = yield* ResourceChanges.ResourceChanges;
   const timed = yield* ConnectionTiming.make(PgliteClient.makeCompiler());
   const sql = timed.sql;
@@ -106,7 +106,7 @@ export const make = Effect.fn("PgliteCompanyDatabases.make")(function* (
       .withTransaction(
         Effect.gen(function* () {
           yield* Inventory.initialize.pipe(
-            Effect.provideService(Crypto.Crypto, crypto),
+            Effect.provideService(SecureRandom.SecureRandom, random),
             Effect.mapError(
               (cause) =>
                 new CompanyDatabases.CompanyDatabaseError({
@@ -198,6 +198,7 @@ export const make = Effect.fn("PgliteCompanyDatabases.make")(function* (
     const retained = yield* SqlClient.make({
       acquirer: Effect.succeed(acknowledged),
       compiler: PgliteClient.makeCompiler(),
+      driver: "pglite",
       spanAttributes: []
     }).pipe(Effect.provideService(Reactivity.Reactivity, reactivity));
     const context = Context.make(SqlClient.SqlClient, retained).pipe(
