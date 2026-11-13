@@ -38,6 +38,27 @@ export const appShell = `
     .app-subnav { display: grid; gap: 2px; margin: 0 0 var(--space-1) 17px; padding-left: 9px; border-left: 1px solid var(--border); }
     .app-subnav > .app-place { padding-left: 10px; }
 
+    /* app-pins: the viewer's pinned patches, a row each like a place: its mark sits centred on the
+       places' icons and its name starts where their labels do. Up to five never scroll. */
+    .app-pins { display: flex; flex: none; flex-direction: column; gap: var(--space-1); }
+    .app-pins-label { margin: 0; padding: 0 var(--space-2); color: var(--muted); font: var(--text-meta); }
+    .app-pin-list { display: grid; align-content: start; gap: 2px; margin: 0; padding: 0; list-style: none; }
+    .app-pin { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; border-radius: var(--r-control); }
+    .app-pin-link { display: flex; align-items: center; gap: 6px; min-width: 0; min-height: var(--h-sm); padding: 0 var(--space-1); border-radius: var(--r-control); color: var(--text); font: var(--text-label); text-decoration: none; }
+    /* A list that scrolls clips what leaves it, so a row's focus rings are drawn inside the row. */
+    .app-pin > :is(.app-pin-link, .btn):focus-visible { outline-offset: -2px; }
+    .app-pin-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .app-pin-link .mono { width: 24px; height: 24px; border-radius: 6px; font-size: 9px; }
+    .app-pin-link .page-mark { width: 24px; height: 24px; border-radius: 6px; }
+    .app-pin-link .page-mark::after { inset: 6px 5px; }
+    .app-pin:has(> .menu:popover-open) { background: var(--hover); }
+    /* With a pointer, a row's menu button waits for the row to be hovered or to hold focus. */
+    @media (hover: hover) {
+      .app-pin:hover { background: var(--hover); }
+      .app-pin:hover > .app-pin-link { color: var(--ink); }
+      .app-pin:not(:hover, :focus-within, :has(> .menu:popover-open)) > .btn { opacity: 0; }
+    }
+
     .app-foot { display: grid; gap: 2px; margin-top: auto; padding-top: 10px; border-top: 1px solid var(--border-subtle); }
     .app-place > .whats-new-dot { margin-left: auto; }
     /* While its panel is open, What's new takes a current place's look; the account, a hovered one's. */
@@ -81,6 +102,12 @@ export const appShell = `
     /* A Menu opened on a narrow window stays open in the top layer if the window widens; it then
        sits where the in-place menu would, under the brand and the search, until dismissed. */
     @media (min-width: 1024px) {
+      /* More than five pins give way when the sidebar runs out of room: the list scrolls, keeping
+         five and a half rows, the cut one saying there are more, before the sidebar itself does.
+         In the phone's Menu every pin shows and the Menu scrolls. */
+      .app-menu { min-height: 0; }
+      .app-pins:has(.app-pin:nth-child(6)) { flex: 0 1 auto; min-height: calc(18px + var(--space-1) + 5.5 * (var(--h-sm) + 2px)); }
+      .app-pins:has(.app-pin:nth-child(6)) > .app-pin-list { min-height: 0; overflow-y: auto; scrollbar-width: thin; }
       .app-menu:popover-open { position: fixed; inset: calc(14px + var(--h-control) + var(--h-sm) + 2 * var(--space-2)) auto 0 0; width: 240px; height: auto; padding: 0 var(--space-3) var(--space-3); overflow-y: auto; border: 0; border-right: 1px solid var(--border); background: var(--surface); }
       .app-menu::backdrop { background: transparent; }
     }

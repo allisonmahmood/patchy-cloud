@@ -8,6 +8,7 @@ import {
   menuCopy,
   menuLink,
   menuNewTab,
+  menuPost,
   patchTitle
 } from "@patchy/core";
 import type { ReportedAudience } from "@patchy/api";
@@ -135,6 +136,18 @@ export const shareHref = (here: string, name: string) => {
   return `${url.pathname}${url.search}`;
 };
 
+/** A personal pin action shared by row and patch-header menus. */
+export const pinItem = (patch: Patches.Patch, viewer: Viewer, here: string) => {
+  const pinned = viewer.pins?.some((pin) => pin.id === patch.id);
+  return menuPost(
+    `/patches/${encodeURIComponent(patch.id)}/${pinned ? "unpin" : "pin"}`,
+    pinned ? "Unpin patch" : "Pin patch",
+    hidden("user", viewer.user.id) + hidden("return", here),
+    false,
+    patchTitle(patch, viewer.company.name)
+  );
+};
+
 /**
  * The ways to open a patch, Share… for one the viewer manages, then its card, as a row's menu
  * starts on Home and All patches. Its name already opens a live patch, so the menu offers a new
@@ -154,6 +167,7 @@ export const openItems = (
   return [
     ...(live && row.access.canOpen
       ? [
+          pinItem(patch, viewer, here),
           menuNewTab(patchAddress(patch), title),
           menuCopy(
             `${publicBaseUrl.replace(/\/+$/u, "")}${patchAddress(patch)}`,

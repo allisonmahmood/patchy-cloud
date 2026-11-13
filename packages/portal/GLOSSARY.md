@@ -16,9 +16,13 @@ _Avoid_: dashboard, landing, index (the alphabetical list beside the card it rep
 Home's first section, shown only when something is wrong, each row saying what broke and holding the one action that fixes it: the viewer's own tools that failed in the last 24 hours, with View log, for admins the company's connections that need one, in Integrations' words, with their fix, and the viewer's own apps and computers whose access ended on its own in the last 30 days, as Your agents lists them, with Reconnect to Connect an app (that app chosen) or Add a computer. While a computer is there, Home leaves out Connect your agent. A connection is there when its provider stopped it (an Attio key found writable, an IMAP login the mail server refused), when Pidgeon still holds a key Patchy couldn't revoke, when live patches use a Pidgeon test key, or when an admin disconnected it while live patches still declare it. All patches' Needs attention is its own list.
 _Avoid_: alerts, warnings, inbox
 
+**Pinned patches**:
+Personal shortcuts to live company patches, pages and tools together, saved through **Pin patch** / **Unpin patch** in the patch menu. They appear in pin order under the sidebar's places, and in its phone Menu, each opening its patch, with Unpin patch in its menu. There is no limit: up to five always show, and past five the list scrolls once the sidebar runs out of room, while the phone Menu shows them all. It is absent without pins; an inaccessible or off patch is hidden until it becomes available again. Titles and addresses follow the current patch, and reclamation removes its pins. Pinning and unpinning leave a receipt naming the patch.
+_Avoid_: favorites, company pins, pinned pages (tools can be pinned too)
+
 **Your usual**:
 Up to four tiles of the live patches the viewer opened most in the last 30 days, by their opens' halving score, and nothing else. Reopening a patch within ten minutes counts once, so flipping between two patches doesn't take it over. With no opens yet it is titled "Popular at" the company and holds the company's most-visited. A tile carries the mark, the title, and whether it is a tool or a page and whose. It reads only the viewer's own opens.
-_Avoid_: favourites, pinned (pins are not built), recent
+_Avoid_: favourites, pinned, recent
 
 **New** (Home):
 Up to three of colleagues' patches made in the last week that the viewer hasn't opened, newest first, each with Open in a new tab and the [not opened yet](#not-opened-yet) dot. A public page is never new, since reading it signed out records no open.

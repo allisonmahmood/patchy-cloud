@@ -568,7 +568,7 @@ const app = Layer.mergeAll(
  */
 export const layer = Layer.mergeAll(
   HttpRouter.serve(app, { disableLogger: true, disableListenLog: true }).pipe(
-    Layer.provide([ownedPatches, companyGuests, teamReach])
+    Layer.provide([ownedPatches, companyGuests, teamReach, PortalPages.navigation])
   ),
   sweeper,
   Layer.effectContext(

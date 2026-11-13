@@ -487,7 +487,7 @@ export const layer: Layer.Layer<
       const { userId, client, shown: shownAt, action } = form.value;
       // Signed out since: back to the page once signed in, never an answer.
       const returnTo = returnPath(request.url, session.publicBaseUrl) ?? "/";
-      return yield* RequireSession.withViewer(
+      return yield* RequireSession.withoutPins(
         sound((shown) =>
           Effect.gen(function* () {
             if (shown.at - shownAt > ANSWER_SECONDS) {
@@ -663,7 +663,7 @@ export const layer: Layer.Layer<
     yield* router.add(
       "GET",
       "/oauth/authorize",
-      pageErrors(bounded(RequireSession.withViewer(authorize)))
+      pageErrors(bounded(RequireSession.withoutPins(authorize)))
     );
     yield* router.add(
       "POST",

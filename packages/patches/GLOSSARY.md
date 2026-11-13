@@ -155,3 +155,7 @@ _Avoid_: orphaned patch (it still has an owner)
 **Owner history**:
 On a patch's card, for its owner and admins: every audience change someone other than the owner made, and every admin added, by anyone, to a team its audience named at that moment. Each entry is kept as it happened, so a later demotion or audience change never hides it.
 _Avoid_: audit log
+
+**Pin**:
+One person’s saved shortcut to a patch, keyed by person and patch identity. Pins keep their original order and survive a rename or temporary loss of access; navigation includes only live, currently openable patches. Pinning grants no access. Reclamation removes a patch’s pins.
+_Avoid_: bookmark, favorite

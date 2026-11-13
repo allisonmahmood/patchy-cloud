@@ -193,7 +193,7 @@ it.layer(socket)("all patches on a socket", (it) => {
           person,
           menuItems(yield* (yield* request("/patches", person)).text, patch.patchId)
         );
-      const opening = "office-map Open in a new tab Copy link";
+      const opening = "office-map Pin patch Open in a new tab Copy link";
       const about = "About this patch";
       assert.strictEqual(menus.get(workspace.member), `${opening} ${about}`);
       assert.strictEqual(

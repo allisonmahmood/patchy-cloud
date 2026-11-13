@@ -1,10 +1,11 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import type { SqlError } from "effect/sql/SqlError";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { Users } from "@patchy/companies";
-import { copyLine, copyScriptPath, escapeHtml, linkButton } from "@patchy/core";
+import { type PinnedPatch, copyLine, copyScriptPath, escapeHtml, linkButton } from "@patchy/core";
 import * as Receipt from "./Receipt.js";
 import * as Session from "./Session.js";
 import * as TermsPrompt from "./TermsPrompt.js";
@@ -20,12 +21,22 @@ export class Viewer extends Context.Service<
     readonly whatsNewSeen: number;
     /** Their own choice whether patches' single-key shortcuts fire; a guest carries theirs. */
     readonly singleKeyShortcuts: boolean;
+    /** Their pinned patches, for the sidebar; absent where no page is drawn, as under `withoutPins`. */
+    readonly pins?: ReadonlyArray<PinnedPatch>;
     /** What their last form did, shown once on this page; see `Receipt`. */
     readonly receipt?: string | undefined;
     /** This page's local path, for a GET: the account menu's forms come back to it. */
     readonly page?: string | undefined;
   }
 >()("@patchy/auth/RequireSession/Viewer") {}
+
+/**
+ * The viewer's pins for the sidebar, which `withViewer` reads for every page it answers. Hosting
+ * supplies them, so Auth doesn't depend on Patches; without it nobody has any.
+ */
+export const Pins = Context.Reference<
+  (viewer: Viewer["Service"]) => Effect.Effect<ReadonlyArray<PinnedPatch>, SqlError>
+>("@patchy/auth/RequireSession/Pins", { defaultValue: () => () => Effect.succeed([]) });
 
 export class SignedIn extends Context.Service<
   SignedIn,
@@ -200,7 +211,8 @@ export const resolveViewer = Effect.gen(function* () {
 const viewerPage = <E, R>(
   app: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
   returnTo: string | undefined,
-  terms: "prompt" | "pass"
+  terms: "prompt" | "pass",
+  sidebar = true
 ) =>
   withSession(
     Effect.gen(function* () {
@@ -229,6 +241,7 @@ const viewerPage = <E, R>(
       });
       const response = yield* Effect.provideService(app, Viewer, {
         ...viewer,
+        ...(sidebar ? { pins: yield* (yield* Pins)(viewer) } : {}),
         receipt: receipt.text,
         page:
           request.method === "GET"
@@ -254,6 +267,15 @@ export const withViewer = <E, R>(
   app: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
   returnTo?: string
 ) => viewerPage(app, returnTo, "prompt");
+
+/**
+ * `withViewer` without their pins, for an answer that never draws the sidebar: a door, a bare
+ * redirect, or a fragment a script asks for again and again.
+ */
+export const withoutPins = <E, R>(
+  app: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
+  returnTo?: string
+) => viewerPage(app, returnTo, "prompt", false);
 
 /** `withViewer` without the terms prompt, for the prompt's own answer alone. */
 export const forTerms = <E, R>(

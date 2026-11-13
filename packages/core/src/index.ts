@@ -16,7 +16,7 @@ export {
   tellPatchyScriptPath,
   withoutAppAssets
 } from "./html.js";
-export type { AppShell } from "./html.js";
+export type { AppShell, PinnedPatch } from "./html.js";
 export {
   ago,
   dateLabel,

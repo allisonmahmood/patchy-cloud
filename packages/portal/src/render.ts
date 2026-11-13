@@ -59,6 +59,7 @@ import {
   firstClause,
   hidden,
   patchAddress,
+  pinItem,
   shareHref,
   turnedAwayTitle
 } from "./shared/presentation.js";
@@ -109,7 +110,11 @@ const headerMenu = (card: Patches.PortalCard, viewer: Viewer, url: string, title
   const manage = canManage(card);
   const everyday =
     live && card.access.canOpen
-      ? [menuNewTab(patchAddress(patch), title), menuCopy(url, "Copy link", title)]
+      ? [
+          pinItem(patch, viewer, viewer.page ?? cardPath(patch)),
+          menuNewTab(patchAddress(patch), title),
+          menuCopy(url, "Copy link", title)
+        ]
       : [];
   const takeDown = !manage
     ? []

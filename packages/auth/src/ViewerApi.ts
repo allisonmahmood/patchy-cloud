@@ -68,7 +68,7 @@ const readSetting = Effect.gen(function* () {
   const form = yield* readForm;
   const session = yield* Session.Session;
   const back = returnPath(form.return ?? null, session.publicBaseUrl) ?? "/";
-  return yield* RequireSession.withViewer(
+  return yield* RequireSession.withoutPins(
     setShortcuts(form, back),
     form.return === undefined ? undefined : back
   );

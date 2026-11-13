@@ -228,5 +228,14 @@ export const migrations: Migrations = {
     `CREATE TRIGGER patch_admin_additions_record
       AFTER INSERT ON company_team_changes
       FOR EACH ROW WHEN (NEW.added) EXECUTE FUNCTION patch_admin_additions_record()`
+  ),
+  // Personal shortcuts survive renames and go away when the patch is reclaimed.
+  "0042_patch_pins": ddl(
+    `CREATE TABLE patch_pins (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      patch_id TEXT NOT NULL REFERENCES patches(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ NOT NULL,
+      PRIMARY KEY (user_id, patch_id)
+    )`
   )
 };
