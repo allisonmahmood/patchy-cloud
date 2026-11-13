@@ -1,6 +1,6 @@
 import * as parse5 from "parse5";
 import { describe, expect, it } from "vitest";
-import { documentTitle, headStart } from "./html-policy.js";
+import { boundedTreeAdapter, documentTitle, headStart } from "./html-policy.js";
 
 /** A page's title is read under the parser's bounds: within them it reads, past one it is null. */
 const titled = (markup: string) => documentTitle(`<title>Bounded</title>${markup}`);
@@ -126,5 +126,25 @@ describe("headStart", () => {
     const attributes = Array.from({ length: 300 }, (_, index) => ` a${index}`).join("");
     expect(headStart(`\u{FEFF}<!doctype html><html${attributes}><head>`)).toBe(16);
     expect(headStart(`<html${attributes}><head>`)).toBe(0);
+  });
+});
+
+describe("boundedTreeAdapter", () => {
+  it("bounds error recovery that moves nodes from the front of a long sibling list", () => {
+    // No known input makes parse5 8.1 move nodes this way; before 8.1 a misnested </b> did.
+    const detachEvery = (order: "last first" | "front first") => () => {
+      const tree = boundedTreeAdapter();
+      const parent = tree.createDocumentFragment();
+      const children = Array.from({ length: 6000 }, () => {
+        const child = tree.createElement("br", parse5.html.NS.HTML, []);
+        tree.appendChild(parent, child);
+        return child;
+      });
+      if (order === "last first") children.reverse();
+      for (const child of children) tree.detachNode(child);
+    };
+
+    expect(detachEvery("last first")).not.toThrow();
+    expect(detachEvery("front first")).toThrow("HTML needs too much repair to check");
   });
 });
