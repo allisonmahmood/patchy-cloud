@@ -22,21 +22,55 @@ const callbackUrl = "http://127.0.0.1:1/callback";
 
 // What the engine itself gives a handler whose Node imports the loader's scan never saw
 // (`runtime.node` in the fixture). Pinned exactly, so an engine release that widens any of
-// them fails here: which built-ins load, the process stub's whole surface, its environment,
-// what its getBuiltinModule reaches, and which Node globals exist. Left loose, because the
-// guest reports only that they are there: platform's value, which follows the host;
-// features, which describes the Node build workerd imitates; and nextTick, which only
-// schedules a callback.
+// them fails here: which built-ins load, what the process stub's getBuiltinModule resolves or
+// throws for, the stub's whole surface, its environment, and which Node globals exist. Left
+// loose, because the guest reports only that they are there: platform's value, which follows
+// the host; features, which describes the Node build workerd imitates; and nextTick, which
+// only schedules a callback.
 const nodeRuntime = {
   modules: ["node:process"],
+  builtins: { resolved: ["process", "node:process"], threw: [] },
   process: {
     exports: ["default", "env", "exit", "features", "getBuiltinModule", "nextTick", "platform"],
     members: ["env", "exit", "features", "getBuiltinModule", "nextTick", "platform"],
     env: [],
-    PATH: "undefined",
-    builtins: ["process", "node:process"]
+    PATH: "undefined"
   },
   globals: []
+};
+
+// workerd's own modules the same hidden imports reach (`runtime.workerd`), pinned so a release
+// that adds one fails here. None is supported, and none reaches past the guest:
+// cloudflare:workers sees the guest's empty environment and only its own exports;
+// cloudflare:sockets meets the network refusal test/network.ts proves; the ai and br clients
+// only call a fetcher they are handed, and the global one is refused as `refusals` shows; the
+// rest are classes, constants and request adapters. cloudflare:email is registered, but the
+// internal module it needs isn't, so getBuiltinModule throws for it.
+const workerdModules = {
+  modules: [
+    "cloudflare:ai",
+    "cloudflare:br",
+    "cloudflare:node",
+    "cloudflare:pipelines",
+    "cloudflare:sockets",
+    "cloudflare:vectorize",
+    "cloudflare:workers",
+    "cloudflare:workflows"
+  ],
+  builtins: {
+    resolved: [
+      "cloudflare:ai",
+      "cloudflare:br",
+      "cloudflare:node",
+      "cloudflare:pipelines",
+      "cloudflare:sockets",
+      "cloudflare:vectorize",
+      "cloudflare:workers",
+      "cloudflare:workflows"
+    ],
+    threw: ["cloudflare:email"]
+  },
+  workers: { env: [], exports: ["default"] }
 };
 
 // One workerd and engine serve every handler case; the handlers are pure.
@@ -166,21 +200,32 @@ it.layer(bound, { excludeTestServices: true, timeout: 30_000 })("server runtime 
       })
   );
 
+  it.effect("past the loader's scan, workerd's own modules are exactly the known ones", () =>
+    Effect.gen(function* () {
+      const { run } = yield* RuntimePromise;
+      expect(yield* run("workerd")).toEqual(workerdModules);
+    })
+  );
+
   it.effect("the process stub's exit ends only its own call", () =>
     Effect.gen(function* () {
       const { invoke } = yield* RuntimePromise;
-      expect((yield* invoke("exit")).outcome).toBe("guest_failed");
+      // An ordinary throw returns "exit threw", so only exit itself ends the call this way.
+      expect(yield* invoke("exit")).toMatchObject({ outcome: "guest_failed" });
       expect((yield* invoke("node")).outcome).toBe("returned");
     })
   );
 });
 
 it.live(
-  "inspection gets the same answer from the engine to Node imports the scan misses",
+  "inspection gets the same answer from the engine to built-in imports the scan misses",
   () =>
     Effect.gen(function* () {
       const handlers = yield* Inspection.inspect(runtimePromiseBundle);
-      expect(JSON.parse(handlers["runtime.node"]?.description ?? "null")).toEqual(nodeRuntime);
+      const reported = (name: string): unknown =>
+        JSON.parse(handlers[`runtime.${name}`]?.description ?? "null");
+      expect(reported("node")).toEqual(nodeRuntime);
+      expect(reported("workerd")).toEqual(workerdModules);
     }),
   30_000
 );

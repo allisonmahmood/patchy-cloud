@@ -619,8 +619,10 @@ decimal-string number formatting), Web Crypto, `TextEncoder`, `TextDecoder`,
 Bundles are single closed modules. Outbound fetch and sockets, Node globals,
 `eval` and `new Function` are refused. Node's built-in modules are unavailable,
 apart from workerd's minimal `node:process` stub: it is present, its environment
-is empty, and it is not supported. Other workerd APIs are incidental, not a
-supported contract; the exact list and engine pin live in ADR-0012.
+is empty, and it is not supported. The engine's own `cloudflare:` modules load
+too; they are not supported, see no bindings and reach no network. Other workerd
+APIs are incidental, not a supported contract; the exact list and engine pin live
+in ADR-0012.
 
 ### When access ends
 
