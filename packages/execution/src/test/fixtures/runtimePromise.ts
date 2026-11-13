@@ -1,5 +1,95 @@
+// Every Node built-in across the Node versions CI runs. With the nodejs_compat flags the guest
+// turns off, workerd offers all but node:ffi, node:sea and node:test/reporters.
+const nodeBuiltins = [
+  ...[
+    "_http_agent",
+    "_http_client",
+    "_http_common",
+    "_http_incoming",
+    "_http_outgoing",
+    "_http_server",
+    "_stream_duplex",
+    "_stream_passthrough",
+    "_stream_readable",
+    "_stream_transform",
+    "_stream_wrap",
+    "_stream_writable",
+    "_tls_common",
+    "_tls_wrap",
+    "assert",
+    "assert/strict",
+    "async_hooks",
+    "buffer",
+    "child_process",
+    "cluster",
+    "console",
+    "constants",
+    "crypto",
+    "dgram",
+    "diagnostics_channel",
+    "dns",
+    "dns/promises",
+    "domain",
+    "events",
+    "fs",
+    "fs/promises",
+    "http",
+    "http2",
+    "https",
+    "inspector",
+    "inspector/promises",
+    "module",
+    "net",
+    "os",
+    "path",
+    "path/posix",
+    "path/win32",
+    "perf_hooks",
+    "process",
+    "punycode",
+    "querystring",
+    "readline",
+    "readline/promises",
+    "repl",
+    "stream",
+    "stream/consumers",
+    "stream/promises",
+    "stream/web",
+    "string_decoder",
+    "sys",
+    "timers",
+    "timers/promises",
+    "tls",
+    "trace_events",
+    "tty",
+    "url",
+    "util",
+    "util/types",
+    "v8",
+    "vm",
+    "wasi",
+    "worker_threads",
+    "zlib"
+  ].flatMap((name) => [name, `node:${name}`]),
+  // Prefix-only built-ins.
+  "node:ffi",
+  "node:sea",
+  "node:sqlite",
+  "node:test",
+  "node:test/reporters"
+];
+
 /** Runs inside the pinned engine, not Node's implementation of these globals. */
 export const runtimePromiseBundle = `
+const nodeBuiltins = ${JSON.stringify(nodeBuiltins)};
+const nodeGlobals = ["process", "Buffer", "global", "setImmediate", "clearImmediate"];
+// The loader's import scan misses an import behind an ambiguous division, as test/network.ts
+// shows, so what loads here is the engine's own answer rather than the scan's.
+const hiddenImport = (name) => {
+  const module = Promise.withResolvers();
+  const hidden = function(){} / import(name).then(module.resolve, module.reject) / 1;
+  return module.promise;
+};
 
 const handlers = {
   intl() {
@@ -55,14 +145,45 @@ const handlers = {
     let functionRefused = false;
     try { eval("1 + 1"); } catch { evalRefused = true; }
     try { new Function("return 2")(); } catch { functionRefused = true; }
-    return { fetches, evalRefused, functionRefused, process: typeof process, Buffer: typeof Buffer };
+    return { fetches, evalRefused, functionRefused };
+  },
+  async node() {
+    const modules = [];
+    for (const name of nodeBuiltins) {
+      try { await hiddenImport(name); modules.push(name); } catch {}
+    }
+    const stub = await hiddenImport("node:process");
+    const members = [];
+    for (let target = stub.default; target !== null && target !== Object.prototype; target = Object.getPrototypeOf(target))
+      members.push(...Reflect.ownKeys(target).map(String));
+    const reaches = (name) => { try { return stub.default.getBuiltinModule(name) !== undefined; } catch { return false; } };
+    return {
+      modules,
+      process: {
+        exports: Object.keys(stub).sort(),
+        members: members.sort(),
+        env: Reflect.ownKeys(stub.default.env).map(String),
+        // Every host sets PATH, so an environment that read the host's would answer it.
+        PATH: typeof stub.default.env.PATH,
+        builtins: nodeBuiltins.filter(reaches)
+      },
+      globals: nodeGlobals.filter((name) => typeof globalThis[name] !== "undefined")
+    };
+  },
+  async exit() {
+    (await hiddenImport("node:process")).default.exit(1);
+    return "exit returned";
   }
 };
 
 export default {
   async fetch(request) {
     const input = await request.json();
-    if (input.type === "describe") return Response.json({ ok: true, handlers: Object.fromEntries(Object.keys(handlers).map(name => ["runtime." + name, { kind: "query", args: {}, result: { kind: "json" } }])) });
+    // Inspection answers only with descriptors, so runtime.node's answer rides in its description.
+    if (input.type === "describe") {
+      const node = JSON.stringify(await handlers.node());
+      return Response.json({ ok: true, handlers: Object.fromEntries(Object.keys(handlers).map(name => ["runtime." + name, { kind: "query", args: {}, result: { kind: "json" }, ...(name === "node" ? { description: node } : {}) }])) });
+    }
     return Response.json({ ok: true, value: await handlers[input.handler.split(".")[1]]() });
   }
 };
