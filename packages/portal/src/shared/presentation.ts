@@ -8,6 +8,7 @@ import {
   menuCopy,
   menuLink,
   menuNewTab,
+  menuPost,
   patchTitle
 } from "@patchy/core";
 import type { ReportedAudience } from "@patchy/api";
@@ -154,6 +155,13 @@ export const openItems = (
   return [
     ...(live && row.access.canOpen
       ? [
+          menuPost(
+            `/patches/${encodeURIComponent(patch.id)}/${viewer.pins?.some((pin) => pin.id === patch.id) ? "unpin" : "pin"}`,
+            viewer.pins?.some((pin) => pin.id === patch.id) ? "Unpin patch" : "Pin patch",
+            hidden("user", viewer.user.id) + hidden("return", here),
+            false,
+            title
+          ),
           menuNewTab(patchAddress(patch), title),
           menuCopy(
             `${publicBaseUrl.replace(/\/+$/u, "")}${patchAddress(patch)}`,

@@ -39,6 +39,7 @@ import { ConnectionStore } from "@patchy/integrations";
 import { ConnectionStoreDev } from "@patchy/integrations/dev";
 import { GuestGrants, Patches, ConnectionVisibility } from "@patchy/patches";
 import { Tables } from "@patchy/primitives";
+import * as PinPages from "../PinPages.js";
 import * as PortalPages from "../PortalPages.js";
 import { InvocationLog, RuntimeLog, Wakes } from "@patchy/runtime";
 import { NodeCryptography } from "@patchy/core";
@@ -194,6 +195,7 @@ export const socket = HttpRouter.serve(routes, {
   disableListenLog: true
 }).pipe(
   Layer.provideMerge(NodeHttpServer.layerTest),
+  Layer.provide(PinPages.navigation),
   Layer.provideMerge(services),
   Layer.provideMerge(Layer.succeed(FetchHttpClient.RequestInit)({ redirect: "manual" })),
   Layer.provideMerge(NodeCryptography.layer)

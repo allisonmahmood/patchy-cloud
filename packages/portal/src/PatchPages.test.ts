@@ -114,7 +114,7 @@ it.layer(socket)("a patch's card on a socket", (it) => {
         );
         assert.strictEqual(
           menuItems(html, `patch-${patch.patchId}`),
-          `A useful office tool Open in a new tab Copy link${person === workspace.member ? "" : " Retire… Delete…"}`
+          `A useful office tool Pin patch Open in a new tab Copy link${person === workspace.member ? "" : " Retire… Delete…"}`
         );
         const settings = yield* request(`${cardPath(patch.name)}/settings`, person);
         if (person === workspace.member) {
@@ -2131,7 +2131,7 @@ it.layer(socket)("patch log on a socket", (it) => {
       assert.deepStrictEqual(tabLinks(html), ["Overview", "Log", "Versions 1", "Settings"]);
       assert.strictEqual(
         menuItems(html, `patch-${patch.patchId}`),
-        "logged-tool Open in a new tab Copy link Retire… Delete…"
+        "logged-tool Pin patch Open in a new tab Copy link Retire… Delete…"
       );
       assert.strictEqual(
         links(html).find((link) => link.text === "Share")?.href,

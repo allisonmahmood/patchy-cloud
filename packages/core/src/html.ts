@@ -1,4 +1,4 @@
-import { avatar, searchField } from "./components.js";
+import { avatar, menuPost, patchMark, rowMenu, searchField } from "./components.js";
 import { fontFaces, fontPreload } from "./fonts.js";
 import { appStyles } from "./styles/index.js";
 import { button, choiceGroup, field, linkButton, radio, textarea } from "./ui/controls.js";
@@ -42,6 +42,15 @@ export const switcherTag = (viewer: {
 }) =>
   `<script defer src="${SWITCHER_PATH}?v=${switcherDigest}" data-viewer="${escapeAttribute(viewer.userId)}" data-company="${escapeAttribute(viewer.companyId)}"${viewer.patchId === undefined ? "" : ` data-patch="${escapeAttribute(viewer.patchId)}"`}></script>`;
 
+/** One accessible personal shortcut; the hosting adapter supplies its current title and address. */
+export interface PinnedPatch {
+  readonly id: string;
+  readonly name: string;
+  readonly title: string;
+  readonly href: string;
+  readonly tier: number;
+}
+
 export interface AppShell {
   readonly viewer: {
     readonly user: { readonly id: string; readonly name: string; readonly email: string };
@@ -51,6 +60,7 @@ export interface AppShell {
     readonly whatsNewSeen: number;
     /** Whether patches' single-key shortcuts fire for them; the account menu switches it. */
     readonly singleKeyShortcuts: boolean;
+    readonly pins?: ReadonlyArray<PinnedPatch>;
     /** One line naming what their last form did, shown once at the top of the page it lands on. */
     readonly receipt?: string | undefined;
     /** This page's local path, when opening it again shows it: the account menu's forms come back here. */
@@ -225,6 +235,16 @@ function nav(section: AppShell["section"]): string {
     .join("");
 }
 
+/** Pins share the folding navigation; only the list scrolls when it grows past five rows. */
+function pinnedNavigation(viewer: AppShell["viewer"]): string {
+  if (!viewer.pins?.length) return "";
+  const items = viewer.pins.map((patch) => {
+    const fields = `<input type="hidden" name="user" value="${escapeAttribute(viewer.user.id)}"><input type="hidden" name="return" value="${escapeAttribute(viewer.page ?? "/")}">`;
+    return `<li class="app-pin"><a class="app-pin-link" href="${escapeAttribute(patch.href)}">${patchMark(patch.name, patch.tier)}<span>${escapeHtml(patch.title)}</span></a>${rowMenu(`pin-${patch.id}`, patch.title, [menuPost(`/patches/${encodeURIComponent(patch.id)}/unpin`, "Unpin patch", fields, false, patch.title)])}</li>`;
+  });
+  return `<section class="app-pins" aria-labelledby="pinned-heading"><h2 id="pinned-heading">Pinned</h2><ul class="app-pin-list" tabindex="0" aria-label="Pinned patches">${items.join("")}</ul></section>`;
+}
+
 /**
  * Every signed-in page's frame: a sidebar beside the page, holding the brand, the patch search,
  * New patch, the places and, at its foot, What's new, Tell Patchy and the account. Below 1024px it folds into
@@ -250,7 +270,7 @@ function appBody(app: AppShell, body: string): string {
     app.viewer.receipt === undefined
       ? ""
       : `<p class="note note-ok app-receipt" role="status">${escapeHtml(app.viewer.receipt)}</p>`;
-  return `<div class="app"${app.overlay === undefined ? "" : " inert"}><aside class="app-side"><div class="app-side-inner"><a class="brand" href="/"><span class="glyph" aria-hidden="true"></span><span class="brand-name">${escapeHtml(app.viewer.company.name)}</span></a>${search}${menuButton}<div class="app-menu" id="app-menu" popover>${newPatch}<nav class="app-nav" aria-label="Primary">${nav(app.section)}</nav>${foot}</div>${tellPatchy()}</div></aside><main class="app-page">${receipt}${body}</main></div>${app.overlay === undefined ? "" : `<div class="modal-scrim"></div>${app.overlay}`}`;
+  return `<div class="app"${app.overlay === undefined ? "" : " inert"}><aside class="app-side"><div class="app-side-inner"><a class="brand" href="/"><span class="glyph" aria-hidden="true"></span><span class="brand-name">${escapeHtml(app.viewer.company.name)}</span></a>${search}${menuButton}<div class="app-menu" id="app-menu" popover>${newPatch}<nav class="app-nav" aria-label="Primary">${nav(app.section)}</nav>${pinnedNavigation(app.viewer)}${foot}</div>${tellPatchy()}</div></aside><main class="app-page">${receipt}${body}</main></div>${app.overlay === undefined ? "" : `<div class="modal-scrim"></div>${app.overlay}`}`;
 }
 
 /**

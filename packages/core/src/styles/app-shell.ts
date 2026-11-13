@@ -38,6 +38,16 @@ export const appShell = `
     .app-subnav { display: grid; gap: 2px; margin: 0 0 var(--space-1) 17px; padding-left: 9px; border-left: 1px solid var(--border); }
     .app-subnav > .app-place { padding-left: 10px; }
 
+    .app-pins { min-height: 0; }
+    .app-pins > h2 { margin: 0 var(--space-2) var(--space-2); color: var(--muted); font: var(--text-meta); font-weight: var(--weight-strong); }
+    .app-pin-list { max-height: calc(5 * var(--h-control)); margin: 0; padding: 0; overflow-y: auto; overscroll-behavior: contain; list-style: none; scrollbar-width: thin; border: 1px solid var(--border); border-radius: var(--r-control); }
+    .app-pin { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; min-height: var(--h-control); }
+    .app-pin-link { display: flex; align-items: center; gap: var(--space-2); min-width: 0; min-height: var(--h-control); padding: var(--space-1) var(--space-2); color: var(--ink); font: var(--text-label); text-decoration: none; }
+    .app-pin-link > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .app-pin-link :is(.mono, .page-mark) { width: var(--space-5); height: var(--space-5); font: var(--text-badge); }
+    .app-pin > .btn { width: var(--h-sm); height: var(--h-sm); }
+    @media (hover: hover) { .app-pin:has(.app-pin-link:hover) { background: var(--hover); } }
+
     .app-foot { display: grid; gap: 2px; margin-top: auto; padding-top: 10px; border-top: 1px solid var(--border-subtle); }
     .app-place > .whats-new-dot { margin-left: auto; }
     /* While its panel is open, What's new takes a current place's look; the account, a hovered one's. */

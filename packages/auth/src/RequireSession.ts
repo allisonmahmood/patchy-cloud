@@ -1,10 +1,11 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import type { SqlError } from "effect/sql/SqlError";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { Users } from "@patchy/companies";
-import { copyLine, copyScriptPath, escapeHtml, linkButton } from "@patchy/core";
+import { type PinnedPatch, copyLine, copyScriptPath, escapeHtml, linkButton } from "@patchy/core";
 import * as Receipt from "./Receipt.js";
 import * as Session from "./Session.js";
 import * as TermsPrompt from "./TermsPrompt.js";
@@ -20,12 +21,18 @@ export class Viewer extends Context.Service<
     readonly whatsNewSeen: number;
     /** Their own choice whether patches' single-key shortcuts fire; a guest carries theirs. */
     readonly singleKeyShortcuts: boolean;
+    readonly pins?: ReadonlyArray<PinnedPatch>;
     /** What their last form did, shown once on this page; see `Receipt`. */
     readonly receipt?: string | undefined;
     /** This page's local path, for a GET: the account menu's forms come back to it. */
     readonly page?: string | undefined;
   }
 >()("@patchy/auth/RequireSession/Viewer") {}
+
+/** Hosting supplies patch navigation without making Auth depend on Patches. */
+export const Pins = Context.Reference<
+  (viewer: Viewer["Service"]) => Effect.Effect<ReadonlyArray<PinnedPatch>, SqlError>
+>("@patchy/auth/RequireSession/Pins", { defaultValue: () => () => Effect.succeed([]) });
 
 export class SignedIn extends Context.Service<
   SignedIn,
@@ -227,8 +234,10 @@ const viewerPage = <E, R>(
         userId: viewer.user.id,
         publicBaseUrl: session.publicBaseUrl
       });
+      const pins = yield* (yield* Pins)(viewer);
       const response = yield* Effect.provideService(app, Viewer, {
         ...viewer,
+        pins,
         receipt: receipt.text,
         page:
           request.method === "GET"

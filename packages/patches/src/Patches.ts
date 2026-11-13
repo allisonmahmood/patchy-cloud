@@ -1109,6 +1109,14 @@ export class Patches extends Context.Service<
      * rows: owners and admins see only the visit count.
      */
     readonly opens: (userId: string) => Effect.Effect<ReadonlyArray<Open>, SqlError>;
+    /** Personal pins in pin order, restricted to currently openable live company patches. */
+    readonly pins: (access: ReadAccess) => Effect.Effect<ReadonlyArray<ListedPatch>, SqlError>;
+    /** Idempotent: pin an openable patch, or remove only this person's own pin. */
+    readonly setPinned: (
+      access: ReadAccess,
+      patchId: string,
+      pinned: boolean
+    ) => Effect.Effect<void, SqlError | PatchUnavailable>;
     /**
      * The earliest live patch whose current version was published with one of these machine
      * tokens, by its id: the Final step panel's first publication, attributed to the publisher's
@@ -2052,6 +2060,47 @@ export const make = Effect.gen(function* () {
         )
     }));
   }, Effect.catchTags(dieOnSchemaError));
+
+  const pinIds = SqlSchema.findAll({
+    Request: Schema.String,
+    Result: Schema.Struct({ patchId: Schema.String }),
+    execute: (userId) => sql`SELECT patch_id AS "patchId" FROM patch_pins
+      WHERE user_id = ${userId} ORDER BY created_at, patch_id`
+  });
+  const pins = Effect.fn("Patches.pins")(
+    function* (access: ReadAccess) {
+      const ids = yield* pinIds(access.userId);
+      if (ids.length === 0) return [];
+      const available = new Map(
+        (yield* list({ ...access, state: "live" })).map((entry) => [entry.patch.id, entry])
+      );
+      return ids.flatMap(({ patchId }) => {
+        const entry = available.get(patchId);
+        return entry === undefined ? [] : [entry];
+      });
+    },
+    Effect.catchTags({ ...dieOnSchemaError, PatchUnavailable: Effect.die, WrongState: Effect.die })
+  );
+  const setPinned = Effect.fn("Patches.setPinned")(function* (
+    access: ReadAccess,
+    patchId: string,
+    pinned: boolean
+  ) {
+    if (!pinned) {
+      yield* sql`DELETE FROM patch_pins WHERE user_id = ${access.userId} AND patch_id = ${patchId}`;
+      return;
+    }
+    const found = yield* findForViewer(patchId, access);
+    if (
+      Option.isNone(found) ||
+      found.value.patch.companyId !== access.companyId ||
+      !access.canOpen(found.value.patch)
+    )
+      return yield* new PatchUnavailable({ patchId });
+    yield* sql`INSERT INTO patch_pins (user_id, patch_id, created_at)
+      VALUES (${access.userId}, ${patchId}, ${stamp(yield* Clock.currentTimeMillis)})
+      ON CONFLICT (user_id, patch_id) DO NOTHING`;
+  });
 
   const sharedTable = Effect.fn("Patches.sharedTable")(function* (
     patchId: string,
@@ -3432,6 +3481,8 @@ export const make = Effect.gen(function* () {
     admitsMember,
     findRetained,
     recordVisit,
+    pins,
+    setPinned,
     recordOpen,
     opens,
     publishedWith,

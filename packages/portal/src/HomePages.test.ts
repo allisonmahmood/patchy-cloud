@@ -784,7 +784,7 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
           const menu = menuItems(html, `${list}-${patch.patchId}`);
           assert.include(
             menu,
-            `Open in a new tab Copy link${shown ? " Share…" : ""} About this patch`,
+            `Pin patch Open in a new tab Copy link${shown ? " Share…" : ""} About this patch`,
             list
           );
           assert.strictEqual(menu.includes("Settings"), shown, list);
