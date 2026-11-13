@@ -60,6 +60,47 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 43,
+    date: "2026-11-13",
+    through: "1cbd39f8dc59842cbb773feb5ac368e0bacfd98f",
+    changes: [
+      {
+        kind: "New",
+        title: "Teams",
+        detail:
+          "Admins can now make teams in Settings › Teams and tick people in or out of each. Before anything is saved, Patchy shows who gains or loses what. Everyone can see every team and who's on it.",
+        prs: [1417]
+      },
+      {
+        kind: "New",
+        title: "Share a patch with just your team",
+        detail:
+          "A patch can now be open to one or more teams instead of the whole company. Only people on those teams can find or open it, and anyone taken off a team loses it straight away. Pick the teams in the Share dialog, or ask your agent to share it with a team.",
+        prs: [1417]
+      },
+      {
+        kind: "New",
+        title: "Choose who builds with a connection",
+        detail:
+          "Admins can limit a connection to some teams, so only people on them can build patches with it. Everyone a patch is shared with can still use it through that patch.",
+        prs: [1417]
+      },
+      {
+        kind: "Improved",
+        title: "Admins look after every patch without opening it",
+        detail:
+          "Admins can change any patch's owner and who can open it, without seeing what's inside. If an owner loses access to their own patch, it shows under Needs attention so an admin can hand it on. A patch's owner sees every change someone else made to who can open it.",
+        prs: [1417]
+      }
+    ],
+    behindTheScenes: [
+      "Agents and CLIs installed before today keep working, and are asked to update before they change who can open a team's patch."
+    ],
+    patchChanges: [
+      "A patch that reads another patch's shared tables or stores now fails those reads for some viewers once that source is open only to teams they aren't on: they get `access_denied` while everyone else keeps working, and publish and share warn about it. A connection limited to teams stops working for a patch once its owner is on none of them. Keep the shell's notice for `access_denied` instead of rendering an empty table. In `pnpm patchy dev`, the colleague is on none of your teams, so the failure shows locally."
+    ]
+  },
+  {
     id: 42,
     date: "2026-11-12",
     through: "1cd6d12404a67f7954bbe80583b22847431a6f70",
