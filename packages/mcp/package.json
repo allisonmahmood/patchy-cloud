@@ -40,6 +40,6 @@
     "@patchy/integrations": "workspace:*",
     "@patchy/primitives": "workspace:*",
     "esbuild": "0.28.2",
-    "vitest": "^5.0.5"
+    "vitest": "^5.1.0"
   }
 }
