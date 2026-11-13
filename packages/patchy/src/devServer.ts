@@ -6,6 +6,7 @@ import {
   RuntimeStreamGroup,
   ShortcutsRequest,
   ViewerGroup,
+  capBody,
   handlerKinds
 } from "@patchy/api";
 import type { ReleaseToolchain } from "@patchy/api";
@@ -19,7 +20,7 @@ import {
   StreamLimits
 } from "@patchy/runtime/dev";
 import { Cryptography, documentTitle } from "@patchy/core";
-import { Limits } from "@patchy/limits";
+import { ContractLimits, Limits } from "@patchy/limits";
 import {
   brokerScript,
   renderPatchWrapper,
@@ -74,6 +75,8 @@ const headers = {
 };
 const absent = HttpServerResponse.text("Not found", { status: 404, headers });
 const decodeAgentRequest = Schema.decodeUnknownEffect(AgentRequest);
+/** The shortcuts form, as Patchy reads it: the value and a page path to land back on. */
+const MAX_SHORTCUTS_BYTES = 4_096;
 // External trusted script, never inserted into the sandbox. A reload retains pathname/query/hash.
 const reloadScript = `(() => {
   const revision = new URL(document.currentScript.src).searchParams.get("v");
@@ -223,6 +226,8 @@ export const serve = Effect.fn("Dev.serve")(function* (
               const request = yield* HttpServerRequest.HttpServerRequest;
               if (request.headers["x-patchy-dev"] !== record.nonce) return absent;
               const body = yield* request.json.pipe(
+                // `patchy dev agent`'s call, read up to the cap Patchy MCP reads one at.
+                capBody(yield* ContractLimits.get("mcp.body.bytes")),
                 Effect.flatMap(decodeAgentRequest),
                 Effect.option
               );
@@ -317,6 +322,7 @@ export const serve = Effect.fn("Dev.serve")(function* (
             if (request.headers.origin !== origin)
               return HttpServerResponse.text("Request refused", { status: 403, headers });
             const form = yield* HttpServerRequest.schemaBodyUrlParams(ShortcutsRequest).pipe(
+              capBody(MAX_SHORTCUTS_BYTES),
               Effect.option
             );
             if (Option.isNone(form))

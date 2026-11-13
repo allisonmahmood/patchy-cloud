@@ -4,6 +4,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { Identity, RuntimeStreamFrame } from "@patchy/api";
 import { switcherRelay } from "@patchy/core";
+import { registry } from "@patchy/limits/registry";
 import {
   brokerScript,
   brokerSrc,
@@ -29,6 +30,7 @@ import type { Prepared } from "./devPreparation.js";
 import { RELEASE, MANIFEST_VERSION, WIRE_VERSION } from "./release.js";
 import toolchain from "./toolchain.json" with { type: "json" };
 import { NodeCryptography } from "@patchy/core";
+import { stalledUpload } from "../../../test/socket.js";
 
 const identity = new Identity({
   user: { id: "local-user", email: "local@example.test", name: "Local" },
@@ -213,6 +215,29 @@ it.live(
         );
       assert.strictEqual((yield* agentDoor(colleagueOrigin)).status, 200);
       assert.strictEqual((yield* agentDoor(guestOrigin)).status, 404);
+      // The agent door reads a call as Patchy MCP does, and the shortcuts form as Patchy does:
+      // one byte past either cap, streamed or declared, is refused without the rest, and closes.
+      const { host, port } = new URL(origin);
+      for (const [head, maxBytes, refusal] of [
+        [
+          `POST /~dev/agent HTTP/1.1\nhost: ${host}\nx-patchy-dev: ${record!.nonce}\ncontent-type: application/json`,
+          registry["mcp.body.bytes"].default,
+          "Bad request"
+        ],
+        [
+          `POST /api/me/shortcuts HTTP/1.1\nhost: ${host}\norigin: ${origin}\ncontent-type: application/x-www-form-urlencoded`,
+          4_096,
+          "Send value=on or value=off."
+        ]
+      ] as const) {
+        for (const body of [{ chunked: maxBytes + 1 }, { declared: maxBytes + 1 }]) {
+          const label = `${head.split("\n")[0]} ${JSON.stringify(body)}`;
+          const answer = yield* Effect.promise(() => stalledUpload(Number(port), head, body));
+          assert.strictEqual(answer.status, 400, label);
+          assert.strictEqual(answer.body, refusal, label);
+          assert.isDefined(answer.closedAfterMs, label);
+        }
+      }
       // Dev holds the page to its own patch as production does: the directory is a handler's.
       for (const [target, viewerId] of [
         [origin, identity.user.id],

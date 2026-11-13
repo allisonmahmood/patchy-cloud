@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import type { SqlError } from "effect/sql/SqlError";
 import { Analytics } from "@patchy/analytics";
+import { capBody } from "@patchy/api";
 import {
   button,
   doorPage,
@@ -36,6 +37,12 @@ const decodeForm = Schema.decodeUnknownEffect(
     })
   ])
 );
+
+/**
+ * The door's two forms: an invitation's id, or a company's name (200 characters, up to 12 bytes
+ * each once percent-encoded) and its handle.
+ */
+const MAX_FORM_BYTES = 4_096;
 
 /** The door, as `doorPage` draws it, or where to go instead. */
 export interface JoinPage {
@@ -275,7 +282,9 @@ export const handle = Effect.fn("Join.handle")(function* (
         ? undefined
         : { name: suggestedName, handle: suggestedHandle(suggestedName) }
     );
-  const fields = Object.fromEntries(new URLSearchParams(yield* request.text));
+  const fields = Object.fromEntries(
+    new URLSearchParams(yield* request.text.pipe(capBody(MAX_FORM_BYTES)))
+  );
   const entered = { name: (fields.name ?? "").trim(), handle: fields.handle ?? "" };
   const companies = yield* Companies.Companies;
   const analytics = yield* Analytics.Analytics;

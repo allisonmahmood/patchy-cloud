@@ -124,24 +124,39 @@ export const closeAfterAnswer = HttpEffect.appendPreResponseHandler((_request, r
 );
 
 /**
- * `read`, a read of the request body, capped at `maxBytes`. A body that crosses the cap fails the
- * read as the platform does, and closes the connection after the answer (`closeAfterAnswer`).
+ * `read`, a read of the request body, capped at `maxBytes`. A declared length over the cap fails
+ * before a byte is read, and a body that crosses it mid-stream fails the read; both fail as the
+ * platform does, so a page answers them as it answers any unreadable form. Either closes the
+ * connection after the answer (`closeAfterAnswer`), so a sender that stalls is never waited on.
  */
 export const capBody =
   (maxBytes: number) =>
   <A, E, R>(
     read: Effect.Effect<A, E, R>
-  ): Effect.Effect<A, E, R | HttpServerRequest.HttpServerRequest> =>
-    read.pipe(
-      Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(maxBytes)),
-      Effect.tapError((error): Effect.Effect<void, never, HttpServerRequest.HttpServerRequest> =>
-        HttpServerError.isHttpServerError(error) &&
-        error.reason._tag === "RequestParseError" &&
-        error.reason.reason === "BodyTooLarge"
-          ? closeAfterAnswer
-          : Effect.void
-      )
-    );
+  ): Effect.Effect<
+    A,
+    E | HttpServerError.HttpServerError,
+    R | HttpServerRequest.HttpServerRequest
+  > =>
+    Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      if (Number(request.headers["content-length"]) > maxBytes) {
+        yield* closeAfterAnswer;
+        return yield* new HttpServerError.HttpServerError({
+          reason: new HttpServerError.RequestParseError({ request, reason: "BodyTooLarge" })
+        });
+      }
+      return yield* read.pipe(
+        Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(maxBytes)),
+        Effect.tapError((error): Effect.Effect<void, never, HttpServerRequest.HttpServerRequest> =>
+          HttpServerError.isHttpServerError(error) &&
+          error.reason._tag === "RequestParseError" &&
+          error.reason.reason === "BodyTooLarge"
+            ? closeAfterAnswer
+            : Effect.void
+        )
+      );
+    });
 
 /**
  * The current request's body as JSON, capped at `maxBytes`. An absent or
