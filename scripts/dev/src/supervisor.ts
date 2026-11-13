@@ -38,18 +38,25 @@ import { loadScenario, seedScenario } from "./scenario.js";
 import { FAILED, layout, writeEnv, writePlan } from "./state.js";
 
 /**
- * embedded-postgres without the SIGINT and SIGTERM handlers it installs as it loads. Those stop
- * its clusters and force the process out within five seconds, which can cut this scope's own
- * teardown short, the server's SIGTERM-then-SIGKILL included. `NodeRuntime.runMain` turns both
- * signals into interruption instead, and the scope stops Postgres. Its exit and hangup hooks stay.
+ * embedded-postgres, and the SIGINT and SIGTERM handlers it installs as it loads, to take back
+ * once the cluster is up. Those handlers stop its clusters and force the process out within five
+ * seconds, which would cut this scope's own teardown short, the server's SIGTERM-then-SIGKILL
+ * included. Its exit and hangup hooks stay.
  */
 const loadEmbeddedPostgres = Effect.promise(async () => {
-  const listening = new Set([...process.listeners("SIGINT"), ...process.listeners("SIGTERM")]);
+  const signals = ["SIGINT", "SIGTERM"] as const;
+  const listening = new Set(signals.flatMap((signal) => process.listeners(signal)));
   const { default: EmbeddedPostgres } = await import("embedded-postgres");
-  for (const signal of ["SIGINT", "SIGTERM"] as const)
-    for (const listener of process.listeners(signal))
-      if (!listening.has(listener)) process.removeListener(signal, listener);
-  return EmbeddedPostgres;
+  const installed = signals.flatMap((signal) =>
+    process
+      .listeners(signal)
+      .filter((listener) => !listening.has(listener))
+      .map((listener) => ({ signal, listener }))
+  );
+  const releaseSignals = Effect.sync(() => {
+    for (const { signal, listener } of installed) process.removeListener(signal, listener);
+  });
+  return { EmbeddedPostgres, releaseSignals };
 });
 
 export class PostgresError extends Schema.TaggedError<PostgresError>()("PostgresError", {
@@ -139,7 +146,7 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
 
   // Postgres: initdb once per state dir, then a normal start/stop pair. The
   // durability flags are off because a dev database is disposable.
-  const EmbeddedPostgres = yield* loadEmbeddedPostgres;
+  const { EmbeddedPostgres, releaseSignals } = yield* loadEmbeddedPostgres;
   const postgres = new EmbeddedPostgres({
     databaseDir: files.postgresDir,
     port: plan.ports.postgres,
@@ -168,6 +175,11 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
         Effect.ignore
       )
   );
+  // Two owners for SIGINT and SIGTERM. While the cluster starts, acquisition can't be interrupted,
+  // so embedded-postgres's handlers stop it and exit, as they always have. From here on the
+  // cluster is this scope's: runMain turns both signals into interruption, which stops the server
+  // and then runs the release above.
+  yield* releaseSignals;
   yield* Effect.tryPromise({
     try: async () => {
       const client = postgres.getPgClient("postgres");
