@@ -23,8 +23,9 @@
     "plugins": [
       {
         "name": "@effect/language-service",
-        // A tsconfig's plugins replace the base's, so its correctness rules are
-        // restated here. Style rules that steer production code toward Effect
+        // The checker merges these severities over the base's, so a rule left out
+        // here keeps the base's setting. The correctness rules are restated to show
+        // what tests keep. Style rules that steer production code toward Effect
         // services are off: tests drive Node, clocks and browsers directly.
         "includeSuggestionsInTsc": false,
         "diagnosticSeverity": {
