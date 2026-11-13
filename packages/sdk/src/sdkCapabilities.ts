@@ -45,7 +45,7 @@ export const sdkCapabilities: readonly SdkCapability[] = [
     entrypoints: ["patchy/preact", "patchy/preact/jsx-runtime", "patchy/preact/jsx-dev-runtime"],
     runs: "Page",
     limits:
-      "Bundled Preact, hooks and signals share one instance. Transitions are synchronous and there is no concurrent scheduler. Chromium desktop is the supported browser."
+      "Bundled Preact, hooks and signals share one instance. Transitions are synchronous and there is no concurrent scheduler. Desktop Chromium-based browsers and Firefox are supported; Safari is untested and mobile is outside this release."
   },
   {
     id: "core.query-adapter",

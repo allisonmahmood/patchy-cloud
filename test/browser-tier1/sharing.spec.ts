@@ -21,8 +21,18 @@ test("an owner shares a page from its menu, and the guest opens it from Home and
   await expect(page).toHaveURL(`${instance.origin}/patches?share=${patch.name}`);
   await expect(dialog.getByRole("status")).toHaveText(`Shared ${title} with Jo Rivera`);
   await expect(dialog.getByText("guest@pine.example · Pine Studio")).toBeVisible();
-  await dialog.getByRole("link", { name: "Close", exact: true }).last().click();
+  // The invitation came back to the dialog's own address, which takes a new history entry in
+  // Chromium and replaces the dialog's in Firefox. Back and Close both reach the list either way.
+  const actions = page.getByRole("button", { name: `Actions for ${title}` });
+  await page.goBack({ waitUntil: "commit" });
+  await expect(page).toHaveURL(`${instance.origin}/patches`);
   await expect(page.getByRole("dialog")).toHaveCount(0);
+  await loadDialog(page, () => page.goForward());
+  await expect(dialog.getByText("guest@pine.example · Pine Studio")).toBeVisible();
+  await dialog.getByRole("link", { name: "Close", exact: true }).last().click();
+  await expect(page).toHaveURL(`${instance.origin}/patches`);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(actions).toBeFocused();
 
   // Someone new to Patchy meets the Final step first.
   await instance.session(context, "guest");

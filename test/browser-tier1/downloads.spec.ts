@@ -14,10 +14,8 @@ interface DownloadWindow extends Window {
 
 test("generated files wait for shell approval on both tiers, refuse 21 MiB and stay shell-local", async ({
   page,
-  instance,
-  browserName
+  instance
 }) => {
-  test.skip(browserName !== "chromium", "The SDK supports Chromium desktop.");
   // Only broker admission differs by tier and scope, so the full flow runs once and
   // the other configurations approve one small file.
   for (const [tier, scope, full] of [

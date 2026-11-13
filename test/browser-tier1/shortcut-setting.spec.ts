@@ -469,8 +469,6 @@ test("a public patch keeps its shortcuts for a viewer signed in with them off, a
 });
 
 test.describe("tier 2", () => {
-  test.skip(({ browserName }) => browserName !== "chromium", "Tier 2 targets Chromium desktop.");
-
   test("while the starting cover is up, a question gets the setting as it is", async ({
     page,
     instance

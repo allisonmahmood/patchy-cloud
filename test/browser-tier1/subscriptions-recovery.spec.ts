@@ -3,10 +3,6 @@ import type { FixtureWindow } from "./fixture-client.js";
 import { test, expect, open } from "./fixtures.js";
 
 test.use({ tls: true, ignoreHTTPSErrors: true });
-test.skip(
-  ({ browserName }) => browserName !== "chromium",
-  "Subscriptions target Chromium desktop."
-);
 
 test("cross-host writes recover after listener loss and publisher death between commit and NOTIFY", async ({
   page,

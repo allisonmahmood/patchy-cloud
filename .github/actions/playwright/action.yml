@@ -13,8 +13,7 @@ runs:
   using: composite
   steps:
     # Chromium's entry holds the whole browser folder, as it always has, and keeps its key and
-    # path, so its cache stays warm. Firefox's holds only Firefox: the job that adds it restores
-    # Chromium's entry first and this one on top.
+    # path, so its cache stays warm. Firefox's holds only Firefox, which is all its job runs.
     - name: Key the cache on the browser, runner image and Playwright version
       id: key
       shell: bash

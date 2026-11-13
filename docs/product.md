@@ -390,8 +390,9 @@ Tier 1 can be **public**, open to anyone with the link. A public tier 1 patch ca
 
 The [serving guarantees](../packages/serving/GLOSSARY.md) distinguish patch content from its first-party shell: a public shell starts only Patchy's broker and switcher relay, never analytics. A company shell also loads Clerk's headless client and Patchy's external session initializer; a public shell loads neither. Only the current version of a public patch is public; older versions stay behind the company door. A public patch's own signed-in members get the same public page with their switcher and the session's scripts on top, never stored, so the patch reads the same for them as for anyone. Caching is keyed to sharing: a minute at most for the current public page at its address and numbered version URL, never for a doored page or a public one that sets a cookie. Pages stay open to any agent that may open them, never bot-blocked; an agent reads a company page through its user's signed-in browser, not a machine token. The host knows who opened a company page in order to let them in, and remembers what each member opened so their own Home can put their usual patches first; nobody else, owner or admin, sees that record. Of opens, the one business event is each member's first open of a colleague's patch, by ids, to count [activation](#analytics); the request diagnostics every page already sends to Patchy's analytics, as `wide.request`, carry the viewer's and the patch's ids on every company-page open, repeats and owners included.
 
-The supported browser is Chromium desktop. Other browsers and mobile are outside
-this release's supported runtime.
+Desktop Chromium-based browsers and Firefox are the supported browsers: CI runs
+the tier 1 browser suite in each. Safari is untested, and mobile is outside this
+release's supported runtime.
 
 ### Tier 1 — browser
 

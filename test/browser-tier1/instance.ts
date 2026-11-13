@@ -62,7 +62,8 @@ export interface Instance {
   wire: number;
   html: string;
   platform: Client;
-  runtimeRequests: Array<{ method: string; path: string; body: string }>;
+  /** Each `/api/runtime/` request as the ingress took it; `httpVersion` is "2.0" over HTTP/2. */
+  runtimeRequests: Array<{ method: string; path: string; body: string; httpVersion: string }>;
   foreignRequests: string[];
   session(
     context: BrowserContext,
@@ -493,7 +494,8 @@ export async function startInstance(options: {
           runtimeRequests.push({
             method: request.method ?? "GET",
             path: request.url,
-            body: body.toString()
+            body: body.toString(),
+            httpVersion: request.httpVersion
           });
         if (!backendReady) {
           response.writeHead(502).end();

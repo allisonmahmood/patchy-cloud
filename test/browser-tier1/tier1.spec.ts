@@ -850,11 +850,15 @@ test("cross-site simple POST refusal, response CSP and one terminal stale public
     [`${instance.foreignOrigin}/embed`, unicode.address],
     [`${instance.foreignOrigin}/embed`, unicodeContent]
   ] as const) {
+    // A page of its own for each: once a page's frame was refused, Playwright's Firefox never
+    // reports that page's next navigation to the same origin.
+    const embedder = await context.newPage();
     // A CSP-denied frame may expose only a failed navigation, not a response event.
-    const framed = page.waitForEvent("requestfailed", (request) => request.url() === target);
-    await page.goto(`${parent}?target=${encodeURIComponent(target)}`);
+    const framed = embedder.waitForEvent("requestfailed", (request) => request.url() === target);
+    await embedder.goto(`${parent}?target=${encodeURIComponent(target)}`);
     await framed;
-    expect(page.frames().map((child) => child.url())).not.toContain(target);
+    expect(embedder.frames().map((child) => child.url())).not.toContain(target);
+    await embedder.close();
   }
   await instance.session(context, "none");
   const denied = await context.request.get(instance.origin + content!);

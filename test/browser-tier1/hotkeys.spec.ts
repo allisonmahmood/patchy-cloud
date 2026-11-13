@@ -9,7 +9,11 @@ import type { Instance } from "./instance.js";
 // the published frame, in fields, controls, a scope, an input method's composition, other layouts
 // and on a Mac, a held key across a remount, a re-render's new run, the conflict warning waiting
 // until every hook's update has landed, and the sheet behaving as a dialog.
-test.skip(({ browserName }) => browserName !== "chromium", "The SDK targets Chromium desktop.");
+// Pressing a key as another layout reports it, composing with an input method, dragging a touch
+// and reading the accessibility tree all go through Chromium's DevTools protocol. Playwright has
+// no such door into Firefox, so those steps run in Chromium alone.
+const needsCdp = (browserName: string) =>
+  [browserName !== "chromium", "Needs Chromium's DevTools protocol."] as const;
 const packageRoot = fileURLToPath(new URL("../../packages/patchy", import.meta.url));
 const source = `import { render, useEffect, useState } from "patchy/preact";
 import { createClient } from "patchy/client";
@@ -426,7 +430,8 @@ const firedNext = async (frame: Frame, expected: string[]) => {
 test("patchy/hotkeys fires in the published frame across fields, scopes, layouts and a Mac", async ({
   page,
   context,
-  instance
+  instance,
+  browserName
 }) => {
   const patch = await publish(instance, source);
   expect((await page.goto(patch.address))?.status()).toBe(200);
@@ -498,7 +503,8 @@ test("patchy/hotkeys fires in the published frame across fields, scopes, layouts
     await firedNext(frame, ["L"]);
   });
 
-  await test.step("other layouts: ? on AZERTY, J on Russian, AZERTY's Mod+= isn't Mod+/, shifted / is", async () => {
+  await test.step("other layouts: ? on AZERTY, J on Russian, AZERTY's Mod+= isn't Mod+/, shifted / is", async (step) => {
+    step.skip(...needsCdp(browserName));
     // Trusted key events carrying the key and code each layout reports.
     const cdp = await context.newCDPSession(page);
     const press = async (key: string, code: string, keyCode: number, modifiers: number) => {
@@ -531,7 +537,8 @@ test("patchy/hotkeys fires in the published frame across fields, scopes, layouts
     await firedNext(frame, ["+", "+", "+", "Mod++"]);
   });
 
-  await test.step("no hotkey fires on a key an input method is composing, and the page gets the key untouched", async () => {
+  await test.step("no hotkey fires on a key an input method is composing, and the page gets the key untouched", async (step) => {
+    step.skip(...needsCdp(browserName));
     const cdp = await context.newCDPSession(page);
     const press = async (key: string, keyCode: number, modifiers: number) => {
       const event = { key, code: key, windowsVirtualKeyCode: keyCode, modifiers };
@@ -820,8 +827,10 @@ test.describe("on a touch screen", () => {
   test("a tap on the sheet's scrim closes it, and a touch from the scrim into its card doesn't", async ({
     page,
     context,
-    instance
+    instance,
+    browserName
   }) => {
+    test.skip(...needsCdp(browserName));
     const patch = await publish(instance, sheet);
     expect((await page.goto(patch.address))?.status()).toBe(200);
     const frame = contentFrame(page);
@@ -915,7 +924,8 @@ test("a page's element rules don't reach the sheet, which takes the page's font 
         "padding-left"
       ])
     ).toEqual({
-      "font-size": "12.16px",
+      // 0.76em of 16px, which Firefox rounds to 12.1563px.
+      "font-size": expect.stringMatching(/^12\.1[56]\d*px$/),
       color: "rgb(1, 2, 3)",
       opacity: "1",
       "font-family": "Georgia, serif",
@@ -1025,7 +1035,8 @@ test("a page's element rules don't reach the sheet, which takes the page's font 
 test("local hotkeys: the narrowest place wins, fields keep their keys, handled keys stand down, and the sheet runs a dialog's commands", async ({
   page,
   context,
-  instance
+  instance,
+  browserName
 }) => {
   const patch = await publish(instance, local);
   expect((await page.goto(patch.address))?.status()).toBe(200);
@@ -1073,12 +1084,17 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
             .join("");
     return nodes.filter((node) => !node.ignored && node.role?.value === "status").map(text);
   };
+  // Only Chromium's protocol reads the tree; the rest of each step runs in every browser.
+  const statusesAre = async (expected: string[]) => {
+    if (browserName === "chromium") await expect.poll(statuses).toEqual(expected);
+  };
   // Trusted key events carrying the key and code each layout reports.
-  const cdp = await context.newCDPSession(page);
   const press = async (key: string, code: string, keyCode: number, modifiers: number) => {
+    const cdp = await context.newCDPSession(page);
     const event = { key, code, windowsVirtualKeyCode: keyCode, modifiers };
     await cdp.send("Input.dispatchKeyEvent", { ...event, type: "rawKeyDown" });
     await cdp.send("Input.dispatchKeyEvent", { ...event, type: "keyUp" });
+    await cdp.detach();
   };
 
   await test.step("an editor inside a list inside the page: each place's Enter and Escape fire only there", async () => {
@@ -1191,6 +1207,9 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
     await mac.keyboard.press("Meta+a");
     await firedNext(contentFrame(mac), ["page Mod+A"]);
     await mac.close();
+    // Back on the first tab, a press in the patch, as a person makes: Playwright's Firefox
+    // doesn't give that tab's frame its focus back when the other tab closes.
+    await view.locator("#body").click();
   });
 
   await test.step("a key a widget already handled neither fires a hotkey nor steps a sequence", async () => {
@@ -1211,7 +1230,8 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
     await firedNext(frame, ["page G", "page Escape"]);
   });
 
-  await test.step("Mod+/ opens the sheet from a field on German and French layouts; AZERTY's = isn't Mod+/", async () => {
+  await test.step("Mod+/ opens the sheet from a field on German and French layouts; AZERTY's = isn't Mod+/", async (step) => {
+    step.skip(...needsCdp(browserName));
     await view.locator("#field").focus();
     // German types / with Shift+7, French with Shift on the key in the US . position.
     for (const [code, keyCode] of [
@@ -1421,7 +1441,7 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
     await expect(field).toBeFocused();
     await firedNext(frame, ["native S"]);
     // A modal dialog makes the rest of the page inert, which only the browser's own tree shows.
-    await expect.poll(statuses).toEqual(["Star"]);
+    await statusesAre(["Star"]);
   });
 
   await test.step("a command that opens another modal, or closes its own and leaves it mounted, is still announced", async () => {
@@ -1430,7 +1450,7 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
     await expect(sheet).toBeVisible();
     await page.keyboard.press("o");
     await expect(view.locator("#confirm-field")).toBeFocused();
-    await expect.poll(statuses).toEqual(["Open another"]);
+    await statusesAre(["Open another"]);
     await page.keyboard.press("Escape");
     await expect(field).toBeFocused();
     await page.keyboard.press("Control+/");
@@ -1438,7 +1458,7 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
     await page.keyboard.press("h");
     await expect(view.locator("#native")).toBeHidden();
     await expect(view.locator("#native")).toHaveCount(1);
-    await expect.poll(statuses).toEqual(["Hide"]);
+    await statusesAre(["Hide"]);
     await page.keyboard.press("q");
     await expect(view.locator("#native")).toHaveCount(0);
     await firedNext(frame, []);

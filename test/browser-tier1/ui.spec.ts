@@ -76,6 +76,33 @@ test("a refused submission draws the dialog again, and closing it skips the subm
   await expect(page).toHaveURL(/\/~ui$/);
 });
 
+test("in a history at its longest, closing a dialog drawn again still reaches its opener", async ({
+  page,
+  instance
+}) => {
+  await page.goto(`${instance.origin}/~ui/index?page=2`);
+  // A browser keeps 50 entries: past that a new one drops the oldest, and the count stays.
+  await page.evaluate(() => {
+    for (let entry = 0; entry < 60; entry++) history.pushState(null, "");
+  });
+  const length = await page.evaluate(() => history.length);
+  const opener = page.getByRole("main").getByRole("link", { name: "New patch" });
+  await loadDialog(page, () => opener.click());
+  const dialog = page.getByRole("dialog", { name: "Invite people" });
+  for (let refusal = 0; refusal < 2; refusal++) {
+    await loadDialog(page, () => page.getByRole("button", { name: "Send invites" }).click());
+    await expect(dialog.getByRole("textbox", { name: "Emails" })).toHaveAttribute(
+      "aria-invalid",
+      "true"
+    );
+  }
+  expect(await page.evaluate(() => history.length)).toBe(length);
+  await page.keyboard.press("Escape");
+  await expect(page).toHaveURL(/\/~ui\/index\?page=2$/);
+  await expect(dialog).toHaveCount(0);
+  await expect(opener).toBeFocused();
+});
+
 test("Back from a refused submission closes the dialog to the page that opened it", async ({
   page,
   instance

@@ -5,7 +5,6 @@ import { test, expect } from "./fixtures.js";
 
 // packages/patchy/src/csv.test.ts owns the codec's cases. These prove the page and the
 // published workerd handler bundle the same codec and carry its results and errors.
-test.skip(({ browserName }) => browserName !== "chromium", "The SDK targets Chromium desktop.");
 const packageRoot = fileURLToPath(new URL("../../packages/patchy", import.meta.url));
 const probe = `import { CsvError, parse, stringify } from "patchy/csv";
 function run(input) {
