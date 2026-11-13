@@ -4,6 +4,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
@@ -27,6 +28,19 @@ const alive = (pid: number) => {
   } catch {
     return false;
   }
+};
+
+/** SIGKILLs whichever of `pids` still run, and waits until none does. */
+const killAndWait = (pids: ReadonlyArray<number>) => {
+  const owned = pids.filter((pid) => pid > 0);
+  return Effect.sync(() => {
+    for (const pid of owned) if (alive(pid)) process.kill(pid, "SIGKILL");
+    return owned.some(alive);
+  }).pipe(
+    Effect.flatMap((running) => (running ? Effect.fail("still running") : Effect.void)),
+    Effect.retry({ schedule: Schedule.spaced("50 millis"), times: 100 }),
+    Effect.ignore
+  );
 };
 
 /** Starts a cluster in its second argument, prints the postmaster's pid, then exits 5 with it running. */
@@ -64,34 +78,36 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("embedded Postgres s
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
         const databaseDir = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-pg-exit-" });
-        const { code, stdout, stderr } = yield* Effect.callback<{
-          readonly code: number | null;
-          readonly stdout: string;
-          readonly stderr: string;
-        }>((resume) => {
-          const child = spawn(
-            process.execPath,
-            nodeArgs(exitWithClusterRunning, embeddedPostgres, databaseDir),
-            { stdio: ["ignore", "pipe", "pipe"] }
-          );
-          let stdout = "";
-          let stderr = "";
-          child.stdout.on("data", (chunk) => (stdout += chunk));
-          child.stderr.on("data", (chunk) => (stderr += chunk));
-          child.on("close", (code) => resume(Effect.succeed({ code, stdout, stderr })));
+        const probe = spawn(
+          process.execPath,
+          nodeArgs(exitWithClusterRunning, embeddedPostgres, databaseDir),
+          { stdio: ["ignore", "pipe", "pipe"] }
+        );
+        const output = { stdout: "", stderr: "" };
+        probe.stdout.on("data", (chunk) => (output.stdout += chunk));
+        probe.stderr.on("data", (chunk) => (output.stderr += chunk));
+        const closed = new Promise<number | null>((resolve, reject) => {
+          probe.once("error", reject);
+          probe.once("close", resolve);
         });
-        const postmaster = Number(stdout.trim());
-        assert.isAbove(postmaster, 0, stderr);
-        // Whatever the hook did, nothing outlives the test.
+        // Registered before anything waits and after the directory, so a run that fails or times
+        // out still stops the probe and its cluster, and the directory goes only after both. It
+        // runs after the assertions, so it can never be what stopped Postgres.
         yield* Effect.addFinalizer(() =>
-          Effect.sync(() => {
-            if (alive(postmaster)) process.kill(postmaster, "SIGKILL");
-          })
+          fs.readFileString(path.join(databaseDir, "postmaster.pid")).pipe(
+            Effect.map((pidFile) => Number(pidFile.split("\n")[0])),
+            Effect.orElseSucceed(() => 0),
+            Effect.flatMap((cluster) => killAndWait([probe.pid ?? 0, cluster]))
+          )
         );
 
+        const code = yield* Effect.promise(() => closed);
+        const postmaster = Number(output.stdout.trim());
+        assert.isAbove(postmaster, 0, output.stderr);
         assert.strictEqual(code, 5);
-        assert.strictEqual(stderr, "");
+        assert.strictEqual(output.stderr, "");
         // Nothing here signals Postgres: only the hook in the exited process can have stopped it.
         yield* Effect.sync(() => alive(postmaster)).pipe(
           Effect.flatMap((running) => (running ? Effect.fail("still running") : Effect.void)),
