@@ -182,16 +182,24 @@ interface View {
 }
 
 const inviteBatch = registry["invites.batch"].default;
+/** The longest address, in UTF-16 units. */
+const MAX_ADDRESS_LENGTH = 254;
 /**
- * Invite people: `inviteBatch` addresses of up to 254 characters, three bytes each once
- * percent-encoded, with room for a longer paste to be refused by its count.
+ * Invite people's form, sized from what `isEmail` accepts. A UTF-16 unit takes at most 9 bytes
+ * once percent-encoded: a three-byte UTF-8 character, each byte `%XX` (a four-byte one is two
+ * units, 6 bytes each). A separator takes at most 9: a comma or semicolon and a CRLF. The cap
+ * reads twice a full batch of the longest addresses, so a longer paste is refused by its count,
+ * and 4 KiB more for the role and the list's filter (200 units of `q`): 233,596 bytes.
  */
-const MAX_INVITE_BYTES = 65_536;
+const MAX_INVITE_BYTES = 2 * inviteBatch * (MAX_ADDRESS_LENGTH * 9 + 9) + 4_096;
 /** Every other form here: a hidden field or two. */
 const MAX_FORM_BYTES = 1_024;
 const lifetimeDays = Companies.INVITATION_LIFETIME_MS / 86_400_000;
 const isEmail = Schema.is(
-  Schema.String.check(Schema.isMaxLength(254), Schema.isPattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/))
+  Schema.String.check(
+    Schema.isMaxLength(MAX_ADDRESS_LENGTH),
+    Schema.isPattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)
+  )
 );
 const decodeRole = Schema.decodeUnknownEffect(Schema.Struct({ role: Users.Role }));
 const decodeAgentAccess = Schema.decodeUnknownEffect(

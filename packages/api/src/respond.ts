@@ -123,6 +123,12 @@ export const closeAfterAnswer = HttpEffect.appendPreResponseHandler((_request, r
   Effect.succeed(HttpServerResponse.setHeader(response, "connection", "close"))
 );
 
+/** Whether `error` is a read that `capBody` (or the platform's own cap) refused for its size. */
+export const isBodyTooLarge = (error: unknown): error is HttpServerError.HttpServerError =>
+  HttpServerError.isHttpServerError(error) &&
+  error.reason._tag === "RequestParseError" &&
+  error.reason.reason === "BodyTooLarge";
+
 /**
  * `read`, a read of the request body, capped at `maxBytes`. A declared length over the cap fails
  * before a byte is read, and a body that crosses it mid-stream fails the read; both fail as the
@@ -149,11 +155,7 @@ export const capBody =
       return yield* read.pipe(
         Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(maxBytes)),
         Effect.tapError((error): Effect.Effect<void, never, HttpServerRequest.HttpServerRequest> =>
-          HttpServerError.isHttpServerError(error) &&
-          error.reason._tag === "RequestParseError" &&
-          error.reason.reason === "BodyTooLarge"
-            ? closeAfterAnswer
-            : Effect.void
+          isBodyTooLarge(error) ? closeAfterAnswer : Effect.void
         )
       );
     });

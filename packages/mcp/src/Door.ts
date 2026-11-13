@@ -33,7 +33,13 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as WideEvents from "@patchy/analytics/wide-events";
-import { CURRENT_RELEASE, fitRefusal, toolRefusal, type ToolCallResult } from "@patchy/api";
+import {
+  CURRENT_RELEASE,
+  bodyTooLarge,
+  fitRefusal,
+  toolRefusal,
+  type ToolCallResult
+} from "@patchy/api";
 import { type AgentConnections, Authorization, Bearer, OAuthMetadata, Session } from "@patchy/auth";
 import { Companies, Users } from "@patchy/companies";
 import { DeploymentConfig, Limits, OperatingLimits, TokenBucket } from "@patchy/limits";
@@ -415,8 +421,8 @@ export const layer: Layer.Layer<
       if (read === "too_large")
         return yield* refuse(
           413,
-          "too_large",
-          `A request body is at most ${MAX_BODY_BYTES} bytes: the ${registry["tier2.args.bytes"].default}-byte argument cap and its envelope.`,
+          bodyTooLarge.code,
+          bodyTooLarge.message,
           // Whatever the client still sends is never read.
           { connection: "close" }
         );

@@ -9,6 +9,7 @@ import {
   agentToolEntries,
   agentToolKind,
   agentTools,
+  bodyTooLarge,
   callAnswer,
   changeAnswer,
   handlerArgsSchema,
@@ -17,6 +18,7 @@ import {
   readAnswer,
   runtimeRefusal,
   toolAnswer,
+  toolRefusal,
   unknownToolRefusal,
   type RuntimeMe,
   type ToolCallResult
@@ -53,13 +55,34 @@ export interface Mount {
 
 const noAgentTools = (error: string): AgentReply => ({ ok: false, code: "no_agent_tools", error });
 
+/** A mount's answer, naming the build that gave it. */
+const replied = (
+  binding: ReturnType<Dev["binding"]>,
+  mount: Mount,
+  answer: ToolCallResult
+): AgentReply => ({
+  ok: true,
+  person: mount.person.user.name,
+  build: binding.build,
+  rebuildFailed: binding.rebuildFailed,
+  answer
+});
+
+/**
+ * A request whose body was over Patchy MCP's cap, answered as the door answers one, unread: its
+ * arguments were over the argument cap, so nothing ran.
+ */
+export const tooLarge = (dev: Dev, mount: Mount): AgentReply =>
+  replied(dev.binding(), mount, toolRefusal(bodyTooLarge));
+
 /** Answers one `patchy dev agent` request for a mount. Runtime's refusals become the door's. */
 export const answer = Effect.fn("DevAgent.answer")(function* (
   dev: Dev,
   mount: Mount,
   request: AgentRequest
 ): Effect.fn.Return<AgentReply, never, WideEvents.WideEvents | Cryptography.Cryptography> {
-  const { version, build, rebuildFailed } = dev.binding();
+  const binding = dev.binding();
+  const { version, build } = binding;
   const invocation = yield* Effect.serviceOption(Invocation.Invocation);
   // Only tier 2 runs server code, so only tier 2 has an invocation to call through.
   if (Option.isNone(invocation))
@@ -71,13 +94,7 @@ export const answer = Effect.fn("DevAgent.answer")(function* (
     return noAgentTools(
       "This patch has no agent tools. Every export of a file in agent/ is one; the dev build picks new files up."
     );
-  const answered = (answer: ToolCallResult): AgentReply => ({
-    ok: true,
-    person: mount.person.user.name,
-    build,
-    rebuildFailed,
-    answer
-  });
+  const answered = (answer: ToolCallResult) => replied(binding, mount, answer);
   if (request.call === undefined)
     return answered(toolAnswer(openPatchAnswer({ ...dev.patch, address: mount.address }, tools)));
   const { tool, args } = request.call;
