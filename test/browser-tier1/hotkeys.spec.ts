@@ -7,8 +7,9 @@ import type { Instance } from "./instance.js";
 // packages/patchy/src/hotkeys.test.ts and hotkeyRules.test.ts own the types and the warnings'
 // words. These pages prove what only a browser shows: real key events reaching patchy/hotkeys in
 // the published frame, in fields, controls, a scope, an input method's composition, other layouts
-// and on a Mac, a held key across a remount, a re-render's new run, the conflict warning waiting
-// until every hook's update has landed, and the sheet behaving as a dialog.
+// and on a Mac, a held key across a remount, a re-render's new run, a native modal dialog's own
+// Escape, the conflict warning waiting until every hook's update has landed, and the sheet
+// behaving as a dialog.
 // Pressing a key as another layout reports it, composing with an input method, dragging a touch
 // and reading the accessibility tree all go through Chromium's DevTools protocol. Playwright has
 // no such door into Firefox, so those steps run in Chromium alone.
@@ -142,6 +143,33 @@ function App() {
     <Record key={record} id={record} approve={() => setRecord(record + 1)} />
     <Counter />
   </main>;
+}
+render(<App />, document.getElementById("app")!);
+`;
+
+// A native modal dialog in a scope that closes from its own Escape hotkey's run, which the hotkeys
+// skill offers beside closing from onCancel. O opens it from the page.
+const nativeEscape = `import { render, useLayoutEffect, useRef, useState } from "patchy/preact";
+import { HotkeyScope, useHotkey } from "patchy/hotkeys";
+
+const fired: string[] = [];
+Object.assign(window, { fired });
+
+function Edit(props: { close: () => void }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useLayoutEffect(() => {
+    const element = dialog.current!;
+    element.showModal();
+    return () => element.close();
+  }, []);
+  useHotkey("Escape", () => { fired.push("dialog Escape"); props.close(); });
+  return <dialog id="edit" ref={dialog} aria-label="Edit"><button type="button">Save</button></dialog>;
+}
+
+function App() {
+  const [editing, setEditing] = useState(false);
+  useHotkey("O", () => { fired.push("page O"); setEditing(true); });
+  return <main>{editing && <HotkeyScope><Edit close={() => setEditing(false)} /></HotkeyScope>}</main>;
 }
 render(<App />, document.getElementById("app")!);
 `;
@@ -646,6 +674,24 @@ test("a component's hotkeys are live from the commit that mounts it to the one t
     }
     await firedNext(frame, ["count 0", "count 1", "count 2"]);
   });
+});
+
+test("a native modal dialog's own Escape hotkey takes the key, so its run closes it and the scope goes", async ({
+  page,
+  instance
+}) => {
+  const patch = await publish(instance, nativeEscape);
+  expect((await page.goto(patch.address))?.status()).toBe(200);
+  const frame = contentFrame(page);
+  const edit = page.frameLocator("#patch").locator("#edit");
+  await page.keyboard.press("o");
+  await expect(edit).toBeVisible();
+  await page.keyboard.press("Escape");
+  // Left to the browser, Escape would close the dialog but leave it mounted, holding the page.
+  await expect(edit).toHaveCount(0);
+  await page.keyboard.press("o");
+  await expect(edit).toBeVisible();
+  await firedNext(frame, ["page O", "dialog Escape", "page O"]);
 });
 
 test("a conflict warning waits for every hook's update, so siblings swapping keys don't warn", async ({

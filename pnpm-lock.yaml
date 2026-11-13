@@ -19,7 +19,7 @@ overrides:
   '@effect/tsgo': 0.62.0
 
 patchedDependencies:
-  '@tanstack/hotkeys@0.19.0': bcb3b09693350b2aa37d3aa60001ef9a9a22ab740f3a81c638195b0ca7fe0e1d
+  '@tanstack/hotkeys@0.27.1': 8c7afdc2812d563cc2dc8586a53b7c8114c0294564f208dc1ab496085abdae5c
   async-exit-hook@2.0.1: 0e924a268bde91ae6eab699901a3c4fdd0365ca42542db16dc86d41cb0cf9712
 
 importers:
@@ -377,8 +377,8 @@ importers:
         version: 6.0.0
     devDependencies:
       '@tanstack/hotkeys':
-        specifier: 0.19.0
-        version: 0.19.0(patch_hash=bcb3b09693350b2aa37d3aa60001ef9a9a22ab740f3a81c638195b0ca7fe0e1d)
+        specifier: 0.27.1
+        version: 0.27.1(patch_hash=8c7afdc2812d563cc2dc8586a53b7c8114c0294564f208dc1ab496085abdae5c)
       '@types/css-tree':
         specifier: ^3.2.0
         version: 3.2.0
@@ -708,11 +708,11 @@ importers:
         specifier: workspace:*
         version: link:../serving
       '@tanstack/hotkeys':
-        specifier: 0.19.0
-        version: 0.19.0(patch_hash=bcb3b09693350b2aa37d3aa60001ef9a9a22ab740f3a81c638195b0ca7fe0e1d)
+        specifier: 0.27.1
+        version: 0.27.1(patch_hash=8c7afdc2812d563cc2dc8586a53b7c8114c0294564f208dc1ab496085abdae5c)
       '@tanstack/preact-hotkeys':
-        specifier: 0.17.1
-        version: 0.17.1(preact@11.1.0)
+        specifier: 0.21.1
+        version: 0.21.1(preact@11.1.0)
       '@types/css-tree':
         specifier: ^3.2.0
         version: 3.2.0
@@ -2086,26 +2086,18 @@ packages:
   '@stablelib/base64@1.0.1':
     resolution: {integrity: sha512-1bnPQqSxSuc3Ii6MhBysoWCg58j97aUjuCSZrGSmDxNqtytIi0k8utUenAwTZN4V5mXXYGsVUI9zeBqy+jBOSQ==}
 
-  '@tanstack/hotkeys@0.19.0':
-    resolution: {integrity: sha512-w/YnW06vfyhomWwEpa3+sJWix3Xz1E+3AFXXPmZxg8wbeafq6F+0klVawLdzg994IetgfDjx6PaStkc8u62Z9g==}
+  '@tanstack/hotkeys@0.27.1':
+    resolution: {integrity: sha512-ZgZWw1jcAYwukEwF9Fk7JQSLh4dunfI5ElP48/YoRFBnXqtMwP9MmTKazMKcyW6tOLYZ1gx9bWe9KfQdPuRZMA==}
     engines: {node: '>=20'}
 
-  '@tanstack/preact-hotkeys@0.17.1':
-    resolution: {integrity: sha512-fTkOHmzOq6Y3qOVRdg9IimqTBgIIxNWFNjUCKpiLIrGxAAhwuYK7lr/RlfzQRxAC2PYAgmQS7lEIRroFf7gkaQ==}
+  '@tanstack/preact-hotkeys@0.21.1':
+    resolution: {integrity: sha512-OwBR/nga/lyODH86F84Hs1Nqc4l3BzSGxJWw26w7eaCfzp7T4J4c6C0wsTxd02OBDgCX3RYoybDEt/9Hua0bpQ==}
     engines: {node: '>=20'}
     peerDependencies:
       preact: '>=10.5.2'
 
-  '@tanstack/preact-store@0.13.5':
-    resolution: {integrity: sha512-+ONKQNVqoGBpCbvahHjW39d28vwBVNRUa927m5owRQS6fySTORPKbOV6HYBXt0qHxOA8r0llg1Bfy/FKXsj3qw==}
-    peerDependencies:
-      preact: ^10.0.0 || ^11.0.0-0
-
   '@tanstack/query-core@5.104.0':
     resolution: {integrity: sha512-JrC2r/JQlXt7khBSdUpsgxNvybzOg+aITa+ARRMlP2AFo93Y8vIqz077rp+e61mJetSZ0T6AJbwW1JHer1vrPQ==}
-
-  '@tanstack/store@0.11.2':
-    resolution: {integrity: sha512-sJ4mjol8uQsHV0gOJzzjwXfh2Fwm+Sz0+8deqiTm4jGbMdjzNSW+xZCFm0kUa870uhd8yi+DpKnZb5Kc4apa0Q==}
 
   '@turbo/darwin-64@2.11.9':
     resolution: {integrity: sha512-OkW+EESJjo248CThWe9DfuUqzGcRwHe1DXKWRw9DSZ0lMkocKbbwNMjWVCiO+WNBcARDM0ibu0c9SbuIe4mw6w==}
@@ -3978,24 +3970,14 @@ snapshots:
 
   '@stablelib/base64@1.0.1': {}
 
-  '@tanstack/hotkeys@0.19.0(patch_hash=bcb3b09693350b2aa37d3aa60001ef9a9a22ab740f3a81c638195b0ca7fe0e1d)':
-    dependencies:
-      '@tanstack/store': 0.11.2
+  '@tanstack/hotkeys@0.27.1(patch_hash=8c7afdc2812d563cc2dc8586a53b7c8114c0294564f208dc1ab496085abdae5c)': {}
 
-  '@tanstack/preact-hotkeys@0.17.1(preact@11.1.0)':
+  '@tanstack/preact-hotkeys@0.21.1(preact@11.1.0)':
     dependencies:
-      '@tanstack/hotkeys': 0.19.0(patch_hash=bcb3b09693350b2aa37d3aa60001ef9a9a22ab740f3a81c638195b0ca7fe0e1d)
-      '@tanstack/preact-store': 0.13.5(preact@11.1.0)
-      preact: 11.1.0
-
-  '@tanstack/preact-store@0.13.5(preact@11.1.0)':
-    dependencies:
-      '@tanstack/store': 0.11.2
+      '@tanstack/hotkeys': 0.27.1(patch_hash=8c7afdc2812d563cc2dc8586a53b7c8114c0294564f208dc1ab496085abdae5c)
       preact: 11.1.0
 
   '@tanstack/query-core@5.104.0': {}
-
-  '@tanstack/store@0.11.2': {}
 
   '@turbo/darwin-64@2.11.9':
     optional: true
