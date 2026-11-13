@@ -22,7 +22,7 @@ _Avoid_: favorites, company pins, pinned pages (tools can be pinned too)
 
 **Your usual**:
 Up to four tiles of the live patches the viewer opened most in the last 30 days, by their opens' halving score, and nothing else. Reopening a patch within ten minutes counts once, so flipping between two patches doesn't take it over. With no opens yet it is titled "Popular at" the company and holds the company's most-visited. A tile carries the mark, the title, and whether it is a tool or a page and whose. It reads only the viewer's own opens.
-_Avoid_: favourites, pinned (pins are not built), recent
+_Avoid_: favourites, pinned, recent
 
 **New** (Home):
 Up to three of colleagues' patches made in the last week that the viewer hasn't opened, newest first, each with Open in a new tab and the [not opened yet](#not-opened-yet) dot. A public page is never new, since reading it signed out records no open.

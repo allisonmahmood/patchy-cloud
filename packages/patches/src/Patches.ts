@@ -1513,10 +1513,11 @@ export const make = Effect.gen(function* () {
       companyId: Schema.String,
       userId: Schema.String,
       /** Whether to read the shared-read declarations, across every version of every patch. */
-      sharing: Schema.Boolean
+      sharing: Schema.Boolean,
+      patchIds: Schema.optionalKey(Schema.Array(Schema.String))
     }),
     Result: ReadPatchRow,
-    execute: ({ companyId, userId, sharing }) => sql`
+    execute: ({ companyId, userId, sharing, patchIds }) => sql`
       SELECT ${sql.unsafe(PATCH_COLUMNS)}, owner.name AS "ownerName",
         owner.deactivated_at IS NOT NULL AS "ownerDeactivated",
         current_version.version_number AS "currentVersion", current_version.tier,
@@ -1529,6 +1530,7 @@ export const make = Effect.gen(function* () {
       JOIN patch_versions current_version ON current_version.id = patches.current_version_id
         AND current_version.patch_id = patches.id
       WHERE patches.company_id = ${companyId}
+        ${patchIds === undefined ? sql`` : sql`AND patches.id IN ${sql.in(patchIds)}`}
       ORDER BY (patches.owner_user_id = ${userId}) DESC, patches.name, patches.id`
   });
 
@@ -1930,11 +1932,16 @@ export const make = Effect.gen(function* () {
    * The patches `options` selects that the person can open, with or without sharing edges, and
    * with `managed` also the ones they manage or own but can't open, their content left out.
    */
-  const select = Effect.fn("Patches.select")(function* (options: ReadOptions, sharing: boolean) {
+  const select = Effect.fn("Patches.select")(function* (
+    options: ReadOptions,
+    sharing: boolean,
+    patchIds?: readonly string[]
+  ) {
     const rows = yield* companyPatchRows({
       companyId: options.companyId,
       userId: options.userId,
-      sharing
+      sharing,
+      ...(patchIds === undefined ? {} : { patchIds })
     });
     const people = yield* peopleOf(options.companyId, [
       options.userId,
@@ -2072,7 +2079,11 @@ export const make = Effect.gen(function* () {
       const ids = yield* pinIds(access.userId);
       if (ids.length === 0) return [];
       const available = new Map(
-        (yield* list({ ...access, state: "live" })).map((entry) => [entry.patch.id, entry])
+        (yield* select(
+          { ...access, state: "live" },
+          false,
+          ids.map(({ patchId }) => patchId)
+        )).selected.map((entry) => [entry.patch.id, listed(entry)])
       );
       return ids.flatMap(({ patchId }) => {
         const entry = available.get(patchId);
@@ -2091,11 +2102,7 @@ export const make = Effect.gen(function* () {
       return;
     }
     const found = yield* findForViewer(patchId, access);
-    if (
-      Option.isNone(found) ||
-      found.value.patch.companyId !== access.companyId ||
-      !access.canOpen(found.value.patch)
-    )
+    if (Option.isNone(found) || !access.canOpen(found.value.patch))
       return yield* new PatchUnavailable({ patchId });
     yield* sql`INSERT INTO patch_pins (user_id, patch_id, created_at)
       VALUES (${access.userId}, ${patchId}, ${stamp(yield* Clock.currentTimeMillis)})
