@@ -46,7 +46,7 @@ which production has run on since its first deploy on 2026-10-05 ([#416](https:/
 ## Engine, guest wire and inspection
 
 Wire 1 fixes the workerd compatibility date at `2026-09-24`. This release pins
-`workerd` to `1.20260924.1` and launches its platform binary directly, not the npm
+`workerd` to `1.20261112.1` and launches its platform binary directly, not the npm
 Node launcher. A dynamically loaded Worker belongs to one company/patch/version;
 its binding includes a verified SHA-256 of the exact bundle. Rebinding that
 identity to different bytes is refused. Worker Loader caches the isolate; each

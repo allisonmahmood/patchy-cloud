@@ -7,7 +7,7 @@ import { limitRefusal } from "./limits.js";
 /** Private execution wire, never mounted on the public HttpApi. Stored versions retain it. */
 export const wireVersion = 1;
 export const compatibilityDate = "2026-09-24";
-export const workerdVersion = "1.20260924.1";
+export const workerdVersion = "1.20261112.1";
 // This date enables Node compatibility by default; wire 1 explicitly refuses it.
 export const compatibilityFlags = ["no_nodejs_compat", "no_nodejs_compat_v2"] as const;
 export const callbackFileLimit = limitRefusal("tier2.callbacks.fileBytes");
