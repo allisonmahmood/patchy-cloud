@@ -1,7 +1,5 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Cause from "effect/Cause";
-import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -92,13 +90,14 @@ it.layer(Testing.emptyLayer({ ...widgets, ...gadgets }))("migrator", (it) => {
 
   it.effect("applies pending steps in one transaction: a failing step rolls the batch back", () =>
     Effect.gen(function* () {
-      const exit = yield* migrate({
+      const error = yield* migrate({
         ...widgets,
         ...gadgets,
         "3_sprockets": ddl("CREATE TABLE sprockets (id integer PRIMARY KEY)"),
         "4_broken": ddl("CREATE TABLE sprockets (id integer PRIMARY KEY)")
-      }).pipe(Effect.exit);
-      assert.isTrue(Exit.isFailure(exit) && Cause.hasDies(exit.cause));
+      }).pipe(Effect.flip);
+      assert.instanceOf(error, Migrator.MigrationError);
+      assert.strictEqual(error.kind, "Failed");
       assert.deepStrictEqual(yield* tables, ["gadgets", LEDGER_TABLE, "widgets"]);
       assert.strictEqual((yield* ledger).length, 2);
     })

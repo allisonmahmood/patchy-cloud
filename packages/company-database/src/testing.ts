@@ -1,5 +1,3 @@
-import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import type * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -13,13 +11,7 @@ import * as CompanyDatabases from "./CompanyDatabases.js";
 import * as Inventory from "./Inventory.js";
 import * as PgCompanyDatabases from "./PgCompanyDatabases.js";
 import * as ResourceChanges from "./ResourceChanges.js";
-import { Cryptography, NodeCryptography } from "@patchy/core";
-
-/** The host's cryptography, Effect's and Patchy's, for everything a test builds on this layer. */
-const crypto: Layer.Layer<Crypto.Crypto | Cryptography.Cryptography> = Layer.merge(
-  NodeCrypto.layer,
-  NodeCryptography.layer
-);
+import { NodeCryptography } from "@patchy/core";
 
 /** Tests which do not observe delivery still install the port explicitly. */
 export const resourceChangesLayer = Layer.succeed(
@@ -71,6 +63,6 @@ export const layer = (options?: {
     })
   ).pipe(
     Layer.provideMerge(Testing.layer()),
-    // Operating limits fingerprint their configuration with the host's Crypto.
-    Layer.provideMerge(crypto)
+    // The host's cryptography, Effect's and Patchy's, for everything a test builds on this layer.
+    Layer.provideMerge(NodeCryptography.layer)
   );

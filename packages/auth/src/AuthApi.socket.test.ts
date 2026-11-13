@@ -75,11 +75,12 @@ it.layer(layer)("anonymous device JSON bodies on a socket", (it) => {
           JSON.stringify({ machineNameHint }),
           framing
         );
+        const response = yield* request;
         if (framing === "chunked") {
-          // The server cuts an undeclared body off mid-stream, so the request fails.
-          yield* request.pipe(Effect.flip);
+          // An undeclared body that crosses the cap stops being read and answers as malformed.
+          assert.strictEqual(response.status, 400);
+          assert.deepStrictEqual(response.body, { ok: false, error: "Malformed request body." });
         } else {
-          const response = yield* request;
           assert.strictEqual(response.status, 413);
           assert.deepStrictEqual(response.body, { ok: false, error: "Request body is too large." });
         }

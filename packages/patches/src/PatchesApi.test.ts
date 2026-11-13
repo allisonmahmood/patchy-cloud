@@ -587,9 +587,10 @@ it.layer(Layer.fresh(lifecycleSocketLayer))("owner lifecycle body bounds on a so
           { contentType: "application/json" }
         )
       );
-      // Node closes the socket when an undeclared body crosses the cap.
-      const failure = yield* http.execute(chunked).pipe(Effect.flip);
-      assert.strictEqual(failure.reason._tag, "TransportError");
+      // An undeclared body that crosses the cap stops being read and answers as malformed.
+      const cut = yield* http.execute(chunked);
+      assert.strictEqual(cut.status, 400);
+      expect(yield* cut.json).toEqual({ ok: false, error: "Malformed request body." });
       assert.deepStrictEqual(yield* snapshot, before);
 
       for (const malformed of ["{", '{"description":null}']) {

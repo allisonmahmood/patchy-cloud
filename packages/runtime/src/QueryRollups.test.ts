@@ -350,7 +350,12 @@ it.layer(Testing.layer())("QueryRollups", (it) => {
 const failingSql = (acquirer: Effect.Effect<never, SqlError.SqlError>) =>
   Layer.effect(
     SqlClient.SqlClient,
-    SqlClient.make({ acquirer, compiler: PgClient.makeCompiler(), spanAttributes: [] })
+    SqlClient.make({
+      acquirer,
+      compiler: PgClient.makeCompiler(),
+      driver: "pg",
+      spanAttributes: []
+    })
   ).pipe(Layer.provide(Reactivity.layer));
 
 it.effect("backs off with jitter and stops retrying within the dedup retention window", () =>

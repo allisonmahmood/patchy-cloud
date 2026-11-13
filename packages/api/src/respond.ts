@@ -18,7 +18,13 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { RateLimited } from "./schemas.js";
 
-const statusOf = SchemaAST.resolveAt<number>("httpApiStatus");
+const plainStatus = SchemaAST.resolveAt<number>("httpApiStatus");
+/**
+ * A schema's status as HttpApi reads it: a plain `httpApiStatus` annotation, else the key
+ * annotation `HttpApiSchema.status` stores. HttpApi's own reader is internal.
+ */
+const statusOf = (ast: SchemaAST.AST) =>
+  plainStatus(ast) ?? ast.context?.annotations?.httpApiStatus;
 const parseJson = Schema.decodeUnknownResult(Schema.fromJsonString(Schema.Unknown));
 
 export const refuse = <S extends Schema.Top & Schema.Codec<unknown, unknown>>(

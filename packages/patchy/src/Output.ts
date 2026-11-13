@@ -33,7 +33,7 @@ const booleanLiterals = new Set([...falseLiterals, "true", "yes", "on", "1", "y"
 
 /**
  * Whether argv asks for `--json`, read as Effect reads the flag: the first `--json`,
- * `--json=<b>`, `-json=<b>`, `--json <b>` or `--no-json` before `--` decides. The
+ * `--json=<b>`, `--json <b>` or `--no-json` before `--` decides. The
  * entrypoint needs it before any handler runs, because that is where a parse error
  * is rendered.
  */
@@ -43,7 +43,7 @@ export const jsonRequested = (args: ReadonlyArray<string>) => {
     // Effect refuses `--no-json <b>` without recording a value, so the next one decides.
     if (arg === "--no-json" && !booleanLiterals.has(args[index + 1] ?? "")) return false;
     if (arg === "--json") return !falseLiterals.has(args[index + 1] ?? "");
-    if (/^--?json=/.test(arg)) return !falseLiterals.has(arg.slice(arg.indexOf("=") + 1));
+    if (arg.startsWith("--json=")) return !falseLiterals.has(arg.slice(arg.indexOf("=") + 1));
   }
   return false;
 };
@@ -83,7 +83,7 @@ export const rememberWarnings = Effect.fn("Output.rememberWarnings")(function* (
 });
 
 /** Already rendered; carries only the exit code, so the runtime prints nothing more. */
-export class Failed extends Data.Error<{ readonly code: number }> {
+class Failed extends Data.Error<{ readonly code: number }> {
   readonly [Runtime.errorExitCode]: number;
   readonly [Runtime.errorReported] = false;
   constructor(props: { readonly code: number }) {

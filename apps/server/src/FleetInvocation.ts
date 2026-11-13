@@ -29,7 +29,7 @@ import {
   type Wakes
 } from "@patchy/runtime";
 import * as Config from "effect/Config";
-import type * as Crypto from "effect/Crypto";
+import type * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -54,7 +54,7 @@ export type StartupError =
 type Dependencies =
   | Cryptography.Cryptography
   | Scope.Scope
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
   | HttpClient.HttpClient
   | RuntimeLog.RuntimeLog
   | ServerBundles.ServerBundles
@@ -169,7 +169,7 @@ export const layer = (
   | ConnectedVersions.ConnectedVersions
   | Prewarm.Prewarm,
   StartupError,
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
   | CompanyDatabases.CompanyDatabases
   | Inventory.Inventory
   | Wakes.Wakes

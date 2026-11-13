@@ -132,6 +132,7 @@ export const make = Effect.fnUntraced(function* (compiler: Statement.Compiler) {
   const sql = yield* SqlClient.make({
     acquirer: Effect.map(reserve, (reservation) => reservation.connection),
     compiler,
+    driver: source.driver,
     spanAttributes: []
   });
   return { sql, reserve } satisfies Client;
