@@ -1,6 +1,6 @@
 ---
 name: patchy
-description: Publish an HTML page on Patchy Cloud, start a patch repo, find company tools or data sources, manage a patch's lifecycle or description, read a Patchy link, change the company look, run onboarding, or tell Patchy's team what it lacks or got wrong.
+description: Publish an HTML page on Patchy Cloud, start a patch repo for a tool (frontend only, or with server code and tools for agents), find company tools or data sources, manage a patch's lifecycle or description, read a Patchy link, change the company look, run onboarding, or tell Patchy's team what it lacks or got wrong.
 ---
 
 # Patchy
@@ -93,13 +93,33 @@ back. Keep both somewhere lasting:
 
 When the user wants a tool with its own rows, files or company connections,
 start a patch repo: a single-file page can run script, but it has no data of its own.
-Choose tier 1 by default: it reaches only its own tables and files. Choose
-tier 2 for enforced rules, atomic writes (several rows at once, or a value such
-as a total that several people change at once), anything outside the patch
-(company connections, other patches' shared data, the member directory), or
-when people's agents should use it: agents reach only a tier 2 agent area. Tier 1 rules are advisory because a viewer can make the same writes
-from devtools. Live sync and sequential steps work on tier 1 and do not require
-tier 2.
+
+A repo's **tier** is where its code runs, set by `tier` in `patchy.config.ts`:
+
+- **Tier 1 is frontend code only.** All of it runs in the viewer's browser, as
+  the viewer. It reaches the patch's own tables and files, who the viewer is and
+  the page's routes, and nothing else: no server code, no company connections,
+  no outbound network. Live sync between viewers and sequential steps work
+  here. Its rules are advisory, because a viewer can make the same writes from
+  devtools. It can be shared public, where it reaches no data.
+- **Tier 2 adds server code.** Handlers in `server/` run on Patchy while someone
+  has the patch open or their agent is calling it, and the page calls them
+  instead of its tables. Handlers enforce rules. A mutation reads and writes
+  the patch's tables in one transaction, as a write across tables, or a value
+  such as a total that several people change at once, needs. Handlers also
+  reach outside the patch: other patches' shared tables and stores and the
+  member directory, all read-only, and company connections (Postgres, PostHog,
+  Attio and an IMAP mailbox, each read-only, and Pidgeon, which reads email
+  and, when its key allows, sends it). Tools in `agent/` are what people's own
+  agents call, as them, through Patchy MCP; tier 1 has no agent tools. It
+  cannot be shared public.
+
+Neither tier starts work with nobody there: schedules, webhooks and inbound
+routes are not built, and handlers reach outside systems only through company
+connections. A tool that needs more is a [request](#requests-and-feedback).
+
+Tier 1 is the smaller thing to build. Start at tier 2 when the tool needs
+anything only tier 2 has; a repo moves between tiers later, as below.
 
 Use the instance-installed CLI described under Publishing, settle the instance
 and identity, and complete the login handoff below if needed. Then run:
@@ -759,5 +779,6 @@ patch](#reading-a-patch) lists the rest.
   output. Login saves the key itself; relay only the handoff's URL and user code.
 - A publishing key acts as its user. Losing or revoking a key does not change
   ownership; another machine token for that user can still update, share or delete their pages.
-- Patchy Cloud is not a social scheduler. This flow hosts single-file HTML pages.
+- Patchy Cloud is not a social scheduler. The output pattern above hosts single-file
+  HTML pages; a tool with data or server code is a [patch repo](#building-a-tool).
 - Hand over a link or a local file rather than pasting giant HTML into chat.
