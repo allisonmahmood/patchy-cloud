@@ -78,9 +78,9 @@ function boundedTreeAdapter(): parse5.TreeAdapter<parse5.DefaultTreeAdapterMap> 
   /**
    * Finds a node among its siblings for error recovery to move it, searching from the end and
    * paying for every sibling after it, each of which the search passes and the move shifts.
-   * Misplaced table content goes just before the open table, its parent's last child, so it costs
-   * next to nothing; the children of an element closed out of order leave from the front, and pay
-   * for the whole list each time.
+   * Misplaced table content goes just before the open table, its parent's last child, and parse5
+   * moves the children of an element closed out of order from the last one back, so both cost next
+   * to nothing. The bound stops any move that would pass a long list instead.
    */
   const locate = (
     siblings: parse5.DefaultTreeAdapterMap["childNode"][],

@@ -27,9 +27,8 @@ describe("documentTitle", () => {
   it("bounds the repair of misnested markup", () => {
     // Table content outside a cell moves to just before the table, which is cheap.
     expect(titled(`<table>${"stray<br>".repeat(6000)}</table>`)).toBe("Bounded");
-    // Closing <b> early moves every child of the block it crosses, front first.
-    expect(titled(`<b><div>${"<br>".repeat(600)}</b>`)).toBe("Bounded");
-    expect(titled(`<b><div>${"<br>".repeat(6000)}</b>`)).toBeNull();
+    // Closing <b> early moves every child of the block it crosses, last first, which is cheap too.
+    expect(titled(`<b><div>${"<br>".repeat(15000)}</b>`)).toBe("Bounded");
     // Formatting left open across paragraphs is cloned into each; distinct attributes defeat the
     // parser's own cap of three alike, so each "x<p>" clones all 500.
     const open = Array.from({ length: 500 }, (_, index) => `<b a=${index}>`).join("");
