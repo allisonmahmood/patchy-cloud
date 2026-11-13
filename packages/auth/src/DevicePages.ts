@@ -1,6 +1,5 @@
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
-import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
 import type * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -9,7 +8,7 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import type * as SqlClient from "effect/sql/SqlClient";
 import type { Companies, Users } from "@patchy/companies";
-import { BodyTooLarge } from "@patchy/api";
+import { BodyTooLarge, capBody } from "@patchy/api";
 import {
   button,
   escapeAttribute,
@@ -258,9 +257,7 @@ const postDevice = Effect.gen(function* () {
   if (Number(request.headers["content-length"]) > MAX_FORM_BYTES) {
     return yield* new BodyTooLarge({ maxBytes: MAX_FORM_BYTES });
   }
-  const params = yield* request.urlParamsBody.pipe(
-    Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(MAX_FORM_BYTES))
-  );
+  const params = yield* request.urlParamsBody.pipe(capBody(MAX_FORM_BYTES));
   const form = yield* decodeForm(Object.fromEntries(params));
   if (form.setup !== undefined) return yield* postInline({ ...form, setup: form.setup });
   // Only the code survives authentication/enrollment. Neither the action nor

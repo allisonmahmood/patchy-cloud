@@ -10,21 +10,58 @@
  */
 import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
+import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as SchemaAST from "effect/SchemaAST";
 import type * as SchemaIssue from "effect/SchemaIssue";
+import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
+import * as HttpEffect from "effect/http/HttpEffect";
+import * as HttpServerError from "effect/http/HttpServerError";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { RateLimited } from "./schemas.js";
 
-const plainStatus = SchemaAST.resolveAt<number>("httpApiStatus");
 /**
- * A schema's status as HttpApi reads it: a plain `httpApiStatus` annotation, else the key
- * annotation `HttpApiSchema.status` stores. HttpApi's own reader is internal.
+ * The annotations that set a node's `httpApiStatus`: its last check that sets one, looking into
+ * check groups, else its own.
  */
-const statusOf = (ast: SchemaAST.AST) =>
-  plainStatus(ast) ?? ast.context?.annotations?.httpApiStatus;
+const statusAnnotations = (node: {
+  readonly checks: SchemaAST.Checks | undefined;
+  readonly annotations: Schema.Annotations.Annotations | undefined;
+}): Schema.Annotations.Annotations | undefined => {
+  for (const check of [...(node.checks ?? [])].reverse()) {
+    if (check.annotations !== undefined && "httpApiStatus" in check.annotations)
+      return check.annotations;
+    if (check._tag === "FilterGroup") {
+      const nested = statusAnnotations(check);
+      if (nested !== undefined) return nested;
+    }
+  }
+  return node.annotations !== undefined && "httpApiStatus" in node.annotations
+    ? node.annotations
+    : undefined;
+};
+
+/**
+ * A node's status: set by its annotations, where an explicit `undefined` clears it, else by the
+ * key annotation `HttpApiSchema.status` stores.
+ */
+const resolveStatus = (ast: SchemaAST.AST): number | undefined => {
+  const annotations = statusAnnotations(ast);
+  const status =
+    annotations !== undefined ? annotations.httpApiStatus : ast.context?.annotations?.httpApiStatus;
+  return Predicate.isNumber(status) ? status : undefined;
+};
+
+/**
+ * The status an error schema answers at, by HttpApi's rules (its `getStatusErrorSchema`, which it
+ * doesn't export), so a refusal answers what its endpoint declares; 500 when none is set.
+ */
+const statusOf = (schema: Schema.Top): number =>
+  (HttpApiSchema.isWithHeaders(schema)
+    ? (resolveStatus(schema.ast) ?? resolveStatus(schema.schema.ast))
+    : resolveStatus(schema.ast)) ?? 500;
 const parseJson = Schema.decodeUnknownResult(Schema.fromJsonString(Schema.Unknown));
 
 export const refuse = <S extends Schema.Top & Schema.Codec<unknown, unknown>>(
@@ -33,7 +70,7 @@ export const refuse = <S extends Schema.Top & Schema.Codec<unknown, unknown>>(
   headers: Record<string, string> = {}
 ) =>
   HttpServerResponse.jsonUnsafe(Schema.encodeSync(schema)(schema.make(body)), {
-    status: statusOf(schema.ast) ?? 400,
+    status: statusOf(schema),
     headers
   });
 
@@ -77,12 +114,39 @@ export class BodyTooLarge extends Schema.TaggedError<BodyTooLarge>()("BodyTooLar
   }
 }
 
+/** Closes the connection once the current request's answer is sent. */
+const closeAfterAnswer = HttpEffect.appendPreResponseHandler((_request, response) =>
+  Effect.succeed(HttpServerResponse.setHeader(response, "connection", "close"))
+);
+
+/**
+ * `read`, a read of the request body, capped at `maxBytes`. A body that crosses the cap fails the
+ * read as the platform does, and the connection closes once the answer is sent: the server would
+ * otherwise go on reading the rest, waiting on a sender that may never finish.
+ */
+export const capBody =
+  (maxBytes: number) =>
+  <A, E, R>(
+    read: Effect.Effect<A, E, R>
+  ): Effect.Effect<A, E, R | HttpServerRequest.HttpServerRequest> =>
+    read.pipe(
+      Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(maxBytes)),
+      Effect.tapError((error): Effect.Effect<void, never, HttpServerRequest.HttpServerRequest> =>
+        HttpServerError.isHttpServerError(error) &&
+        error.reason._tag === "RequestParseError" &&
+        error.reason.reason === "BodyTooLarge"
+          ? closeAfterAnswer
+          : Effect.void
+      )
+    );
+
 /**
  * The current request's body as JSON, capped at `maxBytes`. An absent or
  * blank body is `{}`; the route's schema decides whether it is valid.
  * A declared length over the cap is refused before the body is read; a body
  * that fails to read — the cap hit mid-stream, or the client gone — is
- * malformed, since there is no whole body to decode.
+ * malformed, since there is no whole body to decode. Hitting the cap
+ * mid-stream also closes the connection after the answer (`capBody`).
  */
 export const readBody = (maxBytes: number) =>
   Effect.gen(function* () {
@@ -91,7 +155,7 @@ export const readBody = (maxBytes: number) =>
       return yield* new BodyTooLarge({ maxBytes });
     }
     const text = yield* request.text.pipe(
-      Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(maxBytes)),
+      capBody(maxBytes),
       Effect.mapError((cause) => new MalformedBody({ cause }))
     );
     if (text.trim().length === 0) return {} as unknown;

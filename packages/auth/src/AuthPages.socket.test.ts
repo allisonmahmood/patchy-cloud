@@ -28,6 +28,7 @@ import {
   signSession
 } from "./testing.js";
 import { NodeCryptography } from "@patchy/core";
+import { unterminatedUpload } from "../../../test/socket.js";
 
 const localRevocation = Layer.effect(
   Session.Session,
@@ -127,6 +128,24 @@ it.layer(layer)("auth pages on a socket", (it) => {
         assert.strictEqual(response.headers.get("location"), null);
         assert.include(yield* Effect.promise(() => response.text()), "Invalid form");
       }
+    })
+  );
+
+  it.effect("answers a form overflow whose sender never finishes, then closes its connection", () =>
+    Effect.gen(function* () {
+      const server = yield* HttpServer.HttpServer;
+      if (server.address._tag === "UnixPathAddress") return assert.fail("Expected a TCP listener");
+      const { port } = server.address;
+      const answer = yield* Effect.promise(() =>
+        unterminatedUpload(
+          port,
+          `POST /login/device HTTP/1.1\nhost: 127.0.0.1\norigin: ${PUBLIC_BASE_URL}\ncontent-type: application/x-www-form-urlencoded`,
+          8_192
+        )
+      );
+      assert.strictEqual(answer.status, 400);
+      // Closed within the adapter's half-second grace, rather than held open for more body.
+      assert.isDefined(answer.closedAfterMs);
     })
   );
 

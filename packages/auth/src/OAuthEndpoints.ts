@@ -19,7 +19,6 @@
  * connection; a retry within its minute is not a rotation. In production it answers CORS for any origin without credentials; a dev instance
  * answers none, and serves it on its `127.0.0.1` alias like every route.
  */
-import * as ByteSize from "effect/ByteSize";
 import * as Clock from "effect/Clock";
 import type * as Config from "effect/Config";
 import * as Duration from "effect/Duration";
@@ -30,6 +29,7 @@ import * as Schema from "effect/Schema";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { capBody } from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { Companies, Users } from "@patchy/companies";
 import {
@@ -360,7 +360,7 @@ const tokenParams = Effect.gen(function* () {
     return yield* refused(`The token request is larger than ${MAX_BODY_BYTES} bytes.`, 413);
   const params = new URLSearchParams(
     yield* request.text.pipe(
-      Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(MAX_BODY_BYTES)),
+      capBody(MAX_BODY_BYTES),
       Effect.mapError(() => refused("The token request's body couldn't be read."))
     )
   );
@@ -479,7 +479,7 @@ export const layer: Layer.Layer<
       );
       if (Number(request.headers["content-length"]) > MAX_ANSWER_BYTES) return unread;
       const form = yield* request.urlParamsBody.pipe(
-        Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(MAX_ANSWER_BYTES)),
+        capBody(MAX_ANSWER_BYTES),
         Effect.flatMap((params) => decodeAnswer(Object.fromEntries(params))),
         Effect.option
       );

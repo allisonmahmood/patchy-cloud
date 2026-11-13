@@ -1,13 +1,13 @@
 // Owns Home at `/` with its New patch dialog, and the guide: `/guide`, its steps, Later, a new
 // setup line and its script. Renders with `home.ts` and `guide.ts`; anything another surface needs
 // comes from `shared/`.
-import * as ByteSize from "effect/ByteSize";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { capBody } from "@patchy/api";
 import { Analytics } from "@patchy/analytics";
 import {
   endedAccess,
@@ -346,11 +346,7 @@ const guideLater = Effect.fn("HomePages.guideLater")(function* () {
   const { viewer } = yield* context;
   const signedIn = yield* RequireSession.SignedIn;
   const request = yield* HttpServerRequest.HttpServerRequest;
-  const form = new URLSearchParams(
-    yield* request.text.pipe(
-      Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(1_024))
-    )
-  );
+  const form = new URLSearchParams(yield* request.text.pipe(capBody(1_024)));
   if (form.get("user") !== viewer.user.id)
     return yield* errorPage(
       409,
@@ -368,11 +364,7 @@ const guideLater = Effect.fn("HomePages.guideLater")(function* () {
 const guideNewLine = Effect.fn("HomePages.guideNewLine")(function* () {
   const { viewer } = yield* context;
   const request = yield* HttpServerRequest.HttpServerRequest;
-  const form = new URLSearchParams(
-    yield* request.text.pipe(
-      Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(1_024))
-    )
-  );
+  const form = new URLSearchParams(yield* request.text.pipe(capBody(1_024)));
   if (form.get("user") !== viewer.user.id)
     return yield* errorPage(
       409,
