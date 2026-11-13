@@ -34,7 +34,7 @@
     "@patchy/limits": "workspace:*",
     "@patchy/runtime": "workspace:*",
     "effect": "catalog:",
-    "imapflow": "2.10.2",
+    "imapflow": "2.11.0",
     "pg": "^8.23.1"
   },
   "devDependencies": {
