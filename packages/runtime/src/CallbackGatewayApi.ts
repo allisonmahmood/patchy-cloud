@@ -3,7 +3,7 @@ import { Buffer } from "node:buffer";
 import { createServer } from "node:http";
 import { isIP } from "node:net";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import { limitRefusal, RuntimeFailure } from "@patchy/api";
+import { closeAfterAnswer, limitRefusal, RuntimeFailure } from "@patchy/api";
 import * as GuestProtocol from "@patchy/api/guest";
 import { ContractLimits } from "@patchy/limits";
 import * as Effect from "effect/Effect";
@@ -159,15 +159,22 @@ export const make = Effect.gen(function* () {
           if (raw !== undefined) {
             const metadataBytes = Buffer.byteLength(raw);
             const failure = capabilities.chargeBytes(capability, metadataBytes);
-            if (failure !== undefined) return yield* new CallbackBudgetExceeded({ failure });
+            if (failure !== undefined) {
+              yield* closeAfterAnswer;
+              return yield* new CallbackBudgetExceeded({ failure });
+            }
           }
           const length = Number(request.headers["content-length"]);
           if (raw !== undefined && Number.isFinite(length))
             capability.counters.peakFileBytes = Math.max(capability.counters.peakFileBytes, length);
-          if (length > maxBytes) return yield* overflow(length);
+          if (length > maxBytes) {
+            yield* closeAfterAnswer;
+            return yield* overflow(length);
+          }
           const chunks: Uint8Array[] = [];
           let size = 0;
-          // Pull in the request scope so refusal is sent before closing the unread socket.
+          // A size refusal stops the read and closes the connection after its answer, rather than
+          // leaving Effect's server reading the unread rest.
           const pull = yield* Stream.toPull(request.stream);
           while (true) {
             const batch = yield* pull.pipe(
@@ -182,9 +189,15 @@ export const make = Effect.gen(function* () {
                   capability.counters.peakFileBytes,
                   size
                 );
-              if (size > maxBytes) return yield* overflow(chunk.byteLength);
+              if (size > maxBytes) {
+                yield* closeAfterAnswer;
+                return yield* overflow(chunk.byteLength);
+              }
               const failure = capabilities.chargeBytes(capability, chunk.byteLength);
-              if (failure !== undefined) return yield* new CallbackBudgetExceeded({ failure });
+              if (failure !== undefined) {
+                yield* closeAfterAnswer;
+                return yield* new CallbackBudgetExceeded({ failure });
+              }
               chunks.push(chunk);
             }
           }

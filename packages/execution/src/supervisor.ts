@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalDateInEffect:off preferSchemaOverJson:off -- residency uses wall time and OS RSS; tuple keys encode already-validated identities without delimiter collisions.
 import { createServer } from "node:http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import { limitRefusal, limitRefusalFields } from "@patchy/api";
+import { closeAfterAnswer, limitRefusal, limitRefusalFields } from "@patchy/api";
 import * as GuestProtocol from "@patchy/api/guest";
 import * as Management from "@patchy/api/management";
 import { registry } from "@patchy/limits/registry";
@@ -469,7 +469,10 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
       if (!live()) return refusedCallback();
       if (Date.now() >= invocation.attempt.deadline) return deadlineCallback();
       return yield* Effect.gen(function* () {
-        const body = yield* readCallbackBody(request.stream);
+        // A request body over the limit stops being read; its 413 closes the connection.
+        const body = yield* readCallbackBody(request.stream).pipe(
+          Effect.tapErrorTag("CallbackBodyTooLarge", () => closeAfterAnswer)
+        );
         if (!live()) return refusedCallback();
         const headers: Record<string, string> = {
           authorization: `Bearer ${invocation.capability}`,

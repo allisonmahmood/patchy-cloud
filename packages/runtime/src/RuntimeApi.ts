@@ -7,6 +7,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import {
+  closeAfterAnswer,
   PatchyApi,
   type RuntimeBodyLimitId,
   RuntimeEnvelope,
@@ -64,9 +65,10 @@ export const recordFailure = Effect.fnUntraced(function* (
   return failure(error, named);
 });
 
-/** Keep the stream finalizer in the request scope, after its refusal response.
- * A stream runner's inner scope would destroy Node's socket before sending 413.
- * Pulling stops at overflow; the unread remainder is never drained or buffered.
+/**
+ * Each chunk of the body, until `consume` refuses one. A refusal stops the read and closes the
+ * connection after its answer (`closeAfterAnswer`): Effect's server would otherwise go on reading
+ * the unread rest, waiting on a sender that may never finish. Nothing past it is buffered.
  */
 const forEachBodyChunk = Effect.fn("RuntimeApi.forEachBodyChunk")(function* (
   request: HttpServerRequest.HttpServerRequest,
@@ -79,7 +81,7 @@ const forEachBodyChunk = Effect.fn("RuntimeApi.forEachBodyChunk")(function* (
       Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
     );
     if (!chunks) return;
-    for (const chunk of chunks) yield* consume(chunk);
+    for (const chunk of chunks) yield* consume(chunk).pipe(Effect.tapError(() => closeAfterAnswer));
   }
 });
 
@@ -99,7 +101,10 @@ export const readText = Effect.fn("RuntimeApi.readText")(function* (
           configRevision: { deploymentRevision: "contract", overrideRevision: "0" }
         }
       ]
-    }).pipe(Effect.andThen(new Runtime.TooLarge({ maxBytes, limitId })));
+    }).pipe(
+      Effect.andThen(closeAfterAnswer),
+      Effect.andThen(new Runtime.TooLarge({ maxBytes, limitId }))
+    );
   let size = 0;
   let text = "";
   const decoder = new TextDecoder();
@@ -150,6 +155,7 @@ const readFile = Effect.fn("RuntimeApi.readFile")(function* (
         }
       ]
     });
+    yield* closeAfterAnswer;
     return yield* new Runtime.TooLarge({ maxBytes, limitId });
   }
   const chunks: Uint8Array[] = [];

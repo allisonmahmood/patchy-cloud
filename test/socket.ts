@@ -1,19 +1,20 @@
 // @effect-diagnostics nodeBuiltinImport:off -- a raw socket sends what no HTTP client will.
 /**
  * Requests on a raw socket, for what an HTTP client won't send or wait out: here, an upload whose
- * body never ends.
+ * body never finishes.
  */
 import { connect } from "node:net";
 
 /**
- * Sends `head` with a chunked body of `bytes` bytes, never sends the terminating chunk, and waits
- * up to `waitMs` for the server to close the connection. `status` is the answer's, or 0 for none;
+ * Sends `head` and then a body that never finishes: `{ chunked: n }` sends one chunk of `n` bytes
+ * and never the terminating chunk; `{ declared: n }` declares `n` bytes and sends none. Waits up
+ * to `waitMs` for the server to close the connection. `status` is the answer's, or 0 for none;
  * `closedAfterMs` is when the server closed it, or `undefined` if it was still open at `waitMs`.
  */
-export const unterminatedUpload = (
+export const stalledUpload = (
   port: number,
   head: string,
-  bytes: number,
+  body: { readonly chunked: number } | { readonly declared: number },
   waitMs = 3_000
 ): Promise<{ readonly status: number; readonly closedAfterMs: number | undefined }> =>
   new Promise((resolve) => {
@@ -33,8 +34,10 @@ export const unterminatedUpload = (
     socket.on("data", (chunk) => chunks.push(chunk));
     socket.on("error", () => {});
     socket.on("close", () => finish(performance.now() - started));
+    const start = `${head.trim().replaceAll("\n", "\r\n")}\r\n`;
     socket.write(
-      `${head.trim().replaceAll("\n", "\r\n")}\r\ntransfer-encoding: chunked\r\n\r\n` +
-        `${bytes.toString(16)}\r\n${"x".repeat(bytes)}\r\n`
+      "chunked" in body
+        ? `${start}transfer-encoding: chunked\r\n\r\n${body.chunked.toString(16)}\r\n${"x".repeat(body.chunked)}\r\n`
+        : `${start}content-length: ${body.declared}\r\n\r\n`
     );
   });

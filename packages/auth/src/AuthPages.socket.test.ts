@@ -28,7 +28,7 @@ import {
   signSession
 } from "./testing.js";
 import { NodeCryptography } from "@patchy/core";
-import { unterminatedUpload } from "../../../test/socket.js";
+import { stalledUpload } from "../../../test/socket.js";
 
 const localRevocation = Layer.effect(
   Session.Session,
@@ -137,10 +137,10 @@ it.layer(layer)("auth pages on a socket", (it) => {
       if (server.address._tag === "UnixPathAddress") return assert.fail("Expected a TCP listener");
       const { port } = server.address;
       const answer = yield* Effect.promise(() =>
-        unterminatedUpload(
+        stalledUpload(
           port,
           `POST /login/device HTTP/1.1\nhost: 127.0.0.1\norigin: ${PUBLIC_BASE_URL}\ncontent-type: application/x-www-form-urlencoded`,
-          8_192
+          { chunked: 8_192 }
         )
       );
       assert.strictEqual(answer.status, 400);

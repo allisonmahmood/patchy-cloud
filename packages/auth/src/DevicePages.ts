@@ -8,7 +8,7 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import type * as SqlClient from "effect/sql/SqlClient";
 import type { Companies, Users } from "@patchy/companies";
-import { BodyTooLarge, capBody } from "@patchy/api";
+import { BodyTooLarge, capBody, closeAfterAnswer } from "@patchy/api";
 import {
   button,
   escapeAttribute,
@@ -255,6 +255,7 @@ const postInline = Effect.fn("DevicePages.postInline")(function* (form: {
 const postDevice = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
   if (Number(request.headers["content-length"]) > MAX_FORM_BYTES) {
+    yield* closeAfterAnswer;
     return yield* new BodyTooLarge({ maxBytes: MAX_FORM_BYTES });
   }
   const params = yield* request.urlParamsBody.pipe(capBody(MAX_FORM_BYTES));

@@ -17,7 +17,7 @@ import * as Authorization from "./Authorization.js";
 import * as DeviceLogins from "./DeviceLogins.js";
 import * as MachineTokens from "./MachineTokens.js";
 import { NodeCryptography } from "@patchy/core";
-import { unterminatedUpload } from "../../../test/socket.js";
+import { stalledUpload } from "../../../test/socket.js";
 
 const routes = HttpApiBuilder.layer(HttpApi.make("patchy").add(AuthGroup)).pipe(
   Layer.provide(AuthApi.layer),
@@ -100,16 +100,18 @@ it.layer(layer)("anonymous device JSON bodies on a socket", (it) => {
       const server = yield* HttpServer.HttpServer;
       if (server.address._tag === "UnixPathAddress") return assert.fail("Expected a TCP listener");
       const { port } = server.address;
-      const answer = yield* Effect.promise(() =>
-        unterminatedUpload(
-          port,
-          "POST /api/login/device HTTP/1.1\nhost: 127.0.0.1\ncontent-type: application/json",
-          8_192
-        )
-      );
-      assert.strictEqual(answer.status, 400);
-      // Closed within the adapter's half-second grace, rather than held open for more body.
-      assert.isDefined(answer.closedAfterMs);
+      const head =
+        "POST /api/login/device HTTP/1.1\nhost: 127.0.0.1\ncontent-type: application/json";
+      // Streamed past the cap, or declared past it and never sent: answered, then closed within
+      // the adapter's half-second grace rather than held open for more body.
+      for (const [body, status] of [
+        [{ chunked: 8_192 }, 400],
+        [{ declared: 8_192 }, 413]
+      ] as const) {
+        const answer = yield* Effect.promise(() => stalledUpload(port, head, body));
+        assert.strictEqual(answer.status, status);
+        assert.isDefined(answer.closedAfterMs, JSON.stringify(body));
+      }
     })
   );
 

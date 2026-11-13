@@ -29,7 +29,7 @@ import * as Schema from "effect/Schema";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
-import { capBody } from "@patchy/api";
+import { capBody, closeAfterAnswer } from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { Companies, Users } from "@patchy/companies";
 import {
@@ -356,8 +356,10 @@ const tokenParams = Effect.gen(function* () {
     new TokenRequestRefused({ error: "invalid_request", description, status });
   if (!(request.headers["content-type"] ?? "").startsWith("application/x-www-form-urlencoded"))
     return yield* refused("Send the token request as application/x-www-form-urlencoded.");
-  if (Number(request.headers["content-length"]) > MAX_BODY_BYTES)
+  if (Number(request.headers["content-length"]) > MAX_BODY_BYTES) {
+    yield* closeAfterAnswer;
     return yield* refused(`The token request is larger than ${MAX_BODY_BYTES} bytes.`, 413);
+  }
   const params = new URLSearchParams(
     yield* request.text.pipe(
       capBody(MAX_BODY_BYTES),
@@ -477,7 +479,10 @@ export const layer: Layer.Layer<
         },
         session
       );
-      if (Number(request.headers["content-length"]) > MAX_ANSWER_BYTES) return unread;
+      if (Number(request.headers["content-length"]) > MAX_ANSWER_BYTES) {
+        yield* closeAfterAnswer;
+        return unread;
+      }
       const form = yield* request.urlParamsBody.pipe(
         capBody(MAX_ANSWER_BYTES),
         Effect.flatMap((params) => decodeAnswer(Object.fromEntries(params))),

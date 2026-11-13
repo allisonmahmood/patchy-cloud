@@ -4,7 +4,7 @@ import * as Stream from "effect/Stream";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
-import { PatchyApi } from "@patchy/api";
+import { closeAfterAnswer, PatchyApi } from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { ContractLimits } from "@patchy/limits";
 import * as RuntimeApi from "./RuntimeApi.js";
@@ -51,11 +51,13 @@ export const layer = HttpApiBuilder.group(PatchyApi, "runtimeStream", (handlers)
           yield* Stream.runForEach(request.stream, (chunk) =>
             Effect.gen(function* () {
               size += chunk.byteLength;
-              if (size > maxBytes)
+              if (size > maxBytes) {
+                yield* closeAfterAnswer;
                 return yield* new Runtime.TooLarge({
                   maxBytes,
                   limitId: "runtime.call.bytes"
                 });
+              }
               text += decoder.decode(chunk, { stream: true });
             })
           ).pipe(
