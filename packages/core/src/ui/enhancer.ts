@@ -165,12 +165,15 @@ export const uiScript = `(() => {
   if (close === undefined) return write(CHAIN, null);
   const from = document.referrer === "" ? null : new URL(document.referrer);
   const came = from !== null && from.origin === location.origin ? from.pathname + from.search : null;
-  let chain = history.state?.patchyDialog ?? null;
+  // A record the release before wrote has no step or length. Its depth orders it, and with no
+  // length to compare its next page counts no new entry: a close that falls short keeps going.
+  const known = (record) => record && { ...record, step: record.step ?? record.depth, length: record.length ?? history.length };
+  let chain = known(history.state?.patchyDialog ?? null);
   // Found in the entry's state: a reload or a step back or forward, not a fresh open.
   const restored = chain !== null;
   if (chain === null) {
     const opener = read(LAST);
-    const previous = read(CHAIN);
+    const previous = known(read(CHAIN));
     if (opener !== null && came === opener.page && new URL(opener.to).href.split("#")[0] === location.href.split("#")[0])
       chain = { opener, depth: 1, step: 1 };
     // Drawn again for a submission. That takes a new entry, except in Firefox when the answer
@@ -197,7 +200,7 @@ export const uiScript = `(() => {
   // way.
   const settle = (traversed) => {
     const mine = (opener) => chain !== null && JSON.stringify(opener) === JSON.stringify(chain.opener);
-    const later = read(CHAIN);
+    const later = known(read(CHAIN));
     if (traversed && (mine(read(RETURN)) || (later !== null && later.step > chain?.step && mine(later.opener))))
       return leave();
     write(CHAIN, chain === null ? null : { ...chain, at: here(), length: history.length });

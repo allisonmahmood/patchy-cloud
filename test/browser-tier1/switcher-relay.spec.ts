@@ -154,9 +154,10 @@ test("the shell ignores switcher messages from anywhere but its frame's relay", 
       const post = (source: MessageEventSource | null, origin: string, data: unknown = open) => {
         try {
           dispatchEvent(new MessageEvent("message", { data, source, origin }));
-        } catch {
+        } catch (error) {
           // Firefox won't build a message event that names another origin's window as its
           // source, so there such a forgery is never made; built or not, nothing comes of it.
+          if (!(error instanceof TypeError && navigator.userAgent.includes("Firefox"))) throw error;
         }
       };
       post(window, "null");
@@ -311,8 +312,9 @@ test("the relay holds the keys after the chord only where the shell says a switc
           origin: "null"
         })
       );
-    } catch {
+    } catch (error) {
       // Or never built: Firefox won't name another origin's window as a message's source.
+      if (!(error instanceof TypeError && navigator.userAgent.includes("Firefox"))) throw error;
     }
   });
   await field(page).click();
