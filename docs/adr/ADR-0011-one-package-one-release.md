@@ -42,7 +42,9 @@ upgrade silently taking old patches down.
 For tier 2, wire 1 also fixes the private guest protocol and workerd compatibility
 date, `2026-09-24`, with Node compatibility explicitly disabled. Both the internal
 `packages/execution` dependency and tier 2 patch repos pin `workerd` to
-`1.20260924.1`. Each published version retains its
+`1.20261112.1`. A release may move that pin without a new wire: a newer workerd
+honours the older date and flags, so stored bundles load as published, and
+refresh moves a repo's pin with its `patchy` pin. Each published version retains its
 server bytes, descriptors and server-stamped wire version. Loading and inspection
 use that wire's guest protocol and compatibility date, never the latest tooling
 release's settings. The engine and inspection share these constants; see
