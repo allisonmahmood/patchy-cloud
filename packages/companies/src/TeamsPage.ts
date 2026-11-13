@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import type { SqlError } from "effect/sql/SqlError";
 import * as UrlParams from "effect/http/UrlParams";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import { capBody } from "@patchy/api";
 import {
   avatar,
   badge,
@@ -42,6 +43,11 @@ import * as Users from "./Users.js";
 export const path = "/settings/company/teams";
 export type Action = "view" | "create" | "rename" | "delete" | "stage" | "save";
 const dialogs = ["create", "rename", "delete", "review"] as const;
+/**
+ * A roster form carries up to two member ids for each person in the company (a shown member's
+ * removal and the box that keeps them), about 70 bytes a person: 1 MiB holds over 14,000 people.
+ */
+const MAX_FORM_BYTES = 1_048_576;
 type Dialog = (typeof dialogs)[number];
 const decodeName = Schema.decodeUnknownEffect(Schema.Struct({ name: Schema.String }));
 
@@ -639,7 +645,7 @@ export const handle = Effect.fn("TeamsPage.handle")(function* (viewer: Viewer, a
     if (action === "view") return yield* render(viewer, view);
     if (viewer.role !== "admin") return yield* new Users.RoleForbidden(ref);
     const teams = yield* Teams.Teams;
-    const form = yield* request.urlParamsBody;
+    const form = yield* request.urlParamsBody.pipe(capBody(MAX_FORM_BYTES));
     const target = { ...ref, teamId: view.teamId };
     switch (action) {
       case "create":

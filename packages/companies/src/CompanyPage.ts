@@ -7,7 +7,7 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as UrlParams from "effect/http/UrlParams";
 import type { SqlError } from "effect/sql/SqlError";
 import { Analytics } from "@patchy/analytics";
-import type { PatchState } from "@patchy/api";
+import { capBody, type PatchState } from "@patchy/api";
 import {
   ago,
   avatar,
@@ -182,6 +182,13 @@ interface View {
 }
 
 const inviteBatch = registry["invites.batch"].default;
+/**
+ * Invite people: `inviteBatch` addresses of up to 254 characters, three bytes each once
+ * percent-encoded, with room for a longer paste to be refused by its count.
+ */
+const MAX_INVITE_BYTES = 65_536;
+/** Every other form here: a hidden field or two. */
+const MAX_FORM_BYTES = 1_024;
 const lifetimeDays = Companies.INVITATION_LIFETIME_MS / 86_400_000;
 const isEmail = Schema.is(
   Schema.String.check(Schema.isMaxLength(254), Schema.isPattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/))
@@ -732,9 +739,9 @@ const setAgentAccess = Effect.fn("CompanyPage.setAgentAccess")(function* (viewer
   if (viewer.role !== "admin")
     return yield* refused("Only an admin can turn agent access on or off.", 403);
   const request = yield* HttpServerRequest.HttpServerRequest;
-  const form = yield* decodeAgentAccess(Object.fromEntries(yield* request.urlParamsBody)).pipe(
-    Effect.catchTags({ SchemaError: () => Effect.succeed(null) })
-  );
+  const form = yield* decodeAgentAccess(
+    Object.fromEntries(yield* request.urlParamsBody.pipe(capBody(MAX_FORM_BYTES)))
+  ).pipe(Effect.catchTags({ SchemaError: () => Effect.succeed(null) }));
   if (form === null) return yield* refused("Choose on or off.", 422);
   const analytics = yield* Analytics.Analytics;
   const change = (yield* Companies.Companies).setAgentAccess({
@@ -786,7 +793,9 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
     // so each reports in the same region; role changes report with their commit.
     const admin = { principalId: viewer.user.id, companyId: viewer.company.id };
     if (act.kind === "invite") {
-      const fields = Object.fromEntries(new URLSearchParams(yield* request.text));
+      const fields = Object.fromEntries(
+        new URLSearchParams(yield* request.text.pipe(capBody(MAX_INVITE_BYTES)))
+      );
       const text = fields.email ?? "";
       // The list the dialog was opened over, drawn behind it again and landed on after.
       const filter = filterOf(fields.show, fields.q);
@@ -905,8 +914,9 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
       return done(`Revoked the invite to ${result.invite.email}`);
     }
     if (act.kind === "resend") {
+      const form = yield* request.urlParamsBody.pipe(capBody(MAX_FORM_BYTES));
       const shown = Number.parseInt(
-        Option.getOrElse(UrlParams.getFirst(yield* request.urlParamsBody, "expires"), () => ""),
+        Option.getOrElse(UrlParams.getFirst(form, "expires"), () => ""),
         10
       );
       const result = yield* Invitations.resend({
@@ -957,7 +967,9 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
       });
       return done(`Removed ${guest.name} from all patches`, peopleHref("guests", ""));
     }
-    const { role } = yield* decodeRole(Object.fromEntries(yield* request.urlParamsBody));
+    const { role } = yield* decodeRole(
+      Object.fromEntries(yield* request.urlParamsBody.pipe(capBody(MAX_FORM_BYTES)))
+    );
     const change = users.setRole({ companyId: viewer.company.id, userId: act.id, role });
     const { user } = yield* withReportedCommit(change, ({ changed }) =>
       changed
