@@ -42,11 +42,11 @@ export const appShell = `
        places' icons and its name starts where their labels do. Up to five never scroll. */
     .app-pins { display: flex; flex: none; flex-direction: column; gap: var(--space-1); }
     .app-pins-label { margin: 0; padding: 0 var(--space-2); color: var(--muted); font: var(--text-meta); }
-    .app-pin-list { display: grid; align-content: start; gap: 2px; min-height: 0; margin: 0; padding: 0; overflow-y: auto; overscroll-behavior: contain; list-style: none; scrollbar-width: thin; }
+    .app-pin-list { display: grid; align-content: start; gap: 2px; margin: 0; padding: 0; list-style: none; }
     .app-pin { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; border-radius: var(--r-control); }
     .app-pin-link { display: flex; align-items: center; gap: 6px; min-width: 0; min-height: var(--h-sm); padding: 0 var(--space-1); border-radius: var(--r-control); color: var(--text); font: var(--text-label); text-decoration: none; }
-    /* The list clips what leaves it, so a row's focus ring is drawn inside the row. */
-    .app-pin-link:focus-visible { outline-offset: -2px; }
+    /* A list that scrolls clips what leaves it, so a row's focus rings are drawn inside the row. */
+    .app-pin > :is(.app-pin-link, .btn):focus-visible { outline-offset: -2px; }
     .app-pin-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .app-pin-link .mono { width: 24px; height: 24px; border-radius: 6px; font-size: 9px; }
     .app-pin-link .page-mark { width: 24px; height: 24px; border-radius: 6px; }
@@ -107,6 +107,7 @@ export const appShell = `
          In the phone's Menu every pin shows and the Menu scrolls. */
       .app-menu { min-height: 0; }
       .app-pins:has(.app-pin:nth-child(6)) { flex: 0 1 auto; min-height: calc(18px + var(--space-1) + 5.5 * (var(--h-sm) + 2px)); }
+      .app-pins:has(.app-pin:nth-child(6)) > .app-pin-list { min-height: 0; overflow-y: auto; scrollbar-width: thin; }
       .app-menu:popover-open { position: fixed; inset: calc(14px + var(--h-control) + var(--h-sm) + 2 * var(--space-2)) auto 0 0; width: 240px; height: auto; padding: 0 var(--space-3) var(--space-3); overflow-y: auto; border: 0; border-right: 1px solid var(--border); background: var(--surface); }
       .app-menu::backdrop { background: transparent; }
     }

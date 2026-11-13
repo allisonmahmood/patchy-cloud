@@ -209,7 +209,7 @@ const postInline = Effect.fn("DevicePages.postInline")(function* (form: {
   readonly machineName?: string;
   readonly setup: string;
 }) {
-  return yield* RequireSession.withViewer(
+  return yield* RequireSession.withoutPins(
     Effect.gen(function* () {
       const viewer = yield* RequireSession.Viewer;
       const session = yield* Session.Session;
@@ -266,7 +266,7 @@ const postDevice = Effect.gen(function* () {
   // Only the code survives authentication/enrollment. Neither the action nor
   // the entered machine name is replayed after a session refresh.
   const returnTo = `/login/device?${new URLSearchParams({ code: form.code, refreshed: "1" })}`;
-  return yield* RequireSession.withViewer(
+  return yield* RequireSession.withoutPins(
     Effect.gen(function* () {
       const viewer = yield* RequireSession.Viewer;
       const session = yield* Session.Session;
@@ -382,7 +382,7 @@ export const layer: Layer.Layer<
     >
 > = HttpRouter.use((router) =>
   Effect.gen(function* () {
-    yield* router.add("GET", "/login/device", errors(RequireSession.withViewer(getDevice)));
+    yield* router.add("GET", "/login/device", errors(RequireSession.withoutPins(getDevice)));
     yield* router.add("POST", "/login/device", errors(RequireSession.sameOrigin(postDevice)));
   })
 );

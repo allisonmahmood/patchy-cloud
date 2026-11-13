@@ -46,6 +46,9 @@ it.layer(socket)("Personal pins", (it) => {
           assert.include(pins, `action="/patches/${page.patchId}/unpin"`);
         }
         assert.strictEqual(sidebar(yield* (yield* request("/", owner)).text), "");
+        // Unpinning is each person's own: the owner's unpin of the same patch leaves the member's.
+        yield* post(`/patches/${page.patchId}/unpin`, owner, { user: owner.id });
+        assert.include(sidebar(yield* (yield* request("/", member)).text), "handbook");
         const outsider = (yield* company()).member;
         const pin = `/patches/${page.patchId}/pin`;
         assert.strictEqual((yield* post(pin, outsider, { user: outsider.id })).status, 404);

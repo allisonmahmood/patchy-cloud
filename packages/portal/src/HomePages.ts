@@ -412,7 +412,7 @@ export const layer: Routes = HttpRouter.use((router) =>
     yield* router.add(
       "GET",
       "/guide/steps",
-      errors(RequireSession.withViewer(guideSteps().pipe(pageErrors)))
+      errors(RequireSession.withoutPins(guideSteps().pipe(pageErrors)))
     );
     yield* router.add(
       "POST",
