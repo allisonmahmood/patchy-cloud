@@ -7,6 +7,7 @@
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
+import { registry } from "@patchy/limits/registry";
 import {
   agentToolName,
   handlerValues,
@@ -448,6 +449,17 @@ export const toolRefusal = (error: ToolRefusal, text = error.message): ToolCallR
   structuredContent: { error },
   isError: true
 });
+
+/**
+ * Patchy MCP's refusal of a request body over `mcp.body.bytes`, which it never reads. The cap is
+ * the argument cap and its envelope, so every body over it carries arguments over the argument
+ * cap, and nothing ran.
+ */
+export const bodyTooLarge: ToolRefusal = {
+  code: "too_large",
+  from: "patchy",
+  message: `A request body is at most ${registry["mcp.body.bytes"].default} bytes: the ${registry["tier2.args.bytes"].default}-byte argument cap and its envelope.`
+};
 
 const sentence = (text: string) => (/[.!?]$/.test(text) ? text : `${text}.`);
 

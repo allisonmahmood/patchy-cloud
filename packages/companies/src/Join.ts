@@ -39,8 +39,9 @@ const decodeForm = Schema.decodeUnknownEffect(
 );
 
 /**
- * The door's two forms: an invitation's id, or a company's name (200 characters, up to 12 bytes
- * each once percent-encoded) and its handle.
+ * The door's two forms: an invitation's id, or a company's name and handle. The name is up to 200
+ * UTF-16 units, each at most 9 bytes once percent-encoded (1,800 bytes); a handle is 32 ASCII
+ * characters.
  */
 const MAX_FORM_BYTES = 4_096;
 

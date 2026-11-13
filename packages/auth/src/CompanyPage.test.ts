@@ -660,6 +660,37 @@ it.layer(services)("company page and actions", (it) => {
       })
   );
 
+  it.effect(
+    "reads a full batch of the longest addresses it accepts, and counts a paste twice that long",
+    () =>
+      Effect.gen(function* () {
+        const owner = yield* createCompany("company-batch-longest");
+        // 254 UTF-16 units, every one but the tag, `@` and `.` nine bytes once percent-encoded.
+        const longest = (index: number) => {
+          const tag = String(index).padStart(2, "0");
+          return `${tag}@${"漢".repeat(125)}.${"漢".repeat(254 - tag.length - 127)}`;
+        };
+        const form = (count: number) => ({
+          email: Array.from({ length: count }, (_, index) => longest(index)).join("\r\n"),
+          role: "member",
+          show: "all",
+          q: "漢".repeat(200)
+        });
+        assert.strictEqual(longest(0).length, 254);
+        const sent = yield* send("/settings/people/invites", post(owner.user, form(50)));
+        assert.strictEqual(sent.status, 303);
+        const invites = yield* (yield* Companies.Companies).listInvites(owner.company.id);
+        assert.strictEqual(invites.length, 50);
+
+        const counted = yield* send("/settings/people/invites", post(owner.user, form(100)));
+        assert.strictEqual(counted.status, 422);
+        assert.include(
+          main(yield* Effect.promise(() => counted.text())),
+          "That is 100 addresses. Send up to 50 at a time."
+        );
+      })
+  );
+
   it.effect("narrows the list to a tab and a search, and keeps both in its links", () =>
     Effect.gen(function* () {
       const owner = yield* createCompany("company-filter");

@@ -162,7 +162,7 @@ it.layer(layer)("auth pages on a socket", (it) => {
       for (const [path, cookie, maxBytes] of [
         ["/join", newcomer, 4_096],
         ["/settings/agent-access", admin, 1_024],
-        ["/settings/people/invites", admin, 65_536],
+        ["/settings/people/invites", admin, 233_596],
         ["/settings/people/invites/inv_unread/resend", admin, 1_024],
         ["/settings/people/users/usr_unread/role", admin, 1_024],
         [`${TeamsPage.path}/create`, admin, 1_048_576]
