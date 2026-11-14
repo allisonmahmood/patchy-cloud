@@ -33,6 +33,7 @@ import { Tables } from "@patchy/primitives";
 import {
   SqlConnectionStore,
   CredentialKeys,
+  Github,
   PostgresSource,
   PostHogSource,
   AttioSource,
@@ -246,10 +247,15 @@ const seed = Effect.gen(function* () {
   }
 });
 
+const keys = CredentialKeys.layerFromKeys(
+  Redacted.make(`test:${Buffer.alloc(32, 1).toString("base64")}`)
+);
 export const integrations = SqlConnectionStore.layer.pipe(
   Layer.provideMerge(
     Layer.mergeAll(
-      CredentialKeys.layerFromKeys(Redacted.make(`test:${Buffer.alloc(32, 1).toString("base64")}`)),
+      keys,
+      // No GitHub App is configured here, so GitHub isn't offered.
+      Github.layer.pipe(Layer.provide(keys)),
       PostgresSource.layer,
       PostHogSource.layer,
       PidgeonSource.layer,

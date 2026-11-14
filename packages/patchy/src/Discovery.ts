@@ -77,7 +77,7 @@ const connectionLines = (result: typeof Connections.Type) => {
   const lines: string[] = [];
   for (const connection of result.connections) {
     lines.push(
-      `${connection.integration}/${connection.handle}  ${connection.description}  ${connection.status}${connection.test === true ? " · test, mail stays in Pidgeon" : ""}${connection.paused === true ? " · needs attention, its password was refused" : ""}`,
+      `${connection.integration}/${connection.handle}  ${connection.description}  ${connection.status}${connection.test === true ? " · test, mail stays in Pidgeon" : ""}${connection.paused === true ? " · needs attention, its password was refused" : ""}${connection.suspended === true ? " · suspended on GitHub" : ""}`,
       `  ${connection.hint}`
     );
   }
@@ -128,6 +128,20 @@ const connectionDetailLines = (connection: typeof ConnectionDetail.Type) => {
       `Labels: ${snapshot.labels.length === 0 ? "none" : snapshot.labels.map((label) => label.name).join(", ")}`,
       `Snapshot revision: ${snapshot.revision}`,
       `Taken at: ${snapshot.takenAt}`
+    ];
+  }
+  if (connection.integration === "github") {
+    const snapshot = connection.snapshot;
+    return [
+      ...lines,
+      `Account: ${snapshot.account.login} (${snapshot.account.type === "User" ? "personal account" : "organization"})`,
+      `Snapshot revision: ${snapshot.revision}`,
+      `Taken at: ${snapshot.takenAt}`,
+      "Repositories:",
+      ...snapshot.repositories.map(
+        (repository) =>
+          `  ${repository.name}  ${repository.private ? "private" : "public"}, default branch ${repository.defaultBranch || "unknown"}${repository.archived ? ", archived" : ""}${repository.left === true ? ", left the installation" : ""}`
+      )
     ];
   }
   if (connection.integration === "imap") {

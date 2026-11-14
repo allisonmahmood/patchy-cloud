@@ -134,6 +134,8 @@ export const RepoPatch = Schema.Struct({
  * address on pidgeon.email, which Pidgeon deletes a day later. Attio's pastes the developer's
  * read-only key to Patchy's probe workspace; it only reads, so there's nothing to take down.
  * IMAP's starts a dev mailbox in Docker on this machine and types its login; `down` removes it.
+ * GitHub's isn't made through its page, which signs in on GitHub: it's seeded from the developer's
+ * development App installation and repositories, read live through that App.
  */
 export const PidgeonScenarioConnection = Schema.Struct({
   integration: Schema.Literal("pidgeon"),
@@ -160,10 +162,16 @@ export const ImapScenarioConnection = Schema.Struct({
   /** A file beside `scenario.json` holding the folders and messages `up` puts in the mailbox. */
   mail: Schema.optionalKey(Schema.NonEmptyString)
 });
+export const GithubScenarioConnection = Schema.Struct({
+  integration: Schema.Literal("github"),
+  handle: Slug,
+  description: Schema.NonEmptyString
+});
 export const LiveConnection = Schema.Union([
   PidgeonScenarioConnection,
   AttioScenarioConnection,
-  ImapScenarioConnection
+  ImapScenarioConnection,
+  GithubScenarioConnection
 ]);
 export type LiveConnection = typeof LiveConnection.Type;
 
@@ -172,11 +180,11 @@ export type LiveConnection = typeof LiveConnection.Type;
  * and nothing reaches its integration. `up` saves it connected, as the publisher, before any patch
  * publishes, then leaves it in `state`: `connected`; `paused`, disconnected by the publisher; or
  * `needs-attention` for its integration's own reason, an Attio key a Test found writable, an IMAP
- * login the mail server refused, or a Pidgeon key Patchy replaced but couldn't revoke. Postgres and
- * PostHog keep no such reason.
+ * login the mail server refused, a Pidgeon key Patchy replaced but couldn't revoke, or a GitHub App
+ * uninstalled from its account. Postgres and PostHog keep no such reason.
  */
 export const OfflineConnection = Schema.Struct({
-  integration: Schema.Literals(["postgres", "posthog", "attio", "pidgeon", "imap"]),
+  integration: Schema.Literals(["postgres", "posthog", "attio", "pidgeon", "imap", "github"]),
   handle: Slug,
   description: Schema.NonEmptyString,
   state: Schema.Literals(["connected", "needs-attention", "paused"]),
@@ -185,7 +193,12 @@ export const OfflineConnection = Schema.Struct({
   /** An admin kept guests off it, so patches that declare it turn their guests away. */
   blockGuests: Schema.optionalKey(Schema.Literal(true)),
   /** An IMAP mailbox's server, such as Gmail's; `mail.<company handle>.example` when absent. */
-  host: Schema.optionalKey(Schema.NonEmptyString)
+  host: Schema.optionalKey(Schema.NonEmptyString),
+  /**
+   * A GitHub connection whose account suspended the App on GitHub, as Patchy last saw it: shown
+   * as Suspended on GitHub, not paused.
+   */
+  suspended: Schema.optionalKey(Schema.Literal(true))
 });
 export type OfflineConnection = typeof OfflineConnection.Type;
 
@@ -351,11 +364,12 @@ export const loadScenario = Effect.fn("loadScenario")(function* (worktree: strin
     (connection) =>
       (connection.state === "needs-attention" &&
         (connection.integration === "postgres" || connection.integration === "posthog")) ||
-      (connection.test === true && connection.integration !== "pidgeon")
+      (connection.test === true && connection.integration !== "pidgeon") ||
+      (connection.suspended === true && connection.integration !== "github")
   );
   if (reasonless !== undefined)
     return yield* invalid(
-      `${reasonless.integration}/${reasonless.handle} ${reasonless.test === true ? "can't have a test key: only Pidgeon's do" : "has no reason of its integration's to need attention"}.`
+      `${reasonless.integration}/${reasonless.handle} ${reasonless.test === true ? "can't have a test key: only Pidgeon's do" : reasonless.suspended === true ? "can't be suspended: only GitHub's are" : "has no reason of its integration's to need attention"}.`
     );
   const connections = new Set(
     (scenario.connections ?? []).map(

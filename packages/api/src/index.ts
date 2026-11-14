@@ -14,6 +14,7 @@ export * from "./attioSnapshot.js";
 export * from "./attioTypes.js";
 export * from "./imap.js";
 export * from "./imapSnapshot.js";
+export * from "./githubSnapshot.js";
 export * from "./devRead.js";
 export * from "./limits.js";
 export * from "./handlers.js";

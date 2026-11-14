@@ -18,6 +18,7 @@ import {
   PidgeonDeclaration,
   AttioDeclaration,
   ImapDeclaration,
+  GithubDeclaration,
   SharedTableDeclaration,
   SharedStoreDeclaration,
   sharedStoreId,
@@ -123,6 +124,10 @@ const configSchema = Schema.Struct({
         handle: ImapDeclaration.fields.handle
       }),
       Schema.Struct({
+        kind: GithubDeclaration.fields.kind,
+        handle: GithubDeclaration.fields.handle
+      }),
+      Schema.Struct({
         kind: SharedStoreDeclaration.fields.kind,
         patchId: SharedStoreDeclaration.fields.patchId,
         store: SharedStoreDeclaration.fields.store
@@ -148,6 +153,7 @@ const generatedIndexSchema = Schema.Struct({
         PidgeonDeclaration,
         AttioDeclaration,
         ImapDeclaration,
+        GithubDeclaration,
         SharedTableDeclaration,
         SharedStoreDeclaration
       ]),
@@ -400,6 +406,8 @@ export const resolveStamps = (config: UnresolvedManifest, source: string): Execu
         (generated.kind !== "attio" || declaration.handle !== generated.handle)) ||
       (declaration.kind === "imap" &&
         (generated.kind !== "imap" || declaration.handle !== generated.handle)) ||
+      (declaration.kind === "github" &&
+        (generated.kind !== "github" || declaration.handle !== generated.handle)) ||
       (declaration.kind === "sharedStore" &&
         (generated.kind !== "sharedStore" ||
           declaration.patchId !== generated.patchId ||

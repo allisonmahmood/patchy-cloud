@@ -19,7 +19,8 @@ import {
   PidgeonSource,
   PostgresSource,
   PostHogSource,
-  SqlConnectionStore
+  SqlConnectionStore,
+  Github
 } from "@patchy/integrations";
 import { InvocationLog, RuntimeLog } from "@patchy/runtime";
 import * as Testing from "@patchy/sql/testing";
@@ -35,7 +36,8 @@ const sources = Layer.mergeAll(
   PostHogSource.layer,
   PidgeonSource.layer,
   AttioSource.layer,
-  ImapSource.layer.pipe(Layer.provide(ImapNetwork.layer))
+  ImapSource.layer.pipe(Layer.provide(ImapNetwork.layer)),
+  Github.layer
 );
 
 it.layer(
@@ -91,11 +93,15 @@ it.layer(
               ? connection.display.paused
               : connection.integration === "pidgeon"
                 ? connection.display.retired
-                : undefined;
+                : connection.integration === "github"
+                  ? connection.display.attention
+                  : undefined;
         expect({ handle, status: connection.status, reason: reason !== undefined }).toEqual({
           handle,
+          // Attio's writable key and GitHub's uninstalled App are paused by Patchy.
           status:
-            state === "paused" || (state === "needs-attention" && integration === "attio")
+            state === "paused" ||
+            (state === "needs-attention" && (integration === "attio" || integration === "github"))
               ? "disconnected"
               : "connected",
           reason: state === "needs-attention"

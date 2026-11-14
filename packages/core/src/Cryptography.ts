@@ -1,6 +1,7 @@
 /**
  * Patchy's cryptography: its id, token and digest formats, and the keyed operations Effect's own
- * `Crypto` lacks (HMAC, HKDF, AES-256-GCM, constant-time comparison, public-key inspection).
+ * `Crypto` lacks (HMAC, HKDF, AES-256-GCM, constant-time comparison, public-key inspection, RS256
+ * signing).
  * Services take it from the environment at construction; `NodeCryptography.layer` implements it,
  * and is the one place production code reaches `node:crypto`.
  */
@@ -29,6 +30,16 @@ export class InvalidPublicKey extends Schema.TaggedError<InvalidPublicKey>()("In
 }) {
   override get message() {
     return "The value is not an RSA public key.";
+  }
+}
+
+/** Nothing about why: a key that isn't RSA and one that doesn't parse look the same. */
+export class InvalidPrivateKey extends Schema.TaggedError<InvalidPrivateKey>()(
+  "InvalidPrivateKey",
+  {}
+) {
+  override get message() {
+    return "The value is not an RSA private key.";
   }
 }
 
@@ -95,5 +106,13 @@ export class Cryptography extends Context.Service<
       },
       InvalidPublicKey
     >;
+    /**
+     * RSASSA-PKCS1-v1_5 over SHA-256 (a JWT's RS256) with an RSA private key in PEM, PKCS#1 or
+     * PKCS#8, such as a GitHub App's. Strings sign as UTF-8.
+     */
+    readonly rsaSha256Sign: (
+      privateKey: string,
+      data: string | Uint8Array
+    ) => Effect.Effect<Uint8Array, InvalidPrivateKey>;
   }
 >()("@patchy/core/Cryptography") {}

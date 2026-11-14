@@ -1,12 +1,13 @@
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import { Analytics } from "@patchy/analytics";
 import { Integration, integrations } from "@patchy/api";
-import type { RequireSession } from "@patchy/auth";
+import { type RequireSession, Session } from "@patchy/auth";
 import { Teams, Users } from "@patchy/companies";
 import { checkbox, choiceGroup, radio } from "@patchy/core";
 import { ContractLimits } from "@patchy/limits";
@@ -21,6 +22,9 @@ import * as PidgeonKeys from "./pidgeon/Keys.js";
 import * as PidgeonPage from "./pidgeon/Page.js";
 import * as AttioPage from "./attio/Page.js";
 import * as ImapPage from "./imap/Page.js";
+import * as GithubFlows from "./github/Flows.js";
+import * as GithubPage from "./github/Page.js";
+import * as GithubSource from "./github/Source.js";
 
 /** A page to read. */
 export type Target =
@@ -46,6 +50,8 @@ export interface Page {
   readonly overlay?: string;
   readonly status?: number;
   readonly redirect?: string;
+  /** Other sites a form on the page may land on after a redirect, such as GitHub's sign-in. */
+  readonly formActions?: ReadonlyArray<string>;
 }
 
 type Submitted = Readonly<Record<string, string | undefined>>;
@@ -63,6 +69,8 @@ interface CredentialsPage {
   readonly shows: ReadonlyArray<View.Field>;
   /** What the form starts with, such as a Change access dialog's current access. */
   readonly initial?: (connection: ConnectionStore.Connection) => Submitted;
+  /** Forms of their own after the dialog's, which its buttons may join, as GitHub's sign-in does. */
+  readonly outside?: string;
 }
 
 /** What the pages say about one integration; the layout around it is the same for every one. */
@@ -72,12 +80,17 @@ interface IntegrationPage {
   readonly actions: View.Actions;
   /** What its connect page asks for; the shared frame draws it. */
   readonly connect: ConnectFrame.ConnectSpec;
-  readonly rotate: CredentialsPage;
+  /** Absent where new credentials aren't a form, as GitHub's Reconnect, which signs in first. */
+  readonly rotate?: CredentialsPage;
   /** Absent where a connection can't move to another target. */
   readonly retarget?: CredentialsPage;
   /** Present where what the credentials may do is a choice. */
   readonly access?: CredentialsPage;
   readonly consequences?: Partial<Record<"delete" | "disconnect", string>>;
+  /** Where to remove what Disconnect leaves in the other system. */
+  readonly removal?: (
+    connection: ConnectionStore.Connection
+  ) => { readonly href: string; readonly label: string } | undefined;
   /** Refusal codes about the credentials, by the field they are shown under. */
   readonly credentialRefusals: ReadonlyMap<string, View.Field>;
   /** A refusal's bold first line, by its code, where the integration gives one. */
@@ -99,9 +112,17 @@ const pages: { readonly [K in Integration]: IntegrationPage } = {
   posthog: PostHogPage,
   pidgeon: PidgeonPage,
   attio: AttioPage,
-  imap: ImapPage
+  imap: ImapPage,
+  github: GithubPage
 };
-const offers = integrations.map((integration) => pages[integration].offer);
+/**
+ * The integrations this instance offers, in order: GitHub only while its App is configured, so
+ * with its settings empty nothing about it shows.
+ */
+const offered = Effect.gen(function* () {
+  const github = Option.isSome((yield* GithubSource.Source).app);
+  return integrations.filter((integration) => integration !== "github" || github);
+});
 /**
  * A connection's integration as the pages name and mark it: wearing the logo of the provider the
  * connection reaches where Patchy knows it, such as Gmail's for a mailbox on Gmail's server.
@@ -171,6 +192,14 @@ const about = (
         attention: PidgeonPage.attention(connection),
         tag: PidgeonPage.tag(connection)
       };
+    case "github":
+      return {
+        source: GithubPage.source(connection),
+        facts: GithubPage.facts(connection),
+        credential: GithubPage.credential(connection),
+        access: GithubPage.allowed(connection),
+        attention: GithubPage.attention(connection, people, now)
+      };
   }
 };
 /** What a snapshot lets patches read, in its integration's words. */
@@ -183,7 +212,9 @@ const readsOf = (metadata: ConnectionStore.Metadata) =>
         ? AttioPage.reads(metadata.snapshot)
         : metadata.integration === "imap"
           ? ImapPage.reads(metadata.snapshot)
-          : PidgeonPage.reads(metadata.snapshot);
+          : metadata.integration === "github"
+            ? GithubPage.reads(metadata.snapshot)
+            : PidgeonPage.reads(metadata.snapshot);
 
 /** The field each refusal is about, when it is about one. */
 const refusedField = (page: IntegrationPage, code: string | undefined): View.Field | undefined =>
@@ -287,6 +318,8 @@ const row = (
 /** The word for replacing an integration's credentials, by its key: "Replace key". */
 const rotateLabel = (integration: string) =>
   isIntegration(integration) ? pages[integration].actions.rotate : "Replace key";
+const offersOf = (shown: ReadonlyArray<Integration>) =>
+  shown.map((integration) => pages[integration].offer);
 
 /**
  * The company's people by id, and its active admins' names for the line that tells members whom
@@ -344,7 +377,7 @@ const index = Effect.fn("ConnectionPage.index")(function* (
       admins: known?.admins ?? [],
       rows: connections.map((connection) => row(connection, usage, people, now)),
       lastCalls,
-      offers,
+      offers: offersOf(yield* offered),
       rotate: rotateLabel,
       filters: filters(query),
       now,
@@ -371,7 +404,7 @@ const catalogue = Effect.fn("ConnectionPage.catalogue")(function* (
       admin: viewer.role === "admin",
       admins,
       rows: connections.map((connection) => row(connection, new Map(), new Map(), now)),
-      offers
+      offers: offersOf(yield* offered)
     })
   } satisfies Page;
 });
@@ -389,25 +422,93 @@ const withAttempt = (submitted: Submitted) =>
     ? Effect.succeed(submitted)
     : Effect.map(PidgeonKeys.newAttempt, (attempt): Submitted => ({ ...submitted, attempt }));
 
+/**
+ * What the admin's sign-in to GitHub shows them, for `purpose` and the connection it's for: who
+ * they are and what they administer where the App is installed, or that they haven't signed in.
+ * A listing GitHub refuses leaves them signed in, with its refusal for the page to say.
+ */
+const githubSignIn = Effect.fn("ConnectionPage.githubSignIn")(function* (
+  viewer: RequireSession.Viewer["Service"],
+  purpose: GithubFlows.Purpose,
+  connectionId: string | null
+): Effect.fn.Return<
+  { readonly signIn: GithubPage.SignIn; readonly problem?: View.Notice },
+  GithubSource.NotOffered,
+  GithubFlows.Flows | GithubSource.Source
+> {
+  const flows = yield* GithubFlows.Flows;
+  const flow = yield* flows
+    .current({ companyId: viewer.company.id, userId: viewer.user.id })
+    .pipe(Effect.orElseSucceed(() => Option.none<GithubFlows.Flow>()));
+  if (
+    Option.isNone(flow) ||
+    Option.isNone(flow.value.signedIn) ||
+    flow.value.purpose !== purpose ||
+    flow.value.connectionId !== connectionId
+  )
+    return { signIn: { kind: "signed-out" } satisfies GithubPage.SignIn as GithubPage.SignIn };
+  const who = flow.value.signedIn.value;
+  const installUrl = yield* (yield* GithubSource.Source).installUrl;
+  return yield* flows.listing(who.token).pipe(
+    Effect.map((listed) => ({
+      signIn: {
+        kind: "signed-in",
+        login: who.login,
+        listed,
+        installUrl
+      } satisfies GithubPage.SignIn as GithubPage.SignIn
+    })),
+    Effect.catch((error) =>
+      Effect.succeed({
+        signIn: {
+          kind: "signed-in",
+          login: who.login,
+          listed: null,
+          installUrl
+        } satisfies GithubPage.SignIn as GithubPage.SignIn,
+        problem: refusal(error)
+      })
+    )
+  );
+});
+
 const connectForm = Effect.fn("ConnectionPage.connectForm")(function* (
   viewer: RequireSession.Viewer["Service"],
   integration: Integration,
   given: Submitted = {},
-  notice?: View.Notice
+  notice?: View.Notice,
+  /** The boxes GitHub's form had ticked, which a refusal or a filter keeps. */
+  chosen: ReadonlyArray<string> = []
 ) {
   const page = pages[integration];
+  if (!(yield* offered).includes(integration))
+    return yield* new ConnectionStore.ConnectionNotFound({
+      companyId: viewer.company.id,
+      lookup: { integration, handle: "" }
+    });
   const submitted = yield* withAttempt(given);
   const connections = yield* (yield* ConnectionStore.ConnectionStore).list(viewer.company.id);
+  const github =
+    integration === "github" ? yield* githubSignIn(viewer, "connect", null) : undefined;
+  const shown = notice ?? github?.problem;
   return {
     title: `Connect ${page.integration.label}`,
     ...ConnectFrame.render({
       integration: page.integration,
-      spec: page.connect,
+      spec:
+        github === undefined
+          ? page.connect
+          : GithubPage.connectSpec({
+              signIn: github.signIn,
+              query: submitted.q ?? "",
+              chosen
+            }),
       submitted,
-      ...(notice === undefined ? {} : { notice }),
+      ...(shown === undefined ? {} : { notice: shown }),
       back: connections.length === 0 ? View.indexPath : View.cataloguePath
     }),
-    status: notice?.status
+    status: shown?.status,
+    ...(integration === "github" ? { formActions: [GithubSource.WEB_URL] } : {})
   } satisfies Page;
 });
 
@@ -690,9 +791,20 @@ const confirmationPage = Effect.fn("ConnectionPage.confirmationPage")(function* 
       status: form.notice?.status
     });
   }
-  const credentials =
-    action === "rotate" || action === "retarget" || action === "access" ? page[action] : undefined;
-  if ((action === "retarget" || action === "access") && credentials === undefined)
+  const credentials: CredentialsPage | undefined =
+    connection.integration === "github" && (action === "rotate" || action === "access")
+      ? (action === "rotate" ? GithubPage.reconnectDialog : GithubPage.repositoriesDialog)(
+          connection,
+          (yield* githubSignIn(viewer, action === "rotate" ? "reconnect" : "add", connection.id))
+            .signIn
+        )
+      : action === "rotate" || action === "retarget" || action === "access"
+        ? page[action]
+        : undefined;
+  if (
+    (action === "rotate" || action === "retarget" || action === "access") &&
+    credentials === undefined
+  )
     return yield* connectionPage(viewer, id, "settings", notOffered, { loaded });
   const name = `${view.integration.key}/${view.handle}`;
   const notice =
@@ -714,17 +826,26 @@ const confirmationPage = Effect.fn("ConnectionPage.confirmationPage")(function* 
               yield* withAttempt(form.submitted ?? credentials.initial?.(connection) ?? {}),
               notice
             ),
-            ...(credentials.submit === undefined ? {} : { submit: credentials.submit })
+            ...(credentials.submit === undefined ? {} : { submit: credentials.submit }),
+            ...(credentials.outside === undefined ? {} : { outside: credentials.outside })
           }
         }),
     ...(page.consequences === undefined ? {} : { consequences: page.consequences }),
+    ...(() => {
+      const removal = page.removal?.(connection);
+      return removal === undefined ? {} : { removal };
+    })(),
     ...(notice === undefined ? {} : { notice })
   });
-  return yield* connectionPage(viewer, id, "settings", undefined, {
+  const page_ = yield* connectionPage(viewer, id, "settings", undefined, {
     overlay,
     status: notice?.status,
     loaded
   });
+  // GitHub's Reconnect and Change repositories sign in there first.
+  return connection.integration === "github"
+    ? ({ ...page_, formActions: [GithubSource.WEB_URL] } satisfies Page)
+    : page_;
 });
 
 /** Renders a page; Auth supplies a live viewer, and no query parameter selects authority. */
@@ -752,7 +873,18 @@ export const read = Effect.fn("ConnectionPage.read")(function* (
           lookup: { integration: target.integration, handle: "" }
         });
       if (!admin) return yield* index(viewer, new URLSearchParams(), forbidden);
-      return yield* connectForm(viewer, target.integration);
+      // GitHub's filter is a GET of the form: its text and the boxes it had ticked come back.
+      return yield* connectForm(
+        viewer,
+        target.integration,
+        {
+          handle: query.get("handle") ?? "",
+          description: query.get("description") ?? "",
+          q: query.get("q") ?? ""
+        },
+        undefined,
+        query.getAll("repository")
+      );
     case "view":
       // Members read Overview; Calls and Settings refuse them on it.
       if (!admin && target.tab !== "overview")
@@ -760,7 +892,21 @@ export const read = Effect.fn("ConnectionPage.read")(function* (
       return yield* connectionPage(viewer, target.id, target.tab, done);
     case "confirm":
       if (!admin) return yield* connectionPage(viewer, target.id, "overview", forbidden);
-      return yield* confirmationPage(viewer, target.id, target.action);
+      // GitHub's Change repositories filter is a GET of its dialog: its text and ticks come back.
+      return yield* confirmationPage(
+        viewer,
+        target.id,
+        target.action,
+        target.action === "access" && query.has("q")
+          ? {
+              submitted: {
+                q: query.get("q") ?? "",
+                keep: query.getAll("keep").join(","),
+                repository: query.getAll("repository").join(",")
+              }
+            }
+          : {}
+      );
   }
 });
 
@@ -853,6 +999,19 @@ const reporter = Effect.fn("ConnectionPage.reporter")(function* (
     });
 });
 
+/** A field's values, however many times the form sent it. */
+const valuesOf = (value: string | ReadonlyArray<string> | undefined): ReadonlyArray<string> =>
+  value === undefined ? [] : typeof value === "string" ? [value] : value;
+/** The form as an integration reads it: GitHub's ticked boxes joined, since they repeat. */
+const withTicks = (
+  submitted: Submitted,
+  form: Readonly<Record<string, string | ReadonlyArray<string>>> | null
+): Submitted => ({
+  ...submitted,
+  keep: valuesOf(form?.keep).join(","),
+  repository: valuesOf(form?.repository).join(",")
+});
+
 const connect = Effect.fn("ConnectionPage.connect")(function* (
   viewer: RequireSession.Viewer["Service"],
   integration: Integration
@@ -860,18 +1019,22 @@ const connect = Effect.fn("ConnectionPage.connect")(function* (
   const page = pages[integration];
   const form = yield* formBody;
   const submitted = submittedOf(form);
-  // A refused connect keeps what was typed, except the credentials.
+  const chosen = integration === "github" ? valuesOf(form?.repository) : [];
+  // A refused connect keeps what was typed, except the credentials, and what GitHub's had ticked.
   const refused = (notice: View.Notice) =>
     connectForm(
       viewer,
       integration,
       submitted,
-      atField(page, notice, ConnectFrame.shows(page.connect))
+      atField(page, notice, ConnectFrame.shows(page.connect)),
+      chosen
     );
   if (form === null) return yield* refused(unreadable);
   return yield* Effect.gen(function* () {
     const fields = yield* decodeConnect(form);
-    const credentials = page.credentials(submitted);
+    const credentials = page.credentials(
+      integration === "github" ? withTicks(submitted, form) : submitted
+    );
     if (!Redacted.isRedacted(credentials)) return yield* refused(credentials);
     const connection = yield* (yield* ConnectionStore.ConnectionStore).connect(
       {
@@ -909,7 +1072,11 @@ const act = Effect.fn("ConnectionPage.act")(function* (
         case "rotate":
         case "retarget":
         case "access":
-          return yield* confirmationPage(viewer, id, kind, { submitted, notice });
+          // GitHub's ticked boxes repeat, so they're kept joined, as its dialog reads them.
+          return yield* confirmationPage(viewer, id, kind, {
+            submitted: form === null ? submitted : withTicks(submitted, form),
+            notice
+          });
         case "audience":
           return yield* confirmationPage(viewer, id, kind, { audience: chosen, notice });
         case "description":
@@ -939,7 +1106,9 @@ const act = Effect.fn("ConnectionPage.act")(function* (
               ? { next: { href: View.connectionPath(id, "rotate"), label: "Replace key…" } }
               : notice.code === "auth_failed"
                 ? { next: { href: View.connectionPath(id, "rotate"), label: "Replace password…" } }
-                : {};
+                : notice.code === "github_installation_gone"
+                  ? { next: { href: View.connectionPath(id, "rotate"), label: "Reconnect…" } }
+                  : {};
           return yield* connectionPage(viewer, id, "overview", { ...notice, ...replace });
         }
       }
@@ -953,7 +1122,7 @@ const act = Effect.fn("ConnectionPage.act")(function* (
       const current = yield* store.get(viewer.company.id, id);
       // Replacing credentials keeps where they point; pointing elsewhere names it anew.
       const credentials = pages[current.integration].credentials(
-        submitted,
+        current.integration === "github" ? withTicks(submitted, form) : submitted,
         kind === "retarget" ? undefined : current
       );
       if (!Redacted.isRedacted(credentials)) return yield* refused(credentials);
@@ -1076,4 +1245,124 @@ export const pidgeonAddresses = Effect.fn("ConnectionPage.pidgeonAddresses")(fun
     Effect.map((found): Fragment => ({ status: 200, body: PidgeonPage.addressesFragment(found) })),
     Effect.catch((error) => Effect.succeed(refused(refusal(error))))
   );
+});
+
+// ---------- GitHub's sign-in ----------
+
+const githubPurposes: ReadonlyArray<GithubFlows.Purpose> = ["connect", "add", "reconnect"];
+const isPurpose = (value: string | null): value is GithubFlows.Purpose =>
+  githubPurposes.some((purpose) => purpose === value);
+/** Where GitHub sends the browser back: this instance's own callback. */
+const callbackUrl = Effect.map(Session.Session, (session) =>
+  new URL(GithubPage.callbackPath, session.publicBaseUrl).toString()
+);
+/** Where a GitHub sign-in that came back lands: the page it was for. */
+const githubReturn = (purpose: GithubFlows.Purpose, connectionId: string | null) =>
+  purpose === "connect" || connectionId === null
+    ? GithubPage.connectPath
+    : View.connectionPath(connectionId, purpose === "add" ? "access" : "rotate");
+
+/**
+ * Continue with GitHub, from the connect page or a connection's Change repositories or Reconnect:
+ * the admin's new flow record, then GitHub's authorization page. An Add or Reconnect names a
+ * GitHub connection of the admin's company.
+ */
+export const githubStart = Effect.fn("ConnectionPage.githubStart")(function* (
+  viewer: RequireSession.Viewer["Service"],
+  query: URLSearchParams
+) {
+  if (viewer.role !== "admin") return yield* index(viewer, new URLSearchParams(), forbidden);
+  const purpose = query.get("purpose");
+  if (!isPurpose(purpose))
+    return yield* new ConnectionStore.ConnectionNotFound({
+      companyId: viewer.company.id,
+      lookup: { integration: "github", handle: "" }
+    });
+  const connectionId = purpose === "connect" ? null : (query.get("connection") ?? "");
+  if (connectionId !== null) {
+    const connection = yield* (yield* ConnectionStore.ConnectionStore).get(
+      viewer.company.id,
+      connectionId
+    );
+    if (connection.integration !== "github")
+      return yield* new ConnectionStore.ConnectionNotFound({
+        companyId: viewer.company.id,
+        lookup: { id: connectionId }
+      });
+  }
+  return yield* (yield* GithubFlows.Flows)
+    .start({
+      companyId: viewer.company.id,
+      userId: viewer.user.id,
+      purpose,
+      connectionId,
+      redirectUri: yield* callbackUrl,
+      selectAccount: query.get("account") === "choose"
+    })
+    .pipe(
+      Effect.map((url): Page => ({ title: "GitHub", body: "", redirect: url })),
+      Effect.catch((error) =>
+        Effect.gen(function* () {
+          if (connectionId === null)
+            return yield* connectForm(viewer, "github", {}, refusal(error));
+          return yield* connectionPage(viewer, connectionId, "settings", refusal(error));
+        })
+      )
+    );
+});
+
+/**
+ * GitHub's return from signing in: the flow's nonce consumed, only for the admin and company
+ * that started it, the code exchanged and who they are read; then the page it was for. A refusal
+ * shows on the connect page, which offers Continue with GitHub again.
+ */
+export const githubCallback = Effect.fn("ConnectionPage.githubCallback")(function* (
+  viewer: RequireSession.Viewer["Service"],
+  query: URLSearchParams
+) {
+  if (viewer.role !== "admin") return yield* index(viewer, new URLSearchParams(), forbidden);
+  // Someone who declined on GitHub comes back with an error and no code.
+  if (query.get("error") !== null)
+    return yield* connectForm(viewer, "github", {}, refusal(new GithubSource.SignInFailed({})));
+  return yield* (yield* GithubFlows.Flows)
+    .callback({
+      companyId: viewer.company.id,
+      userId: viewer.user.id,
+      code: query.get("code") ?? "",
+      state: query.get("state") ?? "",
+      redirectUri: yield* callbackUrl
+    })
+    .pipe(
+      Effect.map((done): Page => ({
+        title: "GitHub",
+        body: "",
+        redirect: githubReturn(done.purpose, done.connectionId)
+      })),
+      Effect.catch((error) => connectForm(viewer, "github", {}, refusal(error)))
+    );
+});
+
+/**
+ * The App's setup URL, where GitHub sends someone after installing it or changing its
+ * repositories. It proves nothing and may carry no `state` (shown): an admin with a live sign-in
+ * goes through GitHub again, which answers at once for someone who already authorized, and then
+ * sees what they can tick now. Anyone else lands on Integrations.
+ */
+export const githubSetup = Effect.fn("ConnectionPage.githubSetup")(function* (
+  viewer: RequireSession.Viewer["Service"]
+) {
+  if (viewer.role !== "admin")
+    return { title: "Integrations", body: "", redirect: View.indexPath } satisfies Page;
+  const url = yield* (yield* GithubFlows.Flows)
+    .restart({
+      companyId: viewer.company.id,
+      userId: viewer.user.id,
+      redirectUri: yield* callbackUrl
+    })
+    .pipe(Effect.orElseSucceed(() => Option.none<string>()));
+  return {
+    title: "Integrations",
+    body: "",
+    redirect: Option.getOrElse(url, () => View.indexPath)
+  } satisfies Page;
 });

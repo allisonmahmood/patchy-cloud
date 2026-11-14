@@ -77,6 +77,8 @@ import {
   PostHogOperations,
   PidgeonSource,
   AttioSource,
+  Github,
+  GithubFlows,
   AttioOperations,
   ImapOperations,
   ImapSessions,
@@ -421,16 +423,19 @@ const services = Layer.mergeAll(
       Looks.layer,
       identity
     ).pipe(
-      // One PostHog, Pidgeon, Attio and IMAP source each, so connection administration and
-      // patches share each project's, address's, workspace's and mailbox's slots, and one pool of
-      // IMAP sessions that published patches and the dev door share.
+      // One PostHog, Pidgeon, Attio, IMAP and GitHub source each, so connection administration and
+      // patches share each project's, address's, workspace's, mailbox's and installation's slots,
+      // and one pool of IMAP sessions that published patches and the dev door share. GitHub's
+      // App comes from the host's settings: empty, GitHub isn't offered; partly filled, the
+      // server refuses to start.
       Layer.provideMerge(
         SqlConnectionStore.layer.pipe(
           Layer.provide([CredentialKeys.layer, PostgresSource.layer, Teams.layer]),
           Layer.provideMerge(PostHogSource.layer),
           Layer.provideMerge(PidgeonSource.layer),
           Layer.provideMerge(AttioSource.layer),
-          Layer.provideMerge(ImapSessions.layer.pipe(Layer.provideMerge(ImapSource.layer)))
+          Layer.provideMerge(ImapSessions.layer.pipe(Layer.provideMerge(ImapSource.layer))),
+          Layer.provideMerge(Github.layer.pipe(Layer.provide(CredentialKeys.layer)))
         )
       ),
       Layer.provideMerge(Tables.layer),
@@ -453,7 +458,7 @@ const services = Layer.mergeAll(
  * Each sweep runs once on the way up and then on its own interval in its own
  * scoped fiber: deletion, orphans and change keys past their 24 hours hourly,
  * agent connections' retry copies every 15 seconds, so none outlives its minute
- * by more. A slow or defective
+ * by more, and GitHub sign-ins past their ten minutes every minute. A slow or defective
  * pass must not stop another. Contain pass failures inside each repeat so the
  * next tick retries, but never swallow shutdown.
  */
@@ -463,13 +468,16 @@ export const sweeper = Layer.effectDiscard(
     const orphan = yield* OrphanSweep.OrphanSweep;
     const connections = yield* AgentConnections.AgentConnections;
     const changeKeys = yield* ChangeKeys.ChangeKeys;
+    const githubFlows = yield* GithubFlows.Flows;
     const sweeps: ReadonlyArray<
       readonly [name: string, sweep: Effect.Effect<void, SqlError>, every: Duration.Input]
     > = [
       ["deletion", Effect.asVoid(deletion.sweep), "1 hour"],
       ["orphan", Effect.asVoid(orphan.sweep), "1 hour"],
       ["agent connection retries", connections.sweepRetries, "15 seconds"],
-      ["change keys", changeKeys.sweep, "1 hour"]
+      ["change keys", changeKeys.sweep, "1 hour"],
+      // A GitHub sign-in lasts ten minutes; once it ends, its token is revoked at GitHub.
+      ["github sign-ins", githubFlows.sweep, "1 minute"]
     ];
     for (const [name, sweep, every] of sweeps) {
       yield* sweep.pipe(

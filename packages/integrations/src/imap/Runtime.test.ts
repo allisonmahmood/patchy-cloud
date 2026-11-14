@@ -43,6 +43,7 @@ import { generate } from "./Generate.js";
 import * as Operations from "./Operations.js";
 import * as Sessions from "./Sessions.js";
 import * as Source from "./Source.js";
+import * as GithubTest from "../test/github.js";
 
 /**
  * A mailbox read the way patches read it: the generated client calling back through the gateway
@@ -126,6 +127,7 @@ const credentials = Layer.mergeAll(
   PostHogSource.layer,
   PidgeonSource.layer,
   AttioSource.layer,
+  GithubTest.unconfigured,
   // No IMAP source here: layers memoize by reference, so an outer one would stand in for the
   // scripted mailbox's.
   Layer.effect(Certs, ImapTest.certificates([host]))

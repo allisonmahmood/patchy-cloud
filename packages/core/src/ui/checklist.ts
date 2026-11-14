@@ -61,3 +61,12 @@ export const checklist = (spec: {
     .join("");
   return `<fieldset class="fieldset" id="${escapeAttribute(spec.id)}"${invalid}><legend class="field-label">${escapeHtml(spec.legend)}</legend>${spec.hint === undefined ? "" : `<p class="field-hint" id="${escapeAttribute(hintId)}">${escapeHtml(spec.hint)}</p>`}<div class="rows box checklist">${items}</div>${spec.error === undefined ? "" : `<p class="field-error" id="${escapeAttribute(errorId)}"${first === -1 ? ' tabindex="-1" autofocus' : ""}>${escapeHtml(spec.error)}</p>`}</fieldset>`;
 };
+
+/**
+ * Checklists of which one is chosen from at a time, such as repositories grouped by the account
+ * that holds them when a choice may take one account's: once a box is ticked in one, the others
+ * are dimmed whole, without script. Each group is a `checklist` of its own, under its
+ * legend; the server still refuses boxes ticked in two.
+ */
+export const checklistGroups = (groups: ReadonlyArray<Parameters<typeof checklist>[0]>) =>
+  `<div class="stack checklist-groups">${groups.map(checklist).join("")}</div>`;

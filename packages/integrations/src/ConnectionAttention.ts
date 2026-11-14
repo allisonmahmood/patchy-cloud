@@ -22,10 +22,44 @@ export interface Attention {
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
 
+/** Why a GitHub connection needs an admin, as its page leads with it. */
+const githubStop = (
+  connection: Extract<ConnectionStore.Connection, { readonly integration: "github" }>
+): Pick<Attention, "problem" | "fix"> | undefined => {
+  const reason = connection.display.attention;
+  if (reason?.reason === "uninstalled")
+    return {
+      problem: "Paused: Patchy Cloud was uninstalled on GitHub",
+      fix: { label: "Reconnect…", href: connectionPath(connection.id, "rotate") }
+    };
+  if (reason?.reason === "permissions")
+    return {
+      problem: "Paused: the installation's permissions changed",
+      fix: { label: "Resume…", href: connectionPath(connection.id) }
+    };
+  if (connection.status === "connected" && connection.suspendedAt !== null)
+    return {
+      problem: "Suspended on GitHub",
+      fix: { label: "Test again…", href: connectionPath(connection.id) }
+    };
+  const left = connection.display.repositories.filter((item) => item.left === true).length;
+  return left === 0
+    ? undefined
+    : {
+        problem:
+          left === 1
+            ? "A repository left the installation"
+            : `${left} repositories left the installation`,
+        fix: { label: "Refresh…", href: connectionPath(connection.id) }
+      };
+};
+
 /**
  * What a connection's provider did that only an admin can undo, as its page's notice says it, and
  * the fix that notice leads with: an Attio key a check found writable, an IMAP login the mail server
- * refused, or a Pidgeon key Patchy replaced but couldn't revoke. Nothing for any other connection.
+ * refused, a Pidgeon key Patchy replaced but couldn't revoke, or a GitHub App uninstalled, its
+ * permissions changed, suspended on its account or a repository gone from it. Nothing for any
+ * other connection.
  */
 const providerStop = (
   connection: ConnectionStore.Connection
@@ -45,12 +79,15 @@ const providerStop = (
             problem: "The old key is still active in Pidgeon",
             fix: { label: "Test again…", href: connectionPath(connection.id) }
           }
-        : undefined;
+        : connection.integration === "github"
+          ? githubStop(connection)
+          : undefined;
 
 /** Whether patches that declare it can't read it now. */
 const stops = (connection: ConnectionStore.Connection) =>
   connection.status === "disconnected" ||
-  (connection.integration === "imap" && connection.display.paused !== undefined);
+  (connection.integration === "imap" && connection.display.paused !== undefined) ||
+  (connection.integration === "github" && connection.suspendedAt !== null);
 
 /** A Pidgeon connection on a test key, whose mail never leaves Pidgeon. */
 const testMode = (connection: ConnectionStore.Connection) =>

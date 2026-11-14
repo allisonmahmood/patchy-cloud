@@ -25,6 +25,7 @@ import * as ConnectionStore from "../ConnectionStore.js";
 import * as CredentialKeys from "../CredentialKeys.js";
 import * as PidgeonSource from "../pidgeon/Source.js";
 import * as ImapTest from "../test/imap.js";
+import * as GithubTest from "../test/github.js";
 import * as PostgresSource from "../postgres/Source.js";
 import * as PostHogSource from "../posthog/Source.js";
 import * as SqlConnectionStore from "../SqlConnectionStore.js";
@@ -128,7 +129,8 @@ const credentials = Layer.mergeAll(
   ),
   PostHogSource.layer,
   PidgeonSource.layer,
-  ImapTest.offline
+  ImapTest.offline,
+  GithubTest.unconfigured
 );
 
 /** The part of the fixture's workspace the journey reads, as generation describes it. */

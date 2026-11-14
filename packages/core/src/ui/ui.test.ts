@@ -72,6 +72,7 @@ const shownAt = {
   switchForm: "Switch",
   copyLine: "Copy line",
   checklist: "Checklist",
+  checklistGroups: "Checklist",
   searchField: "Search field",
   fieldRow: "Field row",
   copyButton: "Copy button",

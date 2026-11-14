@@ -18,7 +18,15 @@ import {
   usesRefusal
 } from "@patchy/api";
 import { Looks } from "@patchy/companies";
-import { Attio, ConnectionStore, Imap, Pidgeon, Postgres, PostHog } from "@patchy/integrations";
+import {
+  Attio,
+  ConnectionStore,
+  Github,
+  Imap,
+  Pidgeon,
+  Postgres,
+  PostHog
+} from "@patchy/integrations";
 import type { CompanyDatabases } from "@patchy/company-database";
 import { Audiences, Patches } from "@patchy/patches";
 import { sdkCapabilities, sdkCapabilitiesMarkdown } from "./sdkCapabilities.js";
@@ -56,12 +64,13 @@ const labels = {
   posthog: "PostHog",
   pidgeon: "Pidgeon",
   attio: "Attio",
-  imap: "Email (IMAP)"
+  imap: "Email (IMAP)",
+  github: "GitHub"
 } as const;
 export class ConnectionNotConnected extends Schema.TaggedError<ConnectionNotConnected>()(
   "SdkConnectionNotConnected",
   {
-    integration: Schema.Literals(["postgres", "posthog", "pidgeon", "attio", "imap"]),
+    integration: Schema.Literals(["postgres", "posthog", "pidgeon", "attio", "imap", "github"]),
     handle: Schema.String
   }
 ) {
@@ -126,7 +135,7 @@ export class GenerationUnavailable extends Schema.TaggedError<GenerationUnavaila
 const sharedSourceErrors = (
   declaration: Exclude<
     (typeof GenerateRequest.Type)["manifest"]["uses"][string],
-    { kind: "postgres" | "posthog" | "pidgeon" | "attio" | "imap" | "members" }
+    { kind: "postgres" | "posthog" | "pidgeon" | "attio" | "imap" | "github" | "members" }
   >
 ) => {
   const source =
@@ -162,6 +171,7 @@ const knownSkills = [
   "patchy-pidgeon",
   "patchy-attio",
   "patchy-imap",
+  "patchy-github",
   "patchy-shared-tables",
   "patchy-shared-stores",
   "patchy-members"
@@ -306,6 +316,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
     pidgeon: Record<string, (typeof DeclarationMetadata.Type)["pidgeon"][string]>;
     attio: Record<string, (typeof DeclarationMetadata.Type)["attio"][string]>;
     imap: Record<string, (typeof DeclarationMetadata.Type)["imap"][string]>;
+    github: Record<string, (typeof DeclarationMetadata.Type)["github"][string]>;
     shared: Record<string, (typeof DeclarationMetadata.Type)["shared"][string]>;
   } = {
     postgres: Object.create(null),
@@ -313,6 +324,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
     pidgeon: Object.create(null),
     attio: Object.create(null),
     imap: Object.create(null),
+    github: Object.create(null),
     shared: Object.create(null)
   };
   const factories: Record<string, string> = Object.create(null);
@@ -322,7 +334,8 @@ export const generate = Effect.fn("Generation.generate")(function* (
       entry.kind === "posthog" ||
       entry.kind === "pidgeon" ||
       entry.kind === "attio" ||
-      entry.kind === "imap"
+      entry.kind === "imap" ||
+      entry.kind === "github"
   )
     ? yield* connections.list(companyId, viewerId).pipe(
         Effect.mapError(
@@ -344,7 +357,8 @@ export const generate = Effect.fn("Generation.generate")(function* (
       declaration.kind === "posthog" ||
       declaration.kind === "pidgeon" ||
       declaration.kind === "attio" ||
-      declaration.kind === "imap"
+      declaration.kind === "imap" ||
+      declaration.kind === "github"
     ) {
       const connection = available.find(
         (entry) =>
@@ -450,6 +464,24 @@ export const generate = Effect.fn("Generation.generate")(function* (
           client
         });
         skills.add("patchy-imap");
+      } else if (stored.integration === "github") {
+        // GitHub has no fixture: invented CI runs and pull requests never resemble a company's,
+        // so dev reads the real repositories.
+        const declared = { kind: "github" as const, ...resolved };
+        metadata.github[alias] = { declaration: declared, snapshot: stored.snapshot };
+        const output = Github.github.generate({ ...described, kind: "github" }, stored.snapshot);
+        files.set(client, output.client);
+        files.set(context, output.context);
+        uses.push({
+          alias,
+          id: resolved.id,
+          revision: resolved.revision,
+          declaration: declared,
+          skill: ".agents/skills/patchy-github/SKILL.md",
+          context,
+          client
+        });
+        skills.add("patchy-github");
       } else {
         // PostHog has no fixture: dev reads the real connection.
         const declared = { kind: "posthog" as const, ...resolved };

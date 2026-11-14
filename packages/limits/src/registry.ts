@@ -401,6 +401,123 @@ export const registry = {
     refusal: null,
     overridable: false
   },
+  "github.connection.repositories": {
+    kind: "contract",
+    default: 100,
+    unit: "repositories",
+    scope: "company",
+    measure: "Repositories in one GitHub connection, left ones included",
+    refusal: "limit_exceeded",
+    overridable: false
+  },
+  "github.calls.concurrent": {
+    kind: "contract",
+    default: 4,
+    unit: "calls",
+    scope: "host",
+    measure:
+      "GitHub requests per App installation at once in one server process, shared by every connection on it and by dev, published and administrative calls, token mints and discovery included; an excess call waits within its deadline",
+    refusal: "busy",
+    overridable: false
+  },
+  "github.host.concurrent": {
+    kind: "contract",
+    default: 8,
+    unit: "calls",
+    scope: "host",
+    measure:
+      "GitHub requests at once in one server process across every installation, a person's own reads while they connect included; an excess call waits within its deadline",
+    refusal: "busy",
+    overridable: false
+  },
+  "github.response.bytes": {
+    kind: "contract",
+    default: 4194304,
+    unit: "bytes",
+    scope: "company",
+    measure: "One GitHub answer as collected, before it is decoded",
+    refusal: "too_large",
+    overridable: false
+  },
+  "github.picker.repositories": {
+    kind: "contract",
+    default: 1000,
+    unit: "repositories",
+    scope: "viewer",
+    measure:
+      "Repositories read in one installation when connecting, from the GitHub listing of the person signing in; more and the rest aren't offered",
+    refusal: null,
+    overridable: false
+  },
+  "github.picker.installations": {
+    kind: "contract",
+    default: 200,
+    unit: "installations",
+    scope: "viewer",
+    measure:
+      "Installations of the App read when connecting, from the GitHub listing of the person signing in; more and the rest aren't offered, and the page says so",
+    refusal: null,
+    overridable: false
+  },
+  "github.picker.shown": {
+    kind: "contract",
+    default: 50,
+    unit: "repositories",
+    scope: "viewer",
+    measure:
+      "Repositories the connect page and Change repositories list at once; a filter finds the others",
+    refusal: null,
+    overridable: false
+  },
+  "github.installation.repositories": {
+    kind: "contract",
+    default: 5000,
+    unit: "repositories",
+    scope: "company",
+    measure:
+      "Repositories read from one installation to find which of a connection's repositories left it; more and the call fails source_unavailable",
+    refusal: null,
+    overridable: false
+  },
+  "github.discovery.deadline": {
+    kind: "contract",
+    default: 60000,
+    unit: "milliseconds",
+    scope: "company",
+    measure:
+      "Refresh, and Resume's look for repositories that came back: reading every repository in an installation, however many requests that takes; a patch's call keeps integration.deadline",
+    refusal: "timeout",
+    overridable: false
+  },
+  "github.cooldown.default": {
+    kind: "contract",
+    default: 60000,
+    unit: "milliseconds",
+    scope: "company",
+    measure:
+      "How long an installation's calls are refused after a GitHub limit answer that names no time of its own",
+    refusal: "source_rate_limited",
+    overridable: false
+  },
+  "github.flow.ttl": {
+    kind: "contract",
+    default: 600000,
+    unit: "milliseconds",
+    scope: "viewer",
+    measure:
+      "How long a sign-in to GitHub lasts for choosing repositories, from pressing Continue with GitHub",
+    refusal: null,
+    overridable: false
+  },
+  "github.token.margin": {
+    kind: "contract",
+    default: 300000,
+    unit: "milliseconds",
+    scope: "host",
+    measure: "How long before its expiry a cached installation token stops being used",
+    refusal: null,
+    overridable: false
+  },
   "imap.test.deadline": {
     kind: "contract",
     default: 30000,

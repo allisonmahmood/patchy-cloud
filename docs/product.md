@@ -335,7 +335,7 @@ Signed-in pages share one sidebar of places: **Home**, **All patches**, **Your a
 
 Patch detail returns cumulative inventory and reads across retained versions, not dependants or version history. Table detail returns column kinds, optionality, explicit defaults including `null`, ref targets, indexes with `unique`, sharing and schema revision, never rows. An unavailable company database yields `inventory: null` and text `Tables: unavailable`, not empty definitions. Shared live tables and stores carry copy-ready `patchy add shared-table <patchId>/<table>` or `patchy add shared-store <patchId>/<store>` hints. Agents branch on `declarable` and `reason`, not the human `hint`; unshared resources name the owner and off sources need restoration. Store reads and dependants use a `store` field, never a `table` field.
 
-`list connections [--all]` lists the company's connections, with offered integrations when requested. Connected entries carry an `add` hint; disconnected ones carry `reason: not_connected` and a `/settings/integrations` pointer; an IMAP connection whose server refused its password carries `paused: true` and a hint to ask an admin to replace the password or test it, instead of the `add` hint. `list connections <integration>/<handle>`, or a handle only one connection has, returns the current immutable snapshot with its revision and `takenAt`. A handle is unique within its integration, so `postgres/warehouse` names one connection. A null snapshot is unavailable, not an empty database. Discovery reads no source rows or credentials.
+`list connections [--all]` lists the company's connections, with offered integrations when requested. Connected entries carry an `add` hint; disconnected ones carry `reason: not_connected` and a `/settings/integrations` pointer; an IMAP connection whose server refused its password carries `paused: true` and a hint to ask an admin to replace the password or test it, instead of the `add` hint. A GitHub connection whose account suspended the App on GitHub carries `suspended: true`, with a hint saying calls fail until it's unsuspended there. `list connections <integration>/<handle>`, or a handle only one connection has, returns the current immutable snapshot with its revision and `takenAt`. A handle is unique within its integration, so `postgres/warehouse` names one connection. A null snapshot is unavailable, not an empty database. Discovery reads no source rows or credentials.
 
 Every discovery level accepts `--json`. The top level merges `{ patches, connections }` from `GET /api/patches` and `GET /api/connections`; other levels print their wire body without an `ok` wrapper. Agents filter those documents locally. Patch detail includes `descriptionUpdatedAt` for repo synchronization. The patch read query carries live dependant edges for the portal, while agent detail exposes inventory and reads.
 
@@ -724,7 +724,7 @@ Personal-connection credentials and the takedown of owner-only patches wait for 
 
 ### Integrations and connections
 
-Patchy ships the **integration** — today Postgres, PostHog, Pidgeon, Attio and Email (IMAP) — as a company-scoped capability. A **connection** is the live, credentialed instance an admin connects for their company. Patches declare connections, not an integration in the abstract, and never receive their credentials. Personal connections are a future extension of this model; the implemented connect flow and its limits are spelled out under [Integrations](#integrations).
+Patchy ships the **integration** — today Postgres, PostHog, Pidgeon, Attio, Email (IMAP) and GitHub — as a company-scoped capability. A **connection** is the live, credentialed instance an admin connects for their company. Patches declare connections, not an integration in the abstract, and never receive their credentials. Personal connections are a future extension of this model; the implemented connect flow and its limits are spelled out under [Integrations](#integrations).
 
 **Integrations**, at `/settings/integrations`, is one table of the company's connections across
 integrations: each row is titled with the name agents type (`postgres/warehouse`) beside its
@@ -733,7 +733,9 @@ the newest its Calls tab would show them, and a menu. A connection is **Connecte
 paused it; or **Needs attention**, a badge, when Patchy stopped it or something about it waits
 on an admin, in its integration's own words with its fix: an Attio key a check found writable,
 an IMAP login its mail server refused (its login pause), a Pidgeon key Patchy replaced but
-couldn't revoke, or a Pidgeon test address. From nine connections the page adds search over names and descriptions and the
+couldn't revoke, a Pidgeon test address, or a GitHub App uninstalled, its permissions changed or
+a repository gone from its installation. A GitHub connection whose account suspended the App
+shows "Suspended on GitHub, last checked …" in its place, a state of its own rather than a pause. From nine connections the page adds search over names and descriptions and the
 views All, Needs attention and Paused while any are, and for admins Unused, then the
 integrations its connections come from; they are plain links and a GET form, and combine. **Used by** names the live patches
 whose served version declares the connection, and reads "None live · 3 retired" or "None live ·
@@ -1182,10 +1184,13 @@ Company Pidgeon connections connect one email address with a key Patchy mints fo
 it, and patches read and send from it. Company Attio connections read one CRM
 workspace through a read-only key: its records, list entries and members.
 Company Email (IMAP) connections log in to one mailbox with its password, and
-patches read its folders and messages without ever changing it. Other
-integrations and personal connections remain planned.
+patches read its folders and messages without ever changing it. Company GitHub
+connections hold repositories on one GitHub account through Patchy's GitHub App,
+connected by someone GitHub shows administering them; the reads patches call
+arrive in their own release. Other integrations and personal connections remain
+planned.
 
-An **integration** is a capability Patchy builds and maintains, the same for every company. Postgres was the first, PostHog the second, Pidgeon the third, the first that can write, Attio the fourth and Email (IMAP) the fifth; Salesforce and Gmail are examples of future integrations, not offered connections. A **connection** is the live, credentialed instance of an integration. That distinction was drawn with [Companies](#integrations-and-connections); this section is the layer itself — how a connection comes to exist, how a patch declares and uses one, and what patch code is actually handed.
+An **integration** is a capability Patchy builds and maintains, the same for every company. Postgres was the first, PostHog the second, Pidgeon the third, the first that can write, Attio the fourth, Email (IMAP) the fifth and GitHub the sixth; Salesforce and Gmail are examples of future integrations, not offered connections. A **connection** is the live, credentialed instance of an integration. That distinction was drawn with [Companies](#integrations-and-connections); this section is the layer itself — how a connection comes to exist, how a patch declares and uses one, and what patch code is actually handed.
 
 Integrations sit inside the **primitive** model. **Patch-scoped** primitives — the patch's own tables and file stores — are defined in config and provisioned with the patch. **Company-scoped** primitives — connections and the database those tables live in — are shared infrastructure, never owned by a consuming patch. A table remains patch-owned wherever it physically lives. Connections and shared tables are declared dependencies; omitting a definition does not delete its provisioned resources.
 
@@ -1196,8 +1201,9 @@ a source and decides who may build with it, and anyone who can open a tier 2 pat
 whose handlers declare it uses it through them; a page below tier 2 reaches no connection. There is no per-patch grant. “As the viewer” means Patchy
 checks company access and records the user; the source sees the shared role from
 the connection string, the admin's PostHog key, the key Patchy minted for a
-Pidgeon address, the admin's read-only Attio workspace key, or a mailbox's IMAP
-login, not a separate identity for each person.
+Pidgeon address, the admin's read-only Attio workspace key, a mailbox's IMAP
+login, or a token Patchy mints through its GitHub App, not a separate identity
+for each person.
 
 A company may hold several connections of that integration, each with an
 immutable **handle** and an editable description: `postgres/warehouse`,
@@ -1786,6 +1792,131 @@ OAuth, so Gmail and Microsoft 365 would be integrations of their own;
 autodiscovery; private-network hosts, non-standard ports and IP allowlists;
 attachment text extraction and raw `.eml` export; personal connections; server
 SORT and THREAD; S/MIME and PGP decryption.
+
+### Connecting GitHub
+
+GitHub is read-only and company-wide: one connection reads a set of repositories
+on one GitHub account, through Patchy's GitHub App, "Patchy Cloud". An account's
+owner installs the App on GitHub and chooses which repositories it may read; a
+Patchy admin then connects, from that installation, repositories GitHub shows them
+administering. The App requests read on metadata, Actions, checks, commit
+statuses, contents, deployments, issues and pull requests, and nothing on the
+organization; webhooks are off. Its credentials are host settings, five
+`PATCHY_GITHUB_APP_*` keys: all empty and GitHub isn't offered anywhere, some
+filled and the server refuses to start, naming what's empty. github.com only.
+The reads patches call arrive with their own release; until then a declaration
+reads nothing.
+
+**The rule.** A connection reads a repository only because a person GitHub showed
+to administer it, at that moment, added it to that connection. The connect page
+signs the admin in to GitHub, through an authorization Patchy starts with a
+one-use nonce and an S256 challenge, held on a ten-minute record of that admin's
+sign-in; the return consumes the nonce once, only for the same admin and company,
+and the exchange counts as signed in only when GitHub's answer carries a token and
+no error, whatever its status. The person's GitHub token stays sealed on that
+record, only the return of its newest request seals one there, and the token the
+record holds when the connection saves or the record expires is revoked at GitHub;
+a token no record takes, as from a return a newer request overtook, is revoked at
+once. Patchy then lists up to 200 installations they can see, saying so when there
+are more, and, in each, only the repositories whose listing carries
+`permissions.admin` exactly true. The admin ticks repositories on one account
+(ticking one account dims the others),
+names the connection and submits; the ticked ids are read again with their token
+then, each must be in that installation with `admin` true, and an account that
+is neither a person nor an organization is refused. Installing the App and adding
+repositories to it happen on GitHub and prove nothing: the App's setup URL, which
+may carry no `state`, only sends an admin with a live sign-in through GitHub
+again, which answers at once for someone who already authorized, so they see what
+they can tick now. Someone signed in where the App isn't installed on anything
+they administer is told so, with Install on GitHub; on an organization they don't
+own, GitHub sends its owners a request.
+
+**One company per organization installation.** Whoever first connects a
+repository of an organization's installation claims it for their company, an
+outside collaborator who administers a repository included; they read only what
+they administer. Another company is then refused, told the account is connected
+to another Patchy company and the way out: an owner uninstalls and reinstalls the
+App, which GitHub counts as a new installation nobody holds. The claim holds
+through Pause and every state that needs attention, and ends when the company's
+last connection on it is Disconnected. A personal account's installation may be
+connected to any company by its own user, the person signed in to GitHub matching
+the account by numeric id, on Connect, Add and Reconnect alike. A connection
+survives its connector later losing admin: it ends in Patchy, by Remove, Pause or
+Disconnect, or on GitHub, by taking a repository out of the installation,
+suspending or uninstalling the App.
+
+**What a call may reach.** A connection stores its installation, account and
+repository ids, sealed under the keyring. A call names a repository by name,
+which is looked up in the connection's current set and refused `not_found`
+before GitHub is asked when it isn't there or has left: GitHub lets any token read
+any public repository, so this check is the boundary for them. Requests address
+the repository by its numeric id, never its name, which a namesake can take over.
+Patchy mints an installation token for the set's ids with read permissions named,
+which GitHub refuses if any left the installation, and keeps it in the host's
+memory by connection and credential revision until five minutes before it
+expires; a token never reaches workerd. Each installation has 4 slots per server
+process, shared by every connection on it, by dev, published and administrative
+calls, mints and discovery, inside 8 for all of GitHub, which a person's own reads
+while they connect take too. One 15-second deadline covers the wait for a slot and
+every request after it. A call that waited loads the connection again: one moved
+to another installation meanwhile is refused, its next call admitted under that
+one, and a cooldown that began meanwhile refuses it before anything is sent.
+
+**When access ends, the mint says why.** A 404 means the App was uninstalled: the
+connection pauses as needing attention, and Reconnect, after it's reinstalled,
+signs in, must find the App on the same account, re-checks admin on every
+repository there, claims the new installation and moves the connection to it. A
+403 the App's own read confirms as a suspension refuses the call, saying the
+account suspended the App, and is never a pause: the installation keeps when a
+mint last saw it, and connections on it show "Suspended on GitHub, last checked …"
+in place of Connected until a mint, check, Refresh or connect works against it
+again. A 422 is read, never
+assumed: a permission the installation no longer grants exactly pauses it as
+needing attention, with Resume once an owner accepts the App's permissions;
+otherwise Patchy lists the installation's repositories, marks the set's missing
+ones as left, under a new snapshot and credential revision, checks the asked-for
+repository again and mints once for what remains. If GitHub refuses that mint too,
+the call answers unavailable and the left marks stay, since the complete listing
+showed those repositories gone. One reconciliation and one replacement mint per
+call, never a loop. A 401 is Patchy's own key, an operator's alert, never a
+connection's state. A pause or a reconciliation applies only while the connection
+is as the attempt found it, so a failure that began before a newer success changes
+nothing. A private repository taken out of the installation is refused by GitHub
+at once; a public one stays readable until the next mint. Leaving isn't final: one
+put back reads again, after a Refresh or a Resume if Patchy marked it left. To end
+a repository's access for good, remove it from the connection.
+
+**Limits.** A limit answer, a 429, a 403 with `Retry-After` or
+`X-RateLimit-Remaining: 0`, or a 403 carrying GitHub's secondary-limit message
+with neither header, is recognised before anything else reads the answer. To an
+installation's token or the App's key it writes the installation's cooldown, until
+GitHub's time or a minute, only ever later, and every host refuses its calls
+`source_rate_limited` with the time left, without asking GitHub, until it passes.
+To a person's own token while they connect it refuses their sign-in with the time
+left and cools nothing. Nothing is retried.
+
+**Lifecycle.** Test checks the installation exists, isn't suspended, holds every
+permission Patchy reads with and none above read, and that a token for the set can
+be minted. Refresh does that and reads every repository again by id: its name now,
+default branch, and whether it's private, archived or disabled, or left or back,
+as a new snapshot. A connection holds at most 100 repositories, and the picker and
+Change repositories show 50 at a time with a filter. **Change repositories** adds,
+through a sign-in under the same rule, or removes, which needs none; both take a
+new credential and metadata revision. Snapshots, revisions, `stale_generated` and
+deletion protection work as for Postgres; a published version keeps the snapshot
+it names, and what a call reaches is the current set. Pause keeps the connection
+and its claim; Resume checks first, and where repositories are marked left it
+reads which of them the installation holds now, marking them back as Refresh does,
+so a connection whose repositories all left can resume once they're back.
+Disconnect forgets it, frees the name and revokes its cached tokens; Patchy Cloud
+stays installed on GitHub, and the dialog links to where an owner removes it.
+
+The connect page says that every member reads the code, pull requests and CI logs
+of these repositories through patches that use it, builders' agents while they
+build, and guests of those patches unless blocked; that nothing on GitHub can be
+changed and no other repository reached; and that CI logs can hold secrets a
+workflow printed. [ADR-0015](adr/ADR-0015-github-app-key-and-repository-rule.md)
+records why the App's key is the one secret that matters and the repository rule.
 
 ### Discovery and binding
 

@@ -48,6 +48,7 @@ import * as PostgresSource from "../src/postgres/Source.js";
 import * as PostHogSource from "../src/posthog/Source.js";
 import * as SqlConnectionStore from "../src/SqlConnectionStore.js";
 import * as ImapTest from "../src/test/imap.js";
+import * as GithubTest from "../src/test/github.js";
 import * as RuntimeTest from "../src/test/runtime.js";
 
 /**
@@ -86,6 +87,7 @@ const storage = Layer.unwrap(
 );
 const services = Layer.mergeAll(
   RuntimeLog.layer,
+  GithubTest.unconfigured,
   InvocationLog.layer,
   OperatingLimits.layer,
   QuerySnapshot.layer,

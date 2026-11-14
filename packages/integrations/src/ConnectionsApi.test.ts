@@ -22,6 +22,7 @@ import * as Source from "./postgres/Source.js";
 import * as PostHogSource from "./posthog/Source.js";
 import * as AttioSource from "./attio/Source.js";
 import * as ImapTest from "./test/imap.js";
+import * as GithubTest from "./test/github.js";
 import * as PidgeonSource from "./pidgeon/Source.js";
 import * as PidgeonTest from "./test/pidgeon.js";
 import { NodeCryptography } from "@patchy/core";
@@ -103,6 +104,8 @@ const layer = Layer.mergeAll(ConnectionsApi.layer, HttpServer.layerServices).pip
       ])
     )
   ),
+  // No GitHub App here: GitHub isn't offered.
+  Layer.provideMerge(GithubTest.unconfigured),
   Layer.provideMerge(
     Layer.effectDiscard(seed).pipe(
       Layer.provideMerge(Teams.layer),

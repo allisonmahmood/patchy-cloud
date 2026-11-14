@@ -9,7 +9,9 @@ import {
   createDecipheriv,
   createHash,
   createHmac,
+  createPrivateKey,
   createPublicKey,
+  createSign,
   hkdfSync,
   randomBytes,
   randomUUID,
@@ -111,6 +113,16 @@ export const make = Cryptography.Cryptography.of({
         publicExponent: details.publicExponent,
         spki: key.export({ type: "spki", format: "pem" }).toString()
       };
+    }),
+  rsaSha256Sign: (privateKey, data) =>
+    Effect.try({
+      try: () => {
+        const key = createPrivateKey(privateKey);
+        if (key.asymmetricKeyType !== "rsa") throw new Error("not RSA");
+        return Uint8Array.from(createSign("RSA-SHA256").update(data).sign(key));
+      },
+      // Why it failed stays here: the message could quote part of the key.
+      catch: () => new Cryptography.InvalidPrivateKey()
     })
 });
 

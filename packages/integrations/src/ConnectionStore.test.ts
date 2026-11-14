@@ -19,6 +19,7 @@ import * as PostHogDouble from "./test/posthog.js";
 import * as PidgeonSource from "./pidgeon/Source.js";
 import * as AttioSource from "./attio/Source.js";
 import * as ImapTest from "./test/imap.js";
+import * as GithubTest from "./test/github.js";
 import { Teams } from "@patchy/companies";
 import { NodeCryptography } from "@patchy/core";
 
@@ -87,7 +88,8 @@ const fixture = SqlConnectionStore.layer.pipe(
       posthog.layer,
       PidgeonSource.layer,
       AttioSource.layer,
-      ImapTest.offline
+      ImapTest.offline,
+      GithubTest.unconfigured
     )
   ),
   Layer.provideMerge(Teams.layer),

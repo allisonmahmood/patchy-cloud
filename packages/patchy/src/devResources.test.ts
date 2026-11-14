@@ -77,6 +77,7 @@ it.live(
           pidgeon: {},
           attio: {},
           imap: {},
+          github: {},
           shared: {
             contacts: {
               declaration,
@@ -204,6 +205,7 @@ it.live(
           pidgeon: {},
           attio: {},
           imap: {},
+          github: {},
           shared: {
             everyone: { declaration: everyone, tables, uses: {} },
             sales: { declaration: sales, tables, uses: {}, companyWide: false }
@@ -306,6 +308,7 @@ it.live(
           pidgeon: {},
           attio: {},
           imap: {},
+          github: {},
           shared: {
             assets: {
               declaration: assets,
@@ -455,6 +458,7 @@ it.live(
           pidgeon: {},
           attio: {},
           imap: {},
+          github: {},
           shared: {
             contacts: {
               declaration,
@@ -583,6 +587,7 @@ it.live(
           pidgeon: {},
           attio: {},
           imap: {},
+          github: {},
           shared: {
             contacts: {
               declaration,
@@ -699,7 +704,15 @@ it.live(
           role: "admin",
           machine: { id: "local-machine", name: "Local machine" }
         }),
-        metadata: { postgres: {}, posthog: {}, pidgeon: {}, attio: {}, imap: {}, shared: {} }
+        metadata: {
+          postgres: {},
+          posthog: {},
+          pidgeon: {},
+          attio: {},
+          imap: {},
+          github: {},
+          shared: {}
+        }
       };
       const exercise = Effect.fn("test.publishedInventory")(function* (
         current: Prepared,
@@ -870,6 +883,7 @@ it.live(
           pidgeon: {},
           attio: {},
           imap: {},
+          github: {},
           shared: {}
         }
       };

@@ -93,5 +93,45 @@ export const migrations: Migrations = {
       FOREIGN KEY(company_id, team_id) REFERENCES company_teams(company_id, id)
     )`,
     `CREATE INDEX connection_team_references ON connection_team_grants(company_id, team_id)`
+  ),
+  // GitHub, through a GitHub App. An installation's parent row outlives every claim on it: it
+  // keeps the cooldown a limit answer set and when a mint last found the App suspended, and is
+  // what every claim, release, Resume and Reconnect locks first. Claims name which company holds
+  // an installation; one company per installation is a check in code, not a key, so a second can
+  // be admitted later. A flow record is one admin's sign-in to GitHub while choosing
+  // repositories: a hashed nonce consumed once, the PKCE verifier, and the person's sealed token
+  // once GitHub signed them in. It goes when the connection saves or it expires.
+  "0043_github": ddl(
+    `CREATE TABLE github_installations (
+      installation_id BIGINT PRIMARY KEY CHECK (installation_id > 0),
+      cooldown_until TIMESTAMPTZ,
+      suspended_seen_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )`,
+    `CREATE TABLE github_installation_claims (
+      installation_id BIGINT NOT NULL REFERENCES github_installations(installation_id),
+      company_id TEXT NOT NULL REFERENCES companies(id),
+      claimed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (installation_id, company_id)
+    )`,
+    `CREATE TABLE github_flows (
+      id TEXT PRIMARY KEY,
+      company_id TEXT NOT NULL REFERENCES companies(id),
+      user_id TEXT NOT NULL,
+      purpose TEXT NOT NULL CHECK (purpose IN ('connect', 'add', 'reconnect')),
+      connection_id TEXT,
+      nonce_hash TEXT NOT NULL UNIQUE,
+      nonce_consumed_at TIMESTAMPTZ,
+      verifier TEXT NOT NULL,
+      github_user_id BIGINT,
+      github_login TEXT,
+      token TEXT,
+      key_id TEXT,
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE (company_id, user_id),
+      CHECK ((purpose = 'connect') = (connection_id IS NULL))
+    )`,
+    `CREATE INDEX github_flows_expiry ON github_flows(expires_at)`
   )
 };

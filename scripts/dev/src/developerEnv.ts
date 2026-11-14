@@ -1,9 +1,10 @@
 /**
- * Clerk development settings, the seed's optional Clerk user id, a Pidgeon test admin key and an
- * Attio read key, from `$XDG_CONFIG_HOME/patchy-cloud/dev.env` (`~/.config/patchy-cloud/dev.env`).
- * Only Clerk settings reach the server; the user id is consumed by the seed, and the Pidgeon and
- * Attio keys by a scenario's connect page. Other settings in this developer-owned file never enter
- * the dev instance.
+ * Clerk development settings, the seed's optional Clerk user id, a Pidgeon test admin key, an
+ * Attio read key, and the development GitHub App with an installation and repositories to seed,
+ * from `$XDG_CONFIG_HOME/patchy-cloud/dev.env` (`~/.config/patchy-cloud/dev.env`). Clerk's and the
+ * GitHub App's settings reach the server; the user id is consumed by the seed, the Pidgeon and
+ * Attio keys by a scenario's connect page, and the GitHub installation and repositories by the
+ * `github` scenario's seed. Other settings in this developer-owned file never enter the dev instance.
  */
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -12,7 +13,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
-import { CredentialKeys } from "@patchy/integrations";
+import * as Redacted from "effect/Redacted";
+import { CredentialKeys, GithubSource } from "@patchy/integrations";
 
 /** A worktree-local keyring survives restarts without changing shared developer settings. */
 export const readCredentialKeys = Effect.fn("readCredentialKeys")(function* (file: string) {
@@ -93,6 +95,50 @@ const readKey = Effect.fn("readKey")(function* (name: string, file: string) {
   if (!(yield* fs.exists(file))) return Option.none();
   const provider = ConfigProvider.fromDotEnvContents(yield* fs.readFileString(file));
   return yield* key.pipe(Effect.provide(ConfigProvider.layer(provider)));
+});
+
+/**
+ * The development GitHub App's settings, `PATCHY_GITHUB_APP_*`, as the server reads them: the ones
+ * dev.env holds, none when it holds none, which leaves GitHub unoffered.
+ */
+export const readGithubApp = Effect.fn("readGithubApp")(function* (file: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const settings: Partial<Record<(typeof GithubSource.configKeys)[number], string>> = {};
+  if (!(yield* fs.exists(file))) return settings;
+  const provider = ConfigProvider.fromDotEnvContents(yield* fs.readFileString(file));
+  for (const key of GithubSource.configKeys) {
+    const value = (yield* provider.load([key]))?.value;
+    if (value !== undefined) settings[key] = value;
+  }
+  return settings;
+});
+
+/**
+ * What the `github` scenario seeds its connection from: `GITHUB_DEV_INSTALLATION_ID`, one of the
+ * development App's installations, and `GITHUB_DEV_REPOSITORY_IDS`, comma-separated repository ids
+ * in it, from the environment or dev.env. None, and the scenario skips the connection.
+ */
+export const readGithubSeed = Effect.fn("readGithubSeed")(function* (file: string) {
+  const installation = yield* readKey("GITHUB_DEV_INSTALLATION_ID", file);
+  const repositories = yield* readKey("GITHUB_DEV_REPOSITORY_IDS", file);
+  if (Option.isNone(installation) || Option.isNone(repositories)) return Option.none();
+  const installationId = Number(Redacted.value(installation.value).trim());
+  const repositoryIds = Redacted.value(repositories.value)
+    .split(",")
+    .map((id) => Number(id.trim()));
+  return Number.isSafeInteger(installationId) &&
+    repositoryIds.length > 0 &&
+    repositoryIds.every((id) => Number.isSafeInteger(id) && id > 0)
+    ? Option.some({ installationId, repositoryIds })
+    : Option.none();
+});
+
+/** The development GitHub App as the server would read it from dev.env: none when it holds none. */
+export const readGithubAppConfig = Effect.fn("readGithubAppConfig")(function* (file: string) {
+  const fs = yield* FileSystem.FileSystem;
+  if (!(yield* fs.exists(file))) return Option.none<GithubSource.App>();
+  const provider = ConfigProvider.fromDotEnvContents(yield* fs.readFileString(file));
+  return yield* GithubSource.appConfig.pipe(Effect.provide(ConfigProvider.layer(provider)));
 });
 
 /** The allowed developer settings; empty when the developer has written no file. */

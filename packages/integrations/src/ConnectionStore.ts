@@ -3,6 +3,7 @@ import {
   AttioSnapshot,
   type ConnectionDeclaration,
   type ConnectionDetail,
+  GithubSnapshot,
   ImapSnapshot,
   type Integration,
   PidgeonSnapshot,
@@ -21,6 +22,9 @@ import type * as PidgeonKeys from "./pidgeon/Keys.js";
 import * as PidgeonSource from "./pidgeon/Source.js";
 import * as AttioSource from "./attio/Source.js";
 import * as ImapSource from "./imap/Source.js";
+import type * as GithubAccess from "./github/Access.js";
+import * as GithubConnection from "./github/Connection.js";
+import type * as GithubSource from "./github/Source.js";
 
 export const Description = Schema.String.check(
   Schema.isMaxLength(500),
@@ -76,13 +80,24 @@ export const ImapConnection = Schema.Struct({
   integration: Schema.Literal("imap"),
   display: ImapSource.Display
 });
+export const GithubConnectionRow = Schema.Struct({
+  ...fields,
+  integration: Schema.Literal("github"),
+  display: GithubConnection.Display,
+  /**
+   * When a mint last found the App suspended on the connection's account, from its installation's
+   * row, which every connection on it shares; null once a mint or check works again.
+   */
+  suspendedAt: Schema.NullOr(Schema.String)
+});
 /** A company connection; its integration decides what its display says. */
 export const Connection = Schema.Union([
   PostgresConnection,
   PostHogConnection,
   PidgeonConnection,
   AttioConnection,
-  ImapConnection
+  ImapConnection,
+  GithubConnectionRow
 ]);
 export type Connection = typeof Connection.Type;
 /** Where a connection reads, in its integration's terms; credentials of one target share it. */
@@ -96,7 +111,8 @@ export const Metadata = Schema.Union([
   Schema.Struct({ integration: Schema.Literal("posthog"), snapshot: PostHogSnapshot }),
   Schema.Struct({ integration: Schema.Literal("pidgeon"), snapshot: PidgeonSnapshot }),
   Schema.Struct({ integration: Schema.Literal("attio"), snapshot: AttioSnapshot }),
-  Schema.Struct({ integration: Schema.Literal("imap"), snapshot: ImapSnapshot })
+  Schema.Struct({ integration: Schema.Literal("imap"), snapshot: ImapSnapshot }),
+  Schema.Struct({ integration: Schema.Literal("github"), snapshot: GithubSnapshot })
 ]);
 export type Metadata = typeof Metadata.Type;
 
@@ -335,7 +351,11 @@ export type ConnectionError =
   | AttioSource.InspectError
   | AttioSource.OtherWorkspace
   | ImapSource.InspectError
-  | ImapSource.ConnectionPaused;
+  | ImapSource.ConnectionPaused
+  | GithubConnection.ConnectError
+  | GithubAccess.CheckError
+  | GithubSource.UserError
+  | GithubSource.SignInFailed;
 
 /** Who declares a connection, by the rule that decides whether it may be deleted. */
 export interface Usage {

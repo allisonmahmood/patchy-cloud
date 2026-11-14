@@ -15,7 +15,7 @@ export {
 } from "./controls.js";
 export type { ButtonLook, ChoiceAria, FieldControl, HintEcho, InputOptions } from "./controls.js";
 export { behindTheScenes, changeEntry } from "./changelog.js";
-export { checklist } from "./checklist.js";
+export { checklist, checklistGroups } from "./checklist.js";
 export { disclosure } from "./disclosure.js";
 export type { CheckItem } from "./checklist.js";
 export {

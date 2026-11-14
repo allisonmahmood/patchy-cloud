@@ -24,6 +24,7 @@ import * as PostgresSource from "../src/postgres/Source.js";
 import * as PostHogSource from "../src/posthog/Source.js";
 import * as SqlConnectionStore from "../src/SqlConnectionStore.js";
 import type { LiveServer } from "./imapHarness.js";
+import * as GithubTest from "../src/test/github.js";
 
 /**
  * IMAP reads against real mail servers in Docker (`imapHarness.ts`): Dovecot and GreenMail. A
@@ -44,6 +45,7 @@ const network = ImapNetwork.loopback(() =>
 const services = Layer.mergeAll(
   CredentialKeys.layerFromKeys(Redacted.make(`test:${Buffer.alloc(32, 8).toString("base64")}`)),
   RuntimeLog.layer,
+  GithubTest.unconfigured,
   // Never called: these connections reach no database, PostHog project, Pidgeon address or Attio.
   Layer.succeed(
     PostgresSource.Source,

@@ -46,6 +46,7 @@ import * as ImapDev from "./imap/Dev.js";
 import * as ImapSessions from "./imap/Sessions.js";
 import * as ImapSource from "./imap/Source.js";
 import * as ImapTest from "./test/imap.js";
+import * as GithubTest from "./test/github.js";
 import * as PostHogDev from "./posthog/Dev.js";
 import * as PostHogOperations from "./posthog/Operations.js";
 import * as SqlConnectionStore from "./SqlConnectionStore.js";
@@ -309,7 +310,8 @@ const serve = (
         Layer.provideMerge(double.layer),
         Layer.provideMerge(mail.layer),
         Layer.provideMerge(workspace.layer),
-        Layer.provideMerge(imap)
+        Layer.provideMerge(imap),
+        Layer.provideMerge(GithubTest.unconfigured)
       )
     ),
     Layer.provideMerge(Layer.mergeAll(MachineTokens.layer, log, Limits.layer)),

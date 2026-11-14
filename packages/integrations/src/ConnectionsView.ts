@@ -93,6 +93,11 @@ export interface Attention {
    * shows beside an admin's pause.
    */
   readonly paused?: boolean;
+  /**
+   * The words the status shows in its place, for a reason that is a state of its own rather than
+   * a problem to fix in Patchy, such as GitHub's "Suspended on GitHub, last checked 3 minutes ago".
+   */
+  readonly badge?: string;
   readonly fixes?: ReadonlyArray<Fix>;
 }
 
@@ -225,7 +230,9 @@ const status = (item: {
   readonly attention?: Attention | undefined;
 }) => {
   const words = [
-    item.attention === undefined ? "" : badge("Needs attention", item.attention.tone),
+    item.attention === undefined
+      ? ""
+      : badge(item.attention.badge ?? "Needs attention", item.attention.tone),
     item.status === "disconnected" && item.attention?.paused !== true ? badge("Paused") : ""
   ].filter((part) => part !== "");
   return words.length === 0 ? dot("Connected", "success") : words.join(" ");
@@ -1116,9 +1123,13 @@ export const renderDialog = (input: {
     readonly submit?: string;
     /** Trusted HTML: a warning the form must be submitted again past, in a refusal's place. */
     readonly warning?: string;
+    /** Trusted HTML after the form: forms of their own its buttons may join, as `dialog` says. */
+    readonly outside?: string;
   };
   /** The integration's own words for what pausing or disconnecting does, where they differ. */
   readonly consequences?: Partial<Record<"delete" | "disconnect", string>>;
+  /** Where to remove what Disconnect leaves in the other system, such as a GitHub App's installation. */
+  readonly removal?: { readonly href: string; readonly label: string };
   readonly notice?: Notice;
 }): string => {
   const { connection, action } = input;
@@ -1167,7 +1178,7 @@ export const renderDialog = (input: {
                 body: `<p class="prose">${escapeHtml(
                   input.consequences?.delete ??
                     "No stored patch version declares it. Patchy forgets its credentials and frees the name; the metadata patches were published against is kept. This can't be undone."
-                )}</p>${refusal}`,
+                )}</p>${input.removal === undefined ? "" : `<p class="meta"><a href="${escapeAttribute(input.removal.href)}">${escapeHtml(input.removal.label)}</a></p>`}${refusal}`,
                 foot: `${cancel(true)}${button(`Disconnect ${label}`, { kind: "danger-solid" })}`
               };
   return dialog({
@@ -1175,7 +1186,10 @@ export const renderDialog = (input: {
     title: page.title,
     closeHref: back,
     size: "lg",
-    form: { action: connectionPath(connection.id, action) },
+    form: {
+      action: connectionPath(connection.id, action),
+      ...(input.form?.outside === undefined ? {} : { outside: input.form.outside })
+    },
     body: page.body,
     foot: page.foot
   });

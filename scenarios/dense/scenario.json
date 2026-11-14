@@ -307,6 +307,31 @@
       "description": "The studio's Google Workspace mailbox.",
       "state": "connected",
       "host": "imap.gmail.com"
+    },
+    {
+      "integration": "github",
+      "handle": "site",
+      "description": "The studio's website repositories: code, pull requests and CI runs.",
+      "state": "connected"
+    },
+    {
+      "integration": "github",
+      "handle": "client-apps",
+      "description": "Client app repositories on the clients' own GitHub organization.",
+      "state": "connected",
+      "suspended": true
+    },
+    {
+      "integration": "github",
+      "handle": "tools",
+      "description": "Internal tooling repositories.",
+      "state": "needs-attention"
+    },
+    {
+      "integration": "github",
+      "handle": "archive",
+      "description": "Repositories of finished projects.",
+      "state": "paused"
     }
   ],
   "generalRequests": [

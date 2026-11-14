@@ -28,6 +28,7 @@ import * as PostHogSource from "../src/posthog/Source.js";
 import * as SqlConnectionStore from "../src/SqlConnectionStore.js";
 import * as ImapTest from "../src/test/imap.js";
 import type { LiveServer } from "./imapHarness.js";
+import * as GithubTest from "../src/test/github.js";
 
 /**
  * Staging attachments from real mail servers in Docker (`imapHarness.ts`): every transfer encoding
@@ -53,6 +54,7 @@ const network = ImapNetwork.loopback(() => servers.map(([, server]) => route(ser
 const services = Layer.mergeAll(
   CredentialKeys.layerFromKeys(Redacted.make(`test:${Buffer.alloc(32, 9).toString("base64")}`)),
   RuntimeLog.layer,
+  GithubTest.unconfigured,
   // Never called: these connections reach no database, PostHog project, Pidgeon address or Attio.
   Layer.succeed(
     PostgresSource.Source,

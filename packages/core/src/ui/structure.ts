@@ -272,11 +272,15 @@ export const dialog = (spec: {
   readonly closeHref?: string;
   readonly mark?: string;
   readonly size?: "md" | "lg";
-  /** The dialog is one form: its body and foot post together. A refusal draws it again. */
-  readonly form?: { readonly action: string; readonly fields?: string };
+  /**
+   * The dialog is one form: its body and foot post together. A refusal draws it again.
+   * `outside` is trusted HTML after it: forms of their own that buttons inside it join with a
+   * `form` attribute, which keeps them out of its implicit submission.
+   */
+  readonly form?: { readonly action: string; readonly fields?: string; readonly outside?: string };
 }) => {
   const inner = `<div class="dialog-body">${spec.body}</div>${spec.foot === undefined ? "" : `<div class="dialog-foot">${spec.foot}</div>`}`;
-  return `<section class="dialog${spec.size === "lg" ? " dialog-md" : ""}" id="${escapeAttribute(spec.id)}" role="dialog" aria-modal="true" aria-labelledby="${escapeAttribute(`${spec.id}-title`)}" data-dialog${spec.closeHref === undefined ? "" : ` data-close="${escapeAttribute(spec.closeHref)}"`}><div class="dialog-head">${spec.mark ?? ""}<h2 id="${escapeAttribute(`${spec.id}-title`)}">${escapeHtml(spec.title)}</h2>${spec.closeHref === undefined ? "" : iconButton("Close", "close", { href: spec.closeHref })}</div>${spec.form === undefined ? inner : `<form method="post" action="${escapeAttribute(spec.form.action)}" novalidate>${spec.form.fields ?? ""}${inner}</form>`}</section>`;
+  return `<section class="dialog${spec.size === "lg" ? " dialog-md" : ""}" id="${escapeAttribute(spec.id)}" role="dialog" aria-modal="true" aria-labelledby="${escapeAttribute(`${spec.id}-title`)}" data-dialog${spec.closeHref === undefined ? "" : ` data-close="${escapeAttribute(spec.closeHref)}"`}><div class="dialog-head">${spec.mark ?? ""}<h2 id="${escapeAttribute(`${spec.id}-title`)}">${escapeHtml(spec.title)}</h2>${spec.closeHref === undefined ? "" : iconButton("Close", "close", { href: spec.closeHref })}</div>${spec.form === undefined ? inner : `<form method="post" action="${escapeAttribute(spec.form.action)}" novalidate>${spec.form.fields ?? ""}${inner}</form>${spec.form.outside ?? ""}`}</section>`;
 };
 
 /** A setup step: done, current or still to come. */

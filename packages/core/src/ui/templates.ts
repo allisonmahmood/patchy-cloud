@@ -106,7 +106,15 @@ export const flowPage = (
     readonly outcome?: string;
     /** Trusted HTML: the primary action and Cancel. */
     readonly submit: string;
-    readonly form?: { readonly action: string; readonly fields?: string };
+    readonly form?: {
+      readonly action: string;
+      readonly fields?: string;
+      /**
+       * Trusted HTML after the form: forms of their own that buttons inside it join with a
+       * `form` attribute, which keeps them out of its implicit submission.
+       */
+      readonly outside?: string;
+    };
   }
 ) => {
   const sections = spec.sections
@@ -118,7 +126,7 @@ export const flowPage = (
   const content = `<div class="flow">${sections}${spec.outcome ?? ""}<div class="btn-group">${spec.submit}</div></div>`;
   return page(
     "flow",
-    `${pageHeader(spec)}${spec.form === undefined ? content : `<form method="post" action="${escapeAttribute(spec.form.action)}" novalidate>${spec.form.fields ?? ""}${content}</form>`}`
+    `${pageHeader(spec)}${spec.form === undefined ? content : `<form method="post" action="${escapeAttribute(spec.form.action)}" novalidate>${spec.form.fields ?? ""}${content}</form>${spec.form.outside ?? ""}`}`
   );
 };
 

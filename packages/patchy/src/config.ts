@@ -294,6 +294,11 @@ export const imap = <const Handle extends string>(handle: Handle) => ({
   kind: "imap" as const,
   handle
 });
+/** One company's GitHub repositories on one account, read-only, by its connection's handle. */
+export const github = <const Handle extends string>(handle: Handle) => ({
+  kind: "github" as const,
+  handle
+});
 export const sharedTable = <const Patch extends string, const Table extends string>(
   patchId: Patch,
   table: Table
@@ -317,6 +322,7 @@ export type Declaration =
   | { readonly kind: "pidgeon"; readonly handle: string }
   | { readonly kind: "attio"; readonly handle: string }
   | { readonly kind: "imap"; readonly handle: string }
+  | { readonly kind: "github"; readonly handle: string }
   | { readonly kind: "sharedTable"; readonly patchId: string; readonly table: string }
   | { readonly kind: "sharedStore"; readonly patchId: string; readonly store: string }
   | { readonly kind: "members" };

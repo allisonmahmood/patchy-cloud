@@ -34,6 +34,7 @@ import * as PostgresSource from "../postgres/Source.js";
 import * as PostHogSource from "../posthog/Source.js";
 import * as AttioSource from "../attio/Source.js";
 import * as ImapTest from "../test/imap.js";
+import * as GithubTest from "../test/github.js";
 import * as SqlConnectionStore from "../SqlConnectionStore.js";
 import * as PidgeonTest from "../test/pidgeon.js";
 import * as RuntimeTest from "../test/runtime.js";
@@ -186,7 +187,8 @@ const credentials = Layer.mergeAll(
   ),
   PostHogSource.layer,
   AttioSource.layer,
-  ImapTest.offline
+  ImapTest.offline,
+  GithubTest.unconfigured
 );
 
 const patchId = "pidgeoncallb";

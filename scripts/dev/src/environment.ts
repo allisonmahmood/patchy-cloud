@@ -11,7 +11,7 @@
  */
 import { Users } from "@patchy/companies";
 import { NodeCryptography } from "@patchy/core";
-import { CredentialKeys, PidgeonSource } from "@patchy/integrations";
+import { CredentialKeys, type GithubSource, PidgeonSource } from "@patchy/integrations";
 import { InvocationLog, RuntimeLog } from "@patchy/runtime";
 import { layerFromUrl } from "@patchy/sql";
 import * as Config from "effect/Config";
@@ -33,6 +33,8 @@ import type { Page } from "@playwright/test";
 import {
   developerEnvFile,
   readAttioTestKey,
+  readGithubAppConfig,
+  readGithubSeed,
   readCredentialKeys,
   readPidgeonTestKey
 } from "./developerEnv.js";
@@ -59,7 +61,7 @@ import {
   sourceOf,
   tokenOf
 } from "./scenario.js";
-import { saveConnections } from "./connections.js";
+import { saveConnections, seedGithub } from "./connections.js";
 import { writeHistory } from "./history.js";
 
 /** A step's command ran and exited non-zero; its output was printed to stderr. */
@@ -980,6 +982,9 @@ const materialize = Effect.fn("materialize")(function* (
   const attioKey = connections.some((connection) => connection.integration === "attio")
     ? yield* readAttioTestKey(devEnv)
     : Option.none();
+  const githubSeed = connections.some((connection) => connection.integration === "github")
+    ? yield* readGithubSeed(devEnv)
+    : Option.none();
   // Offline connections first: they need nothing from outside.
   yield* saveConnections(scenario);
   // Connections not made, so the patches declaring them can't publish either.
@@ -999,6 +1004,35 @@ const materialize = Effect.fn("materialize")(function* (
       yield* Console.error(`  ${name}: connecting as ${publisher.name}`);
       const made = yield* connectImap(manifest.apiUrl, publisher.email, connection, login.value);
       if (!made) yield* Console.error(`  ${name}: already connected`);
+      continue;
+    }
+    // GitHub's is read-only, and its sign-in can't run here: it's seeded from the developer's
+    // development App, read live through that App. `down` has nothing to take down on GitHub.
+    if (connection.integration === "github") {
+      const app = yield* readGithubAppConfig(devEnv).pipe(
+        Effect.orElseSucceed(() => Option.none<GithubSource.App>())
+      );
+      if (Option.isNone(githubSeed) || Option.isNone(app)) {
+        skipped.add(name);
+        yield* Console.error(
+          `  ${name}: skipped. Put the development GitHub App's PATCHY_GITHUB_APP_* settings, GITHUB_DEV_INSTALLATION_ID and GITHUB_DEV_REPOSITORY_IDS in ${devEnv} to seed it.`
+        );
+        continue;
+      }
+      yield* Console.error(
+        `  ${name}: seeding from installation ${githubSeed.value.installationId}`
+      );
+      const made = yield* seedGithub(scenario, connection, githubSeed.value, app.value).pipe(
+        Effect.map((seeded) => (seeded ? "seeded" : "kept")),
+        Effect.catch((error) =>
+          Effect.as(
+            Console.error(`  ${name}: skipped. GitHub refused: ${error.message}`),
+            "refused"
+          )
+        )
+      );
+      if (made === "refused") skipped.add(name);
+      if (made === "kept") yield* Console.error(`  ${name}: already connected`);
       continue;
     }
     // Attio's is read-only: nothing is made in Attio, so `down` has nothing to take down there.

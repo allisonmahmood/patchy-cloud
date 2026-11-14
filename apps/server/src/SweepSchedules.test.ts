@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import { AgentConnections } from "@patchy/auth";
 import { OrphanSweep } from "@patchy/company-database";
+import { GithubFlows } from "@patchy/integrations";
 import { ChangeKeys } from "@patchy/mcp";
 import { DeletionSweep } from "@patchy/patches";
 import * as Cause from "effect/Cause";
@@ -64,11 +65,26 @@ it.effect(
           sweep: Effect.sync(() => void changeKeyPasses++)
         })
       );
+      let signInPasses = 0;
+      const githubFlows = Layer.succeed(
+        GithubFlows.Flows,
+        GithubFlows.Flows.of({
+          start: () => Effect.die("not swept"),
+          restart: () => Effect.die("not swept"),
+          callback: () => Effect.die("not swept"),
+          current: () => Effect.die("not swept"),
+          listing: () => Effect.die("not swept"),
+          verify: () => Effect.die("not swept"),
+          installationOn: () => Effect.die("not swept"),
+          revoke: () => Effect.die("not swept"),
+          sweep: Effect.sync(() => void signInPasses++)
+        })
+      );
       const scope = yield* Scope.make();
       yield* Effect.gen(function* () {
         yield* Layer.buildWithScope(
           Server.sweeper.pipe(
-            Layer.provide([deletion, orphan, connections, changeKeys]),
+            Layer.provide([deletion, orphan, connections, changeKeys, githubFlows]),
             Layer.provide(
               Logger.layer([
                 Logger.make((event) => {
@@ -85,6 +101,10 @@ it.effect(
         // Retry copies are swept every 15 seconds, whatever the hourly sweeps are doing.
         yield* TestClock.adjust("15 seconds");
         assert.strictEqual(retryPasses, 2);
+        // Expired GitHub sign-ins are swept every minute.
+        assert.strictEqual(signInPasses, 1);
+        yield* TestClock.adjust("1 minute");
+        assert.strictEqual(signInPasses, 2);
         yield* TestClock.adjust("1 hour");
         assert.strictEqual(yield* Queue.take(deletionRuns), 2);
         assert.strictEqual(yield* Queue.take(orphanRuns), 2);
