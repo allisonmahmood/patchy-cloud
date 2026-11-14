@@ -306,8 +306,9 @@ try {
     say(`${name} exited ${stopped.code} ${stopped.ms} ms after SIGTERM`);
   }
 
-  // 4. The exec supervisor, as AppStack.ts defines the task: root, fewer capabilities.
-  const managementPort = await freePort();
+  // 4. The exec supervisor, as AppStack.ts defines the task: root, fewer capabilities. It binds
+  // a management port of its own, as local tasks do; a port picked here and released could be
+  // taken before the container binds it, and nothing here calls it.
   start("smoke-exec", {
     user: "0",
     capDrop: [
@@ -323,7 +324,7 @@ try {
     command: ["bun", "dist/exec.js"],
     env: {
       EXECUTION_MANAGEMENT_SECRET: "smoke-management-secret-0123456789",
-      EXECUTION_MANAGEMENT_PORT: String(managementPort),
+      EXECUTION_MANAGEMENT_PORT: "0",
       EXECUTION_CALLBACK_URLS: "[]",
       EXECUTION_DEPLOYMENT_REVISION: "smoke-a",
       EXECUTION_TASK_ID: "smoke-task"
