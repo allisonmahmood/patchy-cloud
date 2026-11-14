@@ -35,7 +35,7 @@ import { computerMark } from "./computer-mark.js";
 import { copyButton } from "./copy-button.js";
 import { disclosure } from "./disclosure.js";
 import { changeBar } from "./change-bar.js";
-import { checklist } from "./checklist.js";
+import { checklist, checklistGroups } from "./checklist.js";
 import {
   chipMenu,
   codeRow,
@@ -849,7 +849,23 @@ const checklistDemo = demo(
       },
       { value: "brief", label: "Kickoff brief", description: "Retired", disabled: true }
     ]
-  })}${rows(
+  })}${checklistGroups([
+    {
+      id: "g-repos-northwind",
+      legend: "northwind-labs",
+      name: "repository",
+      items: [
+        { value: "api", label: "api", description: "Private", checked: true },
+        { value: "docs", label: "docs", description: "Public" }
+      ]
+    },
+    {
+      id: "g-repos-mira",
+      legend: "mira-okafor",
+      name: "repository",
+      items: [{ value: "dotfiles", label: "dotfiles", description: "Public" }]
+    }
+  ])}${rows(
     [
       row({
         name: "Refused, with a box to choose",
@@ -877,7 +893,11 @@ const checklistDemo = demo(
       "Refused",
       "the error under the list, each box aria-invalid; focus starts on the first box that can be chosen, or on the error when none can"
     ],
-    ["Hover (fine pointer)", "a faint tint on a row that can be chosen"]
+    ["Hover (fine pointer)", "a faint tint on a row that can be chosen"],
+    [
+      "One group at a time",
+      "checklistGroups: once a box is ticked in one list, the names in the others are set back"
+    ]
   ])
 );
 

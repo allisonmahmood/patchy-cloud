@@ -1,4 +1,4 @@
-import { generateKeyPairSync } from "node:crypto";
+import { createVerify, generateKeyPairSync } from "node:crypto";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Cryptography from "./Cryptography.js";
@@ -165,5 +165,30 @@ describe("keyed operations", () => {
         expect(failure).toBeInstanceOf(Cryptography.InvalidPublicKey);
       }
     })
+  );
+
+  it.effect(
+    "signs RS256 with an RSA private key in PKCS#1 or PKCS#8, and refuses anything else",
+    () =>
+      Effect.gen(function* () {
+        const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+        for (const type of ["pkcs1", "pkcs8"] as const) {
+          const pem = privateKey.export({ type, format: "pem" }).toString();
+          const signature = yield* cryptography.rsaSha256Sign(pem, "header.payload");
+          expect(
+            createVerify("RSA-SHA256").update("header.payload").verify(publicKey, signature)
+          ).toBe(true);
+        }
+        const ed25519 = generateKeyPairSync("ed25519")
+          .privateKey.export({ type: "pkcs8", format: "pem" })
+          .toString();
+        for (const pem of [
+          ed25519,
+          "-----BEGIN RSA PRIVATE KEY-----\nnope\n-----END RSA PRIVATE KEY-----"
+        ]) {
+          const failure = yield* Effect.flip(cryptography.rsaSha256Sign(pem, "header.payload"));
+          expect(failure).toBeInstanceOf(Cryptography.InvalidPrivateKey);
+        }
+      })
   );
 });

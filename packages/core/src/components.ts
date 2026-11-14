@@ -57,7 +57,8 @@ export const menuCopy = (text: string, label: string, target?: string) =>
  * A GET search form over `q`. `keep` holds other query parameters to carry; `className` is the
  * page's layout hook for the form. With `inForm`, it is drawn inside a form of the page's own,
  * such as a list whose ticks a search keeps: no form of its own, and its search icon is a submit
- * button, which the page puts before the form's other submits so Enter searches.
+ * button, which the page puts before the form's other submits so Enter searches. `get` sends that
+ * search as a GET to its own address, where the page's form posts somewhere else.
  */
 export const searchField = (
   input: {
@@ -68,12 +69,12 @@ export const searchField = (
     readonly className?: string;
   } & (
     | { readonly action: string; readonly keep?: Readonly<Record<string, string>> }
-    | { readonly inForm: true }
+    | { readonly inForm: true; readonly get?: string }
   )
 ) => {
   const prefix =
     "inForm" in input
-      ? `<button class="field-prefix" type="submit" aria-label="${escapeAttribute(input.label)}">${searchIcon}</button>`
+      ? `<button class="field-prefix" type="submit"${input.get === undefined ? "" : ` formaction="${escapeAttribute(input.get)}" formmethod="get"`} aria-label="${escapeAttribute(input.label)}">${searchIcon}</button>`
       : `<label class="field-prefix" for="${escapeAttribute(input.id)}">${searchIcon}</label>`;
   const field = `<div class="field field-group field-search">${prefix}<input id="${escapeAttribute(input.id)}" type="search" name="q" value="${escapeAttribute(input.query)}" maxlength="200" placeholder="${escapeAttribute(input.placeholder)}" aria-label="${escapeAttribute(input.label)}"></div>`;
   if ("inForm" in input)
