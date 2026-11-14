@@ -30,6 +30,12 @@ skill straight away and later sessions discover it. Like the CLI, the copy is
 outside every Node's npm prefix, so switching Node keeps both. Each setup
 replaces the copy whole with the running release's skill.
 
+The copy moves only when the installer reruns: by hand from the install line, or
+from `refresh` in a patch repo whose instance is the one saved in the default
+state dir, which runs that line when `~/.patchy/cli` holds an older release. A
+machine whose global skill predates `~/.patchy/cli` gets a refresh warning naming
+the line; after it runs once, refresh keeps the CLI and skill current.
+
 Before serving discovery, the server validates the current archive's SHA-256 and
 SHA-512 against the metadata and writes those verified bytes under `sdk/` in its
 ContentStore. This also repairs a damaged stored copy of the current archive.

@@ -202,6 +202,12 @@ export const link = Effect.fn("Setup.link")(function* (
   return { linked: [...skillLinks(home)], skill: path.join(copy, "SKILL.md") };
 });
 
+/** Whether the copy, or a link setup owns, is on this machine: a global skill some install left. */
+export const installed = Effect.fn("Setup.installed")(function* (home = homedir()) {
+  const entries = yield* inspectAll(home);
+  return entries.some(({ entry }) => entry === "owned" || entry === "current");
+});
+
 /** Remove the links and copy setup owns; anything else at those paths stays, with a warning. */
 export const unlink = Effect.fn("Setup.unlink")(function* (home = homedir()) {
   const copy = skillCopy(home);

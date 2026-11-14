@@ -118,7 +118,12 @@ export type Handler = (
   disconnect: () => void
 ) => void;
 
-/** A stub instance: every request recorded, answered by `handler`. */
+const installer = readFileSync(path.join(packageDir, "../sdk/front-door/install.mjs"), "utf8");
+
+/**
+ * A stub instance: every request recorded, answered by `handler`. Like an instance's front door,
+ * it serves `/install.mjs` with its own address baked in.
+ */
 export const stubInstance = async (
   handler: Handler,
   release = () => CURRENT_RELEASE,
@@ -126,6 +131,7 @@ export const stubInstance = async (
   releaseToolchain = toolchain
 ) => {
   const requests: Recorded[] = [];
+  let url = "";
   const server = createServer((request: IncomingMessage, response: ServerResponse) => {
     const chunks: Buffer[] = [];
     request.on("data", (chunk: Buffer) => chunks.push(chunk));
@@ -149,6 +155,11 @@ export const stubInstance = async (
         response.end(tarball);
         return;
       }
+      if (recorded.url === "/install.mjs") {
+        response.writeHead(200, { "content-type": "text/javascript" });
+        response.end(installer.replace('"__PATCHY_PUBLIC_BASE_URL__"', JSON.stringify(url)));
+        return;
+      }
       if (recorded.url === "/api/release") {
         respond(200, {
           release: release(),
@@ -165,7 +176,8 @@ export const stubInstance = async (
   servers.push(server);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address() as AddressInfo;
-  return { url: `http://127.0.0.1:${port}`, requests };
+  url = `http://127.0.0.1:${port}`;
+  return { url, requests };
 };
 
 /** An instance whose every answer stops partway through its body, after `status`'s headers. */

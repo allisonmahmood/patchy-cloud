@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { CURRENT_RELEASE } from "@patchy/api";
+import { CURRENT_RELEASE, installCommand } from "@patchy/api";
 import { patchChangesBetween } from "@patchy/core/whatsNew";
 import { workerdVersion } from "@patchy/api/guest";
 import {
@@ -1277,6 +1277,99 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
     });
     expect(readFileSync(path.join(dir, "package.json"))).toEqual(before["package.json"]);
   }, 120_000); // Real archives, isolated pnpm installs and tier-transition typechecks can exceed 30 seconds.
+});
+
+// globalCli.test.ts owns when refresh acts; these run the instance's real installer through it.
+describe.skipIf(process.platform === "win32")("refresh and this machine's global CLI", () => {
+  /**
+   * A machine signed in to `instance` with a managed install at `version`: its own home, temp
+   * directory, npm prefix and cache, the default state dir, and the launcher's directory on PATH.
+   */
+  const machine = (instance: string, version: string) => {
+    const dir = tempDir();
+    const home = path.join(dir, "home");
+    const cli = path.join(home, ".patchy/cli/node_modules/patchy");
+    mkdirSync(cli, { recursive: true });
+    writeFileSync(path.join(cli, "package.json"), JSON.stringify({ name: "patchy", version }));
+    writeFileSync(path.join(home, ".patchy/config.json"), JSON.stringify({ apiUrl: instance }));
+    for (const each of ["tmp", "npm prefix"]) mkdirSync(path.join(dir, each));
+    const env = {
+      PATCHY_API_TOKEN: "pp_project",
+      HOME: home,
+      PATCHY_STATE_DIR: "",
+      TMPDIR: path.join(dir, "tmp"),
+      npm_config_prefix: path.join(dir, "npm prefix"),
+      npm_config_cache: path.join(dir, "npm cache"),
+      npm_config_userconfig: path.join(dir, "npmrc"),
+      npm_config_update_notifier: "false",
+      // Node's directory carries npm; sh, curl and mktemp come from the system's.
+      PATH: [
+        path.join(home, ".local/bin"),
+        path.dirname(process.execPath),
+        "/usr/bin",
+        "/bin"
+      ].join(path.delimiter)
+    };
+    return { home, cli, env };
+  };
+  const tarball = () =>
+    readFileSync(path.join(packageDir, "artifacts", path.basename(tarballPath)));
+
+  it("moves an older managed install to the instance's release, says where the skill is, then leaves it", async () => {
+    const instance = await stubInstance(projectHandler, undefined, tarball());
+    const dir = projectTree(instance.url);
+    const { home, cli, env } = machine(instance.url, "0.1.0");
+    const skill = path.join(home, ".patchy/skills/patchy/SKILL.md");
+    const result = await runCli(["refresh", "--json"], { cwd: dir, env });
+    expect(result, result.stderr).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      release: { to: CURRENT_RELEASE },
+      globalCli: { from: "0.1.0", to: CURRENT_RELEASE, skill },
+      warnings: []
+    });
+    expect(readJson(path.join(cli, "package.json"))).toMatchObject({ version: CURRENT_RELEASE });
+    for (const link of [".agents/skills/patchy", ".claude/skills/patchy"])
+      expect(readFileSync(path.join(home, link, "SKILL.md"), "utf8")).toBe(
+        readFileSync(path.join(packageDir, "skills/patchy/SKILL.md"), "utf8")
+      );
+    const again = await runCli(["refresh", "--json"], { cwd: dir, env });
+    expect(again, again.stderr).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(again.stdout)).not.toHaveProperty("globalCli");
+    expect(JSON.parse(again.stdout).warnings).toEqual([]);
+
+    const other = machine(instance.url, "0.2.0");
+    const text = await runCli(["refresh"], { cwd: dir, env: other.env });
+    expect(text, text.stderr).toMatchObject({ status: 0, stderr: "" });
+    expect(text.stdout).toContain(
+      `Updated this machine's patchy CLI and skill 0.2.0 → ${CURRENT_RELEASE}. Skill: ${path.join(other.home, ".patchy/skills/patchy/SKILL.md")}`
+    );
+    expect(readJson(path.join(other.cli, "package.json"))).toMatchObject({
+      version: CURRENT_RELEASE
+    });
+  }, 300_000);
+
+  it("still refreshes when the installer stops, warning with its reason and the install line", async () => {
+    const instance = await stubInstance(projectHandler, undefined, Buffer.from("not the release"));
+    const dir = projectTree(instance.url);
+    const { cli, env } = machine(instance.url, "0.1.0");
+    const result = await runCli(["refresh", "--json"], { cwd: dir, env });
+    expect(result, result.stderr).toMatchObject({ status: 0, stderr: "" });
+    const document = JSON.parse(result.stdout);
+    expect(document).toMatchObject({ ok: true, release: { to: CURRENT_RELEASE } });
+    expect(document).not.toHaveProperty("globalCli");
+    expect(document.warnings).toEqual([
+      expect.stringMatching(
+        new RegExp(
+          `^Updating this machine's patchy CLI and skill from 0\\.1\\.0 to ${CURRENT_RELEASE.replaceAll(".", "\\.")} stopped:\\nThe download from .* does not match the release's integrity, so nothing was installed\\.`
+        )
+      )
+    ]);
+    expect(document.warnings[0]).toContain(
+      `\nInstall line: ${installCommand(instance.url, "posix")}`
+    );
+    expect(readJson(path.join(cli, "package.json"))).toMatchObject({ version: "0.1.0" });
+  });
 });
 
 describe("patchy pull", () => {

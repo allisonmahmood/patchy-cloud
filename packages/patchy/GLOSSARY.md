@@ -57,7 +57,7 @@ An instance's public `/llms.txt` and `/install.mjs`, served before anyone signs 
 _Avoid_: landing page, docs site
 
 **Installer**:
-The instance's `/install.mjs`: a dependency-free Node script with the instance's address baked in. It verifies the current release's integrity, installs it under `~/.patchy/cli` with the command at `~/.local/bin/patchy`, so switching Node keeps it, then runs setup. Rerunning it is how a global CLI upgrades; inside a patch repo, refresh does.
+The instance's `/install.mjs`: a dependency-free Node script with the instance's address baked in. It verifies the current release's integrity, installs it under `~/.patchy/cli` with the command at `~/.local/bin/patchy`, so switching Node keeps it, then runs setup. Rerunning it is how a global CLI and its skill upgrade. Refresh in a patch repo bound to the machine's own instance reruns it when that install is older, besides moving the repo's pinned CLI.
 _Avoid_: bootstrapper, npm package, self-update
 
 **Setup**:

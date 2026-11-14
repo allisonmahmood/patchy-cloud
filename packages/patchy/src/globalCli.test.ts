@@ -1,0 +1,155 @@
+import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { assert, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import { NodeCryptography } from "@patchy/core";
+import { updateGlobalCli } from "./globalCli.js";
+import * as Instance from "./Instance.js";
+import { installLine } from "./ReleaseCheck.js";
+import * as State from "./State.js";
+
+// Nothing listens on port 9, so an install line run by mistake stops at curl, offline.
+const instanceUrl = "http://127.0.0.1:9";
+const release = "2.0.0";
+
+/** A throwaway home whose saved instance is `saved`, read through a state dir at `stateDir`. */
+const machine = Effect.fn("machine")(function* (
+  options: { readonly saved?: string; readonly stateDir?: string } = {}
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const root = yield* fs.makeTempDirectoryScoped({ prefix: "patchy global cli " });
+  const home = path.join(root, "home");
+  const stateDir = path.join(home, ".patchy");
+  mkdirSync(stateDir, { recursive: true });
+  writeFileSync(
+    path.join(stateDir, "config.json"),
+    JSON.stringify({ apiUrl: options.saved ?? instanceUrl })
+  );
+  /** The managed install's manifest, or bytes in its place. */
+  const managed = (contents: string) => {
+    const pkg = path.join(home, ".patchy/cli/node_modules/patchy");
+    mkdirSync(pkg, { recursive: true });
+    writeFileSync(path.join(pkg, "package.json"), contents);
+  };
+  /** An install from before ~/.patchy/cli: npm's global `patchy`, its skill linked for agents. */
+  const earlier = () => {
+    const pkg = path.join(root, "npm prefix/lib/node_modules/patchy");
+    mkdirSync(path.join(pkg, "skills/patchy"), { recursive: true });
+    writeFileSync(path.join(pkg, "package.json"), JSON.stringify({ name: "patchy" }));
+    writeFileSync(path.join(pkg, "skills/patchy/SKILL.md"), "# Patchy\n");
+    mkdirSync(path.join(home, ".claude/skills"), { recursive: true });
+    symlinkSync(path.join(pkg, "skills/patchy"), path.join(home, ".claude/skills/patchy"));
+  };
+  const update = updateGlobalCli(release, home).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        State.layer.pipe(
+          Layer.provide(NodeCryptography.layer),
+          Layer.provide(
+            ConfigProvider.layer(
+              ConfigProvider.fromUnknown({ PATCHY_STATE_DIR: options.stateDir ?? stateDir })
+            )
+          )
+        ),
+        Layer.succeed(
+          Instance.Instance,
+          Instance.Instance.of({ apiUrl: instanceUrl, source: "project", token: Option.none() })
+        )
+      )
+    )
+  );
+  return { root, managed, earlier, update };
+});
+
+const manifest = (version: string) => JSON.stringify({ name: "patchy", version });
+const nothing = { warnings: [] };
+
+it.layer(NodeServices.layer)("refresh and this machine's global CLI", (it) => {
+  it.effect("tells an install from before ~/.patchy/cli to run the install line once", () =>
+    Effect.gen(function* () {
+      const { earlier, update } = yield* machine();
+      earlier();
+      const { warnings, ...rest } = yield* update;
+      assert.deepStrictEqual(rest, {});
+      assert.strictEqual(warnings.length, 1);
+      assert.include(warnings[0], "installed before the installer kept them under ~/.patchy");
+      assert.include(warnings[0], installLine(instanceUrl));
+    })
+  );
+
+  it.effect("compares the saved instance the way instance_mismatch does", () =>
+    Effect.gen(function* () {
+      const { earlier, update } = yield* machine({ saved: ` ${instanceUrl}/ ` });
+      earlier();
+      assert.strictEqual((yield* update).warnings.length, 1);
+    })
+  );
+
+  it.effect("leaves a machine whose saved instance is another one alone", () =>
+    Effect.gen(function* () {
+      const { earlier, managed, update } = yield* machine({ saved: "https://other.example" });
+      earlier();
+      managed(manifest("1.0.0"));
+      assert.deepStrictEqual(yield* update, nothing);
+    })
+  );
+
+  it.effect("leaves the home alone when PATCHY_STATE_DIR points elsewhere", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const elsewhere = yield* fs.makeTempDirectoryScoped({ prefix: "patchy state " });
+      writeFileSync(path.join(elsewhere, "config.json"), JSON.stringify({ apiUrl: instanceUrl }));
+      const { earlier, managed, update } = yield* machine({ stateDir: elsewhere });
+      earlier();
+      managed(manifest("1.0.0"));
+      assert.deepStrictEqual(yield* update, nothing);
+    })
+  );
+
+  it.effect.each(["2.0.0", "2.1.0"])("never touches a managed install at %s", (version) =>
+    Effect.gen(function* () {
+      const { earlier, managed, update } = yield* machine();
+      earlier();
+      managed(manifest(version));
+      assert.deepStrictEqual(yield* update, nothing);
+    })
+  );
+
+  it.effect("says nothing on a machine with no global install", () =>
+    Effect.gen(function* () {
+      const { update } = yield* machine();
+      assert.deepStrictEqual(yield* update, nothing);
+    })
+  );
+
+  it.effect("does nothing rather than warn when the managed install can't be read", () =>
+    Effect.gen(function* () {
+      const { earlier, managed, update } = yield* machine();
+      earlier();
+      managed("{ not json");
+      assert.deepStrictEqual(yield* update, nothing);
+    })
+  );
+
+  it.effect.skipIf(process.platform === "win32")(
+    "runs the install line for an older managed install and relays why it stopped",
+    () =>
+      Effect.gen(function* () {
+        const { managed, update } = yield* machine();
+        managed(manifest("1.9.0"));
+        const { warnings, ...rest } = yield* update;
+        assert.deepStrictEqual(rest, {});
+        assert.strictEqual(warnings.length, 1);
+        assert.match(
+          warnings[0]!,
+          /^Updating this machine's patchy CLI and skill from 1\.9\.0 to 2\.0\.0 stopped:\ncurl: /
+        );
+        assert.isTrue(warnings[0]!.endsWith(`\nInstall line: ${installLine(instanceUrl)}`));
+      })
+  );
+});

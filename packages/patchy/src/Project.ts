@@ -44,6 +44,7 @@ import {
 import { activateStarter, starterFiles, writeInitialGeneration } from "./initProject.js";
 import { RELEASE } from "./release.js";
 import { requireCurrentCli } from "./ReleaseCheck.js";
+import { updateGlobalCli } from "./globalCli.js";
 import { processResult } from "./processResult.js";
 import { lookNotices } from "./lookNotices.js";
 import { primitiveReminders } from "./primitiveReminders.js";
@@ -934,25 +935,35 @@ export const refresh = Effect.fn("Project.refresh")(function* (
         ...capabilityNotices
       ]
     );
-  } else
+  } else {
+    // Here, not in refreshRepo, so pull and the installed release's children never run it.
+    const { globalCli, warnings: machineWarnings } = yield* updateGlobalCli(release.release);
     yield* Output.report(
       {
         ok: true,
         release: { from, to: release.release },
         changed: { pin: pinChanged, ...changed },
+        ...(globalCli === undefined ? {} : { globalCli }),
         addedCapabilities,
-        warnings
+        warnings: [...warnings, ...machineWarnings]
       },
       [
         ...warnings,
+        ...machineWarnings,
         `Refreshed ${from} → ${release.release}.`,
         ...(pinChanged ? ["Updated managed pins and installed the release's dependencies."] : []),
+        ...(globalCli === undefined
+          ? []
+          : [
+              `Updated this machine's patchy CLI and skill ${globalCli.from} → ${globalCli.to}. Skill: ${globalCli.skill}`
+            ]),
         ...capabilityNotices,
         ...changed.generated,
         ...changed.skills,
         ...changed.fixtures
       ]
     );
+  }
 });
 
 export const add = Effect.fn("Project.add")(function* (
