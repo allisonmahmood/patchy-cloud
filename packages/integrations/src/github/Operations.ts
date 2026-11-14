@@ -59,6 +59,8 @@ const LOG_BYTES = registry["github.log.bytes"].default;
 /** GitHub's own caps: a run listing reaches its first 1,000 runs, a pull request's files 3,000. */
 const RUNS_CAP = 1_000;
 const FILES_CAP = 3_000;
+/** The last page a cursor names: no list is followed past it, and none is issued a cursor that is. */
+const PAGES_CAP = 100_000;
 const LIMIT = 30;
 
 type Json = typeof Schema.Json.Type;
@@ -140,7 +142,7 @@ const created = (span: Inputs["listRuns"]["created"]) =>
 const CursorJson = Schema.fromJsonString(
   Schema.Struct({
     v: Schema.Literal(1),
-    page: Schema.Int.check(Schema.isBetween({ minimum: 2, maximum: FILES_CAP })),
+    page: Schema.Int.check(Schema.isBetween({ minimum: 2, maximum: PAGES_CAP })),
     binding: Schema.String
   })
 );
@@ -177,6 +179,8 @@ const pageOf = Effect.fnUntraced(function* (cursor: string | undefined, bound: s
 });
 const cursorFor = (bound: string, page: number) =>
   Buffer.from(encodeCursor({ v: 1, page, binding: bound }), "utf8").toString("base64url");
+/** Whether GitHub says a page follows this one, for a list whose answer carries no total. */
+const hasNext = (answer: Source.Answer) => /rel="next"/.test(answer.headers["link"] ?? "");
 
 // ---------- the twelve reads ----------
 
@@ -366,11 +370,13 @@ const reads: {
         id,
         body.map((item) => item.base.repo.id)
       );
+      // A full page may have more behind it; past the last page a cursor names, Patchy stops.
+      const more = body.length === limit;
       return {
         ok: true,
         pulls: body.map(answers.pulls.make),
-        cursor: body.length === limit ? cursorFor(bound, page + 1) : null,
-        complete: true
+        cursor: more && page < PAGES_CAP ? cursorFor(bound, page + 1) : null,
+        complete: !more || page < PAGES_CAP
       } as const;
     }),
   getPull: ({ reading }, input) =>
@@ -398,7 +404,7 @@ const reads: {
           additions: body.additions,
           deletions: body.deletions,
           changedFiles: body.changed_files,
-          reviews: { ...summary(reviews), complete: reviews.length < ITEMS }
+          reviews: { ...summary(reviews), complete: !hasNext(reviewed) }
         }
       } as const;
     }),
@@ -446,7 +452,7 @@ const reads: {
       const reviews = yield* decoded(answer, answers.reviews, (value) =>
         value.map(answers.reviews.make)
       );
-      return { ok: true, reviews, complete: reviews.length < ITEMS } as const;
+      return { ok: true, reviews, complete: !hasNext(answer) } as const;
     })
 };
 

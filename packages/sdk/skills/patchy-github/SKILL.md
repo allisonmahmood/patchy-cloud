@@ -84,7 +84,7 @@ Queries and mutations can't use connections, and GitHub reads are not live-query
 
 ## Bounds and refusals
 
-- A 15-second service deadline, bounded by an action's remaining time, covers the wait for a slot and every request a call makes. Patchy never retries a call.
+- A 15-second service deadline, bounded by an action's remaining time, covers the wait for a slot and every request a call makes. Patchy doesn't retry a call that failed or timed out.
 - `not_found` names `details.resource`: `repository` (not one of the connection's, or GitHub no longer lets the connection read it), `workflow`, `run`, `job`, `log` (expired, past the repository's retention), `commit` or `pull_request`. A run or job id of another repository is `not_found` here.
 - `source_rate_limited` with `retryAfter` is GitHub's limit for the account's installation, shared by every connection and patch on it; Patchy refuses its calls until then without asking GitHub. `busy` means Patchy's calls for the installation stayed full and nothing was sent.
 - `source_unavailable` covers an unreachable GitHub, an answer Patchy doesn't read, a log store that answered other than Patchy reads, and `details.reason`: `suspended` (the account suspended the App on GitHub; calls work again by themselves once it's unsuspended), `uninstalled` or `permissions` (the connection is paused until an admin reconnects or resumes it).

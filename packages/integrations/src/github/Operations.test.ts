@@ -262,21 +262,30 @@ it.layer(services)("GitHub reads", (it) => {
         assert.lengthOf(workflows.workflows as Array<unknown>, items);
         assert.isFalse(workflows.complete);
 
-        api.jobs.set(1, [GithubDouble.job(1, 11)]);
+        // One page of jobs and of checks: complete at exactly a page, not one past it.
+        const jobs = (count: number) =>
+          Array.from({ length: count }, (_, index) => GithubDouble.job(1, 11 + index));
+        api.jobs.set(1, jobs(items));
         assert.isTrue((yield* read(made, "github.listJobs", { repo: "api", runId: 1 })).complete);
-        api.checks.set("main", [
-          {
-            id: 1,
-            name: "lint",
+        api.jobs.set(1, jobs(items + 1));
+        assert.isFalse((yield* read(made, "github.listJobs", { repo: "api", runId: 1 })).complete);
+        const checks = (count: number) =>
+          Array.from({ length: count }, (_, index) => ({
+            id: index + 1,
+            name: `check-${index}`,
             status: "completed",
             conclusion: "success",
             started_at: null,
             completed_at: null,
             html_url: null,
             app: { slug: "github-actions" }
-          }
-        ]);
+          }));
+        api.checks.set("main", checks(items));
         assert.isTrue(
+          (yield* read(made, "github.listChecks", { repo: "api", ref: "main" })).complete
+        );
+        api.checks.set("main", checks(items + 1));
+        assert.isFalse(
           (yield* read(made, "github.listChecks", { repo: "api", ref: "main" })).complete
         );
 
@@ -301,19 +310,25 @@ it.layer(services)("GitHub reads", (it) => {
           (yield* read(made, "github.listPullFiles", { repo: "api", number: 1 })).complete
         );
 
-        api.reviews.set(
-          1,
-          Array.from({ length: items }, (_, index) =>
+        // Reviews: exactly a page is all of them; one more and GitHub names a next page.
+        const reviews = (count: number) =>
+          Array.from({ length: count }, (_, index) =>
             GithubDouble.review(index + 1, `r${index}`, "COMMENTED")
-          )
+          );
+        const summarized = Effect.map(
+          read(made, "github.getPull", { repo: "api", number: 1 }),
+          (answer) => (answer.pull as { reviews: { complete: boolean } }).reviews.complete
         );
+        api.reviews.set(1, reviews(items));
+        assert.isTrue(
+          (yield* read(made, "github.listPullReviews", { repo: "api", number: 1 })).complete
+        );
+        assert.isTrue(yield* summarized);
+        api.reviews.set(1, reviews(items + 1));
         assert.isFalse(
           (yield* read(made, "github.listPullReviews", { repo: "api", number: 1 })).complete
         );
-        const detail = (yield* read(made, "github.getPull", { repo: "api", number: 1 })).pull as {
-          reviews: { complete: boolean };
-        };
-        assert.isFalse(detail.reviews.complete);
+        assert.isFalse(yield* summarized);
       })
     )
   );

@@ -458,7 +458,19 @@ export const world = () => {
       const found = data.pulls.find((item) => item.number === number);
       if (found === undefined) return message(404, "Not Found");
       if (onePull[2] === "/files") return json(200, listed(data.files.get(number) ?? [], url));
-      if (onePull[2] === "/reviews") return json(200, listed(data.reviews.get(number) ?? [], url));
+      if (onePull[2] === "/reviews") {
+        // Reviews carry no total: GitHub says a page follows only in its Link header.
+        const reviews = data.reviews.get(number) ?? [];
+        const size = Number(url.searchParams.get("per_page") ?? "30");
+        const at = Number(url.searchParams.get("page") ?? "1");
+        const next = new URL(url);
+        next.searchParams.set("page", String(at + 1));
+        return json(
+          200,
+          listed(reviews, url),
+          at * size < reviews.length ? { link: `<${next.href}>; rel="next"` } : {}
+        );
+      }
       return json(200, found);
     }
     return message(404, "Not Found");
