@@ -97,7 +97,19 @@ const connections: Readonly<Record<string, true>> = {
   "imap.listMessages": true,
   "imap.searchMessages": true,
   "imap.getMessages": true,
-  "imap.stageAttachment": true
+  "imap.stageAttachment": true,
+  "github.listRepos": true,
+  "github.getRepo": true,
+  "github.listWorkflows": true,
+  "github.listRuns": true,
+  "github.getRun": true,
+  "github.listJobs": true,
+  "github.getJobLog": true,
+  "github.listChecks": true,
+  "github.listPulls": true,
+  "github.getPull": true,
+  "github.listPullFiles": true,
+  "github.listPullReviews": true
 };
 const allowed = (kind: HandlerKind, op: string) =>
   op === "log" ||
@@ -133,7 +145,8 @@ const bounded = (
     | "runtime.posthog.bytes"
     | "runtime.pidgeon.bytes"
     | "runtime.attio.bytes"
-    | "runtime.imap.bytes",
+    | "runtime.imap.bytes"
+    | "runtime.github.bytes",
   value: number
 ): RuntimeFailure => ({
   ok: false,
@@ -171,7 +184,8 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
     posthogBytes: ContractLimits.get("runtime.posthog.bytes"),
     pidgeonBytes: ContractLimits.get("runtime.pidgeon.bytes"),
     attioBytes: ContractLimits.get("runtime.attio.bytes"),
-    imapBytes: ContractLimits.get("runtime.imap.bytes")
+    imapBytes: ContractLimits.get("runtime.imap.bytes"),
+    githubBytes: ContractLimits.get("runtime.github.bytes")
   });
   const callback = Effect.fn("CallbackGateway.callback")(function* (
     token: string,
@@ -265,7 +279,8 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
       argsLimitId === "runtime.posthog.bytes" ||
       argsLimitId === "runtime.pidgeon.bytes" ||
       argsLimitId === "runtime.attio.bytes" ||
-      argsLimitId === "runtime.imap.bytes"
+      argsLimitId === "runtime.imap.bytes" ||
+      argsLimitId === "runtime.github.bytes"
     ) {
       const maxBytes =
         argsLimitId === "runtime.postgres.bytes"
@@ -276,7 +291,9 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
               ? limits.pidgeonBytes
               : argsLimitId === "runtime.attio.bytes"
                 ? limits.attioBytes
-                : limits.imapBytes;
+                : argsLimitId === "runtime.imap.bytes"
+                  ? limits.imapBytes
+                  : limits.githubBytes;
       if (Buffer.byteLength(encodeJson({ op: request.op, args: request.args })) > maxBytes)
         return remember(bounded(argsLimitId, maxBytes), 413);
     }

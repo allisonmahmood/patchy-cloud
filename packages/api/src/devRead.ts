@@ -1,5 +1,6 @@
 import * as Schema from "effect/Schema";
 import { attioReads } from "./attio.js";
+import { githubReads } from "./github.js";
 import { imapReads, imapStageAttachment } from "./imap.js";
 import { FileContentType } from "./schemas.js";
 import { PidgeonDevRead } from "./pidgeon.js";
@@ -52,6 +53,14 @@ const imap = <const Name extends keyof typeof imapReads>(name: Name) =>
     args: imapReads[name].input
   });
 
+/** A GitHub read: the connection's current set, so the connection needs no revision. */
+const github = <const Name extends keyof typeof githubReads>(name: Name) =>
+  Schema.Struct({
+    op: Schema.Literal(`github.${name}`),
+    connection: DevReadConnection,
+    args: githubReads[name].input
+  });
+
 /** Every operation an integration lets dev read live, with its exact arguments. Never a write. */
 export const DevRead = Schema.Union([
   Schema.Struct({
@@ -75,7 +84,19 @@ export const DevRead = Schema.Union([
   imap("scanMessages"),
   imap("listMessages"),
   imap("searchMessages"),
-  imap("getMessages")
+  imap("getMessages"),
+  github("listRepos"),
+  github("getRepo"),
+  github("listWorkflows"),
+  github("listRuns"),
+  github("getRun"),
+  github("listJobs"),
+  github("getJobLog"),
+  github("listChecks"),
+  github("listPulls"),
+  github("getPull"),
+  github("listPullFiles"),
+  github("listPullReviews")
 ]).annotate({ identifier: "DevRead" });
 export type DevRead = typeof DevRead.Type;
 

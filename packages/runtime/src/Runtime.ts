@@ -129,6 +129,7 @@ export class TooLarge extends Schema.TaggedError<TooLarge>()("TooLarge", {
     "runtime.pidgeon.bytes",
     "runtime.attio.bytes",
     "runtime.imap.bytes",
+    "runtime.github.bytes",
     "tier2.args.bytes",
     "runtime.result.bytes",
     "runtime.file.bytes",
@@ -391,6 +392,7 @@ export const config = Effect.all({
   pidgeonBytes: ContractLimits.get("runtime.pidgeon.bytes"),
   attioBytes: ContractLimits.get("runtime.attio.bytes"),
   imapBytes: ContractLimits.get("runtime.imap.bytes"),
+  githubBytes: ContractLimits.get("runtime.github.bytes"),
   serverArgsBytes: ContractLimits.get("tier2.args.bytes"),
   fileBytes: byteLimits.fileBytes,
   mutationDeadlineMs: ContractLimits.get("runtime.mutation.deadline"),
@@ -501,6 +503,7 @@ export const make = (
       settings.pidgeonBytes,
       settings.attioBytes,
       settings.imapBytes,
+      settings.githubBytes,
       settings.serverArgsBytes + settings.callBytes
     );
     const maxCallLimitId =
@@ -518,7 +521,9 @@ export const make = (
                   ? "runtime.pidgeon.bytes"
                   : maxCallBytes === settings.attioBytes
                     ? "runtime.attio.bytes"
-                    : "runtime.imap.bytes";
+                    : maxCallBytes === settings.imapBytes
+                      ? "runtime.imap.bytes"
+                      : "runtime.github.bytes";
 
     const dispatch = <A>(
       input: typeof RuntimeEnvelope.Type,
@@ -675,6 +680,7 @@ export const make = (
             input.op.startsWith("pidgeon.") ||
             input.op.startsWith("attio.") ||
             input.op.startsWith("imap.") ||
+            input.op.startsWith("github.") ||
             input.op.startsWith("members.") ||
             (version.manifest.tier === 2 &&
               input.op !== "files.redeem" &&

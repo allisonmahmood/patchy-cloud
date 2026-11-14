@@ -61,6 +61,9 @@ PGlite dev has one connection. It does not reproduce production connection conte
 | `github.cooldown.default` | contract | 60000 | milliseconds | company | How long an installation's calls are refused after a GitHub limit answer that names no time of its own | `source_rate_limited` | No | release |
 | `github.flow.ttl` | contract | 600000 | milliseconds | viewer | How long a sign-in to GitHub lasts for choosing repositories, from pressing Continue with GitHub | None | No | release |
 | `github.token.margin` | contract | 300000 | milliseconds | host | How long before its expiry a cached installation token stops being used | None | No | release |
+| `runtime.github.bytes` | contract | 16384 | bytes | viewer | GitHub operation arguments: a repository, filters and a cursor | `too_large` | No | release |
+| `github.list.items` | contract | 100 | items | viewer | Items a GitHub list without a cursor answers: workflows, a run's jobs, a commit's check runs and a pull request's reviews, and the reviews a pull request's summary counts; past it the answer says complete false | None | No | release |
+| `github.log.bytes` | contract | 1048576 | bytes | viewer | The end of a job's log one call answers; a longer log answers its last bytes and says its start was cut off | None | No | release |
 | `imap.test.deadline` | contract | 30000 | milliseconds | company | Connecting, testing, reconnecting, replacing the password of or refreshing an IMAP mailbox: one fresh session's TLS, CAPABILITY, login, LIST and EXAMINE INBOX | `timeout` | No | release |
 | `imap.session.connect` | contract | 10000 | milliseconds | company | Opening one IMAP session: the TCP connection and TLS handshake, then separately the server's greeting | `timeout` | No | release |
 | `imap.session.bytes` | contract | 16777216 | bytes | company | Bytes one IMAP Test session receives from the mail server, from the greeting to LOGOUT; past it the session is destroyed | `too_large` | No | release |

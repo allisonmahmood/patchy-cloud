@@ -518,6 +518,35 @@ export const registry = {
     refusal: null,
     overridable: false
   },
+  "runtime.github.bytes": {
+    kind: "contract",
+    default: 16384,
+    unit: "bytes",
+    scope: "viewer",
+    measure: "GitHub operation arguments: a repository, filters and a cursor",
+    refusal: "too_large",
+    overridable: false
+  },
+  "github.list.items": {
+    kind: "contract",
+    default: 100,
+    unit: "items",
+    scope: "viewer",
+    measure:
+      "Items a GitHub list without a cursor answers: workflows, a run's jobs, a commit's check runs and a pull request's reviews, and the reviews a pull request's summary counts; past it the answer says complete false",
+    refusal: null,
+    overridable: false
+  },
+  "github.log.bytes": {
+    kind: "contract",
+    default: 1048576,
+    unit: "bytes",
+    scope: "viewer",
+    measure:
+      "The end of a job's log one call answers; a longer log answers its last bytes and says its start was cut off",
+    refusal: null,
+    overridable: false
+  },
   "imap.test.deadline": {
     kind: "contract",
     default: 30000,

@@ -215,7 +215,8 @@ it.effect(
               "runtime.posthog.bytes": 128,
               "runtime.pidgeon.bytes": 128,
               "runtime.attio.bytes": 128,
-              "runtime.imap.bytes": 128
+              "runtime.imap.bytes": 128,
+              "runtime.github.bytes": 128
             },
             events.layer
           )
