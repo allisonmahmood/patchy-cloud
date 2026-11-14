@@ -258,6 +258,20 @@ const notInstalled = (installUrl: string) =>
 const notListed = (installUrl: string) =>
   `<p class="meta">Not listed? <a href="${escapeAttribute(installUrl)}">Add repositories on GitHub</a>, then come back.</p>`;
 
+/**
+ * Said when nothing is offered but GitHub listed more than Patchy read: the empty answer covers
+ * only what was read, never passed off as everything.
+ */
+const unread = (listing: Flows.Listing) => {
+  const accounts = registry["github.picker.installations"].default.toLocaleString("en-US");
+  const repositories = registry["github.picker.repositories"].default.toLocaleString("en-US");
+  if (!listing.complete)
+    return `<p class="meta">${escapeHtml(`Patchy read only the first ${accounts} accounts GitHub listed for you.`)}</p>`;
+  return listing.accounts.some((account) => !account.complete)
+    ? `<p class="meta">${escapeHtml(`Patchy read only the first ${repositories} repositories of each account.`)}</p>`
+    : "";
+};
+
 /** Whether the person administers any repository where the App is installed. */
 const offered = (listing: Flows.Listing) =>
   listing.accounts.some((account) => account.repositories.length > 0);
@@ -304,7 +318,7 @@ const chooseBody = (state: ConnectState) => {
     return `<p class="meta">They appear here once you've signed in.</p>`;
   if (signIn.listed === null)
     return `<p class="meta">Patchy couldn't read them from GitHub. Press Use another GitHub account, or reload the page, to try again.</p>`;
-  if (!offered(signIn.listed)) return notInstalled(signIn.installUrl);
+  if (!offered(signIn.listed)) return `${notInstalled(signIn.installUrl)}${unread(signIn.listed)}`;
   const chosen = new Set(state.chosen);
   const accounts = signIn.listed.accounts;
   const total = accounts.reduce((sum, account) => sum + account.repositories.length, 0);

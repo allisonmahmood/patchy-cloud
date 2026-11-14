@@ -561,6 +561,14 @@ export const make = Effect.gen(function* () {
   const adminDeadline = Effect.gen(function* () {
     return (yield* now) + (yield* ContractLimits.get("integration.deadline"));
   });
+  /**
+   * A deadline for reading a whole installation on an admin's request, longer than a call's: a
+   * large installation's listing is many requests, and Refresh is how a connection whose call
+   * couldn't finish reconciling in its own deadline catches up.
+   */
+  const discoveryDeadline = Effect.gen(function* () {
+    return (yield* now) + (yield* ContractLimits.get("github.discovery.deadline"));
+  });
 
   /** Refuses a connection that isn't connected: what a call and a Refresh need. */
   const connected = (loaded: Loaded) =>
@@ -671,7 +679,8 @@ export const make = Effect.gen(function* () {
   ) {
     return yield* admitted(
       input,
-      yield* adminDeadline,
+      // Resume may read the whole installation first, as Refresh does.
+      during === "reconnect" ? yield* discoveryDeadline : yield* adminDeadline,
       () => Effect.void,
       (current) =>
         Effect.gen(function* () {
@@ -680,8 +689,16 @@ export const make = Effect.gen(function* () {
           if (found._tag !== "Fine") return yield* settle(current, found, during, by);
           const attempt = during === "reconnect" ? yield* rediscovered(current, by) : current;
           return (yield* mintFor(attempt, during, undefined, by).pipe(
+            // Nothing left to mint for: every repository of the set is out of the installation.
             Effect.catchTag("GithubRepositoryNotFound", () =>
-              Effect.fail(new Source.Unavailable({ stage: "status", upstreamStatus: 422 }))
+              Effect.fail(
+                new Source.Unavailable({
+                  stage: "status",
+                  upstreamStatus: 422,
+                  reason: "left",
+                  account: current.display.account.login
+                })
+              )
             )
           )).attempt;
         })
@@ -692,7 +709,7 @@ export const make = Effect.gen(function* () {
     input: { readonly companyId: string; readonly id: string },
     by: string
   ) {
-    return yield* admitted(input, yield* adminDeadline, connected, (current) =>
+    return yield* admitted(input, yield* discoveryDeadline, connected, (current) =>
       Effect.gen(function* () {
         const installationId = current.display.installationId;
         const found = yield* read(installationId);

@@ -1122,6 +1122,12 @@ it.layer(services)("GitHub connections", (it) => {
           Connection.RepositoryNotFound
         );
         yield* store.disconnect({ ...admin, id: connection.id });
+        // Still gone: Resume says that none of them are in the installation, not that GitHub failed.
+        const gone = yield* Effect.flip(store.reconnect({ ...admin, id: connection.id }));
+        assert.include(
+          gone.message,
+          "None of this connection's repositories are in Patchy Cloud's"
+        );
         // Put back on GitHub; Refresh refuses a paused connection, and Resume reads it again first.
         org.repositories.push(web);
         const resumed = github(yield* store.reconnect({ ...admin, id: connection.id }));
@@ -1146,6 +1152,38 @@ it.layer(services)("GitHub connections", (it) => {
           .pipe(Effect.flip, Effect.forkChild);
         assert.instanceOf(yield* settled(held), Source.Timeout);
         assert.isAtMost((yield* Clock.currentTimeMillis) - start, 16_000);
+      })
+    )
+  );
+
+  it.effect("Refresh has longer than a call's deadline to read an installation", () =>
+    within(({ github: world, ids }) =>
+      Effect.gen(function* () {
+        const store = yield* SqlConnectionStore.make;
+        yield* signIn(world, admin, "mira");
+        const connection = yield* connect(store, admin, "unhurried", [[ids.org, 11]]);
+        const sentSince = (from: number, path: (pathname: string) => boolean) =>
+          until(() => world.requests.slice(from).some((request) => path(request.url.pathname)));
+        // Two requests of ten seconds each: either fits a call's deadline, both don't.
+        const from = world.requests.length;
+        const read = holdFirst(world, (request) =>
+          request.url.pathname.startsWith("/app/installations/")
+        );
+        const refresh = yield* store
+          .refresh({ ...admin, id: connection.id })
+          .pipe(Effect.forkChild);
+        yield* sentSince(from, (pathname) => pathname.startsWith("/app/installations/"));
+        yield* TestClock.adjust("10 seconds");
+        const listed = world.requests.length;
+        const listing = holdFirst(
+          world,
+          (request) => request.url.pathname === "/installation/repositories"
+        );
+        yield* read.release;
+        yield* sentSince(listed, (pathname) => pathname === "/installation/repositories");
+        yield* TestClock.adjust("10 seconds");
+        yield* listing.release;
+        assert.strictEqual(github(yield* Fiber.join(refresh)).status, "connected");
       })
     )
   );
@@ -1220,6 +1258,21 @@ it.layer(services)("GitHub connections", (it) => {
           assert.include(
             page.choose?.({})[0]?.body ?? "",
             `Showing what you administer on the first ${bound} accounts GitHub listed for you.`
+          );
+          // With nothing administered among those read, the empty answer says how far it read.
+          const empty = Page.connectSpec({
+            signIn: {
+              kind: "signed-in",
+              login: "wide-reach",
+              listed: { accounts: [], complete: false },
+              installUrl: "https://github.com"
+            },
+            query: "",
+            chosen: []
+          });
+          assert.include(
+            empty.choose?.({})[0]?.body ?? "",
+            `Patchy read only the first ${bound} accounts GitHub listed for you.`
           );
         })
       )

@@ -1439,7 +1439,9 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       const now = yield* Clock.currentTimeMillis;
       return yield* sql.withTransaction(
         Effect.gen(function* () {
-          yield* lock(input);
+          // The display written is what the check loaded: a Refresh that renamed a repository
+          // meanwhile is kept, and this Test refused as changed.
+          yield* lock(input, loaded);
           yield* sql`UPDATE connections SET last_tested_at = to_timestamp(${now / 1_000}),
             display = ${githubDisplay(githubCleared(loaded.display), 1)}
             WHERE id = ${input.id} AND company_id = ${input.companyId}

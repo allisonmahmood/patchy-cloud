@@ -479,6 +479,16 @@ export const registry = {
     refusal: null,
     overridable: false
   },
+  "github.discovery.deadline": {
+    kind: "contract",
+    default: 60000,
+    unit: "milliseconds",
+    scope: "company",
+    measure:
+      "Refresh, and Resume's look for repositories that came back: reading every repository in an installation, however many requests that takes; a patch's call keeps integration.deadline",
+    refusal: "timeout",
+    overridable: false
+  },
   "github.cooldown.default": {
     kind: "contract",
     default: 60000,

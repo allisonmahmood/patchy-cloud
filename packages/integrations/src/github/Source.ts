@@ -149,12 +149,13 @@ export class RateLimited extends Schema.TaggedError<RateLimited>()("GithubRateLi
 /**
  * GitHub couldn't be reached, answered unexpectedly, or refused for a reason that isn't the
  * connection's: `suspended` when the account suspended the App, `key` when GitHub refused the
- * App's own key, which is an operator's to fix.
+ * App's own key, which is an operator's to fix, `left` when a check found none of the connection's
+ * repositories in the installation.
  */
 export class Unavailable extends Schema.TaggedError<Unavailable>()("GithubUnavailable", {
   stage: Schema.Literals(["request", "redirect", "status", "response"]),
   upstreamStatus: Schema.optionalKey(Schema.Int),
-  reason: Schema.optionalKey(Schema.Literals(["suspended", "key", "listing"])),
+  reason: Schema.optionalKey(Schema.Literals(["suspended", "key", "listing", "left"])),
   account: Schema.optionalKey(Schema.String),
   cause: Schema.optionalKey(SecretCause)
 }) {
@@ -168,6 +169,8 @@ export class Unavailable extends Schema.TaggedError<Unavailable>()("GithubUnavai
         return "GitHub refused Patchy's own App key. Patchy's operators have to fix this; try again later.";
       case "listing":
         return "GitHub couldn't list every repository in the installation, so Patchy couldn't tell which ones left. Try again.";
+      case "left":
+        return `None of this connection's repositories are in Patchy Cloud's installation on ${this.account ?? "the account"} any more. Add them back to it on GitHub and try again, or add others under Change repositories.`;
       default:
         return "GitHub could not be reached or answered unexpectedly. Try again.";
     }
@@ -502,6 +505,8 @@ export class Source extends Context.Service<
 
 /** The reserve a queued call keeps before its deadline, so a slot freed later isn't worth taking. */
 const SLOT_RESERVE_MS = 1_000;
+/** How long a best-effort revocation of an installation token may take. */
+const REVOKE_MS = 2_000;
 
 /** Reads the whole body, refusing it once it passes `max` bytes. */
 const collect = (response: HttpClientResponse.HttpClientResponse, max: number) =>
@@ -840,25 +845,33 @@ export const makeWith = (app: Option.Option<App>) =>
       }
     });
 
+    /**
+     * Best effort, and brief: it runs as cleanup, where a slot is still held and the caller's
+     * deadline may already have passed, so it gets `REVOKE_MS` and no more. A token it doesn't
+     * reach expires within the hour and was never stored.
+     */
     const revokeInstallationToken = (token: Redacted.Redacted<string>) =>
       send(
         HttpClientRequest.make("DELETE")(`${API_URL}/installation/token`).pipe(
           HttpClientRequest.bearerToken(Redacted.value(token))
         )
-      ).pipe(Effect.ignore);
+      ).pipe(Effect.interruptible, Effect.timeoutOption(REVOKE_MS), Effect.ignore);
 
-    /** `effect` within what's left until `until`, refused `timeout` past it. */
+    /**
+     * `effect` within what's left until `until`, refused `timeout` past it, naming the whole
+     * seconds it had: a call's deadline and discovery's differ.
+     */
     const bounded = <A, E, R>(until: number, effect: Effect.Effect<A, E, R>) =>
-      Effect.flatMap(Clock.currentTimeMillis, (now) =>
-        until <= now
-          ? Effect.fail(new Timeout({ milliseconds: deadline }))
+      Effect.flatMap(Clock.currentTimeMillis, (now) => {
+        const timeout = new Timeout({
+          milliseconds: until <= now ? deadline : Math.ceil((until - now) / 1_000) * 1_000
+        });
+        return until <= now
+          ? Effect.fail(timeout)
           : effect.pipe(
-              Effect.timeoutOrElse({
-                duration: until - now,
-                orElse: () => Effect.fail(new Timeout({ milliseconds: deadline }))
-              })
-            )
-      );
+              Effect.timeoutOrElse({ duration: until - now, orElse: () => Effect.fail(timeout) })
+            );
+      });
     /**
      * Runs `effect` holding one permit of each of `semaphores` in order, all of it within `until`.
      * As Semaphore's own `withPermits`: only the waiting may be interrupted, never the taking, so
