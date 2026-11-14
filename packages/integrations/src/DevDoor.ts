@@ -53,7 +53,19 @@ const integrations: Readonly<Record<DevRead["op"] | DevAttachment["op"], string>
   "imap.listMessages": "IMAP",
   "imap.searchMessages": "IMAP",
   "imap.getMessages": "IMAP",
-  "imap.stageAttachment": "IMAP"
+  "imap.stageAttachment": "IMAP",
+  "github.listRepos": "GitHub",
+  "github.getRepo": "GitHub",
+  "github.listWorkflows": "GitHub",
+  "github.listRuns": "GitHub",
+  "github.getRun": "GitHub",
+  "github.listJobs": "GitHub",
+  "github.getJobLog": "GitHub",
+  "github.listChecks": "GitHub",
+  "github.listPulls": "GitHub",
+  "github.getPull": "GitHub",
+  "github.listPullFiles": "GitHub",
+  "github.listPullReviews": "GitHub"
 };
 
 /** The instance couldn't be reached, or answered with something other than its wire. */
@@ -75,7 +87,19 @@ export class InstanceUnavailable extends Schema.TaggedError<InstanceUnavailable>
       "imap.listMessages",
       "imap.searchMessages",
       "imap.getMessages",
-      "imap.stageAttachment"
+      "imap.stageAttachment",
+      "github.listRepos",
+      "github.getRepo",
+      "github.listWorkflows",
+      "github.listRuns",
+      "github.getRun",
+      "github.listJobs",
+      "github.getJobLog",
+      "github.listChecks",
+      "github.listPulls",
+      "github.getPull",
+      "github.listPullFiles",
+      "github.listPullReviews"
     ]),
     instance: Schema.String,
     cause: Schema.optionalKey(Schema.Redacted(Schema.Defect()))

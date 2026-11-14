@@ -79,6 +79,7 @@ import {
   AttioSource,
   Github,
   GithubFlows,
+  GithubOperations,
   AttioOperations,
   ImapOperations,
   ImapSessions,
@@ -365,6 +366,7 @@ const services = Layer.mergeAll(
       const imap = yield* ImapOperations.makeHandlers.pipe(
         Effect.provideService(FileStaging.FileStaging, staging)
       );
+      const github = yield* GithubOperations.makeHandlers;
       const handlers = {
         me,
         ...tables,
@@ -374,7 +376,8 @@ const services = Layer.mergeAll(
         ...posthog,
         ...pidgeon,
         ...attio,
-        ...imap
+        ...imap,
+        ...github
       };
       // Runtime tells the streams of each admitted call, which keeps its viewer's documents active.
       const runtime = RuntimeProduction.layer(handlers).pipe(

@@ -1186,9 +1186,9 @@ workspace through a read-only key: its records, list entries and members.
 Company Email (IMAP) connections log in to one mailbox with its password, and
 patches read its folders and messages without ever changing it. Company GitHub
 connections hold repositories on one GitHub account through Patchy's GitHub App,
-connected by someone GitHub shows administering them; the reads patches call
-arrive in their own release. Other integrations and personal connections remain
-planned.
+connected by someone GitHub shows administering them, and patches read their CI
+runs, job logs, check runs and pull requests. Other integrations and personal
+connections remain planned.
 
 An **integration** is a capability Patchy builds and maintains, the same for every company. Postgres was the first, PostHog the second, Pidgeon the third, the first that can write, Attio the fourth, Email (IMAP) the fifth and GitHub the sixth; Salesforce and Gmail are examples of future integrations, not offered connections. A **connection** is the live, credentialed instance of an integration. That distinction was drawn with [Companies](#integrations-and-connections); this section is the layer itself — how a connection comes to exist, how a patch declares and uses one, and what patch code is actually handed.
 
@@ -1804,8 +1804,7 @@ statuses, contents, deployments, issues and pull requests, and nothing on the
 organization; webhooks are off. Its credentials are host settings, five
 `PATCHY_GITHUB_APP_*` keys: all empty and GitHub isn't offered anywhere, some
 filled and the server refuses to start, naming what's empty. github.com only.
-The reads patches call arrive with their own release; until then a declaration
-reads nothing.
+What patches read is under [Reading GitHub](#reading-github).
 
 **The rule.** A connection reads a repository only because a person GitHub showed
 to administer it, at that moment, added it to that connection. The connect page
@@ -1917,6 +1916,81 @@ build, and guests of those patches unless blocked; that nothing on GitHub can be
 changed and no other repository reached; and that CI logs can hold secrets a
 workflow printed. [ADR-0015](adr/ADR-0015-github-app-key-and-repository-rule.md)
 records why the App's key is the one secret that matters and the repository rule.
+
+### Reading GitHub
+
+Patches read a connection's repositories in tier 2 actions, through twelve fixed
+operations, the same for every company. Nothing is generated per repository: the
+client is the same whatever the connection holds, and a call names a repository
+by its name in the connection.
+
+- **What patch code sees.** `repos.list()` and `repos.get(repo)`;
+  `workflows.list(repo)`; `runs.list({ repo, branch, sha, workflow, event,
+status, created, limit, cursor })`, `runs.get` and `runs.jobs`, the latest
+  attempt's jobs and their steps; `jobs.log({ repo, jobId })`;
+  `commits.checks({ repo, ref })`, a commit's check runs; `pulls.list({ repo,
+state, base, head, orderBy, limit, cursor })`, `pulls.get`, `pulls.files` and
+  `pulls.reviews`. Each answers Patchy's own trimmed record, decoded from only
+  the fields it keeps: a pull request carries its number, URL, title, author
+  login and id, draft, state and merged, labels, requested reviewers, base and
+  head branch, head SHA and head repository, or null when a fork is gone; a run
+  its id, URL, workflow, event, branch, head SHA, attempt, status, conclusion and
+  times; a job its name, status, conclusion, times and steps. Not read yet:
+  commit history, comparisons, file contents, earlier attempts' jobs, commit
+  statuses, issues, deployments, releases and pull request comments, each added
+  when a patch needs it, under permissions the App already holds. No member list:
+  a patch keeps its own table of GitHub logins beside the author login and id
+  every record carries.
+- **Every call.** It holds one of the installation's slots across its token and
+  every request, has its caller checked again once it holds it, and looks the
+  repository's name up in the connection's current set, refusing `not_found`
+  before GitHub is asked when it isn't there or has left. Patchy builds every
+  request, addresses the repository by numeric id, never its name, and follows no
+  redirect but the log's; an answer that carries another repository's id is
+  refused. A run or job of another repository answers `not_found` under this
+  one's id (shown). A pull request from a fork is read from the connected
+  repository it merges into, never from the fork.
+- **A refused token.** A cached token GitHub refuses with a 401, or a 403 that
+  isn't a limit answer, is dropped and the read runs once more with one minted
+  then, which goes through the mint's own reading of what a refusal means; a
+  refused fresh token ends the call `source_unavailable`. A limit answer writes
+  the installation's cooldown before any of that.
+- **Reviews.** `pulls.reviews` returns the reviews; `pulls.get` adds Patchy's
+  count by one rule, not GitHub's merge rule: each reviewer's latest review that
+  is an approval or a request for changes and isn't dismissed, over at most 100
+  reviews, `complete` false past that.
+- **Completeness.** Every list answers `complete`. A run listing reaches GitHub's
+  first 1,000 runs, false at that cap, and the skill says to narrow by `created`;
+  a pull request's files reach GitHub's first 3,000, a file's `patch` null when
+  GitHub sends none; workflows, jobs, check runs and reviews come in one answer of
+  at most `github.list.items`. Cursors are bound to the connection, the
+  repository's id and the arguments. Pages aren't a snapshot of a moving list.
+- **Logs.** `jobs.log` answers the end of a job's log, at most `github.log.bytes`,
+  with `truncated` when its start was cut off. Patchy asks GitHub for the log by
+  id and reads the redirect itself: the URL must be https on the default port
+  with the whole hostname matching `productionresultssa<N>.blob.core.windows.net`
+  (shown), or the call is refused unavailable and logged by host alone, so a
+  change on GitHub's side fails closed. The store ignores a suffix range (shown),
+  so Patchy asks for `bytes=0-0`, reads the total from `Content-Range` and the
+  `ETag`, and asks for the closed range of the end, pinned to that ETag; it
+  requires a 206 naming the same total and the range asked for, exactly that many
+  bytes, and refuses anything else, its body dropped unread: a whole body is never
+  taken for a range, and a log still being written may be refused and read a
+  moment later. A total of zero is an empty log, with no second request. Neither
+  download carries a token, cookie or trace context or follows a redirect; both
+  run in the host within the call's slot and deadline. The signed URL never leaves
+  the host, and the log's text is inert data everywhere: never logged, in an
+  error or a wide event.
+- **Bounds.** The installation's slots, the 15-second deadline over the whole
+  call, `github.response.bytes` per raw answer and 8 MiB decoded. Refusals carry
+  Patchy's own details: `not_found` names what wasn't found, `source_unavailable`
+  a suspension, an uninstall or changed permissions; recent calls name the
+  repository and a count, never a filter, code or a log.
+- **Development.** Dev reads live (ADR-0013): every operation runs through the
+  dev door as the machine key's person, each read a Dev call on the connection's
+  page. A live tier, `pnpm test:github`, reads a Patchy-owned test repository
+  through the CI App; it notices a by-id route or the log host changing only when
+  it runs.
 
 ### Discovery and binding
 

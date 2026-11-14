@@ -175,6 +175,10 @@ export class Unavailable extends Schema.TaggedError<Unavailable>()("GithubUnavai
         return "GitHub could not be reached or answered unexpectedly. Try again.";
     }
   }
+  /** Why, when it's the connection's rather than GitHub's or the network's: never its cause. */
+  get details() {
+    return this.reason === undefined ? undefined : { reason: this.reason };
+  }
 }
 export class Timeout extends Schema.TaggedError<Timeout>()("GithubTimeout", {
   milliseconds: Schema.Int
@@ -359,11 +363,15 @@ export const permissionGaps = (held: Readonly<Record<string, string>>) => ({
 });
 
 /** An answer once its transport, redirect and server failures are taken out. */
-interface Answer {
+export interface Answer {
   readonly status: number;
   readonly headers: Readonly<Record<string, string>>;
   readonly text: string;
 }
+/** A job log's GET: where its redirect points, or the answer when it isn't a redirect. */
+export type Located =
+  | { readonly _tag: "Redirect"; readonly location: string | undefined }
+  | { readonly _tag: "Answer"; readonly answer: Answer };
 
 /**
  * When a limit answer lets Patchy try again, in epoch milliseconds, or none when the answer
@@ -484,6 +492,44 @@ export class Source extends Context.Service<
     /** Revokes an installation token. Best effort: it never fails. */
     readonly revokeInstallationToken: (token: Redacted.Redacted<string>) => Effect.Effect<void>;
     /**
+     * One GET under the API with an installation token, at a `path` Patchy built. A limit answer
+     * is refused as the installation's before anything reads it; a redirect or a server error is
+     * refused; every other answer comes back to read.
+     */
+    readonly read: (
+      token: Redacted.Redacted<string>,
+      path: string,
+      accept?: string
+    ) => Effect.Effect<Answer, AppError>;
+    /**
+     * A job log's GET with an installation token: where its redirect points, read and never
+     * followed, or the answer when it isn't a redirect. A limit answer is refused first.
+     */
+    readonly locate: (
+      token: Redacted.Redacted<string>,
+      path: string
+    ) => Effect.Effect<Located, AppError>;
+    /**
+     * One range of a log's download at `url`: no token, cookie or tracing header is sent, and no
+     * redirect followed. `keep` reads the answer's head and says how many bytes of its body to
+     * read, at most; when it says none, the body is dropped unread and the request aborted.
+     */
+    readonly download: (
+      url: URL,
+      headers: { readonly range: string; readonly ifMatch?: string },
+      keep: (head: {
+        readonly status: number;
+        readonly headers: Readonly<Record<string, string>>;
+      }) => number | undefined
+    ) => Effect.Effect<
+      {
+        readonly status: number;
+        readonly headers: Readonly<Record<string, string>>;
+        readonly bytes: Uint8Array | undefined;
+      },
+      SendError
+    >;
+    /**
      * Runs `effect` holding one of the installation's slots and one of GitHub's, the whole of it
      * within `deadline` (epoch milliseconds), every page and request included. Waiting keeps a
      * one-second reserve before it, then refuses `busy` with nothing sent; work still running at
@@ -508,8 +554,8 @@ const SLOT_RESERVE_MS = 1_000;
 /** How long a best-effort revocation of an installation token may take. */
 const REVOKE_MS = 2_000;
 
-/** Reads the whole body, refusing it once it passes `max` bytes. */
-const collect = (response: HttpClientResponse.HttpClientResponse, max: number) =>
+/** Reads the whole body as bytes, refusing it once it passes `max` bytes. */
+const collectBytes = (response: HttpClientResponse.HttpClientResponse, max: number) =>
   Effect.gen(function* () {
     const declared = Number(response.headers["content-length"]);
     if (Number.isFinite(declared) && declared > max) return yield* new Overflow({});
@@ -533,8 +579,11 @@ const collect = (response: HttpClientResponse.HttpClientResponse, max: number) =
       body.set(chunk, offset);
       offset += chunk.byteLength;
     }
-    return decoder.decode(body);
+    return body;
   });
+/** Reads the whole body as text, refusing it once it passes `max` bytes. */
+const collect = (response: HttpClientResponse.HttpClientResponse, max: number) =>
+  Effect.map(collectBytes(response, max), (body) => decoder.decode(body));
 
 /** `app` built from the host's settings, over the client this layer is given. */
 export const makeWith = (app: Option.Option<App>) =>
@@ -560,8 +609,11 @@ export const makeWith = (app: Option.Option<App>) =>
       onSome: (value) => Effect.succeed(value)
     });
 
-    /** One request; a redirect and a server error fail here, every other answer is returned. */
-    const send = (request: HttpClientRequest.HttpClientRequest) =>
+    /**
+     * One request to GitHub, `redirect` true when its answer may be a redirect to read rather
+     * than a refusal: a server error fails here, and so does a redirect unless `redirect`.
+     */
+    const respond = (request: HttpClientRequest.HttpClientRequest, redirect = false) =>
       Effect.gen(function* () {
         const response = yield* client
           .execute(
@@ -582,21 +634,28 @@ export const makeWith = (app: Option.Option<App>) =>
             // Trace context stays inside Patchy.
             Effect.provideService(Tracer.DisablePropagation, true)
           );
-        if (response.status >= 300 && response.status < 400)
+        if (!redirect && response.status >= 300 && response.status < 400)
           return yield* new Unavailable({ stage: "redirect", upstreamStatus: response.status });
         if (response.status >= 500)
           return yield* new Unavailable({ stage: "status", upstreamStatus: response.status });
-        return {
-          status: response.status,
-          headers: response.headers,
-          text: yield* collect(response, maxBytes)
-        } satisfies Answer;
-      }).pipe(
+        return response;
+      });
+    const within = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      effect.pipe(
         Effect.timeoutOrElse({
           duration: deadline,
           orElse: () => Effect.fail(new Timeout({ milliseconds: deadline }))
         })
       );
+    const answerOf = (response: HttpClientResponse.HttpClientResponse) =>
+      Effect.map(collect(response, maxBytes), (text): Answer => ({
+        status: response.status,
+        headers: response.headers,
+        text
+      }));
+    /** One request; a redirect and a server error fail here, every other answer is returned. */
+    const send = (request: HttpClientRequest.HttpClientRequest) =>
+      within(Effect.flatMap(respond(request), answerOf));
     /** A request whose limit answer is refused as `who`'s, before anything else reads it. */
     const limited = (who: RateLimited["who"]) => (answer: Answer) =>
       Effect.gen(function* () {
@@ -857,6 +916,90 @@ export const makeWith = (app: Option.Option<App>) =>
         )
       ).pipe(Effect.interruptible, Effect.timeoutOption(REVOKE_MS), Effect.ignore);
 
+    const read = (token: Redacted.Redacted<string>, path: string, accept?: string) =>
+      send(
+        HttpClientRequest.get(`${API_URL}${path}`).pipe(
+          HttpClientRequest.bearerToken(Redacted.value(token)),
+          accept === undefined
+            ? (request) => request
+            : HttpClientRequest.setHeader("accept", accept)
+        )
+      ).pipe(Effect.flatMap(limited("installation")));
+
+    const locate = (token: Redacted.Redacted<string>, path: string) =>
+      within(
+        Effect.gen(function* () {
+          const response = yield* respond(
+            HttpClientRequest.get(`${API_URL}${path}`).pipe(
+              HttpClientRequest.bearerToken(Redacted.value(token))
+            ),
+            true
+          );
+          if (response.status >= 300 && response.status < 400)
+            return {
+              _tag: "Redirect",
+              location: response.headers.location
+            } satisfies Located as Located;
+          return {
+            _tag: "Answer",
+            answer: yield* limited("installation")(yield* answerOf(response))
+          } satisfies Located as Located;
+        })
+      );
+
+    /**
+     * Scoped, so an answer whose body isn't wanted is aborted as the scope closes rather than
+     * read. Only `range`, `if-match` and a user agent are sent: the store's URL is its own
+     * credential, and GitHub's token there answers 401 (shown).
+     */
+    const download = (
+      url: URL,
+      headers: { readonly range: string; readonly ifMatch?: string },
+      keep: (head: {
+        readonly status: number;
+        readonly headers: Readonly<Record<string, string>>;
+      }) => number | undefined
+    ) =>
+      within(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const response = yield* HttpClient.withScope(client)
+              .execute(
+                HttpClientRequest.get(url.toString()).pipe(
+                  HttpClientRequest.setHeaders({
+                    range: headers.range,
+                    "user-agent": "Patchy-Cloud",
+                    ...(headers.ifMatch === undefined ? {} : { "if-match": headers.ifMatch })
+                  })
+                )
+              )
+              .pipe(
+                // The cause would name the signed URL: it's dropped, so it can't reach a log.
+                Effect.mapError(() => new Unavailable({ stage: "request" })),
+                Effect.provideService(FetchHttpClient.RequestInit, {
+                  redirect: "manual",
+                  credentials: "omit"
+                }),
+                Effect.provideService(Tracer.DisablePropagation, true)
+              );
+            const head = { status: response.status, headers: response.headers };
+            const wanted = keep(head);
+            return {
+              ...head,
+              bytes:
+                wanted === undefined
+                  ? undefined
+                  : yield* collectBytes(response, wanted).pipe(
+                      // As above: a broken stream's cause would name the URL.
+                      Effect.catchTag("GithubUnavailable", () =>
+                        Effect.fail(new Unavailable({ stage: "response" }))
+                      )
+                    )
+            };
+          })
+        )
+      );
+
     /**
      * `effect` within what's left until `until`, refused `timeout` past it, naming the whole
      * seconds it had: a call's deadline and discovery's differ.
@@ -928,6 +1071,9 @@ export const makeWith = (app: Option.Option<App>) =>
       mint,
       installationRepositories,
       revokeInstallationToken,
+      read,
+      locate,
+      download,
       withSlot,
       withHost
     });

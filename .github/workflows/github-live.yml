@@ -1,0 +1,76 @@
+name: GitHub live
+
+# Patchy's GitHub reads against GitHub itself: a Patchy-owned test repository, read through the CI
+# App. Offline tests carry correctness; this tier only catches a by-id route or the log store's
+# host changing, so `github-live` is informational and never a required check: a red run can't
+# block a merge.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  github-changes:
+    # Whether the live tier runs: on main, and on a pull request from this repository that touches
+    # GitHub, when the repository has the CI App's key. Fork and Dependabot pull requests never get it.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.changes.outputs.run }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: changes
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          OURS: ${{ github.event_name == 'push' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]') }}
+          HAS_KEY: ${{ secrets.PATCHY_GITHUB_CI_APP_PRIVATE_KEY != '' }}
+        run: |
+          if [ "$OURS" != "true" ] || [ "$HAS_KEY" != "true" ]; then
+            echo "No CI App key for this run, so the live tier doesn't run."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          elif [ "$EVENT" != "pull_request" ] || git diff --name-only "$BASE" HEAD |
+            grep -qE '^(packages/integrations/(src/github/|live/Github)|packages/api/src/github|vitest\.github-live\.config\.ts$|pnpm-lock\.yaml$|\.github/workflows/github-live\.yml$)'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Nothing GitHub's live tier exercises changed, so it doesn't run."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  github-live:
+    # Every run spends the CI App installation's hourly budget, so runs wait in one queue and none
+    # is cancelled. It only reads: nothing to sweep.
+    needs: github-changes
+    if: needs.github-changes.outputs.run == 'true'
+    concurrency:
+      group: github-live
+      cancel-in-progress: false
+      queue: max
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PATCHY_GITHUB_APP_ID: ${{ secrets.PATCHY_GITHUB_CI_APP_ID }}
+      PATCHY_GITHUB_APP_SLUG: ${{ secrets.PATCHY_GITHUB_CI_APP_SLUG }}
+      PATCHY_GITHUB_APP_CLIENT_ID: ${{ secrets.PATCHY_GITHUB_CI_APP_CLIENT_ID }}
+      PATCHY_GITHUB_APP_CLIENT_SECRET: ${{ secrets.PATCHY_GITHUB_CI_APP_CLIENT_SECRET }}
+      PATCHY_GITHUB_APP_PRIVATE_KEY: ${{ secrets.PATCHY_GITHUB_CI_APP_PRIVATE_KEY }}
+      PATCHY_GITHUB_LIVE_INSTALLATION_ID: ${{ secrets.PATCHY_GITHUB_LIVE_INSTALLATION_ID }}
+      PATCHY_GITHUB_LIVE_REPOSITORY_IDS: ${{ secrets.PATCHY_GITHUB_LIVE_REPOSITORY_IDS }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.20.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Read Patchy's test repository through the CI App
+        run: pnpm test:github

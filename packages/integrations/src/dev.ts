@@ -8,3 +8,4 @@ export * as PostHogDev from "./posthog/Dev.js";
 export * as PidgeonDev from "./pidgeon/Dev.js";
 export * as AttioDev from "./attio/Dev.js";
 export * as ImapDev from "./imap/Dev.js";
+export * as GithubDev from "./github/Dev.js";

@@ -1006,8 +1006,8 @@ manifest. Omitted published columns and indexes remain in the local schema,
 including unique constraints; omission does not relax writes.
 
 Each Postgres declaration needs `fixtures/postgres-<handle>.sql`; aliases of
-one connection share its PGlite. PostHog, Pidgeon, Attio and IMAP declarations need no
-fixture: dev reads the real project, address, workspace or mailbox through the instance's
+one connection share its PGlite. PostHog, Pidgeon, Attio, IMAP and GitHub declarations need no
+fixture: dev reads the real project, address, workspace, mailbox or repositories through the instance's
 dev read door as the key's person, for either viewer (ADR-0013). An Attio read
 carries the snapshot revision the repo was generated from. The key reaches the daemon on stdin only
 when such a declaration exists, never argv, the environment, state files or

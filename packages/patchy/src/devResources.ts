@@ -14,6 +14,7 @@ import {
   ConnectionStoreDev,
   DevDoor,
   AttioDev,
+  GithubDev,
   ImapDev,
   PidgeonDev,
   PostgresDev,
@@ -303,11 +304,12 @@ const make = Effect.fn("DevResources.make")(function* (
     ...(yield* Members.make),
     ...fileHandlers,
     ...postgres,
-    // PostHog, Pidgeon, Attio and IMAP have no fixture: their reads go to the real connection,
+    // PostHog, Pidgeon, Attio, IMAP and GitHub have no fixture: their reads go to the real connection,
     // through the instance, and Pidgeon's writes are simulated here, reaching neither.
     ...(yield* PostHogDev.handlers(options.instance)),
     ...(yield* AttioDev.handlers(options.instance)),
     ...(yield* ImapDev.handlers(options.instance, yield* Files.makeStagingLocal)),
+    ...(yield* GithubDev.handlers(options.instance)),
     ...(yield* PidgeonDev.handlers(
       options.instance,
       prepared.metadata.pidgeon,

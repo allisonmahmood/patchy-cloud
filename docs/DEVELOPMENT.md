@@ -723,7 +723,7 @@ worktree, so they open `/join` here afterwards.
 
 The cloud (`pnpm dev`) supplies release bytes, identity and metadata; a patch's
 local runtime (`patchy dev`) runs its handlers over PGlite and invented fixtures.
-PostHog, Pidgeon, Attio and IMAP declarations have no fixture: `patchy dev` reads the real
+PostHog, Pidgeon, Attio, IMAP and GitHub declarations have no fixture: `patchy dev` reads the real
 connection through the cloud's dev read door, as the CLI's machine key
 ([ADR-0013](adr/ADR-0013-dev-bindings-per-integration.md)), so the connection must
 exist on this instance. Pidgeon's sends, replies and triage are simulated in the
@@ -976,7 +976,17 @@ can quote it.
   GitHub (`packages/integrations/src/test/github.ts`) answering in the shapes the
   probe on #1439 was answered with, hand-written: signing in and its replays, who
   may connect what, the one-company claim, each row of the probe's access table,
-  reconciliation, the guard against a stale failure, and limit answers.
+  reconciliation, the guard against a stale failure, and limit answers, and the
+  reads: the set check before GitHub hears anything, a run or job of another
+  repository, an answer naming another repository, each `complete` at its cap,
+  cursors, a refused cached or fresh token, and a job log whose store ignores the
+  range, changes between its two requests, redirects, answers short or sits on
+  another host. `pnpm test:github` is the live tier: it reads a Patchy-owned test
+  repository through the CI App, "Patchy Cloud CI", from `PATCHY_GITHUB_APP_*`,
+  `PATCHY_GITHUB_LIVE_INSTALLATION_ID` and `PATCHY_GITHUB_LIVE_REPOSITORY_IDS` in the
+  environment, and skips without them. It notices a by-id route or the
+  log host changing only when it runs; it is not monitoring and not a required
+  check.
 - **Execution engine and fleet.** `pnpm exec vitest run packages/execution` runs
   real workerd. Fleet hosting offline is in
   [Operations](OPERATIONS.md#exercising-the-fleet-offline); local execution

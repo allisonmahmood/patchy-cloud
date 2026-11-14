@@ -1021,9 +1021,9 @@ export class DevReadsGroup extends HttpApiGroup.make("devReads", { topLevel: tru
     }).annotateMerge(
       describe(
         "`patchy dev` reads a connection whose integration reads live in development, as the " +
-          "bearer: PostHog's `posthog.query`, Pidgeon's `pidgeon.read`, Attio's six reads and IMAP's six. The machine token is " +
+          "bearer: PostHog's `posthog.query`, Pidgeon's `pidgeon.read`, Attio's six reads, IMAP's six and GitHub's twelve. The machine token is " +
           "the only authority: its person, company and machine are read from the token on every " +
-          "call and again after any wait for one of the project's, address's, workspace's or mailbox's slots, which " +
+          "call and again after any wait for one of the project's, address's, workspace's, mailbox's or installation's slots, which " +
           "answers 401 when the token stopped working meanwhile. `connection` only selects: it " +
           "must name a connected connection of the operation's integration in the token's " +
           "company, which any active member reads through. Other operations, including every " +
@@ -1032,10 +1032,10 @@ export class DevReadsGroup extends HttpApiGroup.make("devReads", { topLevel: tru
           "without its `connection` alias. The runtime's bounds apply: a body over the largest " +
           "live bound, `runtime.pidgeon.bytes`, answers 413 `too_large` as it streams, and each " +
           "operation's arguments keep their own (`runtime.posthog.bytes`, " +
-          "`runtime.pidgeon.bytes`, `runtime.attio.bytes`, `runtime.imap.bytes`); each call has the 15-second `integration.deadline` " +
+          "`runtime.pidgeon.bytes`, `runtime.attio.bytes`, `runtime.imap.bytes`, `runtime.github.bytes`); each call has the 15-second `integration.deadline` " +
           "(`timeout`, 504), results keep the operation's own bounds and `runtime.result.bytes`, " +
           "and published patches share the process's slots per PostHog project, per Pidgeon " +
-          "address, per Attio workspace and per IMAP mailbox (`busy`), and IMAP's pool of sessions. A Pidgeon read checks what comes back against the address and " +
+          "address, per Attio workspace, per IMAP mailbox and per GitHub installation (`busy`), and IMAP's pool of sessions. A Pidgeon read checks what comes back against the address and " +
           "keeps held mail empty, as a published read does. An Attio read's `connection.revision` names the " +
           "snapshot the repo was generated from: the instance decodes by that snapshot of that connection, " +
           "and a revision it doesn't have answers 403 as an unknown connection does. Calls are limited to " +
@@ -1206,6 +1206,31 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
           "`imap.server.concurrent` per mail server and `imap.host.concurrent` per process (`busy`); raw answers are bounded " +
           "by `imap.call.bytes`, arguments by `runtime.imap.bytes`. Recent calls name the operation and a count, never a " +
           "subject, a body, an address or a search value. " +
+          "`github.listRepos { connection }`, `github.getRepo { connection, repo }`, " +
+          "`github.listWorkflows { connection, repo }`, " +
+          "`github.listRuns { connection, repo, branch?, sha?, workflow?, event?, status?, created?, limit?, cursor? }`, " +
+          "`github.getRun { connection, repo, runId }`, `github.listJobs { connection, repo, runId }`, " +
+          "`github.getJobLog { connection, repo, jobId }`, `github.listChecks { connection, repo, ref }`, " +
+          "`github.listPulls { connection, repo, state?, base?, head?, orderBy?, limit?, cursor? }`, " +
+          "`github.getPull { connection, repo, number }`, `github.listPullFiles { connection, repo, number, limit?, cursor? }` " +
+          "and `github.listPullReviews { connection, repo, number }` read one declared GitHub connection and never write. " +
+          "`repo` is a repository's name, looked up in the connection's current set and refused `not_found` " +
+          "(`details.resource` `repository`) before GitHub is asked when it isn't there or has left; Patchy addresses " +
+          "it by numeric id, builds every request, and refuses `source_unavailable` an answer carrying another " +
+          "repository's id. A run, job, commit, workflow or pull request GitHub doesn't find under it is `not_found` " +
+          "with its `details.resource`. Every list answers `complete`: a run listing reaches GitHub's first 1,000 runs, " +
+          "a pull request's files its first 3,000, and a list without a cursor `github.list.items`; `limit` is 1–100 " +
+          "(30 by default) and a cursor is bound to the connection, the repository and the arguments " +
+          "(`invalid_cursor`). `getPull` adds `reviews { approved, changesRequested, complete }`, Patchy's count of each " +
+          "reviewer's latest approval or request for changes that isn't dismissed. `getJobLog` answers " +
+          "`{ ok, text, truncated, size }`, the log's last `github.log.bytes`: Patchy reads GitHub's redirect to its " +
+          "log store itself, only to an https `productionresultssa<N>.blob.core.windows.net` on the default port, asks " +
+          "the store for the length and then the closed range of the end, pinned to its ETag, sending no token, " +
+          "cookie or trace context and following no redirect, and refuses `source_unavailable` any other answer. " +
+          "Calls share `github.calls.concurrent` per installation and `github.host.concurrent` per process (`busy`); " +
+          "GitHub's limit answers refuse every host's calls on the installation `source_rate_limited` until its time " +
+          "passes. Raw answers are bounded by `github.response.bytes`, arguments by `runtime.github.bytes`. Recent " +
+          "calls name the repository and a count, never a filter, an id, code or a log. " +
           "`server.call { handler, args, mutationKey? }` names a one-level `module.export`. " +
           'Its declared business refusal is HTTP 200 `{ ok: false, source: "handler", code, details? }`; ' +
           "successful handler data stays inside `{ ok: true, value }`, even when the value resembles a refusal. " +

@@ -272,6 +272,9 @@ export class RepositoryNotFound extends Schema.TaggedError<RepositoryNotFound>()
   override get message() {
     return `${this.repository} isn't one of this connection's repositories. An admin adds repositories on the connection's page.`;
   }
+  get details() {
+    return { resource: "repository" as const };
+  }
 }
 
 export type ConnectError =

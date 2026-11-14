@@ -33,13 +33,14 @@ export type Prepared = typeof Prepared.Type;
 
 /**
  * Whether dev reads a declared connection through the instance, and so needs this machine's key
- * (ADR-0013): PostHog's, Pidgeon's, Attio's and IMAP's have no fixture.
+ * (ADR-0013): PostHog's, Pidgeon's, Attio's, IMAP's and GitHub's have no fixture.
  */
 export const readsLive = (metadata: Prepared["metadata"]) =>
   Object.keys(metadata.posthog).length +
     Object.keys(metadata.pidgeon).length +
     Object.keys(metadata.attio).length +
-    Object.keys(metadata.imap).length >
+    Object.keys(metadata.imap).length +
+    Object.keys(metadata.github).length >
   0;
 
 export class FixtureMissing extends Schema.TaggedError<FixtureMissing>()("DevFixtureMissing", {

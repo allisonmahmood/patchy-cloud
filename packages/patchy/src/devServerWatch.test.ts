@@ -60,7 +60,7 @@ const inspectedChanges = Effect.fn("test.inspectedChanges")(function* (root: str
   const next = yield* watch(
     root,
     toolchain,
-    { sharedStores: [], pidgeon: [], attio: [], imap: [] },
+    { sharedStores: [], pidgeon: [], attio: [], imap: [], github: [] },
     tables
   );
   const observed = next.pipe(
@@ -311,7 +311,8 @@ it.live(
           sharedStores: [],
           pidgeon: [],
           attio: [],
-          imap: []
+          imap: [],
+          github: []
         })
       );
       assert.deepInclude(yield* Inspection.inspect(published.server).pipe(Effect.flip), {
@@ -377,7 +378,8 @@ it.live(
           sharedStores: [],
           pidgeon: [],
           attio: [],
-          imap: []
+          imap: [],
+          github: []
         })
       );
       assert.deepStrictEqual(built.agentTools, { count: "__proto__", read: "leads" });
@@ -488,7 +490,8 @@ export const read = query({ args: {}, result: t.json(), handler: () => optionalM
             sharedStores: [],
             pidgeon: [],
             attio: [],
-            imap: []
+            imap: [],
+            github: []
           }),
         catch: (cause) => cause
       });

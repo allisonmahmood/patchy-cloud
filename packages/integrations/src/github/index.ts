@@ -6,6 +6,7 @@ import * as Access from "./Access.js";
 import * as Connection from "./Connection.js";
 import * as Flows from "./Flows.js";
 import { generate } from "./Generate.js";
+import { operations } from "./Operations.js";
 import * as Source from "./Source.js";
 
 /** Discovery from a connection's credentials: the check, and its repositories read by id. */
@@ -26,9 +27,6 @@ const metadata = {
   })
 };
 
-// The reads patches call arrive with their own ticket; until then a declaration reads nothing.
-const operations = {};
-
 // Keep declaration emission pointed at the modules' public types.
 export const github: {
   readonly name: "github";
@@ -37,13 +35,30 @@ export const github: {
   readonly metadata?: typeof metadata;
   readonly operations: typeof operations;
   readonly generate: typeof generate;
+  readonly live?: ReadonlyArray<keyof typeof operations>;
 } = defineIntegration({
   name: "github",
   modes: ["company"],
   credentials: Connection.Credentials,
   metadata,
   operations,
-  generate
+  generate,
+  // Invented CI runs, logs and pull requests never resemble a company's: dev reads the real
+  // repositories, and nothing on GitHub can be changed through Patchy.
+  live: [
+    "listRepos",
+    "getRepo",
+    "listWorkflows",
+    "listRuns",
+    "getRun",
+    "listJobs",
+    "getJobLog",
+    "listChecks",
+    "listPulls",
+    "getPull",
+    "listPullFiles",
+    "listPullReviews"
+  ]
 });
 
 /** GitHub's source, its call seam and its sign-in flows, sharing one source and its slots. */
