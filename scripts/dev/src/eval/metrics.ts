@@ -33,7 +33,9 @@ export type Metrics = typeof Metrics.Type;
 
 /** A skill's file by its folder's name, or the global skill's in the `patchy` package. */
 const SKILL = /(?:skills\/(patchy[\w-]*)|patchy\/global-skill)\/(SKILL\.md|references\/[\w.-]+)/g;
-const OFF_SKILL = /node_modules\/patchy\/(?!global-skill\/)|\.d\.ts\b/;
+// The package holds the global skill at global-skill/, and at skills/ in releases before that:
+// an eval measures a base release with this same code, so a read of either is a skill read.
+const OFF_SKILL = /node_modules\/patchy\/(?!(?:global-skill|skills)\/)|\.d\.ts\b/;
 const TYPECHECK = /\bpnpm\s+(?:run\s+)?typecheck\b|\btsc\b/;
 const PUBLISH = /\bpatchy\s+publish\b/;
 const DEV_START = /\bpatchy\s+dev\b(?!\s+(?:stop|status|logs|reset)\b)/;

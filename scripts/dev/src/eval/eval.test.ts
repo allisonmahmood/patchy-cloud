@@ -955,6 +955,8 @@ describe("what a run is", () => {
           ),
           step("grep -rn route node_modules/patchy/dist/client.d.ts"),
           step("cat node_modules/patchy/global-skill/SKILL.md"),
+          // Where a release before global-skill/ holds it: still a skill read, not an off-skill lookup.
+          step("cat node_modules/patchy/skills/patchy/SKILL.md"),
           step(
             "cat > src/App.tsx <<'EOF'\nimport { patchy } from \"../patchy/_generated/client.js\";\n// see node_modules/patchy/dist/x.d.ts\nEOF"
           ),
@@ -971,7 +973,7 @@ describe("what a run is", () => {
       ).skillAccesses
     ).toEqual({});
     expect(metrics.skillAccesses).toEqual({
-      patchy: 2,
+      patchy: 3,
       "patchy-loop": 1,
       "patchy-tables": 1,
       "AGENTS.md": 1
