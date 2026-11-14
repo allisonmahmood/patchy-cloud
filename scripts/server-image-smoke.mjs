@@ -331,16 +331,24 @@ try {
     }
   });
   let processes = "";
-  await until("The exec supervisor did not start its standby workerd as another uid", () => {
-    if (!running("smoke-exec")) throw new Error(`The exec task exited:\n${logs("smoke-exec")}`);
-    processes = docker("top", "smoke-exec", "-o", "pid,uid,args");
-    return (
-      /^\s*\d+\s+0\s+bun dist\/exec\.js/m.test(processes) &&
-      /^\s*\d+\s+[1-9]\d*\s+\S*\s*serve /m.test(processes)
-    );
-  });
+  let management;
+  await until(
+    "The exec supervisor did not listen for management and start its standby workerd as another uid",
+    () => {
+      if (!running("smoke-exec")) throw new Error(`The exec task exited:\n${logs("smoke-exec")}`);
+      processes = docker("top", "smoke-exec", "-o", "pid,uid,args");
+      management = /supervisor listening on (http:\/\/127\.0\.0\.1:\d+)/.exec(
+        logs("smoke-exec")
+      )?.[1];
+      return (
+        management !== undefined &&
+        /^\s*\d+\s+0\s+bun dist\/exec\.js/m.test(processes) &&
+        /^\s*\d+\s+[1-9]\d*\s+\S*\s*serve /m.test(processes)
+      );
+    }
+  );
   say(
-    `the exec supervisor runs as root and workerd as uid ${/^\s*\d+\s+([1-9]\d*)\s+\S*\s*serve /m.exec(processes)[1]}`
+    `the exec supervisor runs as root, listens on ${management} and runs workerd as uid ${/^\s*\d+\s+([1-9]\d*)\s+\S*\s*serve /m.exec(processes)[1]}`
   );
   const exec = stop("smoke-exec");
   say(`smoke-exec exited ${exec.code} ${exec.ms} ms after SIGTERM`);
