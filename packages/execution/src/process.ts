@@ -327,7 +327,9 @@ export const startWorkerd = Effect.fn("Execution.startWorkerd")(function* (
           });
           let port: number | undefined;
           let control = "";
-          child.stdio[3]?.on("data", (chunk: Buffer) => {
+          let controlError: Error | undefined;
+          const channel = child.stdio[3];
+          channel?.on("data", (chunk: Buffer) => {
             control += chunk.toString("utf8");
             const lines = control.split("\n");
             control = lines.pop() ?? "";
@@ -335,6 +337,11 @@ export const startWorkerd = Effect.fn("Execution.startWorkerd")(function* (
               const listening = decodeListening(line);
               if (port === undefined && Option.isSome(listening)) port = listening.value.port;
             }
+          });
+          // A broken channel can't report a port: startup then fails as `timeout` with this
+          // cause, instead of the error escaping the process.
+          channel?.on("error", (error: Error) => {
+            controlError ??= error;
           });
           const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
           let disposal: Promise<void> | undefined;
@@ -349,15 +356,17 @@ export const startWorkerd = Effect.fn("Execution.startWorkerd")(function* (
             child,
             directory,
             dispose,
-            failure: (reason: "exited" | "timeout") =>
-              new WorkerdError({
+            failure: (reason: "exited" | "timeout") => {
+              const cause = spawnError ?? controlError;
+              return new WorkerdError({
                 stage: "startup",
                 reason,
                 exitCode: child.exitCode,
                 signal: child.signalCode,
                 stderrBytes,
-                ...(spawnError === undefined ? {} : { cause: spawnError })
-              })
+                ...(cause === undefined ? {} : { cause })
+              });
+            }
           };
         } catch (cause) {
           await rm(directory, { recursive: true, force: true });
