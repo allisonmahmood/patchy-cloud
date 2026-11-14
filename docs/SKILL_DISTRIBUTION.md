@@ -30,11 +30,15 @@ skill straight away and later sessions discover it. Like the CLI, the copy is
 outside every Node's npm prefix, so switching Node keeps both. Each setup
 replaces the copy whole with the running release's skill.
 
-The copy moves only when the installer reruns: by hand from the install line, or
-from `refresh` in a patch repo whose instance is the one saved in the default
-state dir, which runs that line when `~/.patchy/cli` holds an older release. A
-machine whose global skill predates `~/.patchy/cli` gets a refresh warning naming
-the line; after it runs once, refresh keeps the CLI and skill current.
+`patchy setup` replaces the copy, and the installer runs setup. So the copy
+moves when someone runs setup directly, as after a contributor's rebuild, or the
+installer reruns: by hand from the install line, or from `refresh` in a patch
+repo on this machine's own instance (no `PATCHY_STATE_DIR`, no worktree dev env,
+the instance saved in `~/.patchy`), which runs the instance's `/install.mjs` when
+`~/.patchy/cli` holds an older release. That starts with the first refresh run
+by a pinned CLI that has the check. A machine whose global skill predates
+`~/.patchy/cli` gets a refresh warning naming the install line; after it runs
+once, refresh keeps the CLI and skill current.
 
 Before serving discovery, the server validates the current archive's SHA-256 and
 SHA-512 against the metadata and writes those verified bytes under `sdk/` in its

@@ -1302,7 +1302,7 @@ describe.skipIf(process.platform === "win32")("refresh and this machine's global
       npm_config_cache: path.join(dir, "npm cache"),
       npm_config_userconfig: path.join(dir, "npmrc"),
       npm_config_update_notifier: "false",
-      // Node's directory carries npm; sh, curl and mktemp come from the system's.
+      // Node's directory carries npm; the shell npm runs under comes from the system's.
       PATH: [
         path.join(home, ".local/bin"),
         path.dirname(process.execPath),
@@ -1368,6 +1368,29 @@ describe.skipIf(process.platform === "win32")("refresh and this machine's global
     expect(document.warnings[0]).toContain(
       `\nInstall line: ${installCommand(instance.url, "posix")}`
     );
+    expect(readJson(path.join(cli, "package.json"))).toMatchObject({ version: "0.1.0" });
+  });
+
+  // A rollback, say, between refresh's read of the release and the installer's own.
+  it("installs nothing when the instance's release changes before the installer reads it", async () => {
+    let reads = 0;
+    const instance = await stubInstance(
+      projectHandler,
+      () => (reads++ === 0 ? CURRENT_RELEASE : "0.40.0"),
+      tarball()
+    );
+    const dir = projectTree(instance.url);
+    const { cli, env } = machine(instance.url, "0.1.0");
+    const result = await runCli(["refresh", "--json"], { cwd: dir, env });
+    expect(result, result.stderr).toMatchObject({ status: 0, stderr: "" });
+    const document = JSON.parse(result.stdout);
+    expect(document).not.toHaveProperty("globalCli");
+    expect(document.warnings).toEqual([
+      expect.stringContaining(
+        `stopped:\n${instance.url} now serves patchy 0.40.0, not the ${CURRENT_RELEASE} this install was asked for, so nothing was installed.\n`
+      )
+    ]);
+    expect(instance.requests.filter(({ url }) => url === "/api/release")).toHaveLength(2);
     expect(readJson(path.join(cli, "package.json"))).toMatchObject({ version: "0.1.0" });
   });
 });

@@ -213,7 +213,9 @@ path, is exit 1 with `skill_conflict` naming the path. `skill` is the copy's
 `warnings`. The instance's `/install.mjs` installs the release under
 `~/.patchy/cli`, outside every Node's npm prefix, puts the command at
 `~/.local/bin/patchy` (`patchy.cmd` on Windows), and runs `setup --json` by
-absolute path. The command runs on whichever Node is current; on one older than
+absolute path. With `--release <version>` it stops before downloading when the
+instance serves another release. The install line single-quotes the instance
+address as one word in either shell, whatever it contains. The command runs on whichever Node is current; on one older than
 the package's `engines` floor it exits 1 before loading the CLI, with one
 `{ ok: false, error, kind: "local" }` document under `--json`.
 
@@ -346,16 +348,22 @@ adding or removing `workerd` on a tier change. Its transaction restores both
 pins and their installation on failure.
 
 After the transaction, `refresh` (not `add`, `remove` or `pull`) brings this
-machine's global CLI and skill to the release, only when the state dir is the
-default `~/.patchy` and its saved instance is the repo's, compared as
+machine's global CLI and skill to the release. It acts only when
+`PATCHY_STATE_DIR` is unset, the instance doesn't come from a worktree's
+`.local/dev/env`, and the instance saved in `~/.patchy` is the repo's, compared as
 `instance_mismatch` compares them. A `patchy` package under `~/.patchy/cli` whose
-version is older than the release is updated by running the instance's install
-line, and the result gains `globalCli: { from, to, skill }`, `skill` being the
-updated `SKILL.md`. An installer that stops adds a `warnings` line with its
-message and the install line. A global skill without that package, from an
-install that predates `~/.patchy/cli`, adds a `warnings` line with the install
-line. The same or a newer version, no global install, or state that can't be
-read adds nothing. None of these fails the refresh.
+version is older than the release is updated by the instance's `/install.mjs`,
+downloaded and run by the current Node with `--release <release>`, no shell
+between. The result gains `globalCli: { from, to, skill }`: `to` is the version
+then installed and `skill` the updated `SKILL.md`. An installer that stops,
+including when the instance now serves another release than refresh read, adds
+a `warnings` line with its message and the install line. A global skill without
+that package, from an install that predates `~/.patchy/cli`, adds a `warnings`
+line with the install line. The same or a newer version, no global install, or
+state that can't be read adds nothing. None of these fails the refresh, a defect
+included; only interruption stops it. The check runs from the first refresh
+that starts on a pinned CLI that has it: a refresh started by an older pinned
+CLI moves the repo without it, and the next one checks.
 
 Agent, JSON and non-terminal `init` calls require `--purpose`; purpose is never
 inferred. A company with no connections gets empty `uses` and core skills. The

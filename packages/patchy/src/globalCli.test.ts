@@ -7,19 +7,30 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import { NodeCryptography } from "@patchy/core";
 import { updateGlobalCli } from "./globalCli.js";
 import * as Instance from "./Instance.js";
 import { installLine } from "./ReleaseCheck.js";
 import * as State from "./State.js";
 
-// Nothing listens on port 9, so an install line run by mistake stops at curl, offline.
+// Nothing listens on port 9, so a download attempted by mistake fails at once, offline.
 const instanceUrl = "http://127.0.0.1:9";
 const release = "2.0.0";
 
-/** A throwaway home whose saved instance is `saved`, read through a state dir at `stateDir`. */
+/**
+ * A throwaway home whose saved instance is `saved`. State reads `~/.patchy` there, as it does on
+ * a person's machine, while the step sees `env` as the process environment: none by default.
+ */
 const machine = Effect.fn("machine")(function* (
-  options: { readonly saved?: string; readonly stateDir?: string } = {}
+  options: {
+    readonly saved?: string;
+    readonly env?: (stateDir: string) => Record<string, string>;
+    readonly source?: Instance.Source;
+    readonly state?: (state: State.State["Service"]) => State.State["Service"];
+    readonly http?: Layer.Layer<HttpClient.HttpClient>;
+  } = {}
 ) {
   const fs = yield* FileSystem.FileSystem;
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "patchy global cli " });
@@ -45,25 +56,32 @@ const machine = Effect.fn("machine")(function* (
     mkdirSync(path.join(home, ".claude/skills"), { recursive: true });
     symlinkSync(path.join(pkg, "skills/patchy"), path.join(home, ".claude/skills/patchy"));
   };
+  const state = Layer.effect(
+    State.State,
+    Effect.map(State.make, (service) => options.state?.(service) ?? service)
+  ).pipe(
+    Layer.provide(NodeCryptography.layer),
+    Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ PATCHY_STATE_DIR: stateDir })))
+  );
   const update = updateGlobalCli(release, home).pipe(
     Effect.provide(
       Layer.mergeAll(
-        State.layer.pipe(
-          Layer.provide(NodeCryptography.layer),
-          Layer.provide(
-            ConfigProvider.layer(
-              ConfigProvider.fromUnknown({ PATCHY_STATE_DIR: options.stateDir ?? stateDir })
-            )
-          )
-        ),
+        state,
         Layer.succeed(
           Instance.Instance,
-          Instance.Instance.of({ apiUrl: instanceUrl, source: "project", token: Option.none() })
-        )
+          Instance.Instance.of({
+            apiUrl: instanceUrl,
+            source: options.source ?? "project",
+            token: Option.none()
+          })
+        ),
+        // Fetch, so the suite runs on Bun too; the CLI provides undici on Node.
+        options.http ?? FetchHttpClient.layer,
+        ConfigProvider.layer(ConfigProvider.fromUnknown(options.env?.(stateDir) ?? {}))
       )
     )
   );
-  return { root, managed, earlier, update };
+  return { stateDir, managed, earlier, update };
 });
 
 const manifest = (version: string) => JSON.stringify({ name: "patchy", version });
@@ -99,12 +117,25 @@ it.layer(NodeServices.layer)("refresh and this machine's global CLI", (it) => {
     })
   );
 
-  it.effect("leaves the home alone when PATCHY_STATE_DIR points elsewhere", () =>
+  it.effect("leaves the home alone whenever PATCHY_STATE_DIR is set, even to ~/.patchy", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const elsewhere = yield* fs.makeTempDirectoryScoped({ prefix: "patchy state " });
-      writeFileSync(path.join(elsewhere, "config.json"), JSON.stringify({ apiUrl: instanceUrl }));
-      const { earlier, managed, update } = yield* machine({ stateDir: elsewhere });
+      for (const env of [
+        () => ({ PATCHY_STATE_DIR: elsewhere }),
+        (own: string) => ({ PATCHY_STATE_DIR: own })
+      ]) {
+        const { earlier, managed, update } = yield* machine({ env });
+        earlier();
+        managed(manifest("1.0.0"));
+        assert.deepStrictEqual(yield* update, nothing);
+      }
+    })
+  );
+
+  it.effect("leaves the home alone when a worktree's dev env names the instance", () =>
+    Effect.gen(function* () {
+      const { earlier, managed, update } = yield* machine({ source: "dev-env" });
       earlier();
       managed(manifest("1.0.0"));
       assert.deepStrictEqual(yield* update, nothing);
@@ -136,20 +167,42 @@ it.layer(NodeServices.layer)("refresh and this machine's global CLI", (it) => {
     })
   );
 
-  it.effect.skipIf(process.platform === "win32")(
-    "runs the install line for an older managed install and relays why it stopped",
+  it.effect("stays silent when reading this machine's state dies", () =>
+    Effect.gen(function* () {
+      const { earlier, update } = yield* machine({
+        state: (state) => ({ ...state, readConfigUrl: Effect.die(new Error("the disk broke")) })
+      });
+      earlier();
+      assert.deepStrictEqual(yield* update, nothing);
+    })
+  );
+
+  it.effect(
+    "downloads the instance's installer for an older managed install, relaying why it stopped",
     () =>
       Effect.gen(function* () {
         const { managed, update } = yield* machine();
         managed(manifest("1.9.0"));
         const { warnings, ...rest } = yield* update;
         assert.deepStrictEqual(rest, {});
-        assert.strictEqual(warnings.length, 1);
-        assert.match(
-          warnings[0]!,
-          /^Updating this machine's patchy CLI and skill from 1\.9\.0 to 2\.0\.0 stopped:\ncurl: /
-        );
-        assert.isTrue(warnings[0]!.endsWith(`\nInstall line: ${installLine(instanceUrl)}`));
+        assert.deepStrictEqual(warnings, [
+          `Updating this machine's patchy CLI and skill from 1.9.0 to 2.0.0 stopped:\nCould not download ${instanceUrl}/install.mjs.\nInstall line: ${installLine(instanceUrl)}`
+        ]);
       })
+  );
+
+  it.effect("warns instead of failing the refresh when the installer step dies", () =>
+    Effect.gen(function* () {
+      const { managed, update } = yield* machine({
+        http: Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die(new Error("the client broke")))
+        )
+      });
+      managed(manifest("1.9.0"));
+      const { warnings } = yield* update;
+      assert.strictEqual(warnings.length, 1);
+      assert.include(warnings[0], "stopped:\nthe client broke\nInstall line: ");
+    })
   );
 });

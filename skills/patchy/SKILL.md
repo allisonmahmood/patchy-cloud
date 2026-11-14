@@ -161,14 +161,18 @@ read access to every file in the store. `pnpm patchy remove <alias>`
 reverses it while leaving its fixture. `pnpm patchy refresh` updates the managed
 pins, generated server module list, other generated files and present skills
 transactionally, removing stale generated context while preserving application source.
-Then, when the default state directory's saved instance is the repo's, it brings
+Then, on this machine's own instance (no `PATCHY_STATE_DIR`, no worktree
+`.local/dev/env`, and the instance saved in `~/.patchy` is the repo's), it brings
 this machine's global CLI and skill to the instance's release: an install under
 `~/.patchy/cli` older than that release is updated by the instance's installer,
-and the result's `globalCli: { from, to, skill }` names the updated copy of this
-skill. If the installer stops, the refresh still succeeds with a warning holding
-the installer's message and the install line. A global skill from an install
-made before the installer kept the CLI under `~/.patchy` gets a warning with the
-install line; once it has run, refreshes keep both current.
+and the result's `globalCli: { from, to, skill }` names the version installed
+and the updated copy of this skill. If the installer stops, including when the
+instance moved to another release meanwhile, the refresh still succeeds with a
+warning holding the installer's message and the install line. A global skill
+from an install made before the installer kept the CLI under `~/.patchy` gets a
+warning with the install line; once it has run, refreshes keep both current. A
+refresh started by a pinned CLI from before this check moves the repo without
+it; the next refresh checks.
 To move between tiers 1 and 2, edit `tier` in `patchy.config.ts`, then refresh.
 Follow the loop skill's "Moving tiers" steps to migrate calls and add or remove
 `server/`. Refresh adds or removes the `workerd` pin, generated `server.ts` and

@@ -5,6 +5,8 @@
 // ~/.local/bin/patchy (patchy.cmd on Windows) runs it on whichever Node is current.
 // The instance serves this file at /install.mjs with its own address below.
 // Rerunning it is the upgrade path: it always reinstalls the instance's release.
+// `--release <version>` installs only that release: refresh passes the one it saw,
+// so a release that changed since is refused instead of installed in its place.
 // Dependency-free on purpose: it runs before anything Patchy is installed.
 // Bare default imports and no top-level await let old Node load this far
 // enough to reach the version check.
@@ -16,6 +18,9 @@ import path from "path";
 
 const base = "__PATCHY_PUBLIC_BASE_URL__";
 const windows = process.platform === "win32";
+const expected = process.argv.includes("--release")
+  ? process.argv[process.argv.indexOf("--release") + 1]
+  : undefined;
 
 /** A failure whose message already names the fix. */
 class Stop extends Error {}
@@ -118,6 +123,11 @@ const install = async (/** @type {string} */ work) => {
   const release = await (await fetched(`${base}/api/release`)).json().catch(() => undefined);
   if (typeof release?.release !== "string" || typeof release.package?.tarball !== "string") {
     throw new Stop(`${base} did not describe a Patchy release. Check the address you were given.`);
+  }
+  if (expected !== undefined && release.release !== expected) {
+    throw new Stop(
+      `${base} now serves patchy ${release.release}, not the ${expected} this install was asked for, so nothing was installed.`
+    );
   }
   const tarball = new URL(release.package.tarball, `${base}/`).href;
   const bytes = Buffer.from(await (await fetched(tarball)).arrayBuffer());
