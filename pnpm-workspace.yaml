@@ -3,7 +3,7 @@ packages:
   - "packages/*"
   - "scripts/dev"
 catalog:
-  parse5: ^8.0.1
+  parse5: ^8.1.1
   # Effect packages share one version; Dependabot bumps these together
   # (see .github/dependabot.yml). Only the Effect checker has its own release
   # line: it ships Effect-patched builds of exact TypeScript versions, so it

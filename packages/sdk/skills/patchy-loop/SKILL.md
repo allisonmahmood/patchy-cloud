@@ -258,7 +258,7 @@ TypeScript, Vite, `vite-plugin-singlefile` and `@types/node` belong to the repo;
 | Package                  | Accepted   | Tested against |
 | ------------------------ | ---------- | -------------- |
 | `typescript`             | `^7.0.2`   | 7.0.2          |
-| `vite`                   | `^8.3.0`   | 8.3.4          |
+| `vite`                   | `^8.3.0`   | 8.3.8          |
 | `vite-plugin-singlefile` | `^2.3.3`   | 2.3.4          |
 | `@types/node`            | `^22.19.0` | 22.20.5        |
 
