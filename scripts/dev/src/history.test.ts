@@ -84,7 +84,7 @@ it.layer(
           connection
         ])
       );
-      for (const { integration, handle, state } of offlineConnections(scenario)) {
+      for (const { integration, handle, state, reason: why } of offlineConnections(scenario)) {
         const connection = settled.get(`${integration}/${handle}`)!;
         const reason =
           connection.integration === "attio"
@@ -94,14 +94,17 @@ it.layer(
               : connection.integration === "pidgeon"
                 ? connection.display.retired
                 : connection.integration === "github"
-                  ? connection.display.attention
+                  ? (connection.display.attention ??
+                    connection.display.repositories.find((item) => item.left === true))
                   : undefined;
         expect({ handle, status: connection.status, reason: reason !== undefined }).toEqual({
           handle,
-          // Attio's writable key and GitHub's uninstalled App are paused by Patchy.
+          // Attio's writable key and GitHub's uninstalled App or changed permissions are paused
+          // by Patchy; a GitHub repository that left keeps its connection connected.
           status:
             state === "paused" ||
-            (state === "needs-attention" && (integration === "attio" || integration === "github"))
+            (state === "needs-attention" &&
+              (integration === "attio" || (integration === "github" && why !== "left")))
               ? "disconnected"
               : "connected",
           reason: state === "needs-attention"

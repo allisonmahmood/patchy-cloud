@@ -180,8 +180,9 @@ export type LiveConnection = typeof LiveConnection.Type;
  * and nothing reaches its integration. `up` saves it connected, as the publisher, before any patch
  * publishes, then leaves it in `state`: `connected`; `paused`, disconnected by the publisher; or
  * `needs-attention` for its integration's own reason, an Attio key a Test found writable, an IMAP
- * login the mail server refused, a Pidgeon key Patchy replaced but couldn't revoke, or a GitHub App
- * uninstalled from its account. Postgres and PostHog keep no such reason.
+ * login the mail server refused, a Pidgeon key Patchy replaced but couldn't revoke, or, by its
+ * `reason`, a GitHub App uninstalled from its account, its permissions changed, or a repository
+ * gone from its installation. Postgres and PostHog keep no such reason.
  */
 export const OfflineConnection = Schema.Struct({
   integration: Schema.Literals(["postgres", "posthog", "attio", "pidgeon", "imap", "github"]),
@@ -198,7 +199,13 @@ export const OfflineConnection = Schema.Struct({
    * A GitHub connection whose account suspended the App on GitHub, as Patchy last saw it: shown
    * as Suspended on GitHub, not paused.
    */
-  suspended: Schema.optionalKey(Schema.Literal(true))
+  suspended: Schema.optionalKey(Schema.Literal(true)),
+  /**
+   * Why a GitHub connection needs attention: its App was `uninstalled` (when left out), its
+   * installation's `permissions` changed, both pausing it, or its `docs` repository `left` the
+   * installation, which keeps it connected and refuses only that repository.
+   */
+  reason: Schema.optionalKey(Schema.Literals(["uninstalled", "permissions", "left"]))
 });
 export type OfflineConnection = typeof OfflineConnection.Type;
 
@@ -370,6 +377,15 @@ export const loadScenario = Effect.fn("loadScenario")(function* (worktree: strin
   if (reasonless !== undefined)
     return yield* invalid(
       `${reasonless.integration}/${reasonless.handle} ${reasonless.test === true ? "can't have a test key: only Pidgeon's do" : reasonless.suspended === true ? "can't be suspended: only GitHub's are" : "has no reason of its integration's to need attention"}.`
+    );
+  const misread = offlineConnections(scenario).find(
+    (connection) =>
+      connection.reason !== undefined &&
+      (connection.integration !== "github" || connection.state !== "needs-attention")
+  );
+  if (misread !== undefined)
+    return yield* invalid(
+      `${misread.integration}/${misread.handle} names a reason: only a GitHub connection that needs attention has one.`
     );
   const connections = new Set(
     (scenario.connections ?? []).map(

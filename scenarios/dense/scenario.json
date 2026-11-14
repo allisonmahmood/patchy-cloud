@@ -329,6 +329,20 @@
     },
     {
       "integration": "github",
+      "handle": "design-system",
+      "description": "The studio's component library and its CI.",
+      "state": "needs-attention",
+      "reason": "permissions"
+    },
+    {
+      "integration": "github",
+      "handle": "marketing",
+      "description": "Campaign sites; one repository moved off the studio's account.",
+      "state": "needs-attention",
+      "reason": "left"
+    },
+    {
+      "integration": "github",
       "handle": "archive",
       "description": "Repositories of finished projects.",
       "state": "paused"

@@ -338,11 +338,17 @@ const saved = (
         login: `${scenario.company.handle}-labs`,
         type: "Organization" as const
       };
+      // A repository gone from the installation is marked left from the start, as a mint's
+      // reconciliation marks it, and the connection stays connected.
       const repositories = [
         { id: 1, name: "api", private: true },
         { id: 2, name: "web", private: true },
         { id: 3, name: "docs", private: false }
-      ].map((item) => ({ ...item, id: account.id * 10 + item.id }));
+      ].map((item) => ({
+        ...item,
+        id: account.id * 10 + item.id,
+        ...(connection.reason === "left" && item.name === "docs" ? { left: true as const } : {})
+      }));
       const installationId = installationOf(scenario, connection);
       return {
         target: {
@@ -481,10 +487,24 @@ export const settleConnections = Effect.fn("settleConnections")(function* (scena
           }
         })}::jsonb
         WHERE id = ${id} AND company_id = ${companyId} AND status = 'connected'`;
-    else if (connection.state === "needs-attention" && connection.integration === "github")
+    else if (
+      connection.state === "needs-attention" &&
+      connection.integration === "github" &&
+      connection.reason !== "left"
+    )
       yield* sql`UPDATE connections SET ${disconnect},
         display = display || ${attentionJson({
-          attention: { reason: "uninstalled", at: ago(5 * HOUR), during: "call" }
+          attention:
+            connection.reason === "permissions"
+              ? {
+                  reason: "permissions",
+                  at: ago(26 * HOUR),
+                  during: "test",
+                  by: userId,
+                  missing: ["actions"],
+                  above: []
+                }
+              : { reason: "uninstalled", at: ago(5 * HOUR), during: "call" }
         })}::jsonb
         WHERE id = ${id} AND company_id = ${companyId} AND status = 'connected'`;
     else if (connection.state === "needs-attention" && connection.integration === "imap")
