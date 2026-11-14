@@ -1,0 +1,29 @@
+{
+  "company": {
+    "name": "Northwind Platform",
+    "handle": "northwind"
+  },
+  "people": [
+    {
+      "key": "allison",
+      "name": "Allison Mahmood",
+      "email": "allison@northwind.example",
+      "role": "admin"
+    },
+    {
+      "key": "priya",
+      "name": "Priya Raman",
+      "email": "priya@northwind.example",
+      "role": "member"
+    }
+  ],
+  "publisher": "allison",
+  "connections": [
+    {
+      "integration": "github",
+      "handle": "platform",
+      "description": "Northwind's platform repositories on GitHub: code, pull requests and CI runs."
+    }
+  ],
+  "patches": []
+}

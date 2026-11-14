@@ -426,7 +426,9 @@ in about three and a half minutes; `pidgeon` is Lumen Bikes with `pidgeon/suppor
 new Pidgeon test address holding customer mail, and a tier 2 Support desk whose
 actions answer it; `patchy dev` in its workspace reads that address's mail through
 this instance and simulates its sends; `attio` is Northwind Sales with
-`attio/crm` connected to Patchy's probe workspace on Attio; `imap` is Fernhill
+`attio/crm` connected to Patchy's probe workspace on Attio; `github` is Northwind
+Platform with `github/platform` seeded from the developer's development GitHub App;
+`imap` is Fernhill
 Supplies with `imap/invoices` connected to a dev mailbox in Docker on this machine,
 holding the scenario's supplier mail; `guests` is Harbor Works
 with a tier 1 and a tier 2 patch, both shared with Jo at a second company, Pine
@@ -957,6 +959,24 @@ can quote it.
   production's `start.ts` never includes that network. `up` skips the connection
   when Docker isn't answering, restarts a stopped mailbox, and `down` and `reset`
   remove it.
+  GitHub is GitHub itself, through the development App, "Patchy Cloud Dev". Its
+  five `PATCHY_GITHUB_APP_*` settings go in `~/.config/patchy-cloud/dev.env`, and
+  the dev runner hands them to the instance's server in either sign-in mode;
+  without them GitHub isn't offered, and `pnpm dev` says so when it starts. The
+  browser flow signs in on GitHub, which sends the browser back only to a callback
+  URL the App registers, so it runs only in the worktree whose instance URL (its
+  ports are fixed by the worktree's path; `pnpm dev status` prints it) is
+  registered as the dev App's callback and setup URLs. Other worktrees use the
+  seed: `pnpm dev up github` reads `GITHUB_DEV_INSTALLATION_ID`, one of the dev
+  App's installations, and `GITHUB_DEV_REPOSITORY_IDS`, comma-separated
+  repository ids in it, from the environment or dev.env, checks and discovers
+  them live through the App and saves `github/platform` as the publisher's; it
+  skips the connection without them, and only reads, so `down` has nothing to
+  take down on GitHub. The offline suites carry correctness over a scripted
+  GitHub (`packages/integrations/src/test/github.ts`) answering in the shapes the
+  probe on #1439 was answered with, hand-written: signing in and its replays, who
+  may connect what, the one-company claim, each row of the probe's access table,
+  reconciliation, the guard against a stale failure, and limit answers.
 - **Execution engine and fleet.** `pnpm exec vitest run packages/execution` runs
   real workerd. Fleet hosting offline is in
   [Operations](OPERATIONS.md#exercising-the-fleet-offline); local execution

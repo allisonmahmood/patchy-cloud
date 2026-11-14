@@ -147,6 +147,16 @@ Done when `pnpm dev status` exits 0.
   loopback because the dev runner starts it from `scripts/dev/src/server.ts`;
   a production host never can. `pnpm test:imap` is the live tier, on Dovecot
   and GreenMail in Docker, with no secrets.
+  GitHub here is the person's development GitHub App: its `PATCHY_GITHUB_APP_*`
+  settings in their dev.env reach the instance's server, and without them GitHub
+  isn't offered. Its sign-in returns only to the callback the App registers, so
+  the browser flow works only in the worktree whose instance URL is registered
+  there; elsewhere `pnpm dev up github` seeds `github/platform` from
+  `GITHUB_DEV_INSTALLATION_ID` and `GITHUB_DEV_REPOSITORY_IDS` in their dev.env,
+  read live through the App, and skips it without them. Never read or print the
+  App's settings. For pages in every GitHub state without an App, use `dense`'s
+  offline `github/*` connections; check the flow itself over the suites'
+  scripted GitHub (`packages/integrations/src/test/github.ts`).
 - **Clerk sign-in, its handshake or real invitation mail.** These need
   `pnpm dev --clerk`, the person's Clerk keys and their browser; follow
   DEVELOPMENT's **Signing in with Clerk** and ask the person for each sign-in.
