@@ -1,14 +1,18 @@
 import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { createServer, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
+import * as TestClock from "effect/testing/TestClock";
 import { NodeCryptography } from "@patchy/core";
 import { updateGlobalCli } from "./globalCli.js";
 import * as Instance from "./Instance.js";
@@ -20,12 +24,39 @@ const instanceUrl = "http://127.0.0.1:9";
 const release = "2.0.0";
 
 /**
- * A throwaway home whose saved instance is `saved`. State reads `~/.patchy` there, as it does on
+ * A loopback instance that answers `/install.mjs` with `answer` and resolves `requested` once it
+ * has been asked; closed, with any connection it left open, at the end of the test.
+ */
+const instance = Effect.fn("instance")(function* (answer: (response: ServerResponse) => void) {
+  let asked = () => {};
+  const requested = new Promise<void>((resolve) => (asked = resolve));
+  const server = createServer((request, response) => {
+    asked();
+    if (request.url === "/install.mjs") answer(response);
+    else response.writeHead(404).end();
+  });
+  yield* Effect.acquireRelease(
+    Effect.promise(() => new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))),
+    () =>
+      Effect.sync(() => {
+        server.closeAllConnections();
+        server.close();
+      })
+  );
+  return {
+    url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+    requested: Effect.promise(() => requested)
+  };
+});
+
+/**
+ * A throwaway home whose saved instance is `saved`, or `instance`. State reads `~/.patchy` there, as it does on
  * a person's machine, while the step sees `env` as the process environment: none by default.
  */
 const machine = Effect.fn("machine")(function* (
   options: {
     readonly saved?: string;
+    readonly instance?: string;
     readonly env?: (stateDir: string) => Record<string, string>;
     readonly source?: Instance.Source;
     readonly state?: (state: State.State["Service"]) => State.State["Service"];
@@ -39,7 +70,7 @@ const machine = Effect.fn("machine")(function* (
   mkdirSync(stateDir, { recursive: true });
   writeFileSync(
     path.join(stateDir, "config.json"),
-    JSON.stringify({ apiUrl: options.saved ?? instanceUrl })
+    JSON.stringify({ apiUrl: options.saved ?? options.instance ?? instanceUrl })
   );
   /** The managed install's manifest, or bytes in its place. */
   const managed = (contents: string) => {
@@ -70,7 +101,7 @@ const machine = Effect.fn("machine")(function* (
         Layer.succeed(
           Instance.Instance,
           Instance.Instance.of({
-            apiUrl: instanceUrl,
+            apiUrl: options.instance ?? instanceUrl,
             source: options.source ?? "project",
             token: Option.none()
           })
@@ -203,6 +234,67 @@ it.layer(NodeServices.layer)("refresh and this machine's global CLI", (it) => {
       const { warnings } = yield* update;
       assert.strictEqual(warnings.length, 1);
       assert.include(warnings[0], "stopped:\nthe client broke\nInstall line: ");
+    })
+  );
+  it.effect.each([
+    {
+      name: "a 204",
+      answer: (response: ServerResponse) => response.writeHead(204).end(),
+      reason: "answered 204, not the installer."
+    },
+    {
+      name: "an empty 200",
+      answer: (response: ServerResponse) => response.writeHead(200).end(),
+      reason: "The installer finished, but ~/.patchy/cli holds patchy 1.9.0, not 2.0.0."
+    }
+  ])("reports no update from $name, only a warning", ({ answer, reason }) =>
+    Effect.gen(function* () {
+      const { url } = yield* instance(answer);
+      const { managed, update } = yield* machine({ instance: url });
+      managed(manifest("1.9.0"));
+      const { warnings, ...rest } = yield* update;
+      assert.deepStrictEqual(rest, {});
+      assert.strictEqual(warnings.length, 1);
+      assert.include(warnings[0], reason);
+    })
+  );
+
+  it.effect("abandons an installer larger than 1 MiB before running anything", () =>
+    Effect.gen(function* () {
+      // A comment, so even running it would do nothing.
+      const { url } = yield* instance((response) =>
+        response.writeHead(200).end(`//${"x".repeat(1024 * 1024)}\n`)
+      );
+      const { managed, update } = yield* machine({ instance: url });
+      managed(manifest("1.9.0"));
+      const { warnings, ...rest } = yield* update;
+      assert.deepStrictEqual(rest, {});
+      assert.deepStrictEqual(warnings, [
+        `Updating this machine's patchy CLI and skill from 1.9.0 to 2.0.0 stopped:\n${url}/install.mjs sent more than 1 MiB, which is not the installer.\nInstall line: ${installLine(url)}`
+      ]);
+    })
+  );
+
+  it.effect("abandons an installer that doesn't finish within 30 seconds", () =>
+    Effect.gen(function* () {
+      const { url, requested } = yield* instance((response) => {
+        response.writeHead(200);
+        response.write("// and nothing more");
+      });
+      const { managed, update } = yield* machine({ instance: url });
+      managed(manifest("1.9.0"));
+      const running = yield* Effect.forkChild(update);
+      yield* requested;
+      yield* TestClock.adjust("31 seconds");
+      // Real time, so a step that never gives up fails here instead of hanging the suite.
+      const ended = yield* TestClock.withLive(
+        Effect.timeoutOption(Fiber.join(running), "2 seconds")
+      );
+      assert.isTrue(Option.isSome(ended), "the step was still waiting on the download");
+      assert.include(
+        Option.getOrThrow(ended).warnings[0],
+        `stopped:\n${url}/install.mjs did not send the installer within 30 seconds.\n`
+      );
     })
   );
 });

@@ -15,7 +15,7 @@ work=$(mktemp -d) && curl -fsS 'https://pages.example.com/install.mjs' -o "$work
 patchy login --api-url https://pages.example.com
 ```
 
-The installer reads the instance's unauthenticated `GET /api/release`, downloads the exact `package.tarball` and checks its bytes against the SHA-512 `package.integrity` before running `npm install --prefix ~/.patchy/cli --ignore-scripts --no-audit --no-fund` on them. That catches a damaged or mismatched download, not a compromised instance. `~/.patchy/cli` is outside every Node's npm prefix, so a Node version manager (mise, nvm, fnm, asdf) switching or removing Node leaves the CLI. The command is `~/.local/bin/patchy`, a link to the package's executable, which runs on whichever Node is current and refuses one older than 22.22.0; on Windows it is `%USERPROFILE%\.local\bin\patchy.cmd`. The installer then runs the new CLI's [`patchy setup`](#patchy-setup---remove) by absolute path, which keeps the skill under `~/.patchy` too, and prints the executable and skill paths. A `patchy` an earlier installer left in the current Node's npm prefix, which would run first, is removed. It refuses Node older than 22.22.0, a missing npm, or a `~/.local/bin/patchy` it did not make, and names the fix when `~/.local/bin` is not on `PATH` or another `patchy` runs first. Rerunning it is the upgrade path: it always reinstalls the instance's current release. With `--release <version>`, as refresh runs it, it installs nothing unless the instance still serves that release. Windows PowerShell runs the same installer; `/llms.txt` has its line, which calls `patchy.cmd`. To uninstall, run `patchy setup --remove`, then delete `~/.local/bin/patchy` and `~/.patchy/cli`.
+The installer reads the instance's unauthenticated `GET /api/release`, downloads the exact `package.tarball` and checks its bytes against the SHA-512 `package.integrity` before running `npm install --prefix ~/.patchy/cli --ignore-scripts --no-audit --no-fund` on them. That catches a damaged or mismatched download, not a compromised instance. `~/.patchy/cli` is outside every Node's npm prefix, so a Node version manager (mise, nvm, fnm, asdf) switching or removing Node leaves the CLI. The command is `~/.local/bin/patchy`, a link to the package's executable, which runs on whichever Node is current and refuses one older than 22.22.0; on Windows it is `%USERPROFILE%\.local\bin\patchy.cmd`. The installer then runs the new CLI's [`patchy setup`](#patchy-setup---remove) by absolute path, which keeps the skill under `~/.patchy` too, and prints the executable and skill paths. A `patchy` an earlier installer left in the current Node's npm prefix, which would run first, is removed. It refuses Node older than 22.22.0, a missing npm, or a `~/.local/bin/patchy` it did not make, and names the fix when `~/.local/bin` is not on `PATH` or another `patchy` runs first. Rerunning it is the upgrade path: it always reinstalls the instance's current release. It takes no arguments, or only `--release <version>`, as refresh runs it, which installs nothing unless the instance still serves that release; anything else stops it with that usage before it downloads or writes anything. Windows PowerShell runs the same installer; `/llms.txt` has its line, which calls `patchy.cmd`. To uninstall, run `patchy setup --remove`, then delete `~/.local/bin/patchy` and `~/.patchy/cli`.
 
 Contributors working in this checkout can instead run `pnpm --filter patchy build`. It puts an executable at `packages/patchy/dist/bin.js` and packs the release tarball. Symlink that executable as `patchy` into a directory on your `PATH`; adding `dist` alone exposes `bin.js`, not `patchy`. Agents read the copy of the skill that `patchy setup` made, so run `patchy setup` again after rebuilding to give them your skill changes. Alternatively, replace `patchy` in the commands below and in login's returned `next` command with `node /absolute/path/to/packages/patchy/dist/index.js`.
 
@@ -842,12 +842,14 @@ environment, eval or trial has its own state dir, dev env or home and never
 reaches a person's. A `patchy` package under `~/.patchy/cli` older than the
 release, by version, is updated by the instance's `/install.mjs`, downloaded to
 a temporary folder and run by the current Node with `--release <release>`; no
-shell reads the instance address. A same-version rebuild is not older, and
-nothing is downgraded: the installer refuses a release the instance moved to
-after refresh read it. JSON gains `globalCli: { from, to, skill }`, `to` being
-the version then installed and `skill` the updated `SKILL.md`, and text says the
-same in one line. When the installer stops, refresh still succeeds with a
-warning holding the installer's message and the install line. A global skill
+shell reads the instance address. The download must be a 200 of at most 1 MiB,
+within 30 seconds. A same-version rebuild is not older, and nothing is
+downgraded: the installer refuses a release the instance moved to after refresh
+read it. JSON gains `globalCli: { from, to, skill }`, with the updated
+`SKILL.md`, and text says the same in one line, only once `~/.patchy/cli` holds
+the release. When the download is outside those bounds, the installer stops, or
+it finishes leaving another version, refresh still succeeds with a warning
+holding the reason and the install line. A global skill
 with no `~/.patchy/cli`, left by an install from before the installer kept the
 CLI there, is a warning with the install line; after it runs once, refreshes
 keep both current. A defect in this step is silent or a warning; only

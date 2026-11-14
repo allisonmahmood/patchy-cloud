@@ -213,8 +213,9 @@ path, is exit 1 with `skill_conflict` naming the path. `skill` is the copy's
 `warnings`. The instance's `/install.mjs` installs the release under
 `~/.patchy/cli`, outside every Node's npm prefix, puts the command at
 `~/.local/bin/patchy` (`patchy.cmd` on Windows), and runs `setup --json` by
-absolute path. With `--release <version>` it stops before downloading when the
-instance serves another release. The install line single-quotes the instance
+absolute path. It takes no arguments, or only `--release <version>`, with which
+it stops before downloading when the instance serves another release; anything
+else stops it with that usage before it downloads or writes anything. The install line single-quotes the instance
 address as one word in either shell, whatever it contains. The command runs on whichever Node is current; on one older than
 the package's `engines` floor it exits 1 before loading the CLI, with one
 `{ ok: false, error, kind: "local" }` document under `--json`.
@@ -354,10 +355,12 @@ machine's global CLI and skill to the release. It acts only when
 `instance_mismatch` compares them. A `patchy` package under `~/.patchy/cli` whose
 version is older than the release is updated by the instance's `/install.mjs`,
 downloaded and run by the current Node with `--release <release>`, no shell
-between. The result gains `globalCli: { from, to, skill }`: `to` is the version
-then installed and `skill` the updated `SKILL.md`. An installer that stops,
-including when the instance now serves another release than refresh read, adds
-a `warnings` line with its message and the install line. A global skill without
+between. The download must be a 200 of at most 1 MiB within 30 seconds. The
+result gains `globalCli: { from, to, skill }`, `skill` being the updated
+`SKILL.md`, only once `~/.patchy/cli` holds that release. Anything else adds a
+`warnings` line with the reason and the install line: a download outside those
+bounds, an installer that stops (including when the instance now serves another
+release than refresh read), or one that finishes leaving another version. A global skill without
 that package, from an install that predates `~/.patchy/cli`, adds a `warnings`
 line with the install line. The same or a newer version, no global install, or
 state that can't be read adds nothing. None of these fails the refresh, a defect

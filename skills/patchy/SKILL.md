@@ -166,9 +166,9 @@ Then, on this machine's own instance (no `PATCHY_STATE_DIR`, no worktree
 this machine's global CLI and skill to the instance's release: an install under
 `~/.patchy/cli` older than that release is updated by the instance's installer,
 and the result's `globalCli: { from, to, skill }` names the version installed
-and the updated copy of this skill. If the installer stops, including when the
+and the updated copy of this skill. If the update stops, including when the
 instance moved to another release meanwhile, the refresh still succeeds with a
-warning holding the installer's message and the install line. A global skill
+warning holding the reason and the install line. A global skill
 from an install made before the installer kept the CLI under `~/.patchy` gets a
 warning with the install line; once it has run, refreshes keep both current. A
 refresh started by a pinned CLI from before this check moves the repo without

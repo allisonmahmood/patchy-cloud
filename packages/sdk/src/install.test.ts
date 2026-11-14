@@ -228,6 +228,24 @@ describe.skipIf(process.platform === "win32")("the instance installer", () => {
     expect(existsSync(path.join(home, ".patchy"))).toBe(false);
   });
 
+  it.each([
+    ["a bare --release", ["--release"]],
+    ["an empty --release", ["--release", ""]],
+    ["a repeated --release", ["--release", CURRENT_RELEASE, "--release", "0.0.1"]],
+    ["an unknown argument", ["--force"]]
+  ])("refuses %s before downloading or writing anything", async (_, args) => {
+    const stub = await instance();
+    const { home, env, run } = machine(stub.url);
+    const result = await run(env, [], args);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      `This installer takes no arguments, or only --release <version>; it was given ${JSON.stringify(args)}.`
+    );
+    expect(stub.requests).toEqual([]);
+    expect(readdirSync(env.TMPDIR)).toEqual([]);
+    expect(existsSync(path.join(home, ".patchy"))).toBe(false);
+  });
+
   it("names the fix for old Node and for missing npm before asking the instance anything", async () => {
     const stub = await instance();
     const { env, run } = machine(stub.url);

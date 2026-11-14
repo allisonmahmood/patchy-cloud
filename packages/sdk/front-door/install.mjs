@@ -5,8 +5,9 @@
 // ~/.local/bin/patchy (patchy.cmd on Windows) runs it on whichever Node is current.
 // The instance serves this file at /install.mjs with its own address below.
 // Rerunning it is the upgrade path: it always reinstalls the instance's release.
-// `--release <version>` installs only that release: refresh passes the one it saw,
-// so a release that changed since is refused instead of installed in its place.
+// It takes no arguments, or only `--release <version>`, which installs only that
+// release: refresh passes the one it saw, so a release that changed since is
+// refused instead of installed in its place.
 // Dependency-free on purpose: it runs before anything Patchy is installed.
 // Bare default imports and no top-level await let old Node load this far
 // enough to reach the version check.
@@ -18,9 +19,20 @@ import path from "path";
 
 const base = "__PATCHY_PUBLIC_BASE_URL__";
 const windows = process.platform === "win32";
-const expected = process.argv.includes("--release")
-  ? process.argv[process.argv.indexOf("--release") + 1]
-  : undefined;
+
+/**
+ * The release this run may install: any, with no arguments, or the one `--release <version>`
+ * names. Anything else is refused with its fix, before anything is downloaded or written.
+ */
+const asked = (/** @type {string[]} */ args) => {
+  const [flag, value] = args;
+  if (args.length === 0) return { release: undefined };
+  if (args.length === 2 && flag === "--release" && value && !value.startsWith("-"))
+    return { release: value };
+  return {
+    error: `This installer takes no arguments, or only --release <version>; it was given ${JSON.stringify(args)}. Run it with no arguments to install the instance's current release.`
+  };
+};
 
 /** A failure whose message already names the fix. */
 class Stop extends Error {}
@@ -77,7 +89,7 @@ const runnable = (/** @type {string} */ file) => {
   }
 };
 
-const install = async (/** @type {string} */ work) => {
+const install = async (/** @type {string} */ work, /** @type {string | undefined} */ expected) => {
   const prefixResult = run("npm", ["prefix", "--global"]);
   if (prefixResult.error !== undefined || prefixResult.status !== 0) {
     throw new Stop(
@@ -223,15 +235,21 @@ if (major < 22 || (major === 22 && minor < 22)) {
   );
   process.exitCode = 1;
 } else {
-  const work = fs.mkdtempSync(path.join(os.tmpdir(), "patchy-install-"));
-  install(work)
-    .catch((error) => {
-      console.error(
-        error instanceof Stop
-          ? error.message
-          : `The Patchy installer failed: ${error instanceof Error ? error.stack : String(error)}`
-      );
-      process.exitCode = 1;
-    })
-    .finally(() => fs.rmSync(work, { recursive: true, force: true }));
+  const run = asked(process.argv.slice(2));
+  if ("error" in run) {
+    console.error(run.error);
+    process.exitCode = 1;
+  } else {
+    const work = fs.mkdtempSync(path.join(os.tmpdir(), "patchy-install-"));
+    install(work, run.release)
+      .catch((error) => {
+        console.error(
+          error instanceof Stop
+            ? error.message
+            : `The Patchy installer failed: ${error instanceof Error ? error.stack : String(error)}`
+        );
+        process.exitCode = 1;
+      })
+      .finally(() => fs.rmSync(work, { recursive: true, force: true }));
+  }
 }

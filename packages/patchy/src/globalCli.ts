@@ -12,6 +12,7 @@
  */
 import { homedir } from "node:os";
 import * as Cause from "effect/Cause";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -19,6 +20,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import lt from "semver/functions/lt.js";
 import valid from "semver/functions/valid.js";
@@ -95,6 +97,53 @@ const plan = Effect.fn("globalCli.plan")(
   )
 );
 
+/** Generous for a script of a few kilobytes; past either, the download is abandoned. */
+const installerLimit = { bytes: 1024 * 1024, label: "1 MiB", seconds: 30 };
+
+/**
+ * The instance's `/install.mjs` as text: a 200, at most `installerLimit.bytes`, within
+ * `installerLimit.seconds`. Anything else is a `LocalError` naming why.
+ */
+const downloadInstaller = Effect.fn("globalCli.downloadInstaller")(
+  function* (url: string) {
+    const http = yield* HttpClient.HttpClient;
+    const response = yield* http
+      .get(url)
+      .pipe(
+        Effect.mapError((cause) => new LocalError({ message: `Could not download ${url}.`, cause }))
+      );
+    if (response.status !== 200)
+      return yield* new LocalError({
+        message: `${url} answered ${response.status}, not the installer.`
+      });
+    const { chunks } = yield* response.stream.pipe(
+      Stream.mapError((cause) => new LocalError({ message: `Could not download ${url}.`, cause })),
+      Stream.runFoldEffect(
+        () => ({ size: 0, chunks: [] as Array<Uint8Array> }),
+        ({ size, chunks }, chunk) =>
+          size + chunk.length > installerLimit.bytes
+            ? Effect.fail(
+                new LocalError({
+                  message: `${url} sent more than ${installerLimit.label}, which is not the installer.`
+                })
+              )
+            : Effect.succeed({ size: size + chunk.length, chunks: [...chunks, chunk] })
+      )
+    );
+    return Buffer.concat(chunks).toString("utf8");
+  },
+  (download, url) =>
+    Effect.timeoutOrElse(download, {
+      duration: Duration.seconds(installerLimit.seconds),
+      orElse: () =>
+        Effect.fail(
+          new LocalError({
+            message: `${url} did not send the installer within ${installerLimit.seconds} seconds.`
+          })
+        )
+    })
+);
+
 /**
  * The instance's `/install.mjs`, downloaded into a temporary folder and run by this Node, with
  * `home` as the home it reads, so it installs where the plan looked. `--release` makes it stop
@@ -107,12 +156,7 @@ const runInstaller = Effect.fn("globalCli.runInstaller")(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const http = HttpClient.filterStatusOk(yield* HttpClient.HttpClient);
-  const url = `${apiUrl}/install.mjs`;
-  const script = yield* http.get(url).pipe(
-    Effect.flatMap((response) => response.text),
-    Effect.mapError((cause) => new LocalError({ message: `Could not download ${url}.`, cause }))
-  );
+  const script = yield* downloadInstaller(`${apiUrl}/install.mjs`);
   return yield* Effect.scoped(
     Effect.gen(function* () {
       const dir = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-install-" });
@@ -133,9 +177,9 @@ const reasonOf = (cause: Cause.Cause<unknown>) => {
 
 /**
  * Brings this machine's global CLI and skill to `release` after a refresh moved the repo there.
- * `globalCli` says what moved, to the version now installed, and where the skill is; a warning
- * carries the install line when the installer stopped, or when the install is one refresh can't
- * update. `home` is for tests.
+ * `globalCli` says what moved and where the skill is, only once `~/.patchy/cli` holds `release`;
+ * a warning carries the install line when the installer stopped or left another version, or when
+ * the install is one refresh can't update. `home` is for tests.
  */
 export const updateGlobalCli = Effect.fn("updateGlobalCli")(
   function* (release: string, home = homedir()) {
@@ -153,22 +197,27 @@ export const updateGlobalCli = Effect.fn("updateGlobalCli")(
     const { from } = found.value;
     const ran = yield* runInstaller(apiUrl, release, home).pipe(Effect.exit);
     if (Exit.isFailure(ran) && Cause.hasInterrupts(ran.cause)) return yield* Effect.interrupt;
-    if (Exit.isSuccess(ran) && ran.value.code === 0) {
-      const to = yield* managedVersion(home);
-      if (Option.isSome(to))
-        return {
-          globalCli: { from, to: to.value, skill: path.join(Setup.skillCopy(home), "SKILL.md") },
-          warnings: []
-        };
-    }
+    const finished = Exit.isSuccess(ran) && ran.value.code === 0;
+    const installed = finished ? yield* managedVersion(home) : Option.none<string>();
+    // Only the release refresh asked for counts: an installer that did nothing exits 0 too.
+    if (Option.contains(installed, release))
+      return {
+        globalCli: { from, to: release, skill: path.join(Setup.skillCopy(home), "SKILL.md") },
+        warnings: []
+      };
     // The installer's own failures name their fix; anything else is relayed as it was printed.
     const reason = Exit.isFailure(ran)
       ? reasonOf(ran.cause)
-      : ran.value.code === 0
-        ? "The installer finished, but there is no patchy package under ~/.patchy/cli."
-        : ran.value.stderr.trim() ||
+      : !finished
+        ? ran.value.stderr.trim() ||
           ran.value.stdout.trim() ||
-          `The installer exited with code ${ran.value.code}.`;
+          `The installer exited with code ${ran.value.code}.`
+        : Option.match(installed, {
+            onNone: () =>
+              "The installer finished, but there is no patchy package under ~/.patchy/cli.",
+            onSome: (version) =>
+              `The installer finished, but ~/.patchy/cli holds patchy ${version}, not ${release}.`
+          });
     return {
       warnings: [
         `Updating this machine's patchy CLI and skill from ${from} to ${release} stopped:\n${reason}\nInstall line: ${line}`
