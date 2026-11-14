@@ -10,10 +10,12 @@ import {
   refuse
 } from "@patchy/api";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as ConnectionStore from "./ConnectionStore.js";
+import * as GithubSource from "./github/Source.js";
 
 const encodeConnections = Schema.encodeSync(Connections);
 const isIntegration = Schema.is(Integration);
@@ -32,6 +34,8 @@ const unavailable = (error: ConnectionStore.ConnectionStorageFailed) =>
 export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =>
   Effect.gen(function* () {
     const connections = yield* ConnectionStore.ConnectionStore;
+    // GitHub is offered only while its App is configured.
+    const github = Option.isSome((yield* GithubSource.Source).app);
     const detail = (integration: string, handle: string) =>
       Effect.gen(function* () {
         const identity = yield* CurrentIdentity;
@@ -65,8 +69,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =
             query.integrations === undefined || query.integrations === "all"
               ? ["postgres"]
               : query.integrations.split(",");
-          const shown: ReadonlyArray<Integration> = integrations.filter((integration) =>
-            asked.includes(integration)
+          const shown: ReadonlyArray<Integration> = integrations.filter(
+            (integration) => asked.includes(integration) && (integration !== "github" || github)
           );
           const rows = (yield* connections.list(identity.company.id, identity.user.id)).filter(
             (row) => shown.includes(row.integration)
@@ -76,6 +80,11 @@ export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =
               connections: rows.map((row) => {
                 // An IMAP login its mail server refused fails every call until an admin fixes it, so it says so.
                 const paused = row.integration === "imap" && row.display.paused !== undefined;
+                // A GitHub account that suspended the App refuses every call until it's unsuspended there.
+                const suspended =
+                  row.integration === "github" &&
+                  row.status === "connected" &&
+                  row.suspendedAt !== null;
                 return {
                   id: row.id,
                   handle: row.handle,
@@ -86,6 +95,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =
                     ? { test: true as const }
                     : {}),
                   ...(paused ? { paused: true as const } : {}),
+                  ...(suspended ? { suspended: true as const } : {}),
                   ...(row.status !== "connected"
                     ? {
                         reason: "not_connected" as const,
@@ -95,7 +105,11 @@ export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =
                       ? {
                           hint: "Its mail server refused the password, so every call fails auth_failed. Ask an administrator to replace the password or test it at /settings/integrations."
                         }
-                      : { hint: `patchy add ${row.integration}/${row.handle}` })
+                      : suspended
+                        ? {
+                            hint: `The account suspended Patchy Cloud on GitHub, so every call fails source_unavailable until it's unsuspended there. patchy add ${row.integration}/${row.handle} still declares it.`
+                          }
+                        : { hint: `patchy add ${row.integration}/${row.handle}` })
                 };
               }),
               ...(query.all

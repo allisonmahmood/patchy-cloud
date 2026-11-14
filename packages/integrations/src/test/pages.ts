@@ -22,6 +22,12 @@ import * as PostHogSource from "../posthog/Source.js";
 import * as AttioSource from "../attio/Source.js";
 import type * as ImapSource from "../imap/Source.js";
 import * as ImapTest from "./imap.js";
+import * as GithubTest from "./github.js";
+import type * as GithubAccess from "../github/Access.js";
+import type * as GithubFlows from "../github/Flows.js";
+import type * as GithubSource from "../github/Source.js";
+import type * as SqlClient from "effect/sql/SqlClient";
+import type { Cryptography } from "@patchy/core";
 import * as SqlConnectionStore from "../SqlConnectionStore.js";
 import { NodeCryptography } from "@patchy/core";
 import * as PatchVisibilityTest from "./patchVisibility.js";
@@ -41,7 +47,12 @@ export const events: Analytics.AnalyticsEvent[] = [];
 export const services = (
   pidgeon: Layer.Layer<PidgeonSource.Source>,
   attio: Layer.Layer<AttioSource.Source> = AttioSource.layer,
-  imap: Layer.Layer<ImapSource.Source> = ImapTest.offline
+  imap: Layer.Layer<ImapSource.Source> = ImapTest.offline,
+  github: Layer.Layer<
+    GithubAccess.Access | GithubFlows.Flows | GithubSource.Source,
+    CredentialKeys.InvalidCredentialKeys,
+    SqlClient.SqlClient | CredentialKeys.CredentialKeys | Cryptography.Cryptography
+  > = GithubTest.unconfigured
 ) =>
   Layer.mergeAll(
     Session.layer,
@@ -68,6 +79,7 @@ export const services = (
     Layer.provideMerge(attio),
     Layer.provideMerge(imap),
     Layer.provideMerge(pidgeon),
+    Layer.provideMerge(github),
     Layer.provideMerge(
       CredentialKeys.layerFromKeys(
         Redacted.make("test:AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=")

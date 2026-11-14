@@ -234,7 +234,7 @@ export type Errors<C extends ErrorCode, O extends string = string> = {
   [K in C]: PatchyError<K, O>;
 }[C];
 /** The integrations whose refusals carry their own details. */
-type Integration = "postgres" | "posthog" | "pidgeon" | "attio" | "imap";
+type Integration = "postgres" | "posthog" | "pidgeon" | "attio" | "imap" | "github";
 /**
  * An integration or one of its operations. Each names exactly one integration, so the details
  * it narrows to are never a guess.

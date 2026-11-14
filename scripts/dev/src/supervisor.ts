@@ -28,6 +28,7 @@ import {
   developerEnvFile,
   readCredentialKeys,
   readDeveloperEnv,
+  readGithubApp,
   readPersonasKey,
   readPersonasSecret
 } from "./developerEnv.js";
@@ -197,6 +198,8 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
     ? {}
     : yield* readDeveloperEnv(devEnvFile);
   const credentialKeys = yield* readCredentialKeys(path.join(plan.stateDir, "dev.env"));
+  // The development GitHub App, from dev.env in either sign-in mode: without it, no GitHub.
+  const githubApp = yield* readGithubApp(devEnvFile);
   yield* Effect.tryPromise({
     try: () => applyDevSeed(plan.databaseUrl, PATCHY_DEV_CLERK_USER_ID || undefined),
     catch: (cause) => new DatabaseSetupError({ cause })
@@ -266,6 +269,7 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
         env: {
           ...inherited,
           ...signIn,
+          ...githubApp,
           NODE_ENV: "development",
           PATCHY_CREDENTIAL_KEYS: Redacted.value(credentialKeys),
           PORT: String(plan.ports.server),
@@ -282,6 +286,9 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
         forceKillAfter: "5 seconds"
       }
     )
+  );
+  yield* say(
+    `github: ${Object.keys(githubApp).length === 0 ? "not offered (no PATCHY_GITHUB_APP_* in dev.env)" : `the development App from ${devEnvFile}`}`
   );
   yield* say(`server pid=${server.pid} port=${plan.ports.server}`);
   yield* server.all.pipe(

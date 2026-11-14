@@ -7,6 +7,9 @@
  */
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -15,12 +18,21 @@ import {
   AttioSource,
   ConnectionStore,
   CredentialKeys,
+  GithubAccess,
+  GithubConnection,
+  GithubSource,
   ImapSource,
   PidgeonSource,
   PostgresSource,
   PostHogSource
 } from "@patchy/integrations";
-import { ids, offlineConnections, type OfflineConnection, type Scenario } from "./scenario.js";
+import {
+  ids,
+  type LiveConnection,
+  offlineConnections,
+  type OfflineConnection,
+  type Scenario
+} from "./scenario.js";
 
 const HOUR = 3_600_000;
 
@@ -33,7 +45,8 @@ const Target = Schema.Union([
   Schema.Struct({ integration: Schema.Literal("posthog"), display: PostHogSource.Display }),
   Schema.Struct({ integration: Schema.Literal("pidgeon"), display: PidgeonSource.Display }),
   Schema.Struct({ integration: Schema.Literal("attio"), display: AttioSource.Display }),
-  Schema.Struct({ integration: Schema.Literal("imap"), display: ImapSource.Display })
+  Schema.Struct({ integration: Schema.Literal("imap"), display: ImapSource.Display }),
+  Schema.Struct({ integration: Schema.Literal("github"), display: GithubConnection.Display })
 ]);
 // Encoding checks a value against its schema's filters, so an invented one that breaks them fails
 // here. The SQL takes the part of the JSON its column holds.
@@ -45,6 +58,15 @@ const writableJson = Schema.encodeSync(
 const pausedJson = Schema.encodeSync(
   Schema.fromJsonString(Schema.Struct({ paused: ImapSource.Display.fields.paused }))
 );
+const attentionJson = Schema.encodeSync(
+  Schema.fromJsonString(Schema.Struct({ attention: GithubConnection.Attention }))
+);
+/** An invented GitHub installation's id, the same for a connection on every `up`. */
+const installationOf = (scenario: Scenario, connection: OfflineConnection) =>
+  [...`${scenario.company.handle}/${connection.handle}`].reduce(
+    (sum, char) => (sum * 31 + char.charCodeAt(0)) % 9_000_000,
+    0
+  ) + 1_000_000;
 
 // ---------- what each integration reads: invented, at the company's own example domain ----------
 
@@ -310,6 +332,42 @@ const saved = (
         }
       };
     }
+    case "github": {
+      const account = {
+        id: installationOf(scenario, connection) + 7,
+        login: `${scenario.company.handle}-labs`,
+        type: "Organization" as const
+      };
+      const repositories = [
+        { id: 1, name: "api", private: true },
+        { id: 2, name: "web", private: true },
+        { id: 3, name: "docs", private: false }
+      ].map((item) => ({ ...item, id: account.id * 10 + item.id }));
+      const installationId = installationOf(scenario, connection);
+      return {
+        target: {
+          integration: "github",
+          display: { installationId, account, repositories, successes: 1 }
+        },
+        credentials: GithubConnection.credentials({
+          installationId,
+          repositoryIds: repositories.map((item) => item.id)
+        }),
+        metadata: {
+          integration: "github",
+          snapshot: {
+            version: 1,
+            account,
+            repositories: repositories.map((item) => ({
+              ...item,
+              defaultBranch: "main",
+              archived: false,
+              disabled: false
+            }))
+          }
+        }
+      };
+    }
     case "imap": {
       const login = {
         host: connection.host ?? `mail.${domain}`,
@@ -375,6 +433,13 @@ export const saveConnections = Effect.fn("saveConnections")(
         (company_id, connection_id, integration, revision, snapshot, created_at)
         VALUES (${companyId}, ${id}, ${connection.integration}, 1,
           ${metadataJson(metadata)}::jsonb -> 'snapshot', now())`;
+      // A GitHub connection's installation is the company's, as a connect claims it.
+      if (inserted.length > 0 && target.integration === "github") {
+        yield* sql`INSERT INTO github_installations (installation_id)
+          VALUES (${target.display.installationId}) ON CONFLICT DO NOTHING`;
+        yield* sql`INSERT INTO github_installation_claims (installation_id, company_id)
+          VALUES (${target.display.installationId}, ${companyId}) ON CONFLICT DO NOTHING`;
+      }
     }
   },
   // Every connection with its snapshot, or none, so a resumed `up` never finds one without it.
@@ -396,6 +461,9 @@ export const settleConnections = Effect.fn("settleConnections")(function* (scena
   for (const connection of offlineConnections(scenario)) {
     const id = connectionId(scenario, connection);
     const disconnect = sql`status = 'disconnected', credential_revision = credential_revision + 1`;
+    if (connection.suspended === true && connection.integration === "github")
+      yield* sql`UPDATE github_installations SET suspended_seen_at = now() - interval '12 minutes'
+        WHERE installation_id = ${installationOf(scenario, connection)}`;
     if (connection.blockGuests === true)
       yield* sql`UPDATE connections SET block_guests = true
         WHERE id = ${id} AND company_id = ${companyId}`;
@@ -413,10 +481,91 @@ export const settleConnections = Effect.fn("settleConnections")(function* (scena
           }
         })}::jsonb
         WHERE id = ${id} AND company_id = ${companyId} AND status = 'connected'`;
+    else if (connection.state === "needs-attention" && connection.integration === "github")
+      yield* sql`UPDATE connections SET ${disconnect},
+        display = display || ${attentionJson({
+          attention: { reason: "uninstalled", at: ago(5 * HOUR), during: "call" }
+        })}::jsonb
+        WHERE id = ${id} AND company_id = ${companyId} AND status = 'connected'`;
     else if (connection.state === "needs-attention" && connection.integration === "imap")
       yield* sql`UPDATE connections SET display = display || ${pausedJson({
         paused: { at: ago(3 * HOUR), reply: "AUTHENTICATIONFAILED", during: "call" }
       })}::jsonb
         WHERE id = ${id} AND company_id = ${companyId}`;
   }
+});
+
+/**
+ * The `github` scenario's connection, seeded from the developer's development App: its
+ * installation and repositories are read through the App, live, as connect checks and discovers
+ * them, and saved as the publisher's, as connect saves one. GitHub's sign-in can't run here, so
+ * nobody is shown administering anything: this is the developer's word for their own App. A
+ * connection already saved under its id is left be.
+ */
+export const seedGithub = Effect.fn("seedGithub")(function* (
+  scenario: Scenario,
+  connection: Extract<LiveConnection, { readonly integration: "github" }>,
+  seed: { readonly installationId: number; readonly repositoryIds: ReadonlyArray<number> },
+  app: GithubSource.App
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const keys = yield* CredentialKeys.CredentialKeys;
+  const publisher = scenario.people.find((person) => person.key === scenario.publisher)!;
+  const { companyId, userId } = ids(scenario, publisher);
+  const id = `conn_env_${scenario.company.handle}_github_${connection.handle}`;
+  const found = yield* sql`SELECT 1 FROM connections WHERE id = ${id}`;
+  if (found.length > 0) return false;
+  const inspected = yield* Effect.gen(function* () {
+    const access = yield* GithubAccess.Access;
+    return yield* access.inspect(seed.installationId, seed.repositoryIds, "the development App");
+  }).pipe(
+    Effect.provide(
+      GithubAccess.layer.pipe(
+        Layer.provide(
+          Layer.effect(GithubSource.Source, GithubSource.makeWith(Option.some(app))).pipe(
+            Layer.provide(FetchHttpClient.layer)
+          )
+        )
+      )
+    )
+  );
+  const display = {
+    installationId: seed.installationId,
+    account: inspected.account,
+    repositories: inspected.repositories.map(({ id: repository, name, private: hidden }) => ({
+      id: repository,
+      name,
+      private: hidden
+    })),
+    successes: 1
+  };
+  const sealed = yield* keys.encrypt(
+    { companyId, id, integration: "github" },
+    GithubConnection.credentials({
+      installationId: seed.installationId,
+      repositoryIds: seed.repositoryIds
+    })
+  );
+  const metadata: ConnectionStore.Metadata = {
+    integration: "github",
+    snapshot: { version: 1, account: inspected.account, repositories: inspected.repositories }
+  };
+  yield* sql.withTransaction(
+    Effect.gen(function* () {
+      yield* sql`INSERT INTO github_installations (installation_id)
+        VALUES (${seed.installationId}) ON CONFLICT DO NOTHING`;
+      yield* sql`INSERT INTO github_installation_claims (installation_id, company_id)
+        VALUES (${seed.installationId}, ${companyId}) ON CONFLICT DO NOTHING`;
+      yield* sql`INSERT INTO connections
+        (id, company_id, integration, handle, description, mode, status, display, credentials, key_id,
+         credential_revision, metadata_revision, created_by, last_tested_at, last_discovered_at)
+        VALUES (${id}, ${companyId}, 'github', ${connection.handle}, ${connection.description},
+          'company', 'connected', ${targetJson({ integration: "github", display })}::jsonb -> 'display',
+          ${sealed.credentials}, ${sealed.keyId}, 1, 1, ${userId}, now(), now())`;
+      yield* sql`INSERT INTO connection_snapshots
+        (company_id, connection_id, integration, revision, snapshot, created_at)
+        VALUES (${companyId}, ${id}, 'github', 1, ${metadataJson(metadata)}::jsonb -> 'snapshot', now())`;
+    })
+  );
+  return true;
 });

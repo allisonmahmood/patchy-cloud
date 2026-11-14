@@ -34,7 +34,14 @@ export const hostSecretKeys = [
   "PATCHY_CREDENTIAL_KEYS",
   "PATCHY_POSTHOG_API_KEY",
   // Empty for no demo link: a host cannot start without every key present.
-  "PATCHY_DEMO_LINK"
+  "PATCHY_DEMO_LINK",
+  // The GitHub App's: all empty and GitHub isn't offered; some filled and the server refuses to
+  // start, naming what's empty. The private key is the PEM, newlines kept or written as \n.
+  "PATCHY_GITHUB_APP_ID",
+  "PATCHY_GITHUB_APP_SLUG",
+  "PATCHY_GITHUB_APP_CLIENT_ID",
+  "PATCHY_GITHUB_APP_CLIENT_SECRET",
+  "PATCHY_GITHUB_APP_PRIVATE_KEY"
 ] as const;
 
 const githubTokens = "token.actions.githubusercontent.com";

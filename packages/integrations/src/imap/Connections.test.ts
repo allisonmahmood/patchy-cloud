@@ -20,6 +20,7 @@ import * as PostHogSource from "../posthog/Source.js";
 import * as SqlConnectionStore from "../SqlConnectionStore.js";
 import * as ImapTest from "../test/imap.js";
 import * as Source from "./Source.js";
+import * as GithubTest from "../test/github.js";
 
 /**
  * IMAP connections in the store, offline over a scripted mail server: connect, Test, Replace
@@ -33,6 +34,7 @@ class Certs extends Context.Service<Certs, ImapTest.Certificates>()("test/imap/S
 const fixture = Layer.mergeAll(
   CredentialKeys.layerFromKeys(Redacted.make(`test:${Buffer.alloc(32, 9).toString("base64")}`)),
   RuntimeLog.layer,
+  GithubTest.unconfigured,
   // Never called: these connections reach no database, PostHog project, Pidgeon address or Attio.
   Layer.succeed(
     PostgresSource.Source,

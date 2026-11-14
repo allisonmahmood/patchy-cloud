@@ -2,6 +2,7 @@ import { Teams } from "@patchy/companies";
 import { assert, it } from "@effect/vitest";
 import {
   CredentialKeys,
+  Github,
   PostgresSource,
   PostHogSource,
   PidgeonSource,
@@ -50,8 +51,12 @@ const release10 = before("0013_handles_per_integration");
 const secret = Redacted.make(
   "postgresql://reader:do-not-log-this@warehouse.example/sales?sslmode=verify-full"
 );
+const keys = CredentialKeys.layerFromKeys(
+  Redacted.make(`upgrade:${Buffer.alloc(32, 7).toString("base64")}`)
+);
 const services = Layer.mergeAll(
-  CredentialKeys.layerFromKeys(Redacted.make(`upgrade:${Buffer.alloc(32, 7).toString("base64")}`)),
+  keys,
+  Github.layer.pipe(Layer.provide(keys)),
   RuntimeLog.layer,
   Layer.succeed(
     PostgresSource.Source,

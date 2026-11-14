@@ -32,6 +32,7 @@ import * as PostHogDouble from "./test/posthog.js";
 import * as PidgeonSource from "./pidgeon/Source.js";
 import * as AttioSource from "./attio/Source.js";
 import * as ImapTest from "./test/imap.js";
+import * as GithubTest from "./test/github.js";
 import { Snapshot } from "@patchy/api/postgres-snapshot";
 import { NodeCryptography } from "@patchy/core";
 import * as PatchVisibility from "./PatchVisibility.js";
@@ -145,6 +146,7 @@ const services = Layer.mergeAll(
   Layer.provideMerge(PidgeonSource.layer),
   Layer.provideMerge(AttioSource.layer),
   Layer.provideMerge(ImapTest.offline),
+  Layer.provideMerge(GithubTest.unconfigured),
   Layer.provideMerge(
     CredentialKeys.layerFromKeys(Redacted.make("test:AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="))
   ),

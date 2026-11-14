@@ -26,6 +26,7 @@ import * as ImapTest from "../test/imap.js";
 import * as Operations from "./Operations.js";
 import * as Sessions from "./Sessions.js";
 import * as Source from "./Source.js";
+import * as GithubTest from "../test/github.js";
 
 /**
  * IMAP reads offline, over a scripted mail server through the network seam: the commands each
@@ -39,6 +40,7 @@ class Certs extends Context.Service<Certs, ImapTest.Certificates>()("test/imap/R
 const fixture = Layer.mergeAll(
   CredentialKeys.layerFromKeys(Redacted.make(`test:${Buffer.alloc(32, 4).toString("base64")}`)),
   RuntimeLog.layer,
+  GithubTest.unconfigured,
   // Never called: these connections reach no database, PostHog project, Pidgeon address or Attio.
   Layer.succeed(
     PostgresSource.Source,

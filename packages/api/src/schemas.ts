@@ -15,6 +15,7 @@ import { PostHogSnapshot } from "./posthogSnapshot.js";
 import { PidgeonSnapshot } from "./pidgeonSnapshot.js";
 import { AttioSnapshot } from "./attioSnapshot.js";
 import { ImapSnapshot } from "./imapSnapshot.js";
+import { GithubSnapshot } from "./githubSnapshot.js";
 import { RepoKind, RepoSnapshot, RepoSummary } from "./repo.js";
 import {
   HandlerDescriptors,
@@ -606,13 +607,19 @@ export const ImapDeclaration = Schema.Struct({
   ...PostgresDeclaration.fields,
   kind: Schema.Literal("imap")
 });
+/** A set of repositories on one GitHub account, read-only. */
+export const GithubDeclaration = Schema.Struct({
+  ...PostgresDeclaration.fields,
+  kind: Schema.Literal("github")
+});
 /** A company connection a version declares, bound to its identity and metadata revision. */
 export const ConnectionDeclaration = Schema.Union([
   PostgresDeclaration,
   PostHogDeclaration,
   PidgeonDeclaration,
   AttioDeclaration,
-  ImapDeclaration
+  ImapDeclaration,
+  GithubDeclaration
 ]);
 export type ConnectionDeclaration = typeof ConnectionDeclaration.Type;
 /** Stable shared-table identity; a patch name never participates in resolution. */
@@ -704,6 +711,7 @@ export const Manifest = Schema.Struct({
       PidgeonDeclaration,
       AttioDeclaration,
       ImapDeclaration,
+      GithubDeclaration,
       SharedTableDeclaration,
       SharedStoreDeclaration,
       MembersDeclaration
@@ -767,6 +775,11 @@ export const GenerationManifest = Schema.Struct({
         revision: Schema.optionalKey(Revision)
       }),
       Schema.Struct({
+        ...GithubDeclaration.fields,
+        id: Schema.optionalKey(NonEmptyText),
+        revision: Schema.optionalKey(Revision)
+      }),
+      Schema.Struct({
         ...SharedTableDeclaration.fields,
         id: Schema.optionalKey(NonEmptyText),
         revision: Schema.optionalKey(Revision)
@@ -781,7 +794,7 @@ export const GenerationManifest = Schema.Struct({
 }).check(distinctPrimitiveNames, memberColumnsValid, Schema.makeFilter(handlerTablesValid));
 
 /** Every integration Patchy ships; a connection's handle is unique within its integration. */
-export const integrations = ["postgres", "posthog", "pidgeon", "attio", "imap"] as const;
+export const integrations = ["postgres", "posthog", "pidgeon", "attio", "imap", "github"] as const;
 export const Integration = Schema.Literals(integrations);
 export type Integration = typeof Integration.Type;
 
@@ -799,7 +812,12 @@ export const ConnectionSummary = Schema.Struct({
    * An IMAP connection whose mail server refused its password: every call fails `auth_failed`
    * until an admin's Test or Replace password logs in. Absent otherwise.
    */
-  paused: Schema.optionalKey(Schema.Literal(true))
+  paused: Schema.optionalKey(Schema.Literal(true)),
+  /**
+   * A GitHub connection whose account suspended the App on GitHub, as Patchy last saw it: calls
+   * are refused until it's unsuspended there, and nothing needs doing in Patchy. Absent otherwise.
+   */
+  suspended: Schema.optionalKey(Schema.Literal(true))
 });
 
 export const Connections = Schema.Struct({
@@ -832,13 +850,15 @@ export const ImapConnectionDetail = Schema.Struct({
   /** When its mail server refused the password; calls fail `auth_failed` until it's fixed. */
   paused: Schema.optionalKey(Schema.Struct({ at: Schema.String }))
 });
+export const GithubConnectionDetail = detail("github", GithubSnapshot.fields);
 /** One connection and its current metadata, in its integration's shape. */
 export const ConnectionDetail = Schema.Union([
   PostgresConnectionDetail,
   PostHogConnectionDetail,
   PidgeonConnectionDetail,
   AttioConnectionDetail,
-  ImapConnectionDetail
+  ImapConnectionDetail,
+  GithubConnectionDetail
 ]);
 export type ConnectionDetail = typeof ConnectionDetail.Type;
 
@@ -893,6 +913,11 @@ export const DeclarationMetadata = Schema.Struct({
   imap: Schema.Record(
     Schema.String,
     Schema.Struct({ declaration: ImapDeclaration, snapshot: ImapSnapshot })
+  ).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
+  // As for Pidgeon: a release before GitHub generates none.
+  github: Schema.Record(
+    Schema.String,
+    Schema.Struct({ declaration: GithubDeclaration, snapshot: GithubSnapshot })
   ).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
   // `companyWide`: whether everyone in the company can open the source, so `patchy dev`'s
   // colleague, on none of the developer's teams, can read it. A release before teams sends none,

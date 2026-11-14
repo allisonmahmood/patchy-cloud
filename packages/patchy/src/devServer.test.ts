@@ -78,7 +78,15 @@ it.live(
           uses: {}
         },
         identity,
-        metadata: { postgres: {}, posthog: {}, pidgeon: {}, attio: {}, imap: {}, shared: {} }
+        metadata: {
+          postgres: {},
+          posthog: {},
+          pidgeon: {},
+          attio: {},
+          imap: {},
+          github: {},
+          shared: {}
+        }
       };
       const server = yield* DevServer.serve(
         prepared,

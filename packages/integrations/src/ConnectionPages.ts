@@ -17,6 +17,9 @@ import * as ConnectionPage from "./ConnectionPage.js";
 import * as ConnectionsView from "./ConnectionsView.js";
 import * as PidgeonPage from "./pidgeon/Page.js";
 import type * as PidgeonSource from "./pidgeon/Source.js";
+import type * as GithubFlows from "./github/Flows.js";
+import * as GithubPage from "./github/Page.js";
+import type * as GithubSource from "./github/Source.js";
 
 type Params = Readonly<Record<string, string | undefined>>;
 
@@ -77,6 +80,7 @@ const serve = <R>(
                 body: content.body,
                 heading: "",
                 ...(content.status === undefined ? {} : { status: content.status }),
+                ...(content.formActions === undefined ? {} : { formActions: content.formActions }),
                 app: {
                   viewer,
                   section: "integrations",
@@ -174,6 +178,8 @@ export const layer: Layer.Layer<
       | RuntimeLog.RuntimeLog
       | Analytics.Analytics
       | PidgeonSource.Source
+      | GithubSource.Source
+      | GithubFlows.Flows
       | Cryptography.Cryptography
     >
 > = HttpRouter.use((router) =>
@@ -226,6 +232,33 @@ export const layer: Layer.Layer<
           )
         )
       )
+    );
+    // GitHub's sign-in: Continue with GitHub posts here, and GitHub sends the browser back to the
+    // callback, or after installing the App or changing its repositories, to the setup URL.
+    yield* router.add(
+      "POST",
+      GithubPage.startPath,
+      errors(
+        RequireSession.sameOrigin(
+          RequireSession.withViewer(
+            serve((viewer, _, query) => ConnectionPage.githubStart(viewer, query))
+          )
+        )
+      )
+    );
+    yield* router.add(
+      "GET",
+      GithubPage.callbackPath,
+      errors(
+        RequireSession.withViewer(
+          serve((viewer, _, query) => ConnectionPage.githubCallback(viewer, query))
+        )
+      )
+    );
+    yield* router.add(
+      "GET",
+      GithubPage.setupPath,
+      errors(RequireSession.withViewer(serve((viewer) => ConnectionPage.githubSetup(viewer))))
     );
     yield* get(indexPath, () => ({ kind: "index" }));
     yield* get(cataloguePath, () => ({ kind: "catalogue" }));

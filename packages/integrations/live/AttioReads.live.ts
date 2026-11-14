@@ -14,6 +14,7 @@ import * as ConnectionStore from "../src/ConnectionStore.js";
 import * as CredentialKeys from "../src/CredentialKeys.js";
 import * as PidgeonSource from "../src/pidgeon/Source.js";
 import * as ImapTest from "../src/test/imap.js";
+import * as GithubTest from "../src/test/github.js";
 import * as PostgresSource from "../src/postgres/Source.js";
 import * as PostHogSource from "../src/posthog/Source.js";
 import * as SqlConnectionStore from "../src/SqlConnectionStore.js";
@@ -47,6 +48,7 @@ const services = Layer.mergeAll(
   PostHogSource.layer,
   PidgeonSource.layer,
   ImapTest.offline,
+  GithubTest.unconfigured,
   Live.layer
 ).pipe(Layer.provideMerge(Testing.layer()), Layer.provideMerge(NodeCryptography.layer));
 

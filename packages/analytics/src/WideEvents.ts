@@ -77,6 +77,13 @@ const invocationMetrics = {
   imapSession: Schema.optionalKey(Schema.Literals(["pooled", "opened"])),
   /** The mail server refused an IMAP login, and saving the connection's pause failed twice. */
   imapPauseFailed: Schema.optionalKey(Schema.Boolean),
+  /**
+   * How a GitHub call got its installation token: from this host's cache, a mint, or a mint after
+   * reconciling the connection's repositories with its installation.
+   */
+  githubMint: Schema.optionalKey(Schema.Literals(["cached", "minted", "reconciled"])),
+  /** A GitHub limit answer set the installation's cooldown during the request. */
+  githubCooldown: Schema.optionalKey(Schema.Boolean),
   /** The bytes of every IMAP attachment the request staged, summed; a refused stage adds none. */
   stagedBytes: Schema.optionalKey(Schema.Number),
   /**

@@ -18,6 +18,7 @@ import * as PostgresSource from "../src/postgres/Source.js";
 import * as PostHogSource from "../src/posthog/Source.js";
 import * as SqlConnectionStore from "../src/SqlConnectionStore.js";
 import { UNNAMED_HOST, type LiveServer } from "./imapHarness.js";
+import * as GithubTest from "../src/test/github.js";
 
 /**
  * IMAP connections against real mail servers in Docker (`imapHarness.ts`): Dovecot, over TLS on
@@ -42,6 +43,7 @@ const network = ImapNetwork.loopback(() => [
 const services = Layer.mergeAll(
   CredentialKeys.layerFromKeys(Redacted.make(`test:${Buffer.alloc(32, 6).toString("base64")}`)),
   RuntimeLog.layer,
+  GithubTest.unconfigured,
   // Never called: these connections reach no database, PostHog project, Pidgeon address or Attio.
   Layer.succeed(
     PostgresSource.Source,

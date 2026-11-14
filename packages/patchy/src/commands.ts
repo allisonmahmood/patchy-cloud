@@ -2229,7 +2229,7 @@ const add = Command.make(
   {
     integration: Argument.String("integration").pipe(
       Argument.withDescription(
-        "members, postgres/<handle>, posthog/<handle>, pidgeon/<handle>, attio/<handle>, imap/<handle>, shared-table or shared-store"
+        "members, postgres/<handle>, posthog/<handle>, pidgeon/<handle>, attio/<handle>, imap/<handle>, github/<handle>, shared-table or shared-store"
       )
     ),
     target: Argument.String("target").pipe(

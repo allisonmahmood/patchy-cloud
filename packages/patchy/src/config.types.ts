@@ -9,6 +9,7 @@ import {
   posthog,
   attio,
   imap,
+  github,
   sharedStore,
   sharedTable,
   t,
@@ -70,6 +71,7 @@ const config = defineConfig({
     support: pidgeon("support"),
     crm: attio("crm"),
     invoices: imap("invoices"),
+    repos: github("platform"),
     customers: sharedTable("abcdefghijkl", "customers"),
     logos: sharedStore("abcdefghijkl", "logos")
   }
@@ -112,6 +114,8 @@ export type ConfigAssertions = [
   Assert<Equal<typeof config.uses.crm.kind, "attio">>,
   Assert<Equal<typeof config.uses.invoices.kind, "imap">>,
   Assert<Equal<typeof config.uses.invoices.handle, "invoices">>,
+  Assert<Equal<typeof config.uses.repos.kind, "github">>,
+  Assert<Equal<typeof config.uses.repos.handle, "platform">>,
   Assert<Equal<typeof config.uses.crm.handle, "crm">>,
   Assert<Equal<typeof config.uses.logos.store, "logos">>,
   Assert<Equal<typeof config.uses.logos.kind, "sharedStore">>,

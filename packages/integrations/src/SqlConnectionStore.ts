@@ -2,6 +2,9 @@ import {
   AttioSnapshot,
   type ConnectionDeclaration,
   type ConnectionDetail,
+  type GithubAccount,
+  type GithubRepository,
+  GithubSnapshot,
   ImapSnapshot,
   integrations,
   type Integration,
@@ -13,6 +16,7 @@ import * as Companies from "@patchy/companies/Companies";
 import { Cryptography } from "@patchy/core";
 import { Teams, Users } from "@patchy/companies";
 import { RuntimeLog } from "@patchy/runtime";
+import { ContractLimits } from "@patchy/limits";
 import { registry } from "@patchy/limits/registry";
 import { withReportedCommit } from "@patchy/sql";
 import * as Clock from "effect/Clock";
@@ -42,6 +46,7 @@ import {
   ConnectionRetargetUnavailable,
   ConnectionStorageFailed,
   Description,
+  GithubConnectionRow,
   ImapConnection,
   InvalidConnectionDescription,
   InvalidConnectionHandle,
@@ -62,6 +67,10 @@ import * as PidgeonKeys from "./pidgeon/Keys.js";
 import * as PidgeonSource from "./pidgeon/Source.js";
 import * as AttioSource from "./attio/Source.js";
 import * as ImapSource from "./imap/Source.js";
+import * as GithubAccess from "./github/Access.js";
+import * as GithubClaims from "./github/Claims.js";
+import * as GithubConnection from "./github/Connection.js";
+import * as GithubFlows from "./github/Flows.js";
 
 const isDescription = Schema.is(Description);
 const decodeMetadata = Schema.decodeUnknownEffect(Metadata);
@@ -70,11 +79,13 @@ const encodePostHogSnapshot = Schema.encodeSync(Schema.fromJsonString(PostHogSna
 const encodePidgeonSnapshot = Schema.encodeSync(Schema.fromJsonString(PidgeonSnapshot));
 const encodeAttioSnapshot = Schema.encodeSync(Schema.fromJsonString(AttioSnapshot));
 const encodeImapSnapshot = Schema.encodeSync(Schema.fromJsonString(ImapSnapshot));
+const encodeGithubSnapshot = Schema.encodeSync(Schema.fromJsonString(GithubSnapshot));
 const encodePostgresDisplay = Schema.encodeSync(Schema.fromJsonString(PostgresSource.Display));
 const encodePostHogDisplay = Schema.encodeSync(Schema.fromJsonString(PostHogSource.Display));
 const encodePidgeonDisplay = Schema.encodeSync(Schema.fromJsonString(PidgeonSource.Display));
 const encodeAttioDisplay = Schema.encodeSync(Schema.fromJsonString(AttioSource.Display));
 const encodeImapDisplay = Schema.encodeSync(Schema.fromJsonString(ImapSource.Display));
+const encodeGithubDisplay = Schema.encodeSync(Schema.fromJsonString(GithubConnection.Display));
 const encodeSnapshot = (metadata: Metadata) => {
   switch (metadata.integration) {
     case "postgres":
@@ -87,6 +98,8 @@ const encodeSnapshot = (metadata: Metadata) => {
       return encodeAttioSnapshot(metadata.snapshot);
     case "imap":
       return encodeImapSnapshot(metadata.snapshot);
+    case "github":
+      return encodeGithubSnapshot(metadata.snapshot);
   }
 };
 const encodeDisplay = (target: Target) => {
@@ -101,6 +114,8 @@ const encodeDisplay = (target: Target) => {
       return encodeAttioDisplay(target.display);
     case "imap":
       return encodeImapDisplay(target.display);
+    case "github":
+      return encodeGithubDisplay(target.display);
   }
 };
 /** One mailbox login: the same host, port, security and username. */
@@ -147,20 +162,25 @@ const sameTarget = (current: Target, next: Target) =>
         ? next.integration === "pidgeon" && next.display.identityId === current.display.identityId
         : current.integration === "imap"
           ? next.integration === "imap" && sameLogin(current.display, next.display)
-          : next.integration === "attio" &&
-            next.display.workspace.id === current.display.workspace.id;
+          : current.integration === "github"
+            ? next.integration === "github" &&
+              next.display.account.id === current.display.account.id
+            : next.integration === "attio" &&
+              next.display.workspace.id === current.display.workspace.id;
 const secret = { credentials: Schema.String, keyId: Schema.String };
 const StoredConnection = Schema.Union([
   Schema.Struct({ ...PostgresConnection.fields, ...secret }),
   Schema.Struct({ ...PostHogConnection.fields, ...secret }),
   Schema.Struct({ ...PidgeonConnection.fields, ...secret }),
   Schema.Struct({ ...AttioConnection.fields, ...secret }),
-  Schema.Struct({ ...ImapConnection.fields, ...secret })
+  Schema.Struct({ ...ImapConnection.fields, ...secret }),
+  Schema.Struct({ ...GithubConnectionRow.fields, ...secret })
 ]);
 type StoredConnection = typeof StoredConnection.Type;
 type StoredPidgeon = Extract<StoredConnection, { readonly integration: "pidgeon" }>;
 type StoredAttio = Extract<StoredConnection, { readonly integration: "attio" }>;
 type StoredImap = Extract<StoredConnection, { readonly integration: "imap" }>;
+type StoredGithub = Extract<StoredConnection, { readonly integration: "github" }>;
 const detailFields = {
   handle: Schema.String,
   description: Schema.String,
@@ -195,6 +215,11 @@ const SnapshotDetail = Schema.Union([
     snapshot: Schema.NullOr(ImapSnapshot),
     // What a member is told about a pause: only when it began.
     display: ImapSource.Display
+  }),
+  Schema.Struct({
+    ...detailFields,
+    integration: Schema.Literal("github"),
+    snapshot: Schema.NullOr(GithubSnapshot)
   })
 ]);
 const Lookup = Schema.Struct({
@@ -228,12 +253,17 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
     const pidgeonSource = yield* PidgeonSource.Source;
     const attio = yield* AttioSource.Source;
     const imap = yield* ImapSource.Source;
+    const githubAccess = yield* GithubAccess.Access;
+    const githubFlows = yield* GithubFlows.Flows;
     const audit = yield* RuntimeLog.RuntimeLog;
     const columns = sql`id, company_id AS "companyId", integration, handle, description, mode, status,
     block_guests AS "blockGuests", display, credential_revision AS "credentialRevision", metadata_revision AS "metadataRevision",
     to_char(last_tested_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "lastTestedAt",
     to_char(last_discovered_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "lastDiscoveredAt",
-    created_by AS "createdBy"`;
+    created_by AS "createdBy",
+    (SELECT to_char(i.suspended_seen_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+      FROM github_installations i WHERE connections.integration = 'github'
+        AND i.installation_id = (connections.display->>'installationId')::bigint) AS "suspendedAt"`;
     const safe = (operation: ConnectionStorageFailed["operation"]) => ({
       SqlError: (cause: SqlError) =>
         Effect.fail(new ConnectionStorageFailed({ operation, cause: Redacted.make(cause) })),
@@ -405,6 +435,11 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
             ...row,
             snapshot: row.snapshot === null || stamp === null ? null : { ...row.snapshot, ...stamp }
           } satisfies ConnectionDetail;
+        if (row.integration === "github")
+          return {
+            ...row,
+            snapshot: row.snapshot === null || stamp === null ? null : { ...row.snapshot, ...stamp }
+          } satisfies ConnectionDetail;
         if (row.integration === "imap") {
           const { display, ...imap } = row;
           return {
@@ -441,7 +476,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
     });
     const lock = Effect.fn("ConnectionStore.lock")(function* (
       input: Identity,
-      expected?: StoredConnection
+      expected?: Pick<StoredConnection, "credentialRevision" | "metadataRevision">
     ) {
       const found = yield* connectionRow({ ...input, locked: true });
       if (Option.isNone(found))
@@ -1228,6 +1263,448 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       Effect.catchTags(safe("pauseLogin"))
     );
 
+    // ---------- GitHub: repositories on one account's installation of the App ----------
+
+    const githubSeal = (identity: Identity, value: GithubConnection.Credentials) =>
+      keys.encrypt(
+        { companyId: identity.companyId, id: identity.id, integration: "github" },
+        GithubConnection.credentials(value)
+      );
+    const githubSet = (repositories: ReadonlyArray<GithubRepository>) =>
+      repositories.map(({ id, name, private: hidden, left }): GithubConnection.Repository => ({
+        id,
+        name,
+        private: hidden,
+        ...(left === true ? { left } : {})
+      }));
+    const githubMetadata = (
+      account: GithubAccount,
+      repositories: ReadonlyArray<GithubRepository>
+    ): Metadata => ({ integration: "github", snapshot: { version: 1, account, repositories } });
+    /**
+     * A GitHub display as written: what's given, with the count of successes the row keeps plus
+     * `bump`, so a write never moves it back under a mint that raced it.
+     */
+    const githubDisplay = (display: Omit<GithubConnection.Display, "successes">, bump: 0 | 1) =>
+      sql`(${encodeDisplay({ integration: "github", display: { ...display, successes: 0 } })}::jsonb
+        || jsonb_build_object('successes', COALESCE((display->>'successes')::int, 0) + ${bump}))`;
+    /** A display without what Patchy paused it for: what a passing check leaves. */
+    const githubCleared = (
+      display: GithubConnection.Display
+    ): Omit<GithubConnection.Display, "successes"> => ({
+      installationId: display.installationId,
+      account: display.account,
+      repositories: display.repositories
+    });
+    /** The admin's live sign-in for this purpose and connection, or the refusal that asks again. */
+    const githubSignedIn = (
+      input: { readonly companyId: string; readonly userId: string },
+      purpose: GithubFlows.Purpose,
+      connectionId: string | null
+    ) =>
+      Effect.gen(function* () {
+        const flow = yield* githubFlows.current(input);
+        if (
+          Option.isNone(flow) ||
+          Option.isNone(flow.value.signedIn) ||
+          flow.value.purpose !== purpose ||
+          flow.value.connectionId !== connectionId
+        )
+          return yield* new GithubConnection.SignInRequired({});
+        return { flow: flow.value, who: flow.value.signedIn.value };
+      });
+    /** The admin check, which locks the company first, as every change that consumes a flow does. */
+    const githubAdmin = (input: { readonly companyId: string; readonly userId: string }) =>
+      Users.lockAdministrator({ companyId: input.companyId, actorId: input.userId }).pipe(
+        Effect.catchTags({
+          RoleForbidden: (cause) =>
+            Effect.fail(new ConnectionStore.ConnectionAdministrationDenied({ cause }))
+        })
+      );
+
+    /**
+     * Connect: the repositories read again with the admin's GitHub sign-in, each in the one
+     * installation with `admin` exactly true; the installation checked and the set discovered with
+     * a mint for it; then one transaction in the lock order: the company's admin check, the flow
+     * record consumed, the installation's row locked and claimed, the connection saved. Nothing is
+     * saved on any refusal. The admin's token is revoked at GitHub after.
+     */
+    const githubConnect = Effect.fn("ConnectionStore.githubConnect")(function* (
+      input: ConnectInput,
+      report?: (connection: Connection) => Effect.Effect<void>
+    ) {
+      const request = yield* GithubConnection.parseRequest(input.credentials);
+      return yield* claimed(
+        input,
+        Effect.gen(function* () {
+          const identity = {
+            ...input,
+            integration: "github" as const,
+            id: yield* cryptography.internalId("conn")
+          };
+          const { flow, who } = yield* githubSignedIn(input, "connect", null);
+          const { verified, inspected } = yield* audited(
+            identity,
+            "github.connect",
+            Effect.gen(function* () {
+              const verified = yield* githubFlows.verify(who.token, request);
+              const inspected = yield* githubAccess.inspect(
+                verified.installationId,
+                verified.repositories.map((item) => item.id),
+                verified.account.login
+              );
+              return { verified, inspected };
+            })
+          );
+          const { account } = inspected;
+          const display: GithubConnection.Display = {
+            installationId: verified.installationId,
+            account,
+            repositories: githubSet(inspected.repositories),
+            // The check that saves it is its first success.
+            successes: 1
+          };
+          const encrypted = yield* githubSeal(identity, {
+            installationId: verified.installationId,
+            repositoryIds: display.repositories.map((item) => item.id)
+          });
+          const now = yield* Clock.currentTimeMillis;
+          const saved = yield* reportedTransaction(
+            Effect.gen(function* () {
+              yield* githubAdmin(input);
+              yield* GithubClaims.consumeFlow({
+                id: flow.id,
+                companyId: input.companyId,
+                userId: input.userId
+              });
+              yield* GithubClaims.lock(verified.installationId);
+              // A personal account's installation, connected by its own user, is exempt.
+              yield* GithubClaims.claim({
+                installationId: verified.installationId,
+                companyId: input.companyId,
+                account: account.login,
+                exempt: account.type === "User" && who.id === account.id
+              });
+              return yield* insert(
+                identity,
+                input,
+                { integration: "github", display },
+                encrypted,
+                githubMetadata(account, inspected.repositories),
+                now
+              );
+            }).pipe(Effect.provideService(SqlClient.SqlClient, sql)),
+            report
+          );
+          yield* githubFlows.revoke(who.token);
+          return saved;
+        })
+      );
+    });
+
+    /** Test: the check. Passing clears what Patchy paused it for; Resume connects it again. */
+    const githubTest = Effect.fn("ConnectionStore.githubTest")(function* (input: Identity) {
+      const loaded = yield* audited(
+        { ...input, integration: "github" },
+        "github.test",
+        githubAccess.check(input, "test", input.userId)
+      );
+      const now = yield* Clock.currentTimeMillis;
+      return yield* sql.withTransaction(
+        Effect.gen(function* () {
+          yield* lock(input);
+          yield* sql`UPDATE connections SET last_tested_at = to_timestamp(${now / 1_000}),
+            display = ${githubDisplay(githubCleared(loaded.display), 1)}
+            WHERE id = ${input.id} AND company_id = ${input.companyId}
+              AND credential_revision = ${loaded.credentialRevision}`;
+          return yield* get(input.companyId, input.id);
+        })
+      );
+    });
+
+    /**
+     * Refresh: the check, and each repository read again by id, its name now and whether it left
+     * or came back, as a new snapshot. A set whose left ones changed takes a new credential
+     * revision too, so no token for the old set is used again.
+     */
+    const githubRefresh = Effect.fn("ConnectionStore.githubRefresh")(function* (input: Identity) {
+      const { loaded, repositories } = yield* audited(
+        { ...input, integration: "github" },
+        "github.discover",
+        githubAccess.discover(input, input.userId)
+      );
+      const now = yield* Clock.currentTimeMillis;
+      const left = (items: ReadonlyArray<{ readonly id: number; readonly left?: true }>) =>
+        items
+          .filter((item) => item.left === true)
+          .map((item) => item.id)
+          .sort((a, b) => a - b)
+          .join(",");
+      const moved = left(loaded.display.repositories) !== left(repositories);
+      return yield* sql.withTransaction(
+        Effect.gen(function* () {
+          yield* lock(input, loaded);
+          const revision = loaded.metadataRevision + 1;
+          yield* writeSnapshot(
+            input,
+            revision,
+            githubMetadata(loaded.display.account, repositories),
+            now
+          );
+          yield* sql`UPDATE connections SET metadata_revision = ${revision},
+            display = ${githubDisplay({ ...githubCleared(loaded.display), repositories: githubSet(repositories) }, 1)},
+            last_tested_at = to_timestamp(${now / 1_000}),
+            last_discovered_at = to_timestamp(${now / 1_000})
+            ${moved ? sql`, credential_revision = credential_revision + 1` : sql``}
+            WHERE id = ${input.id} AND company_id = ${input.companyId}`;
+          return yield* get(input.companyId, input.id);
+        })
+      );
+    });
+
+    /**
+     * Resume: the check, then the installation's row locked and the company's claim confirmed,
+     * then the connection connected again with what Patchy paused it for cleared.
+     */
+    const githubResume = Effect.fn("ConnectionStore.githubResume")(function* (input: Identity) {
+      const loaded = yield* audited(
+        { ...input, integration: "github" },
+        "github.reconnect",
+        githubAccess.check(input, "reconnect", input.userId)
+      );
+      const now = yield* Clock.currentTimeMillis;
+      return yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* GithubClaims.lock(loaded.display.installationId);
+            yield* GithubClaims.claim({
+              installationId: loaded.display.installationId,
+              companyId: input.companyId,
+              account: loaded.display.account.login,
+              exempt: loaded.display.account.type === "User"
+            });
+            yield* lock(input, loaded);
+            yield* sql`UPDATE connections SET status = 'connected',
+              credential_revision = credential_revision + 1,
+              display = ${githubDisplay(githubCleared(loaded.display), 1)},
+              last_tested_at = to_timestamp(${now / 1_000})
+              WHERE id = ${input.id} AND company_id = ${input.companyId}`;
+            return yield* get(input.companyId, input.id);
+          })
+        )
+        .pipe(Effect.provideService(SqlClient.SqlClient, sql));
+    });
+
+    /** The connection's current snapshot's repositories, by id, for a change that keeps some. */
+    const githubKnown = (input: Identity, revision: number) =>
+      Effect.map(snapshot(input.companyId, input.id, revision), (metadata) =>
+        metadata.integration === "github"
+          ? new Map(metadata.snapshot.repositories.map((item) => [item.id, item] as const))
+          : new Map<number, GithubRepository>()
+      );
+
+    /**
+     * Add and Remove. Removing needs no GitHub sign-in. Adding reads the new repositories with
+     * the admin's sign-in, under the same rule as connecting, checks the installation and mints for
+     * the whole set before one transaction in the lock order saves it.
+     */
+    const githubRepositories = Effect.fn("ConnectionStore.githubRepositories")(function* (
+      input: CredentialsInput,
+      current: StoredGithub,
+      change: Extract<GithubConnection.Change, { readonly action: "repositories" }>
+    ) {
+      const max = yield* ContractLimits.get("github.connection.repositories");
+      const { display } = current;
+      const keep = display.repositories.filter((item) => change.keep.includes(item.id));
+      const known = new Set(display.repositories.map((item) => item.id));
+      const added = change.add.filter((item) => !known.has(item.id));
+      if (keep.length + added.length === 0) return yield* new GithubConnection.LastRepository({});
+      if (keep.length + added.length > max)
+        return yield* new GithubConnection.TooManyRepositories({ max });
+      const before = yield* githubKnown(input, current.metadataRevision);
+      const now = yield* Clock.currentTimeMillis;
+      const save = (repositories: ReadonlyArray<GithubRepository>, account: GithubAccount) =>
+        Effect.gen(function* () {
+          yield* lock(input, current);
+          const revision = current.metadataRevision + 1;
+          const encrypted = yield* githubSeal(input, {
+            installationId: display.installationId,
+            repositoryIds: repositories.map((item) => item.id)
+          });
+          yield* writeSnapshot(input, revision, githubMetadata(account, repositories), now);
+          yield* sql`UPDATE connections SET metadata_revision = ${revision},
+            display = ${githubDisplay({ ...display, account, repositories: githubSet(repositories) }, 0)},
+            credentials = ${encrypted.credentials}, key_id = ${encrypted.keyId},
+            credential_revision = credential_revision + 1,
+            last_discovered_at = to_timestamp(${now / 1_000})
+            WHERE id = ${input.id} AND company_id = ${input.companyId}`;
+          return yield* get(input.companyId, input.id);
+        });
+      const kept = keep.map(
+        (item): GithubRepository =>
+          before.get(item.id) ?? {
+            id: item.id,
+            name: item.name,
+            defaultBranch: "",
+            private: item.private,
+            archived: false,
+            disabled: false,
+            ...(item.left === true ? { left: true as const } : {})
+          }
+      );
+      if (added.length === 0) {
+        if (keep.length === display.repositories.length)
+          return yield* get(input.companyId, input.id);
+        return yield* sql.withTransaction(save(kept, display.account));
+      }
+      const { flow, who } = yield* githubSignedIn(input, "add", input.id);
+      const { inspected } = yield* audited(
+        { ...input, integration: "github" },
+        "github.add",
+        Effect.gen(function* () {
+          const verified = yield* githubFlows.verify(who.token, { repositories: added });
+          if (verified.installationId !== display.installationId)
+            return yield* new GithubConnection.OneAccount({});
+          const reachable = kept.filter((item) => item.left !== true).map((item) => item.id);
+          const inspected = yield* githubAccess.inspect(
+            display.installationId,
+            [...reachable, ...verified.repositories.map((item) => item.id)],
+            display.account.login
+          );
+          return { inspected };
+        })
+      );
+      const fresh = new Map(inspected.repositories.map((item) => [item.id, item] as const));
+      const repositories = [
+        ...kept.map((item) => fresh.get(item.id) ?? item),
+        ...added.flatMap((item) => fresh.get(item.id) ?? [])
+      ];
+      const saved = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* githubAdmin(input);
+            yield* GithubClaims.consumeFlow({
+              id: flow.id,
+              companyId: input.companyId,
+              userId: input.userId
+            });
+            yield* GithubClaims.lock(display.installationId);
+            yield* GithubClaims.claim({
+              installationId: display.installationId,
+              companyId: input.companyId,
+              account: inspected.account.login,
+              exempt: inspected.account.type === "User"
+            });
+            return yield* save(repositories, inspected.account);
+          })
+        )
+        .pipe(Effect.provideService(SqlClient.SqlClient, sql));
+      yield* githubFlows.revoke(who.token);
+      return saved;
+    });
+
+    /**
+     * Reconnect, after the App was reinstalled, which is a new installation: the admin's sign-in
+     * must see the App on the connection's own account, GitHub must show them administering every
+     * repository in the set there, and the check and a mint must pass. Then one transaction locks
+     * both installations' rows in ascending order, claims the new one, moves the connection to it
+     * and drops the company's claim on the old one if nothing else of its uses it.
+     */
+    const githubReconnect = Effect.fn("ConnectionStore.githubReconnect")(function* (
+      input: CredentialsInput,
+      current: StoredGithub
+    ) {
+      const { display } = current;
+      const { flow, who } = yield* githubSignedIn(input, "reconnect", input.id);
+      const { installationId, inspected } = yield* audited(
+        { ...input, integration: "github" },
+        "github.reconnect",
+        Effect.gen(function* () {
+          const found = yield* githubFlows.installationOn(who.token, display.account.id);
+          if (Option.isNone(found))
+            return yield* new GithubConnection.OtherAccount({ account: display.account.login });
+          const ids = display.repositories.map((item) => item.id);
+          yield* githubFlows.verify(who.token, {
+            repositories: ids.map((id) => ({ installationId: found.value, id }))
+          });
+          const inspected = yield* githubAccess.inspect(found.value, ids, display.account.login);
+          if (inspected.account.id !== display.account.id)
+            return yield* new GithubConnection.OtherAccount({ account: display.account.login });
+          return { installationId: found.value, inspected };
+        })
+      );
+      const now = yield* Clock.currentTimeMillis;
+      const saved = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* githubAdmin(input);
+            yield* GithubClaims.consumeFlow({
+              id: flow.id,
+              companyId: input.companyId,
+              userId: input.userId
+            });
+            for (const id of [...new Set([display.installationId, installationId])].sort(
+              (a, b) => a - b
+            ))
+              yield* GithubClaims.lock(id);
+            yield* GithubClaims.claim({
+              installationId,
+              companyId: input.companyId,
+              account: inspected.account.login,
+              exempt: inspected.account.type === "User"
+            });
+            yield* lock(input, current);
+            const revision = current.metadataRevision + 1;
+            const encrypted = yield* githubSeal(input, {
+              installationId,
+              repositoryIds: inspected.repositories.map((item) => item.id)
+            });
+            yield* writeSnapshot(
+              input,
+              revision,
+              githubMetadata(inspected.account, inspected.repositories),
+              now
+            );
+            yield* sql`UPDATE connections SET status = 'connected', metadata_revision = ${revision},
+              display = ${githubDisplay(
+                {
+                  installationId,
+                  account: inspected.account,
+                  repositories: githubSet(inspected.repositories)
+                },
+                1
+              )},
+              credentials = ${encrypted.credentials}, key_id = ${encrypted.keyId},
+              credential_revision = credential_revision + 1,
+              last_tested_at = to_timestamp(${now / 1_000}),
+              last_discovered_at = to_timestamp(${now / 1_000})
+              WHERE id = ${input.id} AND company_id = ${input.companyId}`;
+            if (installationId !== display.installationId)
+              yield* GithubClaims.release({
+                installationId: display.installationId,
+                companyId: input.companyId,
+                except: input.id
+              });
+            return yield* get(input.companyId, input.id);
+          })
+        )
+        .pipe(Effect.provideService(SqlClient.SqlClient, sql));
+      yield* githubFlows.revoke(who.token);
+      yield* githubAccess.forget(input.id);
+      return saved;
+    });
+
+    /** Add, Remove or Reconnect, as the connection's dialogs submit them. */
+    const githubChange = Effect.fn("ConnectionStore.githubChange")(function* (
+      input: CredentialsInput,
+      current: StoredGithub
+    ) {
+      const change = yield* GithubConnection.parseChange(input.credentials);
+      return change.action === "reconnect"
+        ? yield* githubReconnect(input, current)
+        : yield* githubRepositories(input, current, change);
+    });
+
     const connect = Effect.fn("ConnectionStore.connect")(
       function* (input: ConnectInput, report?: (connection: Connection) => Effect.Effect<void>) {
         if (!Companies.isHandle(input.handle)) return yield* new InvalidConnectionHandle({});
@@ -1235,6 +1712,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         if (input.integration === "pidgeon") return yield* pidgeonConnect(input, report);
         if (input.integration === "attio") return yield* attioConnect(input, report);
         if (input.integration === "imap") return yield* imapConnect(input, report);
+        if (input.integration === "github") return yield* githubConnect(input, report);
         const identity = {
           ...input,
           integration: input.integration,
@@ -1400,6 +1878,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         if (current.integration === "pidgeon") return yield* pidgeonReplace(input);
         if (current.integration === "attio") return yield* attioReplace(input, current);
         if (current.integration === "imap") return yield* imapReplace(input, current);
+        if (current.integration === "github") return yield* githubChange(input, current);
         const target = yield* testTarget(current.integration, input.credentials);
         if (!sameTarget(current, target)) return yield* new ConnectionRetargetRequired({});
         const encrypted = yield* keys.encrypt(current, input.credentials);
@@ -1442,6 +1921,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         if (current.integration === "pidgeon") return yield* pidgeonTest(input, current);
         if (current.integration === "attio") return yield* attioTest(input, current);
         if (current.integration === "imap") return yield* imapTest(input, current);
+        if (current.integration === "github") return yield* githubTest(input);
         yield* testTarget(current.integration, yield* keys.decrypt(current, current));
         const now = yield* Clock.currentTimeMillis;
         return yield* sql.withTransaction(
@@ -1509,6 +1989,12 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         if (credentials !== undefined) return yield* new ConnectionRetargetUnavailable({});
         return yield* imapRefresh(input, current);
       }
+      // Another account is another connection.
+      if (current.integration === "github") {
+        if (credentials !== undefined) return yield* new ConnectionRetargetUnavailable({});
+        if (current.status !== "connected") return yield* new ConnectionNotConnected({});
+        return yield* githubRefresh(input);
+      }
       if (credentials === undefined && current.status !== "connected")
         return yield* new ConnectionNotConnected({});
       const secret = credentials ?? (yield* keys.decrypt(current, current));
@@ -1563,6 +2049,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
           );
         else if (current.integration === "attio") return yield* attioReconnect(input, current);
         else if (current.integration === "imap") return yield* imapReconnect(input, current);
+        else if (current.integration === "github") return yield* githubResume(input);
         else yield* testTarget(current.integration, yield* keys.decrypt(current, current));
         const now = yield* Clock.currentTimeMillis;
         return yield* sql.withTransaction(
@@ -1796,6 +2283,17 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
               | undefined;
             const removed = yield* reportedTransaction(
               Effect.gen(function* () {
+                // A GitHub connection's installation row is locked before the connection, as
+                // every claim and release does.
+                const peek = yield* connectionRow({ ...input, locked: false });
+                const installationId =
+                  Option.isSome(peek) && peek.value.integration === "github"
+                    ? peek.value.display.installationId
+                    : undefined;
+                if (installationId !== undefined)
+                  yield* GithubClaims.lock(installationId).pipe(
+                    Effect.provideService(SqlClient.SqlClient, sql)
+                  );
                 const connection = yield* lock(input);
                 const references = yield* sql`SELECT 1 FROM ${declarations(input.companyId)}
                 AND declaration.value->>'id' = ${input.id} LIMIT 1`;
@@ -1811,6 +2309,12 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
                         ...retiredOf(minted.display, credentials)
                       ]);
                 yield* sql`DELETE FROM connections WHERE id = ${input.id} AND company_id = ${input.companyId}`;
+                if (connection.integration === "github")
+                  yield* GithubClaims.release({
+                    installationId: connection.display.installationId,
+                    companyId: input.companyId,
+                    except: input.id
+                  }).pipe(Effect.provideService(SqlClient.SqlClient, sql));
                 doomed = { connection, keys };
                 return doomed;
               }),
@@ -1826,6 +2330,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
               )
             );
             const { left } = yield* retire(removed.keys);
+            if (removed.connection.integration === "github") yield* githubAccess.forget(input.id);
             return {
               connection: removed.connection,
               keyLeft: left.length === 0 ? null : left.map((item) => item.name).join(", ")
