@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Connection from "./Connection.js";
+import type * as Flows from "./Flows.js";
 
 /**
  * Which Patchy company holds an organization's installation of the App: (installation, company)
@@ -64,7 +65,9 @@ export const release = Effect.fn("GithubClaims.release")(function* (input: {
 
 /**
  * Consumes the admin's flow record with the save it was for: only while it's still theirs, the
- * company's, signed in and unexpired. Refuses otherwise, and the save with it.
+ * company's, signed in and unexpired. Refuses otherwise, and the save with it. Gives back the
+ * token the deleted row held, which may be newer than the one read before, for revoking once the
+ * save commits.
  */
 export const consumeFlow = Effect.fn("GithubClaims.consumeFlow")(function* (input: {
   readonly id: string;
@@ -72,9 +75,10 @@ export const consumeFlow = Effect.fn("GithubClaims.consumeFlow")(function* (inpu
   readonly userId: string;
 }) {
   const sql = yield* SqlClient.SqlClient;
-  const consumed = yield* sql`DELETE FROM github_flows
+  const [consumed] = yield* sql<Flows.Held>`DELETE FROM github_flows
     WHERE id = ${input.id} AND company_id = ${input.companyId} AND user_id = ${input.userId}
       AND expires_at > now() AND token IS NOT NULL
-    RETURNING id`;
-  if (consumed.length === 0) return yield* new Connection.SignInRequired({});
+    RETURNING id, token, key_id AS "keyId"`;
+  if (consumed === undefined) return yield* new Connection.SignInRequired({});
+  return consumed;
 });

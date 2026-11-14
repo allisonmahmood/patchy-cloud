@@ -37,7 +37,7 @@ Giving a connection new credentials for the same target, keeping its identity an
 _Avoid_: rotate, reconnect
 
 **Needs attention**:
-A connection Patchy stopped, or whose state waits on an admin, for its integration's own reason, shown with its fix: an Attio key a check found writable (paused by Patchy, fixed by Resume or Replace key), an IMAP **login pause** (fixed by Replace password or Test), a Pidgeon key Patchy replaced but couldn't revoke (fixed by Test), a Pidgeon test address (fixed by connecting a live one), and a GitHub App uninstalled (paused by Patchy, fixed by Reconnect), its permissions changed (paused by Patchy, fixed by Resume) or a repository **left** its installation (fixed by Refresh or Change repositories). A GitHub connection **suspended on GitHub** shows that in place of Connected instead. Distinct from Paused, which an admin chose; Postgres and PostHog have no reason of their own.
+A connection Patchy stopped, or whose state waits on an admin, for its integration's own reason, shown with its fix: an Attio key a check found writable (paused by Patchy, fixed by Resume or Replace key), an IMAP **login pause** (fixed by Replace password or Test), a Pidgeon key Patchy replaced but couldn't revoke (fixed by Test), a Pidgeon test address (fixed by connecting a live one), and a GitHub App uninstalled (paused by Patchy, fixed by Reconnect), its permissions changed (paused by Patchy, fixed by Resume) or a repository **left** its installation (fixed by Refresh, Resume or Change repositories). A GitHub connection **suspended on GitHub** shows that in place of Connected instead. Distinct from Paused, which an admin chose; Postgres and PostHog have no reason of their own.
 _Avoid_: broken, error, unhealthy
 
 **Unused**:
@@ -257,11 +257,11 @@ A repository Patchy found missing from its installation when a mint answered 422
 _Avoid_: removed (what an admin does), deleted
 
 **Claim**:
-Which Patchy company holds an organization's installation: the first to connect a repository from it, until its last connection on it is Disconnected; Pause keeps it. Another company is refused, and told that uninstalling and reinstalling the App on GitHub starts fresh. A personal account's installation, connected by its own user, is exempt.
+Which Patchy company holds an organization's installation: the first to connect a repository from it, until its last connection on it is Disconnected; Pause keeps it. Another company is refused, and told that uninstalling and reinstalling the App on GitHub starts fresh. A personal account's installation, connected by its own user, matched by GitHub's numeric id on Connect, Add and Reconnect, is exempt.
 _Avoid_: ownership, lock
 
 **GitHub sign-in**:
-A Patchy admin's authorization of the App on GitHub while choosing repositories: a flow record holding a hashed one-use nonce, a PKCE verifier and, once GitHub answers, who they are there and their token, sealed. It lasts ten minutes and goes when the connection saves, and its token is revoked at GitHub then. Identity comes only from a sign-in Patchy started; installing the App and its setup URL prove nothing.
+A Patchy admin's authorization of the App on GitHub while choosing repositories: a flow record holding a hashed one-use nonce, a PKCE verifier and, once GitHub answers, who they are there and their token, sealed. It lasts ten minutes and goes when the connection saves, and the token it holds then is revoked at GitHub. Only the return of its newest request seals a token on it; a token no record takes is revoked at once. Identity comes only from a sign-in Patchy started; installing the App and its setup URL prove nothing.
 _Avoid_: OAuth flow, login (Patchy's own)
 
 **Suspended on GitHub**:

@@ -1321,6 +1321,34 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
             Effect.fail(new ConnectionStore.ConnectionAdministrationDenied({ cause }))
         })
       );
+    /**
+     * A personal account's installation is exempt from the one-company claim only for its own
+     * user: the person signed in to GitHub, by numeric id, is the account.
+     */
+    const githubExempt = (account: GithubAccount, who: { readonly id: number }) =>
+      account.type === "User" && who.id === account.id;
+    /**
+     * A save that consumes the admin's flow, in one transaction, then the token the deleted row
+     * held revoked at GitHub. Both run to their end even when the request is interrupted, so a
+     * consumed flow never leaves its token live.
+     */
+    const githubSaved = <E>(
+      input: { readonly companyId: string },
+      save: Effect.Effect<
+        { readonly held: GithubFlows.Held; readonly saved: Connection },
+        E,
+        SqlClient.SqlClient
+      >,
+      report?: (connection: Connection) => Effect.Effect<void>
+    ) =>
+      detached(
+        reportedTransaction(save.pipe(Effect.provideService(SqlClient.SqlClient, sql)), (value) =>
+          report === undefined ? Effect.void : report(value.saved)
+        ).pipe(
+          Effect.tap((value) => githubFlows.revoke(input.companyId, value.held)),
+          Effect.map((value) => value.saved)
+        )
+      );
 
     /**
      * Connect: the repositories read again with the admin's GitHub sign-in, each in the one
@@ -1369,23 +1397,23 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
             repositoryIds: display.repositories.map((item) => item.id)
           });
           const now = yield* Clock.currentTimeMillis;
-          const saved = yield* reportedTransaction(
+          return yield* githubSaved(
+            input,
             Effect.gen(function* () {
               yield* githubAdmin(input);
-              yield* GithubClaims.consumeFlow({
+              const held = yield* GithubClaims.consumeFlow({
                 id: flow.id,
                 companyId: input.companyId,
                 userId: input.userId
               });
               yield* GithubClaims.lock(verified.installationId);
-              // A personal account's installation, connected by its own user, is exempt.
               yield* GithubClaims.claim({
                 installationId: verified.installationId,
                 companyId: input.companyId,
                 account: account.login,
-                exempt: account.type === "User" && who.id === account.id
+                exempt: githubExempt(account, who)
               });
-              return yield* insert(
+              const saved = yield* insert(
                 identity,
                 input,
                 { integration: "github", display },
@@ -1393,11 +1421,10 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
                 githubMetadata(account, inspected.repositories),
                 now
               );
-            }).pipe(Effect.provideService(SqlClient.SqlClient, sql)),
+              return { held, saved };
+            }),
             report
           );
-          yield* githubFlows.revoke(who.token);
-          return saved;
         })
       );
     });
@@ -1477,6 +1504,9 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         .withTransaction(
           Effect.gen(function* () {
             yield* GithubClaims.lock(loaded.display.installationId);
+            // Resume has no GitHub sign-in to match a personal account's user against, and needs
+            // none: a paused connection keeps its company's claim, made when a sign-in proved it, so
+            // this confirms a claim the company already holds and grants nothing new.
             yield* GithubClaims.claim({
               installationId: loaded.display.installationId,
               companyId: input.companyId,
@@ -1579,28 +1609,25 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         ...kept.map((item) => fresh.get(item.id) ?? item),
         ...added.flatMap((item) => fresh.get(item.id) ?? [])
       ];
-      const saved = yield* sql
-        .withTransaction(
-          Effect.gen(function* () {
-            yield* githubAdmin(input);
-            yield* GithubClaims.consumeFlow({
-              id: flow.id,
-              companyId: input.companyId,
-              userId: input.userId
-            });
-            yield* GithubClaims.lock(display.installationId);
-            yield* GithubClaims.claim({
-              installationId: display.installationId,
-              companyId: input.companyId,
-              account: inspected.account.login,
-              exempt: inspected.account.type === "User"
-            });
-            return yield* save(repositories, inspected.account);
-          })
-        )
-        .pipe(Effect.provideService(SqlClient.SqlClient, sql));
-      yield* githubFlows.revoke(who.token);
-      return saved;
+      return yield* githubSaved(
+        input,
+        Effect.gen(function* () {
+          yield* githubAdmin(input);
+          const held = yield* GithubClaims.consumeFlow({
+            id: flow.id,
+            companyId: input.companyId,
+            userId: input.userId
+          });
+          yield* GithubClaims.lock(display.installationId);
+          yield* GithubClaims.claim({
+            installationId: display.installationId,
+            companyId: input.companyId,
+            account: inspected.account.login,
+            exempt: githubExempt(inspected.account, who)
+          });
+          return { held, saved: yield* save(repositories, inspected.account) };
+        })
+      );
     });
 
     /**
@@ -1634,38 +1661,38 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         })
       );
       const now = yield* Clock.currentTimeMillis;
-      const saved = yield* sql
-        .withTransaction(
-          Effect.gen(function* () {
-            yield* githubAdmin(input);
-            yield* GithubClaims.consumeFlow({
-              id: flow.id,
-              companyId: input.companyId,
-              userId: input.userId
-            });
-            for (const id of [...new Set([display.installationId, installationId])].sort(
-              (a, b) => a - b
-            ))
-              yield* GithubClaims.lock(id);
-            yield* GithubClaims.claim({
-              installationId,
-              companyId: input.companyId,
-              account: inspected.account.login,
-              exempt: inspected.account.type === "User"
-            });
-            yield* lock(input, current);
-            const revision = current.metadataRevision + 1;
-            const encrypted = yield* githubSeal(input, {
-              installationId,
-              repositoryIds: inspected.repositories.map((item) => item.id)
-            });
-            yield* writeSnapshot(
-              input,
-              revision,
-              githubMetadata(inspected.account, inspected.repositories),
-              now
-            );
-            yield* sql`UPDATE connections SET status = 'connected', metadata_revision = ${revision},
+      const saved = yield* githubSaved(
+        input,
+        Effect.gen(function* () {
+          yield* githubAdmin(input);
+          const held = yield* GithubClaims.consumeFlow({
+            id: flow.id,
+            companyId: input.companyId,
+            userId: input.userId
+          });
+          for (const id of [...new Set([display.installationId, installationId])].sort(
+            (a, b) => a - b
+          ))
+            yield* GithubClaims.lock(id);
+          yield* GithubClaims.claim({
+            installationId,
+            companyId: input.companyId,
+            account: inspected.account.login,
+            exempt: githubExempt(inspected.account, who)
+          });
+          yield* lock(input, current);
+          const revision = current.metadataRevision + 1;
+          const encrypted = yield* githubSeal(input, {
+            installationId,
+            repositoryIds: inspected.repositories.map((item) => item.id)
+          });
+          yield* writeSnapshot(
+            input,
+            revision,
+            githubMetadata(inspected.account, inspected.repositories),
+            now
+          );
+          yield* sql`UPDATE connections SET status = 'connected', metadata_revision = ${revision},
               display = ${githubDisplay(
                 {
                   installationId,
@@ -1679,17 +1706,15 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
               last_tested_at = to_timestamp(${now / 1_000}),
               last_discovered_at = to_timestamp(${now / 1_000})
               WHERE id = ${input.id} AND company_id = ${input.companyId}`;
-            if (installationId !== display.installationId)
-              yield* GithubClaims.release({
-                installationId: display.installationId,
-                companyId: input.companyId,
-                except: input.id
-              });
-            return yield* get(input.companyId, input.id);
-          })
-        )
-        .pipe(Effect.provideService(SqlClient.SqlClient, sql));
-      yield* githubFlows.revoke(who.token);
+          if (installationId !== display.installationId)
+            yield* GithubClaims.release({
+              installationId: display.installationId,
+              companyId: input.companyId,
+              except: input.id
+            });
+          return { held, saved: yield* get(input.companyId, input.id) };
+        })
+      );
       yield* githubAccess.forget(input.id);
       return saved;
     });
@@ -2295,6 +2320,13 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
                     Effect.provideService(SqlClient.SqlClient, sql)
                   );
                 const connection = yield* lock(input);
+                // A Reconnect between the read and the lock moved it to an installation whose row
+                // this attempt never locked: refused, and a retry locks the one it names now.
+                if (
+                  connection.integration === "github" &&
+                  connection.display.installationId !== installationId
+                )
+                  return yield* new ConnectionChanged({});
                 const references = yield* sql`SELECT 1 FROM ${declarations(input.companyId)}
                 AND declaration.value->>'id' = ${input.id} LIMIT 1`;
                 if (references.length !== 0) return yield* new ConnectionInUse({});

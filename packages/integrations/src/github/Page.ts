@@ -226,7 +226,7 @@ export type SignIn =
       readonly kind: "signed-in";
       readonly login: string;
       /** What the person administers where the App is installed; none when it couldn't be read. */
-      readonly listed: ReadonlyArray<Flows.Listed> | null;
+      readonly listed: Flows.Listing | null;
       readonly installUrl: string;
     };
 
@@ -252,8 +252,8 @@ const notListed = (installUrl: string) =>
   `<p class="meta">Not listed? <a href="${escapeAttribute(installUrl)}">Add repositories on GitHub</a>, then come back.</p>`;
 
 /** Whether the person administers any repository where the App is installed. */
-const offered = (listing: ReadonlyArray<Flows.Listed>) =>
-  listing.some((account) => account.repositories.length > 0);
+const offered = (listing: Flows.Listing) =>
+  listing.accounts.some((account) => account.repositories.length > 0);
 
 /**
  * Section 2: the repositories the person administers, one list per account, the ticked account's
@@ -270,9 +270,12 @@ const chooseBody = (state: ConnectState) => {
   const shownMax = registry["github.picker.shown"].default;
   const query = state.query.trim().toLowerCase();
   const chosen = new Set(state.chosen);
-  const total = signIn.listed.reduce((sum, account) => sum + account.repositories.length, 0);
+  const total = signIn.listed.accounts.reduce(
+    (sum, account) => sum + account.repositories.length,
+    0
+  );
   let budget = shownMax;
-  const groups = signIn.listed
+  const groups = signIn.listed.accounts
     .filter((account) => account.repositories.length > 0)
     .map((account) => {
       const items = account.repositories.flatMap((repository) => {
@@ -299,6 +302,10 @@ const chooseBody = (state: ConnectState) => {
     total > shownMax || query !== ""
       ? `${searchField({ id: "github-filter", inForm: true, get: connectPath, query: state.query, placeholder: "Filter by name", label: "Filter repositories" })}${shown < total ? `<p class="meta">${escapeHtml(`Showing ${shown} of ${total}.${query === "" ? " Filter by name to find the others." : ""}`)}</p>` : ""}`
       : "";
+  // Past the installations Patchy reads, the rest aren't listed: said, never passed off as all.
+  const more = signIn.listed.complete
+    ? ""
+    : `<p class="meta">${escapeHtml(`Showing what you administer on the first ${registry["github.picker.installations"].default.toLocaleString("en-US")} accounts GitHub listed for you.`)}</p>`;
   return `<p class="meta">Repositories you administer where Patchy Cloud is installed. One account per connection.</p>${filter}${
     groups.length === 0
       ? `<p class="meta">Nothing matches that filter.</p>`
@@ -317,7 +324,7 @@ const chooseBody = (state: ConnectState) => {
                   })
           }))
         )
-  }${notListed(signIn.installUrl)}`;
+  }${more}${notListed(signIn.installUrl)}`;
 };
 
 /** The connect page in the shared frame, as the admin's sign-in leaves it. */
@@ -410,7 +417,7 @@ export const repositoriesDialog = (connection: Connection, signIn: SignIn) => {
   const known = new Set(connection.display.repositories.map((item) => item.id));
   const here =
     signIn.kind === "signed-in"
-      ? signIn.listed?.find(
+      ? signIn.listed?.accounts.find(
           (account) => account.installationId === connection.display.installationId
         )
       : undefined;

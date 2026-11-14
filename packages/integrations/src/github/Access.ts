@@ -18,11 +18,12 @@ import * as Source from "./Source.js";
 
 /**
  * What a GitHub connection may reach, and the failures that change what it is. Every call holds
- * one of its installation's slots, reloads the connection after any wait, refuses a repository
- * outside the connection's current set before GitHub is asked, and reads with an installation
- * token minted for the set's ids, which GitHub refuses if any left the installation (shown). A
- * token is cached in this process by connection and credential revision until shortly before it
- * expires, and never leaves the host.
+ * one of its installation's slots, reloads the connection after any wait, refuses it if it moved
+ * to another installation or a cooldown began meanwhile, refuses a repository outside the
+ * connection's current set before GitHub is asked, and reads with an installation token minted
+ * for the set's ids, which GitHub refuses if any left the installation (shown). A token is cached
+ * in this process by connection and credential revision until shortly before it expires, and
+ * never leaves the host.
  *
  * The mint is what classifies a failure: 404 the App was uninstalled (paused, needing a
  * Reconnect), 403 suspended (recorded on the installation, never a pause) or refused, 422 a
@@ -132,7 +133,9 @@ export class Access extends Context.Service<
     /**
      * Test and Resume's check of a stored connection: the installation exists, isn't suspended,
      * holds exactly the permissions Patchy reads with, and a token for the set can be minted.
-     * Its failures pause, record or reconcile as a call's do.
+     * Where repositories are marked left, Resume first reads which of the set the installation
+     * holds now, marking them left or back, so one whose repositories all left can resume once
+     * they're back. Its failures pause, record or reconcile as a call's do.
      */
     readonly check: (
       input: { readonly companyId: string; readonly id: string },
@@ -296,7 +299,8 @@ export const make = Effect.gen(function* () {
     );
   /**
    * A mint for the set worked: one more success, under the same credential revision, so a
-   * failure that began before it can no longer pause, and the App isn't suspended any more.
+   * failure that began before it can no longer pause, and the App isn't suspended any more, as a
+   * discovery or an inspection that works says too.
    */
   const succeeded = (attempt: Loaded) =>
     Effect.andThen(
@@ -404,11 +408,10 @@ export const make = Effect.gen(function* () {
     });
 
   /**
-   * Marks the set's repositories missing from the installation as left, with a new snapshot and
-   * credential revision, only while the connection is as the attempt found it. Writes nothing for
-   * a set nothing left.
+   * Marks exactly the set's repositories in `left` as left, and the rest as not, with a new
+   * snapshot and credential revision, only while the connection is as the attempt found it.
    */
-  const markLeft = (attempt: Loaded, gone: ReadonlySet<number>) =>
+  const markLeft = (attempt: Loaded, left: ReadonlySet<number>) =>
     sql
       .withTransaction(
         Effect.gen(function* () {
@@ -430,17 +433,27 @@ export const make = Effect.gen(function* () {
               AND company_id = ${attempt.companyId} AND revision = ${locked.metadataRevision}`;
           const snapshot = yield* decodeSnapshot(current?.snapshot);
           const revision = locked.metadataRevision + 1;
+          const mark = (id: number) => (left.has(id) ? { left: true as const } : {});
           const next: GithubSnapshot = {
             ...snapshot,
-            repositories: snapshot.repositories.map((item) =>
-              gone.has(item.id) ? { ...item, left: true as const } : item
-            )
+            repositories: snapshot.repositories.map((item): GithubRepository => ({
+              id: item.id,
+              name: item.name,
+              defaultBranch: item.defaultBranch,
+              private: item.private,
+              archived: item.archived,
+              disabled: item.disabled,
+              ...mark(item.id)
+            }))
           };
           const display: Connection.Display = {
             ...attempt.display,
-            repositories: attempt.display.repositories.map((item) =>
-              gone.has(item.id) ? { ...item, left: true as const } : item
-            )
+            repositories: attempt.display.repositories.map((item): Connection.Repository => ({
+              id: item.id,
+              name: item.name,
+              private: item.private,
+              ...mark(item.id)
+            }))
           };
           yield* sql`INSERT INTO connection_snapshots
             (company_id, connection_id, integration, revision, snapshot)
@@ -451,6 +464,25 @@ export const make = Effect.gen(function* () {
         })
       )
       .pipe(Effect.mapError(stored));
+  /** The ids of the connection's repositories already marked as left. */
+  const leftOf = (attempt: Loaded) =>
+    attempt.display.repositories.filter((item) => item.left === true).map((item) => item.id);
+
+  /**
+   * Every repository the installation holds, through a token minted for metadata alone that is
+   * used for nothing else and revoked after; or the mint's refusal.
+   */
+  const holding = (installationId: number) =>
+    Effect.gen(function* () {
+      const listing = yield* guarded(installationId)(
+        source.mint(installationId, { metadataOnly: true })
+      );
+      if (listing._tag !== "Minted") return listing;
+      const repositories = yield* guarded(installationId)(
+        source.installationRepositories(listing.token, maxListed)
+      ).pipe(Effect.ensuring(source.revokeInstallationToken(listing.token)));
+      return { _tag: "Holds", repositories } as const;
+    });
 
   /**
    * A mint for the connection's set, with what each refusal means. A 422 is read, not assumed:
@@ -493,20 +525,18 @@ export const make = Effect.gen(function* () {
       // A repository outside the installation, or a permission it doesn't hold: read which.
       const found = yield* read(installationId);
       if (found._tag !== "Fine") return yield* settle(attempt, found, during, by);
-      const listing = yield* guarded(installationId)(
-        source.mint(installationId, { metadataOnly: true })
-      );
-      if (listing._tag !== "Minted")
-        return yield* new Source.Unavailable({ stage: "status", upstreamStatus: listing.status });
-      const present = yield* guarded(installationId)(
-        source.installationRepositories(listing.token, maxListed)
-      ).pipe(Effect.ensuring(source.revokeInstallationToken(listing.token)));
-      const ids = new Set(present.map((item) => item.id));
-      const gone = new Set(set.filter((item) => !ids.has(item.id)).map((item) => item.id));
-      if (gone.size === 0)
+      const held = yield* holding(installationId);
+      if (held._tag !== "Holds")
+        return yield* new Source.Unavailable({ stage: "status", upstreamStatus: held.status });
+      const ids = new Set(held.repositories.map((item) => item.id));
+      const gone = set.filter((item) => !ids.has(item.id)).map((item) => item.id);
+      if (gone.length === 0)
         return yield* new Source.Unavailable({ stage: "status", upstreamStatus: 422 });
-      yield* markLeft(attempt, gone);
+      yield* markLeft(attempt, new Set([...leftOf(attempt), ...gone]));
       const reloaded = yield* load(attempt);
+      // Moved to another installation meanwhile: this attempt's slot and reading are the old one's.
+      if (reloaded.display.installationId !== installationId)
+        return yield* new Source.Unavailable({ stage: "request" });
       if (
         asked !== undefined &&
         Connection.lookup(reloaded.display, reloaded.sealed, asked.name) === undefined
@@ -518,6 +548,8 @@ export const make = Effect.gen(function* () {
       const again = yield* guarded(installationId)(
         source.mint(installationId, { repositoryIds: remaining.map((item) => item.id) })
       );
+      // The left marks stay: the complete listing showed those repositories gone, and keeping
+      // them stops the next call reconciling again. Nothing else is written, and nothing paused.
       if (again._tag !== "Minted")
         return yield* new Source.Unavailable({ stage: "status", upstreamStatus: again.status });
       yield* succeeded(reloaded);
@@ -530,19 +562,46 @@ export const make = Effect.gen(function* () {
     return (yield* now) + (yield* ContractLimits.get("integration.deadline"));
   });
 
+  /** Refuses a connection that isn't connected: what a call and a Refresh need. */
+  const connected = (loaded: Loaded) =>
+    loaded.status === "connected" ? Effect.void : Effect.fail(new NotConnected({}));
+
+  /**
+   * Runs `body` holding one of the connection's installation's slots, within `deadline`. After the
+   * wait, the connection is loaded again, so nothing works from what it was before a change; one
+   * that moved to another installation meanwhile is refused, its next call admitted under that
+   * one, and a cooldown written meanwhile refuses before anything is sent. `gate` is checked
+   * before the wait and again after it.
+   */
+  const admitted = <A, E>(
+    input: { readonly companyId: string; readonly id: string },
+    deadline: number,
+    gate: (loaded: Loaded) => Effect.Effect<void, NotConnected>,
+    body: (current: Loaded) => Effect.Effect<A, E>
+  ) =>
+    Effect.gen(function* () {
+      const first = yield* load(input);
+      yield* gate(first);
+      const installationId = first.display.installationId;
+      yield* cooling(installationId);
+      return yield* source.withSlot(
+        installationId,
+        deadline
+      )(
+        Effect.gen(function* () {
+          const current = yield* load(input);
+          yield* gate(current);
+          if (current.display.installationId !== installationId)
+            return yield* new Source.Unavailable({ stage: "request" });
+          yield* cooling(installationId);
+          return yield* body(current);
+        })
+      );
+    });
+
   const reach = Effect.fn("GithubAccess.reach")(function* (target: Target) {
-    const first = yield* load(target);
-    if (first.status !== "connected") return yield* new NotConnected({});
-    const installationId = first.display.installationId;
-    yield* cooling(installationId);
-    return yield* source.withSlot(
-      installationId,
-      target.deadline
-    )(
+    return yield* admitted(target, target.deadline, connected, (current) =>
       Effect.gen(function* () {
-        // Reloaded after the wait for a slot: a token from before a change is never used.
-        const current = yield* load(target);
-        if (current.status !== "connected") return yield* new NotConnected({});
         const asked = Connection.lookup(current.display, current.sealed, target.repository);
         if (asked === undefined)
           return yield* new Connection.RepositoryNotFound({ repository: target.repository });
@@ -562,7 +621,7 @@ export const make = Effect.gen(function* () {
         return {
           connectionId: current.id,
           credentialRevision: minted.attempt.credentialRevision,
-          installationId,
+          installationId: minted.attempt.display.installationId,
           repositoryId: repository.id,
           token: minted.token,
           fresh: true
@@ -577,27 +636,55 @@ export const make = Effect.gen(function* () {
       if (tokens.get(key)?.reach.token === reach.token) tokens.delete(key);
     });
 
+  /**
+   * Resume's discovery before its check: which of the set's repositories the installation holds
+   * now, marking those it doesn't as left and those back as not, so a paused connection whose
+   * repositories all left and came back can be resumed. The connection as it then stands. With
+   * nothing marked left, nothing can be back, and the mint's own 422 finds any newly gone.
+   */
+  const rediscovered = (attempt: Loaded, by: string) =>
+    Effect.gen(function* () {
+      const before = leftOf(attempt);
+      if (before.length === 0) return attempt;
+      const installationId = attempt.display.installationId;
+      const held = yield* holding(installationId);
+      if (held._tag !== "Holds")
+        return held.status === 404
+          ? yield* settle(attempt, { _tag: "Gone" }, "reconnect", by)
+          : yield* new Source.Unavailable({ stage: "status", upstreamStatus: held.status });
+      const ids = new Set(held.repositories.map((item) => item.id));
+      const left = attempt.display.repositories
+        .filter((item) => !ids.has(item.id))
+        .map((item) => item.id);
+      if (left.length === before.length && left.every((id) => before.includes(id))) return attempt;
+      yield* markLeft(attempt, new Set(left));
+      const reloaded = yield* load(attempt);
+      if (reloaded.display.installationId !== installationId)
+        return yield* new Source.Unavailable({ stage: "request" });
+      return reloaded;
+    });
+
   const check = Effect.fn("GithubAccess.check")(function* (
     input: { readonly companyId: string; readonly id: string },
     during: "test" | "reconnect",
     by: string
   ) {
-    const attempt = yield* load(input);
-    const installationId = attempt.display.installationId;
-    yield* cooling(installationId);
-    return yield* source.withSlot(
-      installationId,
-      yield* adminDeadline
-    )(
-      Effect.gen(function* () {
-        const found = yield* read(installationId);
-        if (found._tag !== "Fine") return yield* settle(attempt, found, during, by);
-        return (yield* mintFor(attempt, during, undefined, by).pipe(
-          Effect.catchTag("GithubRepositoryNotFound", () =>
-            Effect.fail(new Source.Unavailable({ stage: "status", upstreamStatus: 422 }))
-          )
-        )).attempt;
-      })
+    return yield* admitted(
+      input,
+      yield* adminDeadline,
+      () => Effect.void,
+      (current) =>
+        Effect.gen(function* () {
+          const installationId = current.display.installationId;
+          const found = yield* read(installationId);
+          if (found._tag !== "Fine") return yield* settle(current, found, during, by);
+          const attempt = during === "reconnect" ? yield* rediscovered(current, by) : current;
+          return (yield* mintFor(attempt, during, undefined, by).pipe(
+            Effect.catchTag("GithubRepositoryNotFound", () =>
+              Effect.fail(new Source.Unavailable({ stage: "status", upstreamStatus: 422 }))
+            )
+          )).attempt;
+        })
     );
   });
 
@@ -605,29 +692,19 @@ export const make = Effect.gen(function* () {
     input: { readonly companyId: string; readonly id: string },
     by: string
   ) {
-    const attempt = yield* load(input);
-    if (attempt.status !== "connected") return yield* new NotConnected({});
-    const installationId = attempt.display.installationId;
-    yield* cooling(installationId);
-    return yield* source.withSlot(
-      installationId,
-      yield* adminDeadline
-    )(
+    return yield* admitted(input, yield* adminDeadline, connected, (current) =>
       Effect.gen(function* () {
+        const installationId = current.display.installationId;
         const found = yield* read(installationId);
-        if (found._tag !== "Fine") return yield* settle(attempt, found, "refresh", by);
-        const listing = yield* guarded(installationId)(
-          source.mint(installationId, { metadataOnly: true })
-        );
-        if (listing._tag === "Refused" && listing.status === 404)
-          return yield* settle(attempt, { _tag: "Gone" }, "refresh", by);
-        if (listing._tag !== "Minted")
-          return yield* new Source.Unavailable({ stage: "status", upstreamStatus: listing.status });
-        const present = yield* guarded(installationId)(
-          source.installationRepositories(listing.token, maxListed)
-        ).pipe(Effect.ensuring(source.revokeInstallationToken(listing.token)));
-        const byId = new Map(present.map((item) => [item.id, item] as const));
-        const repositories = attempt.display.repositories.map((item): GithubRepository => {
+        if (found._tag !== "Fine") return yield* settle(current, found, "refresh", by);
+        const held = yield* holding(installationId);
+        if (held._tag !== "Holds")
+          return held.status === 404
+            ? yield* settle(current, { _tag: "Gone" }, "refresh", by)
+            : yield* new Source.Unavailable({ stage: "status", upstreamStatus: held.status });
+        yield* clearSuspended(installationId);
+        const byId = new Map(held.repositories.map((item) => [item.id, item] as const));
+        const repositories = current.display.repositories.map((item): GithubRepository => {
           const found = byId.get(item.id);
           return found === undefined
             ? {
@@ -648,7 +725,7 @@ export const make = Effect.gen(function* () {
                 disabled: found.disabled
               };
         });
-        return { loaded: attempt, repositories };
+        return { loaded: current, repositories };
       })
     );
   });
@@ -658,16 +735,19 @@ export const make = Effect.gen(function* () {
     repositoryIds: ReadonlyArray<number>,
     login: string
   ) {
-    yield* cooling(installationId).pipe(
+    // A cooldown is refused before the wait for a slot, and again after it.
+    const cooled = cooling(installationId).pipe(
       Effect.catchTag("GithubStorageFailed", (cause) =>
         Effect.fail(new Source.Unavailable({ stage: "request", cause: Redacted.make(cause) }))
       )
     );
+    yield* cooled;
     return yield* source.withSlot(
       installationId,
       yield* adminDeadline
     )(
       Effect.gen(function* () {
+        yield* cooled;
         const found = yield* guarded(installationId)(source.installation(installationId));
         if (Option.isNone(found)) return yield* new Connection.InstallationGone({ account: login });
         const installation = found.value;
@@ -711,6 +791,7 @@ export const make = Effect.gen(function* () {
             disabled: item.disabled
           });
         }
+        yield* clearSuspended(installationId);
         return { installation, account, repositories } satisfies Inspected;
       })
     );

@@ -81,16 +81,20 @@ export const world = () => {
   >();
   const revoked: Array<string> = [];
   const requests: Array<Request> = [];
-  const answerAsWorld: (request: Request) => Response | Promise<Response> | undefined = () =>
-    undefined;
+  const answerAsWorld: (
+    request: Request
+  ) => Response | Promise<Response | undefined> | undefined = () => undefined;
   const state = {
     keyDeleted: false,
     /**
      * Answers before anything else, such as a limit answer, or a refusal held until a test lets
-     * it go; undefined lets the world answer.
+     * it go; undefined lets the world answer, and a promise of undefined holds the request until
+     * it settles, then lets the world answer it.
      */
     override: answerAsWorld,
-    minted: 0
+    minted: 0,
+    /** Calls that asked for GitHub's slots, counted as each begins to wait for them. */
+    admissions: 0
   };
   let serial = 0;
 
@@ -150,7 +154,10 @@ export const world = () => {
   const handle = (request: Request): Response | Promise<Response> => {
     requests.push(request);
     const early = state.override(request);
-    if (early !== undefined) return early;
+    if (early === undefined) return answer(request);
+    return Promise.resolve(early).then((held) => held ?? answer(request));
+  };
+  const answer = (request: Request): Response => {
     const { url, method } = request;
     const bearer = request.authorization?.replace(/^Bearer /, "") ?? "";
     if (url.origin === Source.WEB_URL && url.pathname === "/login/oauth/access_token") {
@@ -188,14 +195,13 @@ export const world = () => {
       const who = login === undefined ? undefined : people.get(login);
       if (who === undefined) return message(401, "Bad credentials");
       if (path === "/user") return json(200, { id: who.id, login: who.login });
-      if (path === "/user/installations")
-        return json(200, {
-          total_count: who.sees.size,
-          installations: [...who.sees].flatMap((id) => {
-            const found = installations.get(id);
-            return found === undefined ? [] : [installationBody(found)];
-          })
+      if (path === "/user/installations") {
+        const seen = [...who.sees].flatMap((id) => {
+          const found = installations.get(id);
+          return found === undefined ? [] : [installationBody(found)];
         });
+        return json(200, { total_count: seen.length, installations: page(seen, url) });
+      }
       const match = /^\/user\/installations\/(\d+)\/repositories$/.exec(path);
       const found = match === null ? undefined : installations.get(Number(match[1]));
       if (found === undefined || !who.sees.has(found.id)) return message(404, "Not Found");
@@ -281,14 +287,33 @@ export const world = () => {
       return HttpClientResponse.fromWeb(request, answer);
     })
   );
-  /** The production source, seam and flows, configured with `app`, over this world. */
-  const layer = Layer.mergeAll(Access.layer, Flows.layer).pipe(
-    Layer.provideMerge(
-      Layer.effect(Source.Source, Source.makeWith(Option.some(app))).pipe(
-        Layer.provide(Layer.succeed(HttpClient.HttpClient, http))
-      )
+  /**
+   * The production source, seam and flows, configured with `app`, over this world. Each call for
+   * slots is counted in `state.admissions` first, so a test can tell one has begun to wait.
+   */
+  const source = Layer.effect(
+    Source.Source,
+    Effect.map(Source.makeWith(Option.some(app)), (made) =>
+      Source.Source.of({
+        ...made,
+        withSlot:
+          (installationId: number, deadline: number) =>
+          <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+            Effect.suspend(() => {
+              state.admissions++;
+              return made.withSlot(installationId, deadline)(effect);
+            }),
+        withHost:
+          (deadline: number) =>
+          <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+            Effect.suspend(() => {
+              state.admissions++;
+              return made.withHost(deadline)(effect);
+            })
+      })
     )
-  );
+  ).pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, http)));
+  const layer = Layer.mergeAll(Access.layer, Flows.layer).pipe(Layer.provideMerge(source));
   return {
     installations,
     people,

@@ -2,9 +2,11 @@ import { assert, it } from "@effect/vitest";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { Companies, Teams, Users } from "@patchy/companies";
 import { NodeCryptography } from "@patchy/core";
+import { registry } from "@patchy/limits/registry";
 import { RuntimeLog } from "@patchy/runtime";
 import * as Testing from "@patchy/sql/testing";
 import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -13,7 +15,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
-import type * as ConnectionStore from "../ConnectionStore.js";
+import * as ConnectionStore from "../ConnectionStore.js";
 import * as CredentialKeys from "../CredentialKeys.js";
 import * as AttioSource from "../attio/Source.js";
 import * as PidgeonSource from "../pidgeon/Source.js";
@@ -26,6 +28,7 @@ import * as PatchVisibilityTest from "../test/patchVisibility.js";
 import * as Access from "./Access.js";
 import * as Connection from "./Connection.js";
 import * as Flows from "./Flows.js";
+import * as Page from "./Page.js";
 import * as Source from "./Source.js";
 
 /**
@@ -179,6 +182,79 @@ const reach = (id: string, repository: string, who: Admin = admin) =>
     });
   });
 
+/** The admin's signed-in token, as their live flow holds it. */
+const signedInToken = (flow: Option.Option<Flows.Flow>) =>
+  Redacted.value(Option.getOrThrow(Option.getOrThrow(flow).signedIn).token);
+
+/** Waits, in real time, until `done` holds. */
+const until = (done: () => boolean) =>
+  Effect.gen(function* () {
+    while (!done()) yield* TestClock.withLive(Effect.sleep("5 millis"));
+  });
+const isExchange = (request: GithubDouble.Request) =>
+  request.url.pathname === "/login/oauth/access_token";
+const isMint = (request: GithubDouble.Request) => request.url.pathname.endsWith("/access_tokens");
+
+/** Holds the first request `matches` accepts until `release`, then lets the world answer it. */
+const holdFirst = (world: World, matches: (request: GithubDouble.Request) => boolean) => {
+  let release = () => {};
+  const held = new Promise<undefined>((resolve) => {
+    release = () => resolve(undefined);
+  });
+  let armed = true;
+  world.state.override = (request) => {
+    if (!armed || !matches(request)) return undefined;
+    armed = false;
+    return held;
+  };
+  return {
+    /** Until the held request has been sent. */
+    sent: until(() => world.requests.some(matches)),
+    release: Effect.sync(() => release())
+  };
+};
+
+/**
+ * Holds every one of the installation's slots in this process. `queued` waits until another call
+ * has begun waiting for one; `release` lets them all go.
+ */
+const occupy = Effect.fn("test.occupy")(function* (world: World, installationId: number) {
+  const source = yield* Source.Source;
+  const go = yield* Deferred.make<void>();
+  const deadline = (yield* Clock.currentTimeMillis) + 60_000;
+  const holders: Array<Fiber.Fiber<void, Source.Busy | Source.Timeout>> = [];
+  for (let slot = 0; slot < registry["github.calls.concurrent"].default; slot++) {
+    const entered = yield* Deferred.make<void>();
+    holders.push(
+      yield* source
+        .withSlot(
+          installationId,
+          deadline
+        )(Effect.andThen(Deferred.succeed(entered, undefined), Deferred.await(go)))
+        .pipe(Effect.forkChild)
+    );
+    yield* Deferred.await(entered);
+  }
+  const admitted = world.state.admissions;
+  return {
+    queued: until(() => world.state.admissions > admitted),
+    release: Effect.andThen(
+      Deferred.succeed(go, undefined),
+      Effect.forEach(holders, Fiber.join, { discard: true })
+    )
+  };
+});
+
+/** Moves the test clock a second at a time until `fiber` ends, and joins it. */
+const settled = <A, E>(fiber: Fiber.Fiber<A, E>) =>
+  Effect.gen(function* () {
+    while (fiber.pollUnsafe() === undefined) {
+      yield* TestClock.adjust("1 second");
+      yield* TestClock.withLive(Effect.sleep("2 millis"));
+    }
+    return yield* Fiber.join(fiber);
+  });
+
 const claims = Effect.fn("test.claims")(function* (installationId: number) {
   const sql = yield* SqlClient.SqlClient;
   return (yield* sql<{ readonly companyId: string }>`SELECT company_id AS "companyId"
@@ -201,7 +277,10 @@ it.layer(services)("GitHub connections", (it) => {
         // docs says nothing of her permissions, and the other type's account isn't offered.
         const listed = yield* flows.listing(signedIn.token);
         assert.deepStrictEqual(
-          listed.map((item) => [item.account.login, item.repositories.map((repo) => repo.name)]),
+          listed.accounts.map((item) => [
+            item.account.login,
+            item.repositories.map((repo) => repo.name)
+          ]),
           [
             ["northwind-labs", ["api", "web"]],
             ["mira-okafor", ["dotfiles"]]
@@ -236,11 +315,21 @@ it.layer(services)("GitHub connections", (it) => {
         assert.isTrue(Option.isNone(yield* flows.current(admin)));
         assert.include(world.revoked, Redacted.value(signedIn.token));
         assert.deepStrictEqual(yield* claims(ids.org), [admin.companyId]);
+        // The installation and repository ids are sealed: not in the clear, and the keyring opens them.
         const [row] = yield* sql<{
           readonly credentials: string;
-        }>`SELECT credentials FROM connections
-          WHERE id = ${connection.id}`;
-        assert.notInclude(row!.credentials, "ids.org");
+          readonly keyId: string;
+        }>`SELECT credentials, key_id AS "keyId" FROM connections WHERE id = ${connection.id}`;
+        for (const plain of ["installationId", "repositoryIds"])
+          assert.notInclude(row!.credentials, plain);
+        const opened = yield* (yield* CredentialKeys.CredentialKeys).decrypt(
+          { companyId: admin.companyId, id: connection.id, integration: "github" },
+          row!
+        );
+        assert.deepStrictEqual(yield* Connection.parseCredentials(opened), {
+          installationId: ids.org,
+          repositoryIds: [11, 12]
+        });
       })
     )
   );
@@ -274,6 +363,17 @@ it.layer(services)("GitHub connections", (it) => {
         assert.instanceOf(yield* refused([[ids.odd, 31]]), Connection.AccountType);
         // A person GitHub shows reading but not administering.
         yield* signIn(world, admin, "theo");
+        assert.instanceOf(yield* refused([[ids.org, 12]]), Connection.NotAdmin);
+        // Listed as an admin, but no longer by the time they submit: the submit's read decides.
+        yield* signIn(world, admin, "mira");
+        const flows = yield* Flows.Flows;
+        const listed = yield* flows.listing(
+          Redacted.make(signedInToken(yield* flows.current(admin)))
+        );
+        assert.isTrue(
+          listed.accounts.some((account) => account.repositories.some((repo) => repo.id === 12))
+        );
+        world.people.get("mira")!.admin.delete(12);
         assert.instanceOf(yield* refused([[ids.org, 12]]), Connection.NotAdmin);
         const sql = yield* SqlClient.SqlClient;
         assert.lengthOf(
@@ -323,6 +423,26 @@ it.layer(services)("GitHub connections", (it) => {
         );
         assert.instanceOf(failed, Source.SignInFailed);
         assert.strictEqual(failed.error, "bad_verification_code");
+        assert.isTrue(Option.isNone(Option.getOrThrow(yield* flows.current(admin)).signedIn));
+        // A body carrying a token and an error is refused too: only a token with no error signs in.
+        const third = yield* flows.start({
+          ...admin,
+          purpose: "connect",
+          connectionId: null,
+          redirectUri,
+          selectAccount: false
+        });
+        world.state.override = (request) =>
+          isExchange(request)
+            ? new Response(
+                JSON.stringify({ access_token: "ghu_mixed", error: "bad_verification_code" }),
+                { status: 200, headers: { "content-type": "application/json" } }
+              )
+            : undefined;
+        const mixed = yield* Effect.flip(
+          flows.callback({ ...admin, ...world.authorize("mira", third), redirectUri })
+        );
+        assert.instanceOf(mixed, Source.SignInFailed);
         assert.isTrue(Option.isNone(Option.getOrThrow(yield* flows.current(admin)).signedIn));
       })
     )
@@ -465,7 +585,7 @@ it.layer(services)("GitHub connections", (it) => {
   );
 
   it.effect(
-    "a repository gone from the installation is marked left, and refused before GitHub",
+    "a repository taken out of the installation is marked left, refused before GitHub, and found again by Refresh",
     () =>
       within(({ github: world, org, ids }) =>
         Effect.gen(function* () {
@@ -475,7 +595,7 @@ it.layer(services)("GitHub connections", (it) => {
             [ids.org, 11],
             [ids.org, 12]
           ]);
-          // Taken out of the installation, transferred or made private outside it: the mint answers 422.
+          // Taken out of the installation: the mint for the set answers 422.
           org.repositories = org.repositories.filter((repo) => repo.id !== 12);
           assert.instanceOf(
             yield* Effect.flip(reach(connection.id, "web")),
@@ -527,6 +647,13 @@ it.layer(services)("GitHub connections", (it) => {
         assert.isNotNull(seen.suspendedAt);
         org.suspended = false;
         yield* reach(connection.id, "api");
+        assert.isNull(github(yield* store.get(admin.companyId, connection.id)).suspendedAt);
+        // A Refresh that reads the installation again after it's unsuspended says so too.
+        org.suspended = true;
+        yield* Effect.flip(store.refresh({ ...admin, id: connection.id }));
+        assert.isNotNull(github(yield* store.get(admin.companyId, connection.id)).suspendedAt);
+        org.suspended = false;
+        yield* store.refresh({ ...admin, id: connection.id });
         assert.isNull(github(yield* store.get(admin.companyId, connection.id)).suspendedAt);
       })
     )
@@ -708,5 +835,393 @@ it.layer(services)("GitHub connections", (it) => {
         assert.instanceOf(yield* Effect.flip(change([], [])), Connection.LastRepository);
       })
     )
+  );
+
+  it.effect(
+    "a return from before a restart neither replaces the newer sign-in nor keeps its token",
+    () =>
+      within(({ github: world }) =>
+        Effect.gen(function* () {
+          const flows = yield* Flows.Flows;
+          const url = yield* flows.start({
+            ...admin,
+            purpose: "connect",
+            connectionId: null,
+            redirectUri,
+            selectAccount: false
+          });
+          const exchange = holdFirst(world, isExchange);
+          const slow = yield* flows
+            .callback({ ...admin, ...world.authorize("mira", url), redirectUri })
+            .pipe(Effect.flip, Effect.forkChild);
+          yield* exchange.sent;
+          // The setup URL's return starts a newer request on the same flow, which comes back first.
+          const restarted = Option.getOrThrow(yield* flows.restart({ ...admin, redirectUri }));
+          yield* flows.callback({ ...admin, ...world.authorize("mira", restarted), redirectUri });
+          const newer = signedInToken(yield* flows.current(admin));
+          yield* exchange.release;
+          assert.instanceOf(yield* Fiber.join(slow), Connection.SignInRequired);
+          assert.strictEqual(signedInToken(yield* flows.current(admin)), newer);
+          assert.notInclude(world.revoked, newer);
+          assert.isTrue(world.revoked.some((token) => token.startsWith("ghu_") && token !== newer));
+        })
+      )
+  );
+
+  it.effect(
+    "a token no flow takes is revoked, even when its return is interrupted; so is an expired flow's",
+    () =>
+      within(({ github: world }) =>
+        Effect.gen(function* () {
+          const flows = yield* Flows.Flows;
+          const url = yield* flows.start({
+            ...admin,
+            purpose: "connect",
+            connectionId: null,
+            redirectUri,
+            selectAccount: false
+          });
+          const isUser = (request: GithubDouble.Request) => request.url.pathname === "/user";
+          const user = holdFirst(world, isUser);
+          const back = yield* flows
+            .callback({ ...admin, ...world.authorize("mira", url), redirectUri })
+            .pipe(Effect.forkChild);
+          // Exchanged, and the request for who it is still out: the return is interrupted.
+          yield* user.sent;
+          yield* Fiber.interrupt(back);
+          const token = world.requests.find(isUser)!.authorization!.replace(/^Bearer /, "");
+          assert.include(world.revoked, token);
+          assert.isTrue(Option.isNone(Option.getOrThrow(yield* flows.current(admin)).signedIn));
+          yield* user.release;
+          // A flow that expires is swept, and the token it held then revoked.
+          yield* signIn(world, admin, "mira");
+          const held = signedInToken(yield* flows.current(admin));
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`UPDATE github_flows SET expires_at = now() - interval '1 second'
+          WHERE company_id = ${admin.companyId} AND user_id = ${admin.userId}`;
+          yield* flows.sweep;
+          assert.include(world.revoked, held);
+        })
+      )
+  );
+
+  it.effect(
+    "a save revokes the token its flow holds then, though a newer return replaced the one it read",
+    () =>
+      within(({ github: world, ids }) =>
+        Effect.gen(function* () {
+          const store = yield* SqlConnectionStore.make;
+          const flows = yield* Flows.Flows;
+          yield* signIn(world, admin, "mira");
+          const mint = holdFirst(world, isMint);
+          const saving = yield* connect(store, admin, "resigned", [[ids.org, 11]]).pipe(
+            Effect.forkChild
+          );
+          // Verified with the first token; while the save checks the installation, the admin signs
+          // in again on the same flow through the setup URL.
+          yield* mint.sent;
+          const restarted = Option.getOrThrow(yield* flows.restart({ ...admin, redirectUri }));
+          yield* flows.callback({ ...admin, ...world.authorize("mira", restarted), redirectUri });
+          const newer = signedInToken(yield* flows.current(admin));
+          yield* mint.release;
+          yield* Fiber.join(saving);
+          assert.include(world.revoked, newer);
+        })
+      )
+  );
+
+  it.effect("a personal account's exemption on Add and Reconnect is its own user's alone", () =>
+    within(({ github: world, ids }) =>
+      Effect.gen(function* () {
+        const store = yield* SqlConnectionStore.make;
+        const personal = world.installations.get(ids.personal)!;
+        personal.repositories.push({ id: 22, name: "notes" });
+        world.people.get("mira")!.admin.add(22);
+        // Someone GitHub shows administering the account's repositories, who isn't the account.
+        world.person("kai", {
+          id: 7003,
+          login: "kai-osei",
+          sees: new Set([ids.personal]),
+          admin: new Set([21, 22])
+        });
+        const second = yield* company("ghexempt");
+        yield* signIn(world, admin, "mira");
+        const mine = yield* connect(store, admin, "exempt", [[ids.personal, 21]]);
+        yield* signIn(world, second, "mira");
+        const theirs = yield* connect(store, second, "exempt", [[ids.personal, 21]]);
+        const add = () =>
+          store.rotate({
+            ...second,
+            id: theirs.id,
+            credentials: Connection.change({
+              action: "repositories",
+              keep: [21],
+              add: [{ installationId: ids.personal, id: 22 }]
+            })
+          });
+        yield* signIn(world, second, "kai", "add", theirs.id);
+        assert.instanceOf(yield* Effect.flip(add()), Connection.InstallationClaimed);
+        yield* signIn(world, second, "mira", "add", theirs.id);
+        yield* add();
+        // Reinstalled: a new installation on the account, which the first company claims first.
+        world.installations.delete(ids.personal);
+        world.add({ ...personal, id: ids.reinstalled });
+        world.people.get("mira")!.sees.add(ids.reinstalled);
+        world.people.get("kai")!.sees.add(ids.reinstalled);
+        const reconnect = (who: Admin, id: string) =>
+          store.rotate({ ...who, id, credentials: Connection.change({ action: "reconnect" }) });
+        yield* signIn(world, admin, "mira", "reconnect", mine.id);
+        yield* reconnect(admin, mine.id);
+        yield* signIn(world, second, "kai", "reconnect", theirs.id);
+        assert.instanceOf(
+          yield* Effect.flip(reconnect(second, theirs.id)),
+          Connection.InstallationClaimed
+        );
+        yield* signIn(world, second, "mira", "reconnect", theirs.id);
+        yield* reconnect(second, theirs.id);
+        assert.deepStrictEqual(
+          yield* claims(ids.reinstalled),
+          [admin.companyId, second.companyId].sort()
+        );
+      })
+    )
+  );
+
+  it.effect(
+    "Disconnect refuses a connection a Reconnect moved after it looked, and frees nothing",
+    () =>
+      within(({ github: world, ids }) =>
+        Effect.gen(function* () {
+          const store = yield* SqlConnectionStore.make;
+          const sql = yield* SqlClient.SqlClient;
+          yield* signIn(world, admin, "mira");
+          const connection = yield* connect(store, admin, "moved", [[ids.org, 11]]);
+          const locked = yield* Deferred.make<void>();
+          const go = yield* Deferred.make<void>();
+          // A Reconnect holds the connection's row, and moves it once Disconnect is waiting for it.
+          const reconnect = yield* sql
+            .withTransaction(
+              Effect.gen(function* () {
+                yield* sql`SELECT 1 FROM connections WHERE id = ${connection.id} FOR UPDATE`;
+                yield* Deferred.succeed(locked, undefined);
+                yield* Deferred.await(go);
+                yield* sql`UPDATE connections SET display = jsonb_set(display, '{installationId}',
+                to_jsonb(${ids.reinstalled}::int)) WHERE id = ${connection.id}`;
+              })
+            )
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(locked);
+          const disconnect = yield* Effect.flip(store.delete({ ...admin, id: connection.id })).pipe(
+            Effect.forkChild
+          );
+          let waiting = 0;
+          while (waiting === 0) {
+            yield* TestClock.withLive(Effect.sleep("5 millis"));
+            const [row] = yield* sql<{ readonly waiting: number }>`SELECT count(*)::int AS waiting
+            FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`;
+            waiting = row?.waiting ?? 0;
+          }
+          yield* Deferred.succeed(go, undefined);
+          yield* Fiber.join(reconnect);
+          assert.instanceOf(yield* Fiber.join(disconnect), ConnectionStore.ConnectionChanged);
+          assert.deepStrictEqual(yield* claims(ids.org), [admin.companyId]);
+          // Tried again, it locks the installation the connection names now.
+          yield* store.delete({ ...admin, id: connection.id });
+        })
+      )
+  );
+
+  it.effect(
+    "a call that waited for a slot is refused by a cooldown written meanwhile, without asking GitHub",
+    () =>
+      within(({ github: world, ids }) =>
+        Effect.gen(function* () {
+          const store = yield* SqlConnectionStore.make;
+          const access = yield* Access.Access;
+          yield* signIn(world, admin, "mira");
+          const connection = yield* connect(store, admin, "queued", [[ids.org, 11]]);
+          const full = yield* occupy(world, ids.org);
+          const call = yield* Effect.flip(reach(connection.id, "api")).pipe(Effect.forkChild);
+          yield* full.queued;
+          yield* access.cooldown(ids.org, (yield* Clock.currentTimeMillis) + 60_000);
+          const before = world.requests.length;
+          yield* full.release;
+          assert.instanceOf(yield* Fiber.join(call), Source.RateLimited);
+          assert.strictEqual(world.requests.length, before);
+        })
+      )
+  );
+
+  it.effect(
+    "a call whose connection moved to another installation while it waited is refused",
+    () =>
+      within(({ github: world, org, ids }) =>
+        Effect.gen(function* () {
+          const store = yield* SqlConnectionStore.make;
+          const sql = yield* SqlClient.SqlClient;
+          yield* signIn(world, admin, "mira");
+          const connection = yield* connect(store, admin, "rehomed", [[ids.org, 11]]);
+          world.add({ ...org, id: ids.reinstalled });
+          const full = yield* occupy(world, ids.org);
+          const call = yield* Effect.flip(reach(connection.id, "api")).pipe(Effect.forkChild);
+          yield* full.queued;
+          // A Reconnect moves it to the account's new installation meanwhile.
+          yield* sql`UPDATE connections SET credential_revision = credential_revision + 1,
+            display = jsonb_set(display, '{installationId}', to_jsonb(${ids.reinstalled}::int))
+          WHERE id = ${connection.id}`;
+          const before = world.requests.length;
+          yield* full.release;
+          assert.instanceOf(yield* Fiber.join(call), Source.Unavailable);
+          assert.strictEqual(world.requests.length, before);
+          // The next call is admitted under the installation it names now.
+          assert.strictEqual((yield* reach(connection.id, "api")).installationId, ids.reinstalled);
+        })
+      )
+  );
+
+  it.effect("a refused replacement mint answers unavailable, and the left marks stay", () =>
+    within(({ github: world, org, ids }) =>
+      Effect.gen(function* () {
+        const store = yield* SqlConnectionStore.make;
+        yield* signIn(world, admin, "mira");
+        const connection = yield* connect(store, admin, "replaced", [
+          [ids.org, 11],
+          [ids.org, 12]
+        ]);
+        org.repositories = org.repositories.filter((repo) => repo.id !== 12);
+        // The first mint for the set is GitHub's own 422; the one for what remains is refused too.
+        let mints = 0;
+        world.state.override = (request) =>
+          isMint(request) && request.body.includes("repository_ids") && ++mints === 2
+            ? new Response(JSON.stringify({ message: "Unprocessable" }), { status: 422 })
+            : undefined;
+        assert.instanceOf(yield* Effect.flip(reach(connection.id, "api")), Source.Unavailable);
+        const after = github(yield* store.get(admin.companyId, connection.id));
+        assert.strictEqual(after.status, "connected");
+        assert.deepStrictEqual(
+          after.display.repositories.map((repo) => [repo.name, repo.left === true]),
+          [
+            ["api", false],
+            ["web", true]
+          ]
+        );
+      })
+    )
+  );
+
+  it.effect("Resume finds repositories that came back, though every one had left", () =>
+    within(({ github: world, org, ids }) =>
+      Effect.gen(function* () {
+        const store = yield* SqlConnectionStore.make;
+        yield* signIn(world, admin, "mira");
+        const connection = yield* connect(store, admin, "returning", [[ids.org, 12]]);
+        const web = org.repositories.find((repo) => repo.id === 12)!;
+        org.repositories = org.repositories.filter((repo) => repo.id !== 12);
+        assert.instanceOf(
+          yield* Effect.flip(reach(connection.id, "web")),
+          Connection.RepositoryNotFound
+        );
+        yield* store.disconnect({ ...admin, id: connection.id });
+        // Put back on GitHub; Refresh refuses a paused connection, and Resume reads it again first.
+        org.repositories.push(web);
+        const resumed = github(yield* store.reconnect({ ...admin, id: connection.id }));
+        assert.strictEqual(resumed.status, "connected");
+        assert.isFalse(resumed.display.repositories.some((repo) => repo.left === true));
+        assert.strictEqual((yield* reach(connection.id, "web")).repositoryId, 12);
+      })
+    )
+  );
+
+  it.effect("a slot's one deadline bounds all the work it holds, however many steps", () =>
+    within(() =>
+      Effect.gen(function* () {
+        const source = yield* Source.Source;
+        const start = yield* Clock.currentTimeMillis;
+        // Two steps, each within the deadline alone, but not together.
+        const held = yield* source
+          .withSlot(
+            1,
+            start + 15_000
+          )(Effect.forEach([1, 2], () => Effect.sleep("10 seconds"), { discard: true }))
+          .pipe(Effect.flip, Effect.forkChild);
+        assert.instanceOf(yield* settled(held), Source.Timeout);
+        assert.isAtMost((yield* Clock.currentTimeMillis) - start, 16_000);
+      })
+    )
+  );
+
+  it.effect("a person's own reads wait their turn in GitHub's host-wide slots", () =>
+    within(({ github: world }) =>
+      Effect.gen(function* () {
+        const flows = yield* Flows.Flows;
+        const source = yield* Source.Source;
+        yield* signIn(world, admin, "mira");
+        const token = Redacted.make(signedInToken(yield* flows.current(admin)));
+        const go = yield* Deferred.make<void>();
+        const deadline = (yield* Clock.currentTimeMillis) + 60_000;
+        // Every one of GitHub's slots in this process is held, each through its own installation.
+        for (let slot = 0; slot < registry["github.host.concurrent"].default; slot++) {
+          const entered = yield* Deferred.make<void>();
+          yield* source
+            .withSlot(
+              90_000 + slot,
+              deadline
+            )(Effect.andThen(Deferred.succeed(entered, undefined), Deferred.await(go)))
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(entered);
+        }
+        const before = world.requests.length;
+        const listing = yield* flows.listing(token).pipe(Effect.flip, Effect.forkChild);
+        const refused = yield* settled(listing);
+        assert.instanceOf(refused, Source.Busy);
+        assert.strictEqual(refused.limitId, "github.host.concurrent");
+        assert.strictEqual(world.requests.length, before);
+        yield* Deferred.succeed(go, undefined);
+      })
+    )
+  );
+
+  it.effect(
+    "the listing pages through installations to its bound, and says when there were more",
+    () =>
+      within(({ github: world, ids }) =>
+        Effect.gen(function* () {
+          const flows = yield* Flows.Flows;
+          const bound = registry["github.picker.installations"].default;
+          const many = Array.from({ length: bound + 1 }, (_, at) => ids.org + 100 + at);
+          for (const [at, id] of many.entries())
+            world.add({
+              id,
+              account: { id: 60_000 + at, login: `account-${at}`, type: "Organization" },
+              repositories: at === 0 ? [{ id: 41, name: "first" }] : []
+            });
+          world.person("wide", {
+            id: 7004,
+            login: "wide-reach",
+            sees: new Set(many),
+            admin: new Set([41])
+          });
+          yield* signIn(world, admin, "wide");
+          const listed = yield* flows.listing(
+            Redacted.make(signedInToken(yield* flows.current(admin)))
+          );
+          assert.lengthOf(listed.accounts, bound);
+          assert.isFalse(listed.complete);
+          const page = Page.connectSpec({
+            signIn: {
+              kind: "signed-in",
+              login: "wide-reach",
+              listed,
+              installUrl: "https://github.com"
+            },
+            query: "",
+            chosen: []
+          });
+          assert.include(
+            page.choose?.({})[0]?.body ?? "",
+            `Showing what you administer on the first ${bound} accounts GitHub listed for you.`
+          );
+        })
+      )
   );
 });

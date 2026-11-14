@@ -1,8 +1,10 @@
 import { type GithubAccount } from "@patchy/api";
 import { Cryptography } from "@patchy/core";
 import { ContractLimits } from "@patchy/limits";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
@@ -20,8 +22,10 @@ import * as Source from "./Source.js";
  * the admin, a hashed nonce, a PKCE verifier and when it expires, and once GitHub signs them in,
  * who they are there and their token, sealed. Identity comes only from an authorization Patchy
  * started: every request carries a fresh nonce as `state` and an S256 challenge, and its return
- * consumes the nonce once, so a replay on any host finds nothing. The token never leaves the row;
- * the row goes when the connection saves or it expires, and the token is revoked at GitHub then.
+ * consumes the nonce once, so a replay on any host finds nothing. Only the return of the row's
+ * newest request seals its token there. The token never leaves the row; the row goes when the
+ * connection saves or it expires, and the token it held then is revoked at GitHub. A token no row
+ * takes is revoked at once.
  */
 
 export type Purpose = "connect" | "add" | "reconnect";
@@ -50,11 +54,24 @@ export interface Listed {
   readonly complete: boolean;
 }
 
+/** What the person administers, by account; `complete` is false when they see more installations than Patchy reads. */
+export interface Listing {
+  readonly accounts: ReadonlyArray<Listed>;
+  readonly complete: boolean;
+}
+
 /** The repositories submitted, as GitHub shows them to this person now. */
 export interface Verified {
   readonly installationId: number;
   readonly account: GithubAccount;
   readonly repositories: ReadonlyArray<Source.Repository>;
+}
+
+/** A flow row's token, sealed, as the statement that deleted or replaced it returned it. */
+export interface Held {
+  readonly id: string;
+  readonly token: string | null;
+  readonly keyId: string | null;
 }
 
 const FlowRow = Schema.Struct({
@@ -121,12 +138,14 @@ export class Flows extends Context.Service<
       readonly userId: string;
     }) => Effect.Effect<Option.Option<Flow>, Access.StorageFailed>;
     /**
-     * The installations of the App the person can see, each with the repositories GitHub says
-     * they administer, up to the picker's bound. Accounts of another type are left out.
+     * The installations of the App the person can see, up to the picker's bound, each with the
+     * repositories GitHub says they administer, up to its own. Accounts of another type are left
+     * out. Like `verify` and `installationOn`, it holds one of GitHub's host-wide slots and keeps
+     * to one integration deadline.
      */
     readonly listing: (
       token: Redacted.Redacted<string>
-    ) => Effect.Effect<ReadonlyArray<Listed>, Source.UserError>;
+    ) => Effect.Effect<Listing, Source.UserError | Source.Busy>;
     /**
      * The submitted repositories read again with the person's token now: every one must be in
      * that installation with `admin` exactly true, or the refusal names those that aren't.
@@ -137,6 +156,7 @@ export class Flows extends Context.Service<
     ) => Effect.Effect<
       Verified,
       | Source.UserError
+      | Source.Busy
       | Connection.NoRepositories
       | Connection.OneAccount
       | Connection.TooManyRepositories
@@ -147,9 +167,12 @@ export class Flows extends Context.Service<
     readonly installationOn: (
       token: Redacted.Redacted<string>,
       accountId: number
-    ) => Effect.Effect<Option.Option<number>, Source.UserError>;
-    /** Revokes a token whose flow saved or ended. Best effort: it never fails. */
-    readonly revoke: (token: Redacted.Redacted<string>) => Effect.Effect<void>;
+    ) => Effect.Effect<Option.Option<number>, Source.UserError | Source.Busy>;
+    /**
+     * Revokes the token a flow row held when a save deleted it, as the deleting statement returned
+     * it. Best effort: it never fails.
+     */
+    readonly revoke: (companyId: string, held: Held) => Effect.Effect<void>;
     /** Deletes every expired flow and revokes its token. */
     readonly sweep: Effect.Effect<void, SqlError>;
   }
@@ -161,6 +184,8 @@ export const make = Effect.gen(function* () {
   const keys = yield* CredentialKeys.CredentialKeys;
   const cryptography = yield* Cryptography.Cryptography;
   const ttl = yield* ContractLimits.get("github.flow.ttl");
+  const deadline = yield* ContractLimits.get("integration.deadline");
+  const installationsMax = yield* ContractLimits.get("github.picker.installations");
   const pickerMax = yield* ContractLimits.get("github.picker.repositories");
   const repositoriesMax = yield* ContractLimits.get("github.connection.repositories");
   const stored = (cause: SqlError | Schema.SchemaError) =>
@@ -179,10 +204,7 @@ export const make = Effect.gen(function* () {
   });
 
   /** A flow row's token, opened; none when it holds none or it can't be opened. */
-  const tokenOf = (
-    companyId: string,
-    row: { readonly id: string; readonly token: string | null; readonly keyId: string | null }
-  ) =>
+  const tokenOf = (companyId: string, row: Held) =>
     row.token === null || row.keyId === null
       ? Effect.succeed(Option.none<Redacted.Redacted<string>>())
       : keys
@@ -191,14 +213,7 @@ export const make = Effect.gen(function* () {
             Effect.map(Option.some),
             Effect.orElseSucceed(() => Option.none<Redacted.Redacted<string>>())
           );
-  const revokeAll = (
-    companyId: string,
-    rows: ReadonlyArray<{
-      readonly id: string;
-      readonly token: string | null;
-      readonly keyId: string | null;
-    }>
-  ) =>
+  const revokeAll = (companyId: string, rows: ReadonlyArray<Held>) =>
     Effect.forEach(
       rows,
       (row) =>
@@ -223,11 +238,8 @@ export const make = Effect.gen(function* () {
     const replaced = yield* sql
       .withTransaction(
         Effect.gen(function* () {
-          const old = yield* sql<{
-            readonly id: string;
-            readonly token: string | null;
-            readonly keyId: string | null;
-          }>`DELETE FROM github_flows WHERE company_id = ${input.companyId} AND user_id = ${input.userId}
+          const old =
+            yield* sql<Held>`DELETE FROM github_flows WHERE company_id = ${input.companyId} AND user_id = ${input.userId}
             RETURNING id, token, key_id AS "keyId"`;
           yield* sql`INSERT INTO github_flows
             (id, company_id, user_id, purpose, connection_id, nonce_hash, verifier, expires_at)
@@ -281,17 +293,50 @@ export const make = Effect.gen(function* () {
       id: Schema.String,
       purpose: FlowRow.fields.purpose,
       connectionId: Schema.NullOr(Schema.String),
-      verifier: Schema.String,
-      token: Schema.NullOr(Schema.String),
-      keyId: Schema.NullOr(Schema.String)
+      verifier: Schema.String
     }),
     // Atomic: of two returns with one nonce, on any hosts, one finds the row and the other nothing.
     execute: ({ companyId, userId, nonceHash }) => sql`UPDATE github_flows
       SET nonce_consumed_at = now()
       WHERE nonce_hash = ${nonceHash} AND nonce_consumed_at IS NULL AND expires_at > now()
         AND company_id = ${companyId} AND user_id = ${userId}
-      RETURNING id, purpose, connection_id AS "connectionId", verifier, token, key_id AS "keyId"`
+      RETURNING id, purpose, connection_id AS "connectionId", verifier`
   });
+
+  /**
+   * Reads who `token` is and seals it into the flow, only while the row's nonce is still the one
+   * this return consumed and it hasn't expired: a restart since gave the row a newer request,
+   * whose own return is the one that signs in. Refuses otherwise. Gives back the token the row
+   * held until now, which an earlier return sealed there, for the caller to revoke.
+   */
+  const keep = (
+    input: { readonly companyId: string; readonly userId: string },
+    flowId: string,
+    nonceHash: string,
+    token: Redacted.Redacted<string>
+  ) =>
+    Effect.gen(function* () {
+      const who = yield* source.user(token);
+      const sealed = yield* keys.encrypt(sealingOf(input.companyId, flowId), token);
+      const replaced = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const [row] = yield* sql<Held>`SELECT id, token, key_id AS "keyId" FROM github_flows
+              WHERE id = ${flowId} AND company_id = ${input.companyId} AND user_id = ${input.userId}
+                AND nonce_hash = ${nonceHash} AND expires_at > now()
+              FOR UPDATE`;
+            if (row === undefined) return Option.none<Held>();
+            yield* sql`UPDATE github_flows SET
+                token = ${sealed.credentials}, key_id = ${sealed.keyId},
+                github_user_id = ${who.id}, github_login = ${who.login}
+              WHERE id = ${flowId}`;
+            return Option.some(row);
+          })
+        )
+        .pipe(Effect.mapError(stored));
+      if (Option.isNone(replaced)) return yield* new Connection.SignInRequired({});
+      return replaced.value;
+    });
 
   const callback = Effect.fn("GithubFlows.callback")(function* (input: {
     readonly companyId: string;
@@ -301,32 +346,35 @@ export const make = Effect.gen(function* () {
     readonly redirectUri: string;
   }) {
     if (input.state === "" || input.code === "") return yield* new Connection.SignInRequired({});
+    const nonceHash = yield* cryptography.sha256(input.state);
     const found = yield* consume({
       companyId: input.companyId,
       userId: input.userId,
-      nonceHash: yield* cryptography.sha256(input.state)
+      nonceHash
     }).pipe(Effect.mapError(stored));
     if (Option.isNone(found)) return yield* new Connection.SignInRequired({});
     const flow = found.value;
-    const token = yield* source.exchange({
-      code: input.code,
-      verifier: flow.verifier,
-      redirectUri: input.redirectUri
-    });
-    const who = yield* source.user(token).pipe(Effect.tapError(() => source.revokeUser(token)));
-    const sealed = yield* keys.encrypt(sealingOf(input.companyId, flow.id), token);
-    const saved = yield* sql<{ readonly id: string }>`UPDATE github_flows SET
-        token = ${sealed.credentials}, key_id = ${sealed.keyId},
-        github_user_id = ${who.id}, github_login = ${who.login}
-      WHERE id = ${flow.id} AND company_id = ${input.companyId} AND user_id = ${input.userId}
-        AND expires_at > now()
-      RETURNING id`.pipe(Effect.mapError(stored));
-    if (saved.length === 0) {
-      yield* source.revokeUser(token);
-      return yield* new Connection.SignInRequired({});
-    }
-    // The token an earlier return sealed here, before the setup URL started another request.
-    yield* revokeAll(input.companyId, [flow]);
+    // Once the exchange answers, its token is live at GitHub: every way this return ends but the
+    // row holding it, a refusal, a failed write or an interruption, revokes it.
+    yield* Effect.uninterruptibleMask((restore) =>
+      Effect.flatMap(
+        restore(
+          source.exchange({
+            code: input.code,
+            verifier: flow.verifier,
+            redirectUri: input.redirectUri
+          })
+        ),
+        (token) =>
+          restore(keep(input, flow.id, nonceHash, token)).pipe(
+            Effect.onExit((exit) =>
+              Exit.isSuccess(exit) ? Effect.void : source.revokeUser(token)
+            ),
+            // The token an earlier return sealed there, before the setup URL started another request.
+            Effect.flatMap((replaced) => revokeAll(input.companyId, [replaced]))
+          )
+      )
+    );
     return { purpose: flow.purpose, connectionId: flow.connectionId };
   });
 
@@ -356,22 +404,35 @@ export const make = Effect.gen(function* () {
     });
   });
 
+  /**
+   * Runs reads with the person's token inside GitHub's host-wide slots, within one integration
+   * deadline. A limit answer to them is that person's own, so it writes no cooldown.
+   */
+  const admitted = <A, E>(effect: Effect.Effect<A, E>) =>
+    Effect.flatMap(Clock.currentTimeMillis, (now) => source.withHost(now + deadline)(effect));
+  const installationsOf = (token: Redacted.Redacted<string>) =>
+    source.userInstallations(token, installationsMax);
+
   const listing = Effect.fn("GithubFlows.listing")(function* (token: Redacted.Redacted<string>) {
-    const installations = yield* source.userInstallations(token);
-    const listed: Array<Listed> = [];
-    for (const installation of installations) {
-      // An account of a type Patchy doesn't connect is left out, never taken for a personal one.
-      if (Option.isNone(installation.account)) continue;
-      const found = yield* source.userRepositories(token, installation.id, pickerMax);
-      listed.push({
-        installationId: installation.id,
-        account: installation.account.value,
-        suspended: installation.suspended,
-        repositories: found.repositories.filter((item) => item.admin),
-        complete: found.complete
-      });
-    }
-    return listed;
+    return yield* admitted(
+      Effect.gen(function* () {
+        const found = yield* installationsOf(token);
+        const accounts: Array<Listed> = [];
+        for (const installation of found.installations) {
+          // An account of a type Patchy doesn't connect is left out, never taken for a personal one.
+          if (Option.isNone(installation.account)) continue;
+          const repositories = yield* source.userRepositories(token, installation.id, pickerMax);
+          accounts.push({
+            installationId: installation.id,
+            account: installation.account.value,
+            suspended: installation.suspended,
+            repositories: repositories.repositories.filter((item) => item.admin),
+            complete: repositories.complete
+          });
+        }
+        return { accounts, complete: found.complete } satisfies Listing;
+      })
+    );
   });
 
   const verify = Effect.fn("GithubFlows.verify")(function* (
@@ -385,44 +446,47 @@ export const make = Effect.gen(function* () {
     if (asked.length > repositoriesMax)
       return yield* new Connection.TooManyRepositories({ max: repositoriesMax });
     const installationId = asked[0]!.installationId;
-    const installation = (yield* source.userInstallations(token)).find(
-      (item) => item.id === installationId
+    return yield* admitted(
+      Effect.gen(function* () {
+        const installation = (yield* installationsOf(token)).installations.find(
+          (item) => item.id === installationId
+        );
+        if (installation === undefined)
+          return yield* new Connection.NotAdmin({
+            repositories: asked.map((item) => `#${item.id}`)
+          });
+        if (Option.isNone(installation.account)) return yield* new Connection.AccountType({});
+        // The listing is the only authority: `admin` exactly true, read now with the person's token.
+        const found = yield* source.userRepositories(token, installationId, pickerMax);
+        const byId = new Map(found.repositories.map((item) => [item.id, item] as const));
+        const refused = asked.filter((item) => byId.get(item.id)?.admin !== true);
+        if (refused.length > 0)
+          return yield* new Connection.NotAdmin({
+            repositories: refused.map((item) => byId.get(item.id)?.name ?? `#${item.id}`)
+          });
+        return {
+          installationId,
+          account: installation.account.value,
+          repositories: asked.map((item) => byId.get(item.id)!)
+        } satisfies Verified;
+      })
     );
-    if (installation === undefined)
-      return yield* new Connection.NotAdmin({ repositories: asked.map((item) => `#${item.id}`) });
-    if (Option.isNone(installation.account)) return yield* new Connection.AccountType({});
-    // The listing is the only authority: `admin` exactly true, read now with the person's token.
-    const found = yield* source.userRepositories(token, installationId, pickerMax);
-    const byId = new Map(found.repositories.map((item) => [item.id, item] as const));
-    const refused = asked.filter((item) => byId.get(item.id)?.admin !== true);
-    if (refused.length > 0)
-      return yield* new Connection.NotAdmin({
-        repositories: refused.map((item) => byId.get(item.id)?.name ?? `#${item.id}`)
-      });
-    return {
-      installationId,
-      account: installation.account.value,
-      repositories: asked.map((item) => byId.get(item.id)!)
-    } satisfies Verified;
   });
 
   const installationOn = Effect.fn("GithubFlows.installationOn")(function* (
     token: Redacted.Redacted<string>,
     accountId: number
   ) {
-    const found = (yield* source.userInstallations(token)).find(
+    const found = (yield* admitted(installationsOf(token))).installations.find(
       (item) => Option.isSome(item.account) && item.account.value.id === accountId
     );
     return Option.fromNullishOr(found?.id);
   });
 
   const sweep = Effect.gen(function* () {
-    const expired = yield* sql<{
-      readonly id: string;
-      readonly companyId: string;
-      readonly token: string | null;
-      readonly keyId: string | null;
-    }>`DELETE FROM github_flows WHERE expires_at <= now()
+    const expired = yield* sql<
+      Held & { readonly companyId: string }
+    >`DELETE FROM github_flows WHERE expires_at <= now()
       RETURNING id, company_id AS "companyId", token, key_id AS "keyId"`;
     yield* Effect.forEach(expired, (row) => revokeAll(row.companyId, [row]), { discard: true });
   });
@@ -435,7 +499,7 @@ export const make = Effect.gen(function* () {
     listing,
     verify,
     installationOn,
-    revoke: source.revokeUser,
+    revoke: (companyId, held) => revokeAll(companyId, [held]),
     sweep
   });
 });

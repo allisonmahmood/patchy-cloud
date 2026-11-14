@@ -1814,10 +1814,13 @@ one-use nonce and an S256 challenge, held on a ten-minute record of that admin's
 sign-in; the return consumes the nonce once, only for the same admin and company,
 and the exchange counts as signed in only when GitHub's answer carries a token and
 no error, whatever its status. The person's GitHub token stays sealed on that
-record and is revoked at GitHub when the connection saves or the record expires.
-Patchy then lists the installations they can see and, in each, only the
-repositories whose listing carries `permissions.admin` exactly true. The admin
-ticks repositories on one account (ticking one account sets the others back),
+record, only the return of its newest request seals one there, and the token the
+record holds when the connection saves or the record expires is revoked at GitHub;
+a token no record takes, as from a return a newer request overtook, is revoked at
+once. Patchy then lists up to 200 installations they can see, saying so when there
+are more, and, in each, only the repositories whose listing carries
+`permissions.admin` exactly true. The admin ticks repositories on one account
+(ticking one account dims the others),
 names the connection and submits; the ticked ids are read again with their token
 then, each must be in that installation with `admin` true, and an account that
 is neither a person nor an organization is refused. Installing the App and adding
@@ -1835,8 +1838,9 @@ they administer. Another company is then refused, told the account is connected
 to another Patchy company and the way out: an owner uninstalls and reinstalls the
 App, which GitHub counts as a new installation nobody holds. The claim holds
 through Pause and every state that needs attention, and ends when the company's
-last connection on it is Disconnected. A personal account's installation
-connected by its own user may be connected to any company. A connection survives
+last connection on it is Disconnected. A personal account's installation may be
+connected to any company by its own user, the person signed in to GitHub matching
+the account by numeric id, on Connect, Add and Reconnect alike. A connection survives
 its connector later losing admin: it ends in Patchy, by Remove, Pause or
 Disconnect, or on GitHub, by taking a repository out of the installation,
 suspending or uninstalling the App.
@@ -1852,7 +1856,11 @@ which GitHub refuses if any left the installation, and keeps it in the host's
 memory by connection and credential revision until five minutes before it
 expires; a token never reaches workerd. Each installation has 4 slots per server
 process, shared by every connection on it, by dev, published and administrative
-calls, mints and discovery, inside 8 for all of GitHub.
+calls, mints and discovery, inside 8 for all of GitHub, which a person's own reads
+while they connect take too. One 15-second deadline covers the wait for a slot and
+every request after it. A call that waited loads the connection again: one moved
+to another installation meanwhile is refused, its next call admitted under that
+one, and a cooldown that began meanwhile refuses it before anything is sent.
 
 **When access ends, the mint says why.** A 404 means the App was uninstalled: the
 connection pauses as needing attention, and Reconnect, after it's reinstalled,
@@ -1861,19 +1869,22 @@ repository there, claims the new installation and moves the connection to it. A
 403 the App's own read confirms as a suspension refuses the call, saying the
 account suspended the App, and is never a pause: the installation keeps when a
 mint last saw it, and connections on it show "Suspended on GitHub, last checked …"
-in place of Connected until a mint or check works again. A 422 is read, never
+in place of Connected until a mint, check, Refresh or connect works against it
+again. A 422 is read, never
 assumed: a permission the installation no longer grants exactly pauses it as
 needing attention, with Resume once an owner accepts the App's permissions;
 otherwise Patchy lists the installation's repositories, marks the set's missing
 ones as left, under a new snapshot and credential revision, checks the asked-for
-repository again and mints once for what remains. One reconciliation and one
-replacement mint per call, never a loop. A 401 is Patchy's own key, an operator's
+repository again and mints once for what remains. If GitHub refuses that mint too,
+the call answers unavailable and the left marks stay, since the complete listing
+showed those repositories gone. One reconciliation and one replacement mint per
+call, never a loop. A 401 is Patchy's own key, an operator's
 alert, never a connection's state. A pause or a reconciliation applies only
 while the connection is as the attempt found it, so a failure that began before a
 newer success changes nothing. A private repository taken out of the installation
 is refused by GitHub at once; a public one stays readable until the next mint.
-Leaving isn't final: one put back reads again, after a Refresh if Patchy marked it
-left. To end a repository's access for good, remove it from the connection.
+Leaving isn't final: one put back reads again, after a Refresh or a Resume if
+Patchy marked it left. To end a repository's access for good, remove it from the connection.
 
 **Limits.** A limit answer, a 429, a 403 with `Retry-After` or
 `X-RateLimit-Remaining: 0`, or a 403 carrying GitHub's secondary-limit message
@@ -1894,7 +1905,9 @@ under the same rule, or removes, which needs none; both take a new credential an
 metadata revision. Snapshots, revisions, `stale_generated` and deletion protection
 work as for Postgres; a published version keeps the snapshot it names, and what a
 call reaches is the current set. Pause keeps the connection and its claim; Resume
-checks first. Disconnect forgets it, frees the name and revokes its cached tokens;
+checks first, and where repositories are marked left it reads which of them the
+installation holds now, marking them back as Refresh does, so a connection whose
+repositories all left can resume once they're back. Disconnect forgets it, frees the name and revokes its cached tokens;
 Patchy Cloud stays installed on GitHub, and the dialog links to where an owner
 removes it.
 

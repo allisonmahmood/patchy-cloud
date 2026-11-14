@@ -426,7 +426,7 @@ export const registry = {
     unit: "calls",
     scope: "host",
     measure:
-      "GitHub requests at once in one server process across every installation; an excess call waits within its deadline",
+      "GitHub requests at once in one server process across every installation, a person's own reads while they connect included; an excess call waits within its deadline",
     refusal: "busy",
     overridable: false
   },
@@ -446,6 +446,16 @@ export const registry = {
     scope: "viewer",
     measure:
       "Repositories read in one installation when connecting, from the GitHub listing of the person signing in; more and the rest aren't offered",
+    refusal: null,
+    overridable: false
+  },
+  "github.picker.installations": {
+    kind: "contract",
+    default: 200,
+    unit: "installations",
+    scope: "viewer",
+    measure:
+      "Installations of the App read when connecting, from the GitHub listing of the person signing in; more and the rest aren't offered, and the page says so",
     refusal: null,
     overridable: false
   },

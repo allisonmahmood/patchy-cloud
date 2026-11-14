@@ -28,7 +28,7 @@ export type GithubAccount = typeof GithubAccount.Type;
 /**
  * One repository by its numeric id, which survives a rename and a namesake, with the name and
  * default branch discovery read. `left` marks one Patchy found no longer in the installation: a
- * call refuses it until a Refresh finds it back.
+ * call refuses it until a Refresh or a Resume finds it back.
  */
 export const GithubRepository = Schema.Struct({
   id: Schema.Int,

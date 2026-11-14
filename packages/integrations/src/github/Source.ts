@@ -288,7 +288,7 @@ const RepositoryBody = Schema.Struct({
   permissions: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown))
 });
 const decodeInstallations = Schema.decodeUnknownEffect(
-  Schema.Struct({ installations: Schema.Array(InstallationBody) })
+  Schema.Struct({ total_count: Schema.Int, installations: Schema.Array(InstallationBody) })
 );
 const decodeInstallation = Schema.decodeUnknownEffect(InstallationBody);
 const decodeRepositories = Schema.decodeUnknownEffect(
@@ -438,10 +438,17 @@ export class Source extends Context.Service<
     ) => Effect.Effect<{ readonly id: number; readonly login: string }, UserError>;
     /** Revokes a person's token at GitHub. Best effort: it never fails. */
     readonly revokeUser: (token: Redacted.Redacted<string>) => Effect.Effect<void>;
-    /** The installations of the App a person can see, at most a page of them. */
+    /**
+     * The installations of the App a person can see, up to `max`; `complete` is false when
+     * there were more.
+     */
     readonly userInstallations: (
-      token: Redacted.Redacted<string>
-    ) => Effect.Effect<ReadonlyArray<Installation>, UserError>;
+      token: Redacted.Redacted<string>,
+      max: number
+    ) => Effect.Effect<
+      { readonly installations: ReadonlyArray<Installation>; readonly complete: boolean },
+      UserError
+    >;
     /**
      * The repositories of one installation a person can see, with whether GitHub says they
      * administer each, up to `max`; `complete` is false when there were more.
@@ -474,14 +481,22 @@ export class Source extends Context.Service<
     /** Revokes an installation token. Best effort: it never fails. */
     readonly revokeInstallationToken: (token: Redacted.Redacted<string>) => Effect.Effect<void>;
     /**
-     * Runs `effect` holding one of the installation's slots and one of GitHub's. Waiting keeps a
-     * one-second reserve before `deadline` (epoch milliseconds), then refuses `busy` with nothing
-     * sent. The slots are released however `effect` ends, including interruption.
+     * Runs `effect` holding one of the installation's slots and one of GitHub's, the whole of it
+     * within `deadline` (epoch milliseconds), every page and request included. Waiting keeps a
+     * one-second reserve before it, then refuses `busy` with nothing sent; work still running at
+     * it is refused `timeout`. The slots are released however `effect` ends, interruption too.
      */
     readonly withSlot: (
       installationId: number,
       deadline: number
-    ) => <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E | Busy, R>;
+    ) => <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E | Busy | Timeout, R>;
+    /**
+     * `withSlot` for requests with a person's own token while they connect, which no
+     * installation's slots count: one of GitHub's slots alone, within `deadline` as there.
+     */
+    readonly withHost: (
+      deadline: number
+    ) => <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E | Busy | Timeout, R>;
   }
 >()("@patchy/integrations/github/Source") {}
 
@@ -712,14 +727,27 @@ export const makeWith = (app: Option.Option<App>) =>
       }).pipe(Effect.ignore);
 
     const userInstallations = Effect.fn("Github.userInstallations")(function* (
-      token: Redacted.Redacted<string>
+      token: Redacted.Redacted<string>,
+      max: number
     ) {
-      const answer = yield* userRequest(token, `/user/installations?per_page=${PAGE}`);
-      if (answer.status !== 200) return yield* unexpected(answer);
-      const decoded = yield* decodeInstallations(yield* body(answer)).pipe(
-        Effect.mapError(malformed)
-      );
-      return decoded.installations.map(installationOf);
+      const installations: Array<Installation> = [];
+      for (let page = 1; installations.length < max; page++) {
+        const answer = yield* userRequest(
+          token,
+          `/user/installations?per_page=${PAGE}&page=${page}`
+        );
+        if (answer.status !== 200) return yield* unexpected(answer);
+        const decoded = yield* decodeInstallations(yield* body(answer)).pipe(
+          Effect.mapError(malformed)
+        );
+        installations.push(...decoded.installations.map(installationOf));
+        if (decoded.installations.length < PAGE || installations.length >= decoded.total_count)
+          return {
+            installations: installations.slice(0, max),
+            complete: installations.length <= max
+          };
+      }
+      return { installations: installations.slice(0, max), complete: false };
     });
 
     const userRepositories = Effect.fn("Github.userRepositories")(function* (
@@ -819,13 +847,27 @@ export const makeWith = (app: Option.Option<App>) =>
         )
       ).pipe(Effect.ignore);
 
-    const withSlot =
-      (installationId: number, until: number) =>
-      <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | Busy, R> => {
-        const installationGate = gate(installationId);
-        return Effect.uninterruptibleMask((restore) => {
-          // As Semaphore's own `withPermits`: only the waiting may be interrupted, never the
-          // taking, so an interrupted caller never holds a permit it won't release.
+    /** `effect` within what's left until `until`, refused `timeout` past it. */
+    const bounded = <A, E, R>(until: number, effect: Effect.Effect<A, E, R>) =>
+      Effect.flatMap(Clock.currentTimeMillis, (now) =>
+        until <= now
+          ? Effect.fail(new Timeout({ milliseconds: deadline }))
+          : effect.pipe(
+              Effect.timeoutOrElse({
+                duration: until - now,
+                orElse: () => Effect.fail(new Timeout({ milliseconds: deadline }))
+              })
+            )
+      );
+    /**
+     * Runs `effect` holding one permit of each of `semaphores` in order, all of it within `until`.
+     * As Semaphore's own `withPermits`: only the waiting may be interrupted, never the taking, so
+     * an interrupted caller never holds a permit it won't release.
+     */
+    const admitted =
+      (semaphores: ReadonlyArray<readonly [Semaphore.Semaphore, Busy["limitId"]]>, until: number) =>
+      <A, E, R>(effect: Effect.Effect<A, E | Busy | Timeout, R>) =>
+        Effect.uninterruptibleMask((restore) => {
           const take = (semaphore: Semaphore.Semaphore, limitId: Busy["limitId"]) =>
             Effect.gen(function* () {
               while (!(yield* semaphore.takeIfAvailable(1))) {
@@ -837,16 +879,28 @@ export const makeWith = (app: Option.Option<App>) =>
                 if (Option.isNone(freed)) return yield* new Busy({ limitId });
               }
             });
-          return take(installationGate, "github.calls.concurrent").pipe(
-            Effect.andThen(
-              take(host, "github.host.concurrent").pipe(
-                Effect.andThen(restore(effect).pipe(Effect.ensuring(host.release(1)))),
-                Effect.ensuring(installationGate.release(1))
-              )
-            )
+          return semaphores.reduceRight<Effect.Effect<A, E | Busy | Timeout, R>>(
+            (inner, [semaphore, limitId]) =>
+              take(semaphore, limitId).pipe(
+                Effect.andThen(inner.pipe(Effect.ensuring(semaphore.release(1))))
+              ),
+            restore(bounded(until, effect))
           );
         });
-      };
+    const withSlot =
+      (installationId: number, until: number) =>
+      <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | Busy | Timeout, R> =>
+        admitted(
+          [
+            [gate(installationId), "github.calls.concurrent"],
+            [host, "github.host.concurrent"]
+          ],
+          until
+        )(effect);
+    const withHost =
+      (until: number) =>
+      <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | Busy | Timeout, R> =>
+        admitted([[host, "github.host.concurrent"]], until)(effect);
 
     return Source.of({
       app: Option.map(app, (value) => ({ slug: value.slug, clientId: value.clientId })),
@@ -861,7 +915,8 @@ export const makeWith = (app: Option.Option<App>) =>
       mint,
       installationRepositories,
       revokeInstallationToken,
-      withSlot
+      withSlot,
+      withHost
     });
   });
 
