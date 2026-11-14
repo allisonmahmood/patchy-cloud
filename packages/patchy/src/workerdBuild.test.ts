@@ -49,7 +49,7 @@ it.each([
   ["a block workerd: true", "allowBuilds:\n  esbuild: true\n  workerd: true\n"],
   ["a quoted key's workerd: false", "'allowBuilds':\n  # off\n  \"workerd\": false\n"],
   ["a flow workerd", 'allowBuilds: { esbuild: true, "workerd": true }\n'],
-  ["a choice for one workerd version", "allowBuilds:\n  workerd@1.20260924.1: true\n"],
+  ["a choice for one workerd version", "allowBuilds:\n  workerd@1.20261112.1: true\n"],
   ["an aliased workerd key", "pkg: &w workerd\nallowBuilds:\n  *w : true\n"],
   ["an aliased allowBuilds mapping", "base: &b\n  workerd: true\nallowBuilds: *b\n"],
   [
