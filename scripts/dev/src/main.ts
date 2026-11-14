@@ -1694,8 +1694,8 @@ const down = Command.make(
 
 /**
  * The detached process `start` spawns. Reads the plan `start` wrote. The
- * supervisor loads only here: embedded-postgres hooks Ctrl-C to exit the
- * process at once, which would skip every other command's finalizers.
+ * supervisor loads only here: running it loads embedded-postgres, whose exit
+ * and hangup hooks would end any other command without its finalizers.
  */
 const superviseCommand = Command.make("supervise", {}, () =>
   Effect.promise(() => import("./supervisor.js")).pipe(
