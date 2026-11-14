@@ -64,8 +64,8 @@ export const checklist = (spec: {
 
 /**
  * Checklists of which one is chosen from at a time, such as repositories grouped by the account
- * that holds them when a choice may take one account's: once a box is ticked in one, the names in
- * the others are set back, without script. Each group is a `checklist` of its own, under its
+ * that holds them when a choice may take one account's: once a box is ticked in one, the others
+ * are dimmed whole, without script. Each group is a `checklist` of its own, under its
  * legend; the server still refuses boxes ticked in two.
  */
 export const checklistGroups = (groups: ReadonlyArray<Parameters<typeof checklist>[0]>) =>

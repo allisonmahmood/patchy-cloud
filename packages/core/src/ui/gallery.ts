@@ -896,7 +896,7 @@ const checklistDemo = demo(
     ["Hover (fine pointer)", "a faint tint on a row that can be chosen"],
     [
       "One group at a time",
-      "checklistGroups: once a box is ticked in one list, the names in the others are set back"
+      "checklistGroups: once a box is ticked in one list, the others are dimmed whole"
     ]
   ])
 );
