@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off -- disposable TCP listeners and literal guest source exercise workerd's network boundary.
+// @effect-diagnostics nodeBuiltinImport:off globalJsonInEffect:off -- disposable TCP listeners and literal guest source exercise workerd's network boundary.
 import { createServer, get } from "node:http";
 import type { Socket } from "node:net";
 import * as Effect from "effect/Effect";

@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalFetch:off globalFetchInEffect:off preferSchemaOverJson:off -- real workerd hangs require wall-clock deadlines; JSON only serializes test fixtures.
+// @effect-diagnostics nodeBuiltinImport:off globalFetch:off globalFetchInEffect:off globalJsonInEffect:off -- real workerd hangs require wall-clock deadlines; JSON only serializes test fixtures.
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

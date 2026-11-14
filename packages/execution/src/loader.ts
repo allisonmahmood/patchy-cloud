@@ -1,4 +1,4 @@
-// @effect-diagnostics globalDate:off preferSchemaOverJson:off -- workerd request time and JSON HTTP framing are native Worker APIs.
+// @effect-diagnostics globalDate:off globalJsonInEffect:off -- workerd request time and JSON HTTP framing are native Worker APIs.
 import { WorkerEntrypoint } from "cloudflare:workers";
 import * as GuestProtocol from "@patchy/api/guest";
 import * as Schema from "effect/Schema";
