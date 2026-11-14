@@ -13,7 +13,6 @@
  * the copy buttons. A missing computer or app, and a store that can't answer, say so inside the
  * app.
  */
-import * as ByteSize from "effect/ByteSize";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -25,6 +24,7 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as UrlParams from "effect/http/UrlParams";
 import type * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
+import { capBody } from "@patchy/api";
 import { Companies, Users } from "@patchy/companies";
 import {
   ago,
@@ -794,7 +794,7 @@ const disconnectAll = Effect.gen(function* () {
   const viewer = yield* RequireSession.Viewer;
   const request = yield* HttpServerRequest.HttpServerRequest;
   const user = yield* request.urlParamsBody.pipe(
-    Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(MAX_FORM_BYTES)),
+    capBody(MAX_FORM_BYTES),
     Effect.option,
     Effect.map(Option.flatMap(UrlParams.getFirst("user")))
   );

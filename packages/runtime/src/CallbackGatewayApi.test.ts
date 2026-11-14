@@ -12,6 +12,7 @@ import * as Runtime from "./Runtime.js";
 import * as RuntimeLog from "./RuntimeLog.js";
 import * as Fixtures from "./test/callbacks.js";
 import { NodeCryptography } from "@patchy/core";
+import { stalledUpload } from "../../../test/socket.js";
 
 const headers = (capability: InvocationCapabilities.Capability) => ({
   authorization: `Bearer ${capability.token}`,
@@ -222,6 +223,41 @@ it.layer(
       });
       assert.strictEqual(writes, 0);
       assert.strictEqual(capability.counters.peakFileBytes, 12);
+    }).pipe(
+      Effect.scoped,
+      Effect.provideService(ContractLimits.overrides, { "tier2.callbacks.fileBytes": 10 })
+    )
+  );
+
+  it.effect("a callback body past its bound is refused, then its connection closes", () =>
+    Effect.gen(function* () {
+      const capabilities = yield* InvocationCapabilities.make;
+      const gateway = yield* CallbackGateway.make({
+        "files.put": {
+          kind: "mutation",
+          transport: "bytes-put",
+          run: () => Effect.die("An oversized callback must not reach its handler.")
+        }
+      }).pipe(Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities));
+      const listener = yield* CallbackGatewayApi.listen().pipe(
+        Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities),
+        Effect.provideService(CallbackGateway.CallbackGateway, gateway)
+      );
+      const capability = yield* Fixtures.issue(capabilities, { kind: "action" });
+      const head = [
+        "POST /callback HTTP/1.1",
+        "host: 127.0.0.1",
+        ...Object.entries({
+          ...headers(capability),
+          "x-patchy-callback": encodeURIComponent(JSON.stringify({ op: "files.put", args: {} }))
+        }).map(([name, value]) => `${name}: ${value}`)
+      ].join("\n");
+      // The gateway answers its refusal as a 200 body; the rest of the upload never arrives.
+      const answer = yield* Effect.promise(() =>
+        stalledUpload(Number(new URL(listener.url).port), head, { chunked: 64 })
+      );
+      assert.strictEqual(answer.status, 200);
+      assert.isDefined(answer.closedAfterMs);
     }).pipe(
       Effect.scoped,
       Effect.provideService(ContractLimits.overrides, { "tier2.callbacks.fileBytes": 10 })

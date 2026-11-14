@@ -1,7 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Cryptography's Node implementation: the one place production code reaches node:crypto.
 /**
  * `Cryptography` over `node:crypto`. Bun implements the same module; a Web Crypto implementation
- * would replace this file and nothing else.
+ * would replace this file and nothing else. `layer` also provides Effect's own `SecureRandom` and
+ * `Digest`, on the runtime's Web Crypto, so it is the one crypto layer a host provides.
  */
 // oxlint-disable-next-line no-restricted-imports -- Cryptography's Node implementation.
 import {
@@ -16,6 +17,8 @@ import {
   timingSafeEqual
 } from "node:crypto";
 import { Buffer } from "node:buffer";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Cryptography from "./Cryptography.js";
@@ -114,4 +117,8 @@ export const make = Cryptography.Cryptography.of({
     })
 });
 
-export const layer = Layer.succeed(Cryptography.Cryptography, make);
+export const layer = Layer.mergeAll(
+  Layer.succeed(Cryptography.Cryptography, make),
+  SecureRandom.layerWebCrypto,
+  Digest.layerWebCrypto
+);

@@ -1,4 +1,12 @@
+import { connect } from "node:net";
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { assert, describe, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpServer from "effect/http/HttpServer";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as RequestTrust from "./RequestTrust.js";
 
 const production = new URL("https://cloud.patchyhq.com");
@@ -119,6 +127,56 @@ describe("the Host gate", () => {
       "a.example"
     );
   });
+});
+
+// The gate as the door applies it, behind the server adapter that hands the door its requests.
+const gate = HttpRouter.serve(
+  HttpRouter.add(
+    "POST",
+    "/mcp",
+    Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      return HttpServerResponse.text(
+        RequestTrust.isOwnHost(RequestTrust.requestAuthority(request), production) ? "own" : "421"
+      );
+    })
+  ),
+  { disableLogger: true, disableListenLog: true }
+).pipe(Layer.provideMerge(NodeHttpServer.layerTest));
+
+/** The gate's answer to `head`, sent exactly as written on a connection of its own. */
+const gateAnswer = (head: string) =>
+  Effect.gen(function* () {
+    const address = (yield* HttpServer.HttpServer).address;
+    if (!("port" in address)) return yield* Effect.die("A TCP server is expected.");
+    return yield* Effect.callback<string>((resume) => {
+      const chunks: Buffer[] = [];
+      const socket = connect(address.port, "127.0.0.1");
+      socket.on("data", (chunk) => chunks.push(chunk));
+      socket.on("close", () =>
+        resume(Effect.succeed(Buffer.concat(chunks).toString("utf8").split("\r\n\r\n")[1] ?? ""))
+      );
+      socket.write(`${head}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n`);
+      return Effect.sync(() => socket.destroy());
+    });
+  });
+
+it.layer(gate)("the Host gate behind the server adapter", (it) => {
+  it.effect("reads the target and Host the client sent, not the adapter's rewrite of them", () =>
+    Effect.gen(function* () {
+      const host = "host: cloud.patchyhq.com";
+      for (const [head, answer] of [
+        [`POST /mcp HTTP/1.1\r\n${host}`, "own"],
+        ["POST /mcp HTTP/1.1\r\nhost: evil.example", "421"],
+        [`POST https://cloud.patchyhq.com/mcp HTTP/1.1\r\n${host}`, "own"],
+        // The adapter turns these into `/mcp` and a Host of `cloud.patchyhq.com`.
+        [`POST http://cloud.patchyhq.com/mcp HTTP/1.1\r\n${host}`, "421"],
+        [`POST https://user@cloud.patchyhq.com/mcp HTTP/1.1\r\n${host}`, "421"],
+        [`POST /mcp HTTP/1.1\r\n${host}\r\nhost: evil.example`, "421"]
+      ] as const)
+        assert.strictEqual(yield* gateAnswer(head), answer, head);
+    })
+  );
 });
 
 describe("the Origin rules", () => {

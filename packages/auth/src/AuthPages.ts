@@ -1,4 +1,3 @@
-import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -7,6 +6,7 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as UrlParams from "effect/http/UrlParams";
 import type * as SqlClient from "effect/sql/SqlClient";
+import { capBody } from "@patchy/api";
 import type { Analytics } from "@patchy/analytics";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import type { AppShell } from "@patchy/core";
@@ -113,9 +113,7 @@ const logout = Effect.gen(function* () {
   const claims = yield* RequireSession.SignedIn;
   const session = yield* Session.Session;
   const request = yield* HttpServerRequest.HttpServerRequest;
-  const form = yield* request.urlParamsBody.pipe(
-    Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(MAX_LOGOUT_BYTES))
-  );
+  const form = yield* request.urlParamsBody.pipe(capBody(MAX_LOGOUT_BYTES));
   const back = returnPath(
     Option.getOrNull(UrlParams.getFirst(form, "return")),
     session.publicBaseUrl
@@ -145,9 +143,7 @@ const MAX_TERMS_BYTES = 8_192;
 const acceptTerms = Effect.gen(function* () {
   const session = yield* Session.Session;
   const request = yield* HttpServerRequest.HttpServerRequest;
-  const form = yield* request.urlParamsBody.pipe(
-    Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(MAX_TERMS_BYTES))
-  );
+  const form = yield* request.urlParamsBody.pipe(capBody(MAX_TERMS_BYTES));
   const field = (name: string) => Option.getOrNull(UrlParams.getFirst(form, name));
   const returnTo = returnPath(field("return"), session.publicBaseUrl) ?? "/";
   return yield* RequireSession.forTerms(

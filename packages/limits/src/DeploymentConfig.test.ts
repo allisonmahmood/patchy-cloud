@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as DeploymentConfig from "./DeploymentConfig.js";
 import { registry } from "./registry.js";
 
-// The revision is the SHA-256 of the effective values, computed with the host's Crypto.
+// The revision is the SHA-256 of the effective values, computed with the host's Digest.
 const revisionOf = (deployment: Effect.Success<typeof DeploymentConfig.load>) =>
   deployment.revision.pipe(Effect.provide(NodeCrypto.layer));
 

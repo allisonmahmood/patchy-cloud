@@ -17,6 +17,7 @@ import * as Authorization from "./Authorization.js";
 import * as DeviceLogins from "./DeviceLogins.js";
 import * as MachineTokens from "./MachineTokens.js";
 import { NodeCryptography } from "@patchy/core";
+import { stalledUpload } from "../../../test/socket.js";
 
 const routes = HttpApiBuilder.layer(HttpApi.make("patchy").add(AuthGroup)).pipe(
   Layer.provide(AuthApi.layer),
@@ -75,11 +76,12 @@ it.layer(layer)("anonymous device JSON bodies on a socket", (it) => {
           JSON.stringify({ machineNameHint }),
           framing
         );
+        const response = yield* request;
         if (framing === "chunked") {
-          // The server cuts an undeclared body off mid-stream, so the request fails.
-          yield* request.pipe(Effect.flip);
+          // An undeclared body that crosses the cap stops being read and answers as malformed.
+          assert.strictEqual(response.status, 400);
+          assert.deepStrictEqual(response.body, { ok: false, error: "Malformed request body." });
         } else {
-          const response = yield* request;
           assert.strictEqual(response.status, 413);
           assert.deepStrictEqual(response.body, { ok: false, error: "Request body is too large." });
         }
@@ -92,6 +94,26 @@ it.layer(layer)("anonymous device JSON bodies on a socket", (it) => {
       })
     );
   }
+
+  it.effect("answers an overflow whose sender never finishes, then closes its connection", () =>
+    Effect.gen(function* () {
+      const server = yield* HttpServer.HttpServer;
+      if (server.address._tag === "UnixPathAddress") return assert.fail("Expected a TCP listener");
+      const { port } = server.address;
+      const head =
+        "POST /api/login/device HTTP/1.1\nhost: 127.0.0.1\ncontent-type: application/json";
+      // Streamed past the cap, or declared past it and never sent: answered, then closed within
+      // the adapter's half-second grace rather than held open for more body.
+      for (const [body, status] of [
+        [{ chunked: 8_192 }, 400],
+        [{ declared: 8_192 }, 413]
+      ] as const) {
+        const answer = yield* Effect.promise(() => stalledUpload(port, head, body));
+        assert.strictEqual(answer.status, status);
+        assert.isDefined(answer.closedAfterMs, JSON.stringify(body));
+      }
+    })
+  );
 
   // Both routes read through the same bounded body; poll checks its own side effect.
   it.effect("refuses overflow on poll without advancing the polling interval", () =>

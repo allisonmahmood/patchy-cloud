@@ -1,5 +1,7 @@
 import { generateKeyPairSync } from "node:crypto";
 import { describe, expect, it } from "@effect/vitest";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Cryptography from "./Cryptography.js";
 import * as NodeCryptography from "./NodeCryptography.js";
@@ -51,6 +53,20 @@ describe("formats", () => {
         "a9993e364706816aba3e25717850c26c9cd0d89d"
       );
     })
+  );
+
+  it.effect("provides Effect's SecureRandom and Digest beside Cryptography", () =>
+    Effect.gen(function* () {
+      const digest = yield* Digest.Digest;
+      const random = yield* SecureRandom.SecureRandom;
+      expect(yield* digest.digestHex(Digest.sha256, new TextEncoder().encode("abc"))).toBe(
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+      );
+      expect(yield* random.randomBytes(32)).toHaveLength(32);
+      expect(yield* random.uuidV7()).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+      );
+    }).pipe(Effect.provide(NodeCryptography.layer))
   );
 });
 

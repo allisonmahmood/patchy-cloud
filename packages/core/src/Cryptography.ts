@@ -1,11 +1,12 @@
 /**
- * Patchy's cryptography: its id, token and digest formats, and the keyed operations Effect's own
- * `Crypto` lacks (HMAC, HKDF, AES-256-GCM, constant-time comparison, public-key inspection).
- * Services take it from the environment at construction; `NodeCryptography.layer` implements it,
- * and is the one place production code reaches `node:crypto`.
+ * Patchy's cryptography: its id, token and digest formats, and the keyed operations behind what
+ * it stores (HMAC, HKDF, AES-256-GCM sealing in its own byte layout, constant-time comparison,
+ * public-key inspection). Services take it from the environment at construction;
+ * `NodeCryptography.layer` implements it, and is the one place production code reaches
+ * `node:crypto`. Code that needs only random bytes, UUIDs or a digest may take Effect's
+ * `SecureRandom` or `Digest` (`effect/crypto`) instead.
  */
 import * as Context from "effect/Context";
-import type * as Crypto from "effect/Crypto";
 import type * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -47,7 +48,7 @@ export class Cryptography extends Context.Service<
     /** `bytes` random bytes (32 by default) as unpadded base64url. */
     readonly token: (bytes?: number) => Effect.Effect<string>;
     readonly digest: (
-      algorithm: Exclude<Crypto.DigestAlgorithm, "SHA-384">,
+      algorithm: "SHA-1" | "SHA-256" | "SHA-512",
       data: string | Uint8Array
     ) => Effect.Effect<Uint8Array>;
     /** SHA-256 as lowercase hex. Strings hash as UTF-8. */

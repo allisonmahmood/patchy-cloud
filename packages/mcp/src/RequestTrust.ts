@@ -7,9 +7,11 @@
  * `Host` is the gate. The door never believes a forwarded host: the load balancer preserves the
  * `Host` a client sent, port and duplicates included. The door reads an absolute-form target's
  * authority instead, as RFC 9112 does, and refuses a request that carried two `Host` fields,
- * since Node keeps only the first.
+ * since Node keeps only the first. Both are read from what the client sent: Effect's server
+ * adapter rewrites an absolute-form target to its path and `Host` to the target URL's host,
+ * which drops userinfo and the scheme's default port.
  */
-import * as Predicate from "effect/Predicate";
+import * as Schema from "effect/Schema";
 import { Session } from "@patchy/auth";
 
 /** An authority as `Host` carries it: a name or bracketed IPv6 address, then an optional port. */
@@ -33,25 +35,35 @@ export const isOwnHost = (host: string | undefined, publicUrl: URL): boolean => 
   );
 };
 
+/** A Node request as its server parsed it: the header fields and request target as sent. */
+const isNodeRequest = Schema.is(
+  Schema.Struct({
+    rawHeaders: Schema.Array(Schema.String),
+    url: Schema.optionalKey(Schema.String)
+  })
+);
+
 /**
  * The authority a request was addressed to, as RFC 9112 reads it: an absolute-form target's,
  * else its one `Host` field. `undefined` when it carried two, which Node's own headers can't
- * show: only the raw fields a Node request keeps can.
+ * show: only the raw fields a Node request keeps can. A request built from a web `Request` has
+ * no raw fields, so its target and one `Host` are all it can carry.
  */
 export const requestAuthority = (request: {
   readonly url: string;
   readonly headers: { readonly [name: string]: string | undefined };
   readonly source: object;
 }): string | undefined => {
-  const raw = Predicate.hasProperty(request.source, "rawHeaders")
-    ? request.source.rawHeaders
-    : undefined;
-  if (
-    Array.isArray(raw) &&
-    raw.filter((field, at) => at % 2 === 0 && String(field).toLowerCase() === "host").length > 1
-  )
-    return undefined;
-  const absolute = /^(https?):\/\/([^/?#]*)/i.exec(request.url);
+  const sent = isNodeRequest(request.source) ? request.source : undefined;
+  const hosts =
+    sent === undefined
+      ? [request.headers["host"]]
+      : sent.rawHeaders.filter(
+          (_, at) => at % 2 === 1 && sent.rawHeaders[at - 1]!.toLowerCase() === "host"
+        );
+  if (hosts.length > 1) return undefined;
+  const requestTarget = sent?.url ?? request.url;
+  const absolute = /^(https?):\/\/([^/?#]*)/i.exec(requestTarget);
   if (absolute !== null) {
     // The target's own port, or its scheme's default: never the public origin's by omission.
     const [, scheme, target] = absolute;
@@ -60,8 +72,8 @@ export const requestAuthority = (request: {
       ? target
       : `${target}:${scheme!.toLowerCase() === "https" ? 443 : 80}`;
   }
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(request.url)) return undefined;
-  return request.headers["host"];
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(requestTarget)) return undefined;
+  return hosts[0];
 };
 
 /** A reg-name host: unreserved and sub-delim characters or percent escapes, without a comma. */

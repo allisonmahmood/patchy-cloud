@@ -19,7 +19,7 @@ import {
   type Wakes
 } from "@patchy/runtime";
 import * as Config from "effect/Config";
-import type * as Crypto from "effect/Crypto";
+import type * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
@@ -38,7 +38,7 @@ export type StartupError =
 type Dependencies =
   | Cryptography.Cryptography
   | Scope.Scope
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
   | HttpClient.HttpClient
   | RuntimeLog.RuntimeLog
   | ServerBundles.ServerBundles
@@ -115,7 +115,7 @@ export const layer = (
 ): Layer.Layer<
   Invocation.Invocation,
   StartupError,
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
   | CompanyDatabases.CompanyDatabases
   | Inventory.Inventory
   | Wakes.Wakes

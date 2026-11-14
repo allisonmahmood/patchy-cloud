@@ -59,11 +59,11 @@
         "paths": [
           {
             "name": "node:crypto",
-            "message": "Take Cryptography from @patchy/core (or effect/Crypto) from the environment."
+            "message": "Take Cryptography from @patchy/core (or SecureRandom or Digest from effect/crypto) from the environment."
           },
           {
             "name": "crypto",
-            "message": "Take Cryptography from @patchy/core (or effect/Crypto) from the environment."
+            "message": "Take Cryptography from @patchy/core (or SecureRandom or Digest from effect/crypto) from the environment."
           }
         ]
       }
@@ -131,11 +131,11 @@
             "paths": [
               {
                 "name": "node:crypto",
-                "message": "Take Cryptography from @patchy/core (or effect/Crypto) from the environment."
+                "message": "Take Cryptography from @patchy/core (or SecureRandom or Digest from effect/crypto) from the environment."
               },
               {
                 "name": "crypto",
-                "message": "Take Cryptography from @patchy/core (or effect/Crypto) from the environment."
+                "message": "Take Cryptography from @patchy/core (or SecureRandom or Digest from effect/crypto) from the environment."
               }
             ],
             "patterns": [
@@ -176,11 +176,11 @@
             "paths": [
               {
                 "name": "node:crypto",
-                "message": "Take Cryptography from @patchy/core (or effect/Crypto) from the environment."
+                "message": "Take Cryptography from @patchy/core (or SecureRandom or Digest from effect/crypto) from the environment."
               },
               {
                 "name": "crypto",
-                "message": "Take Cryptography from @patchy/core (or effect/Crypto) from the environment."
+                "message": "Take Cryptography from @patchy/core (or SecureRandom or Digest from effect/crypto) from the environment."
               }
             ],
             "patterns": [
