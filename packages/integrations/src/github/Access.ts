@@ -1,4 +1,4 @@
-import { GithubSnapshot, type GithubRepository } from "@patchy/api";
+import { GithubSnapshot, type GithubAccount, type GithubRepository } from "@patchy/api";
 import { WideEvents } from "@patchy/analytics";
 import { ContractLimits } from "@patchy/limits";
 import * as Clock from "effect/Clock";
@@ -48,6 +48,50 @@ export interface Reach {
   readonly repositoryId: number;
   readonly token: Redacted.Redacted<string>;
   readonly fresh: boolean;
+}
+
+/**
+ * What a read names: one repository of the connection by its name, or the whole set, and its
+ * caller, checked again once the call holds a slot and before GitHub hears anything.
+ */
+export interface CallTarget<R = never> extends Omit<Target, "repository"> {
+  readonly repository: string | null;
+  readonly recheck: Effect.Effect<void, R>;
+}
+
+/**
+ * GitHub refused a read's token, with a 401 or a 403 that isn't a limit answer: `call` drops a
+ * cached one and reads once more with one minted then. Never leaves `call`.
+ */
+export class TokenRefused extends Schema.TaggedError<TokenRefused>()("GithubTokenRefused", {
+  upstreamStatus: Schema.Int
+}) {}
+const isTokenRefused = Schema.is(TokenRefused);
+
+/**
+ * What a read works with once its call holds a slot and a token. The token stays inside `get`
+ * and `locate`, which send it to GitHub's API and nowhere else.
+ */
+export interface Reading {
+  readonly installationId: number;
+  /** The connection's account, whose login names a branch on it. */
+  readonly account: GithubAccount;
+  /** The repository the call named, by its id; undefined for a read of the whole set. */
+  readonly repository: Connection.Repository | undefined;
+  /** The connection's current set, without the repositories that left. */
+  readonly set: ReadonlyArray<Connection.Repository>;
+  /**
+   * One GET under the API. A limit answer writes the installation's cooldown and is refused; a
+   * 401 or another 403 refuses the token.
+   */
+  readonly get: (
+    path: string,
+    accept?: string
+  ) => Effect.Effect<Source.Answer, Source.AppError | TokenRefused>;
+  /** A job log's GET: its redirect read and never followed, as `Source.locate`. */
+  readonly locate: (path: string) => Effect.Effect<Source.Located, Source.AppError | TokenRefused>;
+  /** One range of a job log's download, with no token: as `Source.download`. */
+  readonly download: Source.Source["Service"]["download"];
 }
 
 /** The connection isn't connected: paused by an admin, or by Patchy for a reason it names. */
@@ -119,6 +163,16 @@ export class Access extends Context.Service<
      * repository, or a refusal. Holds one of the installation's slots while it works.
      */
     readonly reach: (target: Target) => Effect.Effect<Reach, ReachError>;
+    /**
+     * A read: `body` runs holding one of the installation's slots, after `reach`'s checks, with
+     * a token for the connection's set. When GitHub refuses a cached token, it's dropped and
+     * `body` runs once more with one minted then; a refused fresh token ends the call
+     * unavailable, so recovery never restarts.
+     */
+    readonly call: <A, E, R>(
+      target: CallTarget<R>,
+      body: (reading: Reading) => Effect.Effect<A, E | TokenRefused>
+    ) => Effect.Effect<A, Exclude<E, TokenRefused> | ReachError | R>;
     /**
      * Forgets a token a read found refused (a 401, or a 403 that isn't a limit answer), so the
      * next `reach` mints a new one.
@@ -607,36 +661,123 @@ export const make = Effect.gen(function* () {
       );
     });
 
-  const reach = Effect.fn("GithubAccess.reach")(function* (target: Target) {
-    return yield* admitted(target, target.deadline, connected, (current) =>
-      Effect.gen(function* () {
-        const asked = Connection.lookup(current.display, current.sealed, target.repository);
-        if (asked === undefined)
-          return yield* new Connection.RepositoryNotFound({ repository: target.repository });
-        const cached = tokens.get(cacheKey(current.id, current.credentialRevision));
-        if (cached !== undefined && cached.until > (yield* now)) {
-          yield* WideEvents.enrich({ githubMint: "cached" });
-          return { ...cached.reach, repositoryId: asked.id, fresh: false } satisfies Reach;
-        }
-        const minted = yield* mintFor(current, "call", { name: target.repository });
-        const repository = Connection.lookup(
-          minted.attempt.display,
-          minted.attempt.sealed,
-          target.repository
-        );
-        if (repository === undefined)
-          return yield* new Connection.RepositoryNotFound({ repository: target.repository });
+  /**
+   * A token for the connection as `current` stands, for the repository `repository` names or the
+   * whole set: the cached one unless `mint`, else one minted now. The set check runs first, and
+   * again after a mint that reconciled the set.
+   */
+  const reachIn = (current: Loaded, repository: string | null, mint: boolean) =>
+    Effect.gen(function* () {
+      const asked =
+        repository === null
+          ? undefined
+          : Connection.lookup(current.display, current.sealed, repository);
+      if (repository !== null && asked === undefined)
+        return yield* new Connection.RepositoryNotFound({ repository });
+      const cached = mint
+        ? undefined
+        : tokens.get(cacheKey(current.id, current.credentialRevision));
+      if (cached !== undefined && cached.until > (yield* now)) {
+        yield* WideEvents.enrich({ githubMint: "cached" });
         return {
+          attempt: current,
+          reach: { ...cached.reach, repositoryId: asked?.id ?? 0, fresh: false } satisfies Reach,
+          repository: asked
+        };
+      }
+      const minted = yield* mintFor(
+        current,
+        "call",
+        repository === null ? undefined : { name: repository }
+      );
+      const found =
+        repository === null
+          ? undefined
+          : Connection.lookup(minted.attempt.display, minted.attempt.sealed, repository);
+      if (repository !== null && found === undefined)
+        return yield* new Connection.RepositoryNotFound({ repository });
+      return {
+        attempt: minted.attempt,
+        reach: {
           connectionId: current.id,
           credentialRevision: minted.attempt.credentialRevision,
           installationId: minted.attempt.display.installationId,
-          repositoryId: repository.id,
+          repositoryId: found?.id ?? 0,
           token: minted.token,
           fresh: true
-        } satisfies Reach;
-      })
+        } satisfies Reach,
+        repository: found
+      };
+    });
+
+  const reach = Effect.fn("GithubAccess.reach")(function* (target: Target) {
+    return yield* admitted(target, target.deadline, connected, (current) =>
+      Effect.map(reachIn(current, target.repository, false), (found) => found.reach)
     );
   });
+
+  /** A read's view of what `reachIn` found, its requests guarded by the installation. */
+  const readingOf = (found: Effect.Success<ReturnType<typeof reachIn>>): Reading => {
+    const installationId = found.reach.installationId;
+    const refusal = (answer: Source.Answer) =>
+      answer.status === 401 || answer.status === 403
+        ? Effect.fail(new TokenRefused({ upstreamStatus: answer.status }))
+        : Effect.succeed(answer);
+    return {
+      installationId,
+      account: found.attempt.display.account,
+      repository: found.repository,
+      set: Connection.reachable(found.attempt.display, found.attempt.sealed),
+      get: (path, accept) =>
+        guarded(installationId)(source.read(found.reach.token, path, accept)).pipe(
+          Effect.flatMap(refusal)
+        ),
+      locate: (path) =>
+        guarded(installationId)(source.locate(found.reach.token, path)).pipe(
+          Effect.flatMap((located): Effect.Effect<Source.Located, TokenRefused> =>
+            located._tag === "Answer" &&
+            (located.answer.status === 401 || located.answer.status === 403)
+              ? Effect.fail(new TokenRefused({ upstreamStatus: located.answer.status }))
+              : Effect.succeed(located)
+          )
+        ),
+      download: source.download
+    };
+  };
+  const refused = (error: TokenRefused) =>
+    new Source.Unavailable({ stage: "status", upstreamStatus: error.upstreamStatus });
+
+  const call = <A, E, R>(
+    target: CallTarget<R>,
+    body: (reading: Reading) => Effect.Effect<A, E | TokenRefused>
+  ): Effect.Effect<A, Exclude<E, TokenRefused> | ReachError | R> =>
+    admitted(target, target.deadline, connected, (current) =>
+      Effect.gen(function* () {
+        yield* target.recheck;
+        const first = yield* reachIn(current, target.repository, false);
+        const once = body(readingOf(first));
+        if (first.reach.fresh)
+          return yield* Effect.catchIf(once, isTokenRefused, (error) =>
+            Effect.fail(refused(error))
+          );
+        return yield* Effect.catchIf(once, isTokenRefused, () =>
+          Effect.gen(function* () {
+            // The cached token is refused: drop it, and read once more with one minted now, for
+            // the connection as it stands now.
+            yield* drop(first.reach);
+            yield* WideEvents.enrich({ githubTokenReplaced: true });
+            const reloaded = yield* load(target);
+            yield* connected(reloaded);
+            if (reloaded.display.installationId !== current.display.installationId)
+              return yield* new Source.Unavailable({ stage: "request" });
+            const again = yield* reachIn(reloaded, target.repository, true);
+            return yield* Effect.catchIf(body(readingOf(again)), isTokenRefused, (error) =>
+              Effect.fail(refused(error))
+            );
+          })
+        );
+      })
+    );
 
   const drop = (reach: Reach) =>
     Effect.sync(() => {
@@ -827,6 +968,7 @@ export const make = Effect.gen(function* () {
 
   return Access.of({
     reach,
+    call,
     drop,
     cooldown,
     check,

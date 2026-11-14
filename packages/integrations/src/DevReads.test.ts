@@ -39,6 +39,7 @@ import * as CredentialKeys from "./CredentialKeys.js";
 import * as DevDoor from "./DevDoor.js";
 import * as DevReads from "./DevReads.js";
 import * as AttioDev from "./attio/Dev.js";
+import * as GithubDev from "./github/Dev.js";
 import * as PidgeonDev from "./pidgeon/Dev.js";
 import * as PidgeonOperations from "./pidgeon/Operations.js";
 import * as PostgresSource from "./postgres/Source.js";
@@ -287,7 +288,8 @@ const routes = HttpApiBuilder.layer(HttpApi.make("patchy").add(DevReadsGroup)).p
 );
 /**
  * The door on a socket over a migrated database; `log` stands in for the runtime log when given,
- * and `imap` for the IMAP source and pool, which reach no mailbox by default.
+ * `imap` for the IMAP source and pool, which reach no mailbox by default, and `github` for
+ * GitHub, which isn't configured by default.
  */
 const serve = (
   log: Layer.Layer<
@@ -299,7 +301,10 @@ const serve = (
     ImapSessions.Sessions | ImapSource.Source,
     never,
     Cryptography.Cryptography
-  > = ImapTest.offline
+  > = ImapTest.offline,
+  github:
+    | typeof GithubTest.unconfigured
+    | ReturnType<typeof GithubTest.world>["layer"] = GithubTest.unconfigured
 ) =>
   HttpRouter.serve(routes, { disableLogger: true, disableListenLog: true }).pipe(
     Layer.provideMerge(NodeHttpServer.layerTest),
@@ -311,7 +316,7 @@ const serve = (
         Layer.provideMerge(mail.layer),
         Layer.provideMerge(workspace.layer),
         Layer.provideMerge(imap),
-        Layer.provideMerge(GithubTest.unconfigured)
+        Layer.provideMerge(github)
       )
     ),
     Layer.provideMerge(Layer.mergeAll(MachineTokens.layer, log, Limits.layer)),
@@ -1659,5 +1664,73 @@ it.layer(serve(RuntimeLog.layer, oneAttachment), {
         assert.strictEqual((yield* place(Date.now() + 1_500))._tag, "None");
       }),
     120_000
+  );
+});
+
+/** An organization's private `api`, whose job 71 printed a sentinel. */
+const githubWorld = GithubTest.world();
+githubWorld.add({
+  id: 501,
+  account: { id: 9101, login: "northwind-labs", type: "Organization" },
+  repositories: [{ id: 61, name: "api" }]
+});
+githubWorld.holds(61).logs.set(71, "SENTINEL-LOG-TEXT\n");
+const repos = { kind: "github" as const, id: "conn_dev_github", handle: "platform", revision: 1 };
+
+it.layer(serve(RuntimeLog.layer, ImapTest.offline, githubWorld.layer), {
+  excludeTestServices: true,
+  timeout: "60 seconds"
+})("GitHub reads in patchy dev", (it) => {
+  it.effect(
+    "reads the real connection as the key's person, shown in recent calls by repository, never the log",
+    () =>
+      Effect.gen(function* () {
+        yield* githubWorld.connection({
+          companyId: DEV_SEED.companyId,
+          userId: DEV_SEED.userId,
+          id: repos.id,
+          handle: repos.handle,
+          installationId: 501,
+          repositoryIds: [61]
+        });
+        const handlers = yield* GithubDev.handlers({
+          apiUrl: yield* origin,
+          token: Option.some(Redacted.make(DEV_SEED.token))
+        }).pipe(Effect.provide(FetchHttpClient.layer));
+        const as = <A, E>(effect: Effect.Effect<A, E, Binding.Binding>) =>
+          Effect.flatMap(Clock.currentTimeMillis, (now) =>
+            effect.pipe(Effect.provideService(Binding.Binding, local({ repos }, now)))
+          );
+        const log = yield* as(
+          handlers["github.getJobLog"].run({ connection: "repos", repo: "api", jobId: 71 })
+        );
+        assert.deepInclude(log as object, {
+          ok: true,
+          text: "SENTINEL-LOG-TEXT\n",
+          truncated: false
+        });
+        const [latest] = yield* devCalls;
+        assert.include(latest, {
+          credentialKind: "machine",
+          op: "github.getJobLog",
+          connectionId: repos.id,
+          outcome: "success",
+          resource: "api",
+          rowCount: null
+        });
+        assert.notInclude(JSON.stringify(latest), "SENTINEL");
+        // A repository outside the set is refused at the door, and logged as refused.
+        const refused = yield* Effect.flip(
+          as(handlers["github.getRepo"].run({ connection: "repos", repo: "docs" }))
+        );
+        assert.strictEqual(refused.code, "not_found");
+        const [after] = yield* devCalls;
+        assert.include(after, {
+          op: "github.getRepo",
+          outcome: "failure",
+          outcomeCode: "not_found"
+        });
+      }),
+    60_000
   );
 });

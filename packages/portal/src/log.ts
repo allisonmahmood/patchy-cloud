@@ -130,7 +130,8 @@ const resource = (value: string) => value.replace(/"([a-z_][a-z0-9_]*)"/gu, "$1"
  * method. A PostHog query's resource is its name, shown as written: "posthog/product.query daily".
  * A Pidgeon call's resource names its operation: "pidgeon/support.threads.get thr_1". An Attio
  * call's names its object or list, as a relation: "attio/crm.deals.listRecords". An IMAP call
- * names no folder or message, only its operation: "imap/invoices.scanMessages".
+ * names no folder or message, only its operation: "imap/invoices.scanMessages". A GitHub call's
+ * names its repository, as a relation: "github/platform.api.listRuns".
  */
 const connectionCall = (item: InvocationLog.TreeItem, names: LogNames) => {
   const name =

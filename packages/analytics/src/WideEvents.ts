@@ -84,6 +84,13 @@ const invocationMetrics = {
   githubMint: Schema.optionalKey(Schema.Literals(["cached", "minted", "reconciled"])),
   /** A GitHub limit answer set the installation's cooldown during the request. */
   githubCooldown: Schema.optionalKey(Schema.Boolean),
+  /** GitHub refused a cached installation token, and the read ran once more with one minted then. */
+  githubTokenReplaced: Schema.optionalKey(Schema.Boolean),
+  /**
+   * How a job's log was read: empty, whole, or only its end; `refused` when its redirect or its
+   * store answered other than Patchy reads. Never its text or its URL.
+   */
+  githubLog: Schema.optionalKey(Schema.Literals(["empty", "whole", "end", "refused"])),
   /** The bytes of every IMAP attachment the request staged, summed; a refused stage adds none. */
   stagedBytes: Schema.optionalKey(Schema.Number),
   /**

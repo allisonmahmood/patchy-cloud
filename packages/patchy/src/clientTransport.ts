@@ -31,7 +31,8 @@ export type Operation =
   | "posthog.query"
   | `pidgeon.${"read" | "write"}`
   | `attio.${"listRecords" | "getRecord" | "getManyRecords" | "listEntries" | "getEntry" | "listMembers"}`
-  | `imap.${"listFolders" | "folderStatus" | "scanMessages" | "listMessages" | "searchMessages" | "getMessages" | "stageAttachment"}`;
+  | `imap.${"listFolders" | "folderStatus" | "scanMessages" | "listMessages" | "searchMessages" | "getMessages" | "stageAttachment"}`
+  | `github.${"listRepos" | "getRepo" | "listWorkflows" | "listRuns" | "getRun" | "listJobs" | "getJobLog" | "listChecks" | "listPulls" | "getPull" | "listPullFiles" | "listPullReviews"}`;
 export type Call = (op: Operation, args: unknown, bytes?: Uint8Array) => Promise<unknown>;
 export interface Route {
   get(): Promise<string>;
