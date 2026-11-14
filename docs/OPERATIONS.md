@@ -132,6 +132,85 @@ tasks' own public addresses, which change on every deploy, and needs no IMAP
 configuration of its own. `start.ts` reaches public addresses only; the
 loopback mailboxes of the dev runner's entrypoint are never part of a host.
 
+### GitHub App
+
+GitHub connections reach GitHub through the environment's GitHub App
+([ADR-0015](adr/ADR-0015-github-app-key-and-repository-rule.md)). A connection
+keeps only its installation and repository ids, encrypted under this keyring;
+the secret that matters is the App's private key. The server calls only
+`https://api.github.com`, and `https://github.com` to sign people in, never
+following a redirect.
+
+**Settings.** Five host settings, all empty or all filled:
+`PATCHY_GITHUB_APP_ID`, `PATCHY_GITHUB_APP_SLUG`, `PATCHY_GITHUB_APP_CLIENT_ID`,
+`PATCHY_GITHUB_APP_CLIENT_SECRET` and `PATCHY_GITHUB_APP_PRIVATE_KEY`, the PEM
+with its newlines, or written on one line with `\n` in their place. All empty,
+GitHub isn't offered and nothing else changes. Some filled, or a key Patchy can't
+sign with, and the server refuses to start, naming what's wrong. The host secret
+holds all five keys, present and empty when the environment has no App.
+
+**Registering an App.** One per environment, owned by Patchy's organization:
+"Patchy Cloud" for production, a development and a CI App beside it.
+
+1. Organization settings › Developer settings › GitHub Apps › New GitHub App.
+   Homepage: the instance's origin. Callback URL:
+   `<origin>/settings/integrations/github/callback`. Setup URL:
+   `<origin>/settings/integrations/github/setup`, with **Redirect on update**
+   on, so someone who adds repositories on GitHub lands back in Patchy.
+   **Request user authorization (OAuth) during installation** off. Webhook off.
+2. Repository permissions, all **Read-only**: Metadata, Actions, Checks, Commit
+   statuses, Contents, Deployments, Issues, Pull requests. No organization or
+   account permission.
+3. Where it can be installed: **Any account**. A prefilled registration link's
+   `public=true` doesn't take, and an owner's signed-in view of the App looks
+   the same either way: open Advanced › Make public after creating it, and
+   confirm with a signed-out `curl -s https://api.github.com/apps/<slug>`,
+   which answers only for a public App.
+4. Generate a client secret and a private key, and put the App id, slug, client
+   id, client secret and key in the host secret. The development App's go in a
+   developer's `~/.config/patchy-cloud/dev.env` instead (DEVELOPMENT's GitHub).
+
+**Rotating the key.** Generate a second key on the App, put it in the host
+secret, deploy, and once every host on the old key has drained, delete the old
+key on GitHub. Both keys sign valid JWTs meanwhile.
+
+**A leaked key.** Whoever holds the key can mint a token for any repository any
+account has granted the App, whether or not a Patchy connection uses it.
+Deleting the key stops new mints and revokes nothing: a token already minted with
+it keeps working until its hour is up (#1439). Either way, first:
+
+1. Generate a new key on the App and deploy it, as for rotation, without waiting
+   to drain.
+2. Delete the leaked key on GitHub, and **write down the time GitHub confirmed
+   the deletion**. Every clock below starts there.
+
+Then choose, knowing the cost of each:
+
+- **Accept up to an hour of exposure** from that time. Nothing else to do; the
+  integration keeps working throughout.
+- **Contain it**, which takes GitHub down for every company for that hour. With
+  a JWT from the new key:
+  1. List **every** installation of the App, including ones no Patchy
+     connection uses: `GET /app/installations?per_page=100`, following every
+     page.
+  2. Note, for each, whether it's already suspended (`suspended_at`) and by whom
+     (`suspended_by`): those are left alone throughout.
+  3. Suspend each of the others, recording which this procedure suspended:
+     `PUT /app/installations/{installation_id}/suspended`.
+  4. No sooner than an hour after the recorded deletion, read each again
+     (`GET /app/installations/{installation_id}`) and unsuspend only those this
+     procedure suspended and still suspended by the App:
+     `DELETE /app/installations/{installation_id}/suspended`. One whose
+     suspension changed hands meanwhile, suspended now by its account's owner,
+     stays as it is.
+
+  While they're suspended, connections show Suspended on GitHub and heal by
+  themselves once unsuspended; nothing in Patchy needs touching.
+
+What neither covers: a compromised **host** leaks the new key too, so fix the
+host before step 1; and a signed log URL GitHub already handed out is its own
+credential for about ten minutes, which suspension wasn't shown to cut.
+
 ### Initial credentials
 
 Startup migrates but creates no credential. For normal use, sign in at `/join`,
@@ -871,7 +950,7 @@ The host secret, `patchy/<environment>/host`, is one JSON object a person fills
 in. Its description lists the keys, and each becomes the host environment variable
 it names. A deploy never writes it, and a host cannot start until every key is
 present, so a release that adds a key needs it filled in first; an optional
-setting such as `PATCHY_DEMO_LINK` is present and empty when unused. The
+setting such as `PATCHY_DEMO_LINK`, or the five `PATCHY_GITHUB_APP_*` keys of an environment without a [GitHub App](#github-app), is present and empty when unused. The
 management secret, `patchy/<environment>/fleet-management`, is two slots,
 `{"a": "…", "b": "…"}`. Slot `a` is generated once, `b` stays empty
 until the first rotation, and each release reads one slot; only

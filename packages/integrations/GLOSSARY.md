@@ -1,11 +1,11 @@
 # Integrations
 
-The company capability for connecting outside systems without handing credentials to patches. Postgres, PostHog, Pidgeon, Attio and Email (IMAP) connections and their discovered metadata are managed here; the `connections` API group exposes their safe metadata to active members. [Companies](../companies/GLOSSARY.md) owns membership and teams, and [Runtime](../runtime/GLOSSARY.md) uses the initiating viewer as the effective principal for connection calls, which also check that the patch's owner may build with the connection.
+The company capability for connecting outside systems without handing credentials to patches. Postgres, PostHog, Pidgeon, Attio, Email (IMAP) and GitHub connections and their discovered metadata are managed here; the `connections` API group exposes their safe metadata to active members. [Companies](../companies/GLOSSARY.md) owns membership and teams, and [Runtime](../runtime/GLOSSARY.md) uses the initiating viewer as the effective principal for connection calls, which also check that the patch's owner may build with the connection.
 
 ## Language
 
 **Integration**:
-A capability Patchy ships for reaching an outside system, the same capability for every company. Postgres, PostHog, Pidgeon, Attio and Email (IMAP) are built; OAuth integrations such as Salesforce and Gmail remain future work.
+A capability Patchy ships for reaching an outside system, the same capability for every company. Postgres, PostHog, Pidgeon, Attio, Email (IMAP) and GitHub are built; OAuth integrations such as Salesforce and Gmail remain future work.
 _Avoid_: connector, app (Zapier's word), resource (Retool and Windmill's word), toolkit
 
 **Connection**:
@@ -37,7 +37,7 @@ Giving a connection new credentials for the same target, keeping its identity an
 _Avoid_: rotate, reconnect
 
 **Needs attention**:
-A connection Patchy stopped, or whose state waits on an admin, for its integration's own reason, shown with its fix: an Attio key a check found writable (paused by Patchy, fixed by Resume or Replace key), an IMAP **login pause** (fixed by Replace password or Test), a Pidgeon key Patchy replaced but couldn't revoke (fixed by Test) and a Pidgeon test address (fixed by connecting a live one). Distinct from Paused, which an admin chose; Postgres and PostHog have no reason of their own.
+A connection Patchy stopped, or whose state waits on an admin, for its integration's own reason, shown with its fix: an Attio key a check found writable (paused by Patchy, fixed by Resume or Replace key), an IMAP **login pause** (fixed by Replace password or Test), a Pidgeon key Patchy replaced but couldn't revoke (fixed by Test), a Pidgeon test address (fixed by connecting a live one), and a GitHub App uninstalled (paused by Patchy, fixed by Reconnect), its permissions changed (paused by Patchy, fixed by Resume) or a repository **left** its installation (fixed by Refresh or Change repositories). A GitHub connection **suspended on GitHub** shows that in place of Connected instead. Distinct from Paused, which an admin chose; Postgres and PostHog have no reason of their own.
 _Avoid_: broken, error, unhealthy
 
 **Unused**:
@@ -65,7 +65,7 @@ An admin's setting on one connection that keeps a patch's [guests](../companies/
 _Avoid_: guest access, allow list, sensitive flag
 
 **Metadata**:
-The source's shape as discovered for one connection, never its business rows. Postgres metadata is a schema snapshot; PostHog metadata is an events snapshot; Pidgeon metadata is an address snapshot; Attio metadata is a workspace snapshot; IMAP metadata is a mailbox snapshot. A stored snapshot names its own integration, so it reads correctly after its connection is deleted.
+The source's shape as discovered for one connection, never its business rows. Postgres metadata is a schema snapshot; PostHog metadata is an events snapshot; Pidgeon metadata is an address snapshot; Attio metadata is a workspace snapshot; IMAP metadata is a mailbox snapshot; GitHub metadata is a repository snapshot. A stored snapshot names its own integration, so it reads correctly after its connection is deleted.
 _Avoid_: instance, fixture
 
 **Schema snapshot**:
@@ -137,7 +137,7 @@ A source table or view described in a Postgres schema snapshot. Its source name 
 _Avoid_: primitive table, collection
 
 **Retarget**:
-Replacing a connection's source endpoint while keeping the connection's identity and discovering its new shape. Existing declarations keep their identity and recorded snapshot. The connection page calls it Point elsewhere for Postgres and Change project for PostHog, beside Replace credentials or Replace key, which give it new ones for the same endpoint. A Pidgeon connection has none: another address is another connection. Nor has an Attio one: another workspace is another connection. Nor an IMAP one: another mailbox is another connection.
+Replacing a connection's source endpoint while keeping the connection's identity and discovering its new shape. Existing declarations keep their identity and recorded snapshot. The connection page calls it Point elsewhere for Postgres and Change project for PostHog, beside Replace credentials or Replace key, which give it new ones for the same endpoint. A Pidgeon connection has none: another address is another connection. Nor has an Attio one: another workspace is another connection. Nor an IMAP one: another mailbox is another connection. Nor a GitHub one: another account is another connection, and Reconnect, which moves one to its account's new installation of the App, keeps its account.
 _Avoid_: rename, new connection
 
 **Credential revision**:
@@ -235,3 +235,39 @@ _Avoid_: Sample of production, mock response
 **Connection audience**:
 Who may build patches with a connection: everyone in the company, or the people on any of its selected teams by their recorded memberships, whether or not they are active. Only an admin sets it; every existing connection is the company's. A patch's current owner must be in it at publish and on every call through the patch; anyone who can open the patch uses the connection through its handlers. Discovery, connection pages and SDK generation list only the connections a person can build with. Blocking guests is separate.
 _Avoid_: connection permission, connection access list
+
+**Repository snapshot**:
+An immutable description of a GitHub connection's account and repositories by id: each one's name, default branch, and whether it's private, archived, disabled or left. Never code, a run or a pull request. Refresh, Add, Remove and a repository found left each take a new one.
+_Avoid_: repository list, inventory
+
+**GitHub App**:
+The one public GitHub App each environment reaches GitHub through, "Patchy Cloud" in production: read on repositories only, webhooks off, its credentials five host settings. Its private key needs no stored ciphertext to be useful, which makes it the one GitHub secret that matters ([ADR-0015](../../docs/adr/ADR-0015-github-app-key-and-repository-rule.md)).
+_Avoid_: OAuth app, integration (the capability, not the App), bot
+
+**Installation**:
+The GitHub App on one GitHub account, a person's or an organization's, with the repositories its owner chose; reinstalling makes a new one. Its platform row keeps the cooldown and when a mint last found it suspended, and outlives every claim on it.
+_Avoid_: account (what it's on), app
+
+**Repository set**:
+What one GitHub connection reads: repositories by numeric id on one installation, each added because GitHub showed the person adding it as its admin at that moment. A call names a repository by its name in the current set, never a snapshot's, and is refused before GitHub is asked when it isn't there.
+_Avoid_: selected repositories (the installation's own choice), scope
+
+**Left**:
+A repository Patchy found missing from its installation when a mint answered 422: kept in the repository set but refused until a Refresh finds it back. Leaving isn't final; removing it from the connection is.
+_Avoid_: removed (what an admin does), deleted
+
+**Claim**:
+Which Patchy company holds an organization's installation: the first to connect a repository from it, until its last connection on it is Disconnected; Pause keeps it. Another company is refused, and told that uninstalling and reinstalling the App on GitHub starts fresh. A personal account's installation, connected by its own user, is exempt.
+_Avoid_: ownership, lock
+
+**GitHub sign-in**:
+A Patchy admin's authorization of the App on GitHub while choosing repositories: a flow record holding a hashed one-use nonce, a PKCE verifier and, once GitHub answers, who they are there and their token, sealed. It lasts ten minutes and goes when the connection saves, and its token is revoked at GitHub then. Identity comes only from a sign-in Patchy started; installing the App and its setup URL prove nothing.
+_Avoid_: OAuth flow, login (Patchy's own)
+
+**Suspended on GitHub**:
+An installation whose account suspended the App, as the last mint found it: calls are refused saying so, the connection is never paused, and it works again by itself once unsuspended there. Shown in place of Connected, with when Patchy last checked.
+_Avoid_: paused (an admin's), disabled
+
+**Cooldown**:
+An installation refused GitHub calls on every host until a time a limit answer set: GitHub's own, or a minute. Written in its own statement, only ever later; a limit on a person's own token while they connect refuses them and cools nothing.
+_Avoid_: rate limit (GitHub's), backoff
