@@ -320,18 +320,13 @@ await copyFile(
   path.join(packageDir, "node_modules/yaml/LICENSE"),
   path.join(distDir, "licenses/yaml-LICENSE")
 );
-// The hotkeys bundle carries TanStack Hotkeys and the TanStack Store it builds on, each with its
-// own notice; @tanstack/store's matches @tanstack/preact-store's.
+// The hotkeys bundle carries TanStack Hotkeys, its core and Preact adapter under one notice.
 const tanstackHotkeys = await realpath(
   path.join(packageDir, "node_modules/@tanstack/preact-hotkeys")
 );
 await copyFile(
   path.join(tanstackHotkeys, "LICENSE"),
   path.join(distDir, "licenses/tanstack-hotkeys-LICENSE")
-);
-await copyFile(
-  path.join(tanstackHotkeys, "../preact-store/LICENSE"),
-  path.join(distDir, "licenses/tanstack-store-LICENSE")
 );
 await access(path.join(rootSkillsDir, "patchy/SKILL.md"));
 await rm(packageSkillsDir, { recursive: true, force: true });

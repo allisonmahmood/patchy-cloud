@@ -1,43 +1,17 @@
-diff --git a/dist/_keyboard-event.js b/dist/_keyboard-event.js
-index 2a0b80bd9881a2478b6a43ab791a939bd3615935..7a6ba6d370502bb8250503acff3a62f121e0386b 100644
---- a/dist/_keyboard-event.js
-+++ b/dist/_keyboard-event.js
-@@ -22,7 +22,7 @@ function normalizeKeyboardEvent(event, platform) {
- 		meta: Boolean(event.metaKey),
- 		altGraph: altGraph && !controlAlt,
- 		location: event.location,
--		isComposing: Boolean(event.isComposing) || key === "Process" || key === "Unidentified"
-+		isComposing: Boolean(event.isComposing) || event.keyCode === 229 || key === "Process" || key === "Unidentified"
- 	};
- }
- /**
-diff --git a/dist/_match.js b/dist/_match.js
-index 99c83fccd6dd4460768612d550107e7cd637acf7..47a6160df241c9ad9be7f93b958acc12480fda6d 100644
---- a/dist/_match.js
-+++ b/dist/_match.js
-@@ -11,7 +11,7 @@ function matchKeyboardEvent(event, hotkey, platform = detectPlatform()) {
- 		matched: false,
- 		score: 0
- 	};
--	if (normalized.isComposing && (parsed.code !== void 0 || isPrintableKey(parsed.key))) return noMatch;
-+	if (normalized.isComposing) return noMatch;
- 	if (normalized.altGraph && (parsed.ctrl || parsed.alt)) return noMatch;
- 	if (normalized.altGraph && !altGraphTypedCharacter(normalized)) return noMatch;
- 	if (parsed.code !== void 0) {
 diff --git a/dist/hotkey-manager.d.ts b/dist/hotkey-manager.d.ts
-index 8e86b5ed9d9b5a3fbc0be8fc45d8d5ecfdbd84b7..54e5541997eeef0e25b4fe5d7efb09d960cced35 100644
+index 7250179b35c33f8782e25f8069d7ad5a66e53f46..f9ad3fdab0f69fec1e32b96e4a899ff26d790e2a 100644
 --- a/dist/hotkey-manager.d.ts
 +++ b/dist/hotkey-manager.d.ts
-@@ -3,7 +3,7 @@ import { AppHotkey, AppHotkeysStore } from "./app-hotkeys.js";
- import { Store } from "@tanstack/store";
- //#region src/hotkey-manager.d.ts
+@@ -2,7 +2,7 @@ import { Store } from "./_store.js";
+ import { AppHotkey, AppHotkeysStore } from "./app-hotkeys.js";
+ import { ConflictBehavior, HotkeyCallback, HotkeyCallbackContextFor, HotkeyChord, HotkeyMeta, HotkeySequence, ParsedHotkeyChord, RegisterableHotkey, RegisterableHotkeyChord, RegisterableHotkeySequence } from "./hotkey.types.js";
  /** An element, document, or window that hotkeys can listen on. */
 -export type Target = HTMLElement | Document | Window;
 +export type Target = Element | Document | Window;
  /**
   * Options shared by chords and sequences.
   */
-@@ -56,6 +56,19 @@ export interface HotkeyOptions {
+@@ -68,6 +68,19 @@ export interface HotkeyOptions {
    stopPropagation?: boolean;
    /** The DOM element to attach the event listener to. Defaults to document. */
    target?: Target | null;
@@ -58,16 +32,28 @@ index 8e86b5ed9d9b5a3fbc0be8fc45d8d5ecfdbd84b7..54e5541997eeef0e25b4fe5d7efb09d9
    meta?: HotkeyMeta;
    /**
 diff --git a/dist/hotkey-manager.js b/dist/hotkey-manager.js
-index f4f4c158f4787988739e47790066991b1f415df5..08025aa35cc58c31e31befd98bdd0d9e30a36bf5 100644
+index 51b00cafaa1e014b67786cac93540eeece1ba52c..6cd0609ea138b72f3dec7441d255a005af6dc3be 100644
 --- a/dist/hotkey-manager.js
 +++ b/dist/hotkey-manager.js
-@@ -148,12 +148,14 @@ var HotkeyManager = class HotkeyManager {
- 	/** Scopes that can fire while a scope is exclusive, or `null` when none is. */
- 	#liveScopes = null;
+@@ -1,4 +1,4 @@
+-import { closesNativeLayer, getTargetDocument, isDocumentLevel, shouldIgnoreInputEvent, targetHasFocus } from "./_event-target.js";
++import { getTargetDocument, isDocumentLevel, shouldIgnoreInputEvent, targetHasFocus } from "./_event-target.js";
+ import { isKeyNameShape, keysEqual, normalizeKeyboardEvent } from "./_keyboard-event.js";
+ import { managerRef } from "./_manager-ref.js";
+ import { matchKeyboardEvent, parsedChordsEqual } from "./_match.js";
+@@ -192,7 +192,7 @@ var HotkeyManager = class HotkeyManager {
  	#listeners = new TargetListeners((...args) => this.#processTargetEvent(...args));
+ 	/** Where each registration listens, kept so cleanup finds a target that moved documents. */
+ 	#listenerTargets = /* @__PURE__ */ new Map();
 -	/** Events that continue a sequence in progress, decided before any listener runs. */
 +	/** Events that continue a sequence in progress, decided before any listener runs: the event path index of the innermost target whose sequence continues, or -1. */
  	#sequenceOwned = /* @__PURE__ */ new WeakMap();
+ 	/**
+ 	* Keyup chords whose keydown matched. Releasing one of the chord's
+@@ -204,10 +204,12 @@ var HotkeyManager = class HotkeyManager {
+ 	#pendingReleases = /* @__PURE__ */ new Map();
+ 	/** Events this manager prevented, so its own prevention never skips a hotkey. */
+ 	#prevented = /* @__PURE__ */ new WeakSet();
 -	/** Physical keys whose keydown a sequence owned, so their repeats and keyup are owned too. */
 -	#sequenceOwnedKeys = /* @__PURE__ */ new Set();
 +	/** Physical keys whose keydown a sequence owned, so their repeats and keyup are owned too, at that keydown's index. */
@@ -79,7 +65,7 @@ index f4f4c158f4787988739e47790066991b1f415df5..08025aa35cc58c31e31befd98bdd0d9e
  	constructor() {
  		this.#platform = detectPlatform();
  	}
-@@ -457,7 +459,8 @@ var HotkeyManager = class HotkeyManager {
+@@ -512,7 +514,8 @@ var HotkeyManager = class HotkeyManager {
  	/**
  	* Processes keyboard events for a specific target and event type.
  	* A key that continues a sequence in progress belongs to that sequence, so
@@ -89,9 +75,9 @@ index f4f4c158f4787988739e47790066991b1f415df5..08025aa35cc58c31e31befd98bdd0d9e
  	*/
  	#processTargetEvent(event, target, eventType, capture, ids, first) {
  		if (first) this.#sequenceOwned.set(event, this.#isOwnedBySequence(event, eventType));
-@@ -471,7 +474,8 @@ var HotkeyManager = class HotkeyManager {
- 				registration.activeMatch = void 0;
- 			}
+@@ -556,7 +559,8 @@ var HotkeyManager = class HotkeyManager {
+ 		if (eventType === "keydown" && !event.repeat) {
+ 			for (const { id } of registrations) if (this.#pendingReleases.get(id)) this.#pendingReleases.set(id, null);
  		}
 -		if (isRecordingEvent(event) || this.#sequenceOwned.get(event)) return;
 +		const owner = this.#sequenceOwned.get(event) ?? -1;
@@ -99,7 +85,7 @@ index f4f4c158f4787988739e47790066991b1f415df5..08025aa35cc58c31e31befd98bdd0d9e
  		const matches = /* @__PURE__ */ new Map();
  		let bestScore = 0;
  		let reserved = false;
-@@ -510,32 +514,36 @@ var HotkeyManager = class HotkeyManager {
+@@ -626,32 +630,36 @@ var HotkeyManager = class HotkeyManager {
  		}
  	}
  	/**
@@ -137,7 +123,7 @@ index f4f4c158f4787988739e47790066991b1f415df5..08025aa35cc58c31e31befd98bdd0d9e
  		const now = Date.now();
 +		let owner = -1;
  		for (const registration of this.registrations.state.values()) {
- 			if (registration.kind !== "sequence" || registration.currentIndex === 0 || !this.#isLive(registration) || registration.options.eventType !== eventType || now - registration.lastKeyTime > (registration.options.timeout ?? 1e3)) continue;
+ 			if (registration.kind !== "sequence" || registration.currentIndex === 0 || !this.#isLive(registration) || registration.options.eventType !== eventType || this.#skips(registration, event) || now - registration.lastKeyTime > (registration.options.timeout ?? 1e3)) continue;
  			const target = registration.target;
 -			if (path.includes(isDocumentLevel(target) ? getTargetDocument(target) : target) && !(ignoresInputs(registration) && shouldIgnoreInputEvent(event, target)) && matchKeyboardEvent(event, registration.parsedSequence[registration.currentIndex], registration.options.platform).matched) return true;
 +			const at = path.indexOf(isDocumentLevel(target) ? getTargetDocument(target) : target);
@@ -148,7 +134,7 @@ index f4f4c158f4787988739e47790066991b1f415df5..08025aa35cc58c31e31befd98bdd0d9e
  	}
  	#processSequences(event, target, eventType, capture, registrations) {
  		if (registrations.length === 0) return;
-@@ -554,14 +562,17 @@ var HotkeyManager = class HotkeyManager {
+@@ -670,14 +678,17 @@ var HotkeyManager = class HotkeyManager {
  		const now = Date.now();
  		let changed = false;
  		const candidates = /* @__PURE__ */ new Map();
@@ -156,7 +142,7 @@ index f4f4c158f4787988739e47790066991b1f415df5..08025aa35cc58c31e31befd98bdd0d9e
 +		const outer = (this.#sequenceTaken.get(event) ?? at) < at;
  		let bestScore = 0;
  		for (const registration of registrations) {
- 			if (!this.#isLive(registration) || ignoresInputs(registration) && shouldIgnoreInputEvent(event, target) || registration.options.eventType !== eventType) continue;
+ 			if (!this.#isLive(registration) || ignoresInputs(registration) && shouldIgnoreInputEvent(event, target) || registration.options.eventType !== eventType || this.#skips(registration, event)) continue;
  			const timeout = registration.options.timeout ?? 1e3;
 -			if (registration.currentIndex > 0 && now - registration.lastKeyTime > timeout) {
 +			if (registration.currentIndex > 0 && (outer || now - registration.lastKeyTime > timeout)) {
@@ -167,7 +153,7 @@ index f4f4c158f4787988739e47790066991b1f415df5..08025aa35cc58c31e31befd98bdd0d9e
  			const expected = registration.parsedSequence[registration.currentIndex];
  			if (!expected) continue;
  			let match = matchKeyboardEvent(event, expected, registration.options.platform);
-@@ -570,6 +581,7 @@ var HotkeyManager = class HotkeyManager {
+@@ -686,6 +697,7 @@ var HotkeyManager = class HotkeyManager {
  				match = matchKeyboardEvent(event, registration.parsedSequence[0], registration.options.platform);
  				nextIndex = 1;
  			}
@@ -175,7 +161,7 @@ index f4f4c158f4787988739e47790066991b1f415df5..08025aa35cc58c31e31befd98bdd0d9e
  			candidates.set(registration.id, {
  				score: match.score,
  				nextIndex
-@@ -584,6 +596,8 @@ var HotkeyManager = class HotkeyManager {
+@@ -700,6 +712,8 @@ var HotkeyManager = class HotkeyManager {
  				registration.lastKeyTime = now;
  				registration.currentIndex = candidate.nextIndex;
  				changed = true;
@@ -184,3 +170,18 @@ index f4f4c158f4787988739e47790066991b1f415df5..08025aa35cc58c31e31befd98bdd0d9e
  				if (registration.currentIndex >= registration.parsedSequence.length) {
  					this.#consume(registration, event);
  					registration.currentIndex = 0;
+@@ -728,12 +742,11 @@ var HotkeyManager = class HotkeyManager {
+ 		event.preventDefault();
+ 	}
+ 	/**
+-	* Whether the registration skips the event: Escape belongs to an open modal
+-	* dialog or popover outside its target, or another listener prevented the
++	* Whether the registration skips the event: another listener prevented the
+ 	* event and the registration skips such events.
+ 	*/
+ 	#skips(registration, event) {
+-		return closesNativeLayer(event, registration.target) || !!registration.options.ignoreDefaultPrevented && event.defaultPrevented && !this.#prevented.has(event);
++		return !!registration.options.ignoreDefaultPrevented && event.defaultPrevented && !this.#prevented.has(event);
+ 	}
+ 	/** Applies a matched registration's preventDefault and stopPropagation options. */
+ 	#consume(registration, event) {

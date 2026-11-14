@@ -371,14 +371,14 @@ const checkDuplicates = () => {
   });
 };
 
-// Layout effects keep a component's hotkeys live from the commit that mounts it to the one that
-// removes it. TanStack's `useHotkeys` uses passive effects, which miss a key pressed before the
-// next paint and, on Preact 11, outlive the component until that paint. Each commit reads the
-// `within` refs, which Preact has set by then. A commit that changes a binding's shape or element
-// updates the same registrations in place, so it doesn't restart a sequence; one that doesn't,
-// such as a whiteboard's on each collaborator's move, leaves them alone, since TanStack parses
-// every hotkey again on each update. `scope` puts the hotkeys in a scope of Patchy's own instead
-// of the enclosing `HotkeyScope`'s.
+// Registers a component's hotkeys from the commit that mounts it to the one that removes it, in
+// layout effects, as TanStack's `useHotkeys` also does. Unlike that hook, a commit that changes no
+// binding's shape or element, such as a whiteboard's on each collaborator's move, leaves the
+// registrations alone: TanStack parses every hotkey again on each update. One that does updates
+// the same registrations in place, so it doesn't restart a sequence. It leaves out bindings of
+// Patchy's reserved chord, reads the `within` refs at each commit, which Preact has set by then,
+// and checks for duplicates once every hook has landed. `scope` puts the hotkeys in a scope of
+// Patchy's own instead of the enclosing `HotkeyScope`'s.
 function useBindings(bindings: ReadonlyArray<Checked>, scope?: string): void {
   const kept = permitted(bindings);
   // A `HotkeyScope` above puts its scope here.
@@ -451,9 +451,9 @@ const sheetOpener = "patchy-hotkey-sheet";
 export function HotkeyScope(props: { readonly children: ComponentChildren }): JSX.Element {
   const scope = useId();
   const parent = useDefaultHotkeysOptions().hotkey?.scope;
-  // TanStack's provider holds its scope in a passive effect, whose cleanup Preact 11 runs after
-  // the next paint, so the page's hotkeys would stay held for a frame after the scope unmounts.
-  // A layout effect holds them from the commit that mounts the scope to the one that removes it.
+  // Holds back every hotkey outside this scope except the sheet's openers, from the commit that
+  // mounts it to the one that removes it. TanStack's provider, given `scope` and `exclusive`, has
+  // done the same in a layout effect since 0.19.2; this activation predates that.
   useLayoutEffect(
     () => getHotkeyManager().activateScope(scope, { exclusive: { allow: [sheetOpener] }, parent }),
     [scope, parent]

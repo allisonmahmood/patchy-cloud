@@ -81,10 +81,10 @@ Exports name individual entries, never a `patchy/*` wildcard. Config and local
 dev remain tooling entries; the generated client and Preact entries are for the
 page. `patchy/server` ships the handler builders and guest entry for hosted code;
 `patchy/csv` ships CSV parsing and stringification for either graph;
-`patchy/hotkeys` ships keyboard shortcuts for the page. TanStack Hotkeys and the
-TanStack Store under it are bundled into that entry at an exact version, with
-their MIT notices in `dist/licenses`; it shares the bundled Preact. The graph
-import checks run independently on the page and server publication graphs.
+`patchy/hotkeys` ships keyboard shortcuts for the page. TanStack Hotkeys is
+bundled into that entry at an exact version, with its MIT notice in
+`dist/licenses`; it shares the bundled Preact. The graph import checks run
+independently on the page and server publication graphs.
 
 Managed package pins are `patchy` on every tier and `workerd` on tier 2.
 Changing tier plus `refresh` adds or removes the workerd pin and generated
