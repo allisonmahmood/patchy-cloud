@@ -616,10 +616,13 @@ When a patch asks for data the viewer may not reach, the viewer is told plainly 
 The server runtime supports the release-tested `Intl` formatters (including exact
 decimal-string number formatting), Web Crypto, `TextEncoder`, `TextDecoder`,
 `structuredClone`, `URL`, `URLSearchParams`, `atob`, `btoa` and `BigInt`.
-Bundles are single closed modules. Outbound fetch, socket and Node module access,
-Node globals, `eval` and `new Function` are refused. Other workerd APIs are
-incidental, not a supported contract; the exact list and engine pin live in
-ADR-0012.
+Bundles are single closed modules. Outbound fetch and sockets, Node globals,
+`eval` and `new Function` are refused. Node's built-in modules are unavailable,
+apart from workerd's minimal `node:process` stub: it is present, its environment
+is empty, and it is not supported. The engine's own `cloudflare:` modules load
+too; they are not supported, see no bindings and reach no network. Other workerd
+APIs are incidental, not a supported contract; the exact list and engine pin live
+in ADR-0012.
 
 ### When access ends
 
