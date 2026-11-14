@@ -1,4 +1,5 @@
 import { createHash, createVerify, generateKeyPairSync } from "node:crypto";
+import { type GithubAccount, type GithubRepository, GithubSnapshot } from "@patchy/api";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -189,7 +190,59 @@ const json = (status: number, body: unknown, headers: Readonly<Record<string, st
   });
 const message = (status: number, text: string) => json(status, { message: text });
 const encodeDisplay = Schema.encodeSync(Schema.fromJsonString(Connection.Display));
-const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const encodeSnapshot = Schema.encodeSync(Schema.fromJsonString(GithubSnapshot));
+
+/**
+ * A GitHub connection saved as connect saves one, straight into the database, its installation
+ * claimed for the company: what the reads' tests, offline and live, start from.
+ */
+export const save = Effect.fn("GithubDouble.save")(function* (input: {
+  readonly companyId: string;
+  readonly userId: string;
+  readonly id: string;
+  readonly handle: string;
+  readonly installationId: number;
+  readonly account: GithubAccount;
+  readonly repositories: ReadonlyArray<GithubRepository>;
+}) {
+  const sql = yield* SqlClient.SqlClient;
+  const keys = yield* CredentialKeys.CredentialKeys;
+  const display: Connection.Display = {
+    installationId: input.installationId,
+    account: input.account,
+    repositories: input.repositories.map((item) => ({
+      id: item.id,
+      name: item.name,
+      private: item.private
+    })),
+    successes: 1
+  };
+  const sealed = yield* keys.encrypt(
+    { companyId: input.companyId, id: input.id, integration: "github" },
+    Connection.credentials({
+      installationId: input.installationId,
+      repositoryIds: input.repositories.map((item) => item.id)
+    })
+  );
+  const snapshot: GithubSnapshot = {
+    version: 1,
+    account: input.account,
+    repositories: input.repositories
+  };
+  yield* sql`INSERT INTO github_installations (installation_id) VALUES (${input.installationId})
+    ON CONFLICT DO NOTHING`;
+  yield* sql`INSERT INTO github_installation_claims (installation_id, company_id)
+    VALUES (${input.installationId}, ${input.companyId}) ON CONFLICT DO NOTHING`;
+  yield* sql`INSERT INTO connections
+    (id, company_id, integration, handle, description, mode, status, display, credentials, key_id,
+     credential_revision, metadata_revision, created_by, last_tested_at, last_discovered_at)
+    VALUES (${input.id}, ${input.companyId}, 'github', ${input.handle}, 'Repositories', 'company',
+      'connected', ${encodeDisplay(display)}::jsonb, ${sealed.credentials}, ${sealed.keyId}, 1, 1,
+      ${input.userId}, now(), now())`;
+  yield* sql`INSERT INTO connection_snapshots
+    (company_id, connection_id, integration, revision, snapshot, created_at)
+    VALUES (${input.companyId}, ${input.id}, 'github', 1, ${encodeSnapshot(snapshot)}::jsonb, now())`;
+});
 
 /** A world of installations and people, and what was minted and revoked in it. */
 export const world = () => {
@@ -624,68 +677,35 @@ export const world = () => {
    * A connection saved as connect saves one, with `repositoryIds` of installation `installationId`,
    * straight into the database: what the reads' tests start from.
    */
-  const connection = Effect.fn("GithubDouble.connection")(function* (input: {
+  const connection = (input: {
     readonly companyId: string;
     readonly userId: string;
     readonly id: string;
     readonly handle: string;
     readonly installationId: number;
     readonly repositoryIds: ReadonlyArray<number>;
-  }) {
-    const sql = yield* SqlClient.SqlClient;
-    const keys = yield* CredentialKeys.CredentialKeys;
+  }) => {
     const installation = installations.get(input.installationId)!;
-    const account = {
-      id: installation.account.id,
-      login: installation.account.login,
-      type: installation.account.type === "User" ? ("User" as const) : ("Organization" as const)
-    };
-    const repositories = input.repositoryIds.map((id) =>
-      installation.repositories.find((item) => item.id === id)!
-    );
-    const display: Connection.Display = {
-      installationId: input.installationId,
-      account,
-      repositories: repositories.map((item) => ({
-        id: item.id,
-        name: item.name,
-        private: item.private ?? true
-      })),
-      successes: 1
-    };
-    const sealed = yield* keys.encrypt(
-      { companyId: input.companyId, id: input.id, integration: "github" },
-      Connection.credentials({
-        installationId: input.installationId,
-        repositoryIds: input.repositoryIds
+    return save({
+      ...input,
+      account: {
+        id: installation.account.id,
+        login: installation.account.login,
+        type: installation.account.type === "User" ? "User" : "Organization"
+      },
+      repositories: input.repositoryIds.map((id) => {
+        const item = installation.repositories.find((repository) => repository.id === id)!;
+        return {
+          id: item.id,
+          name: item.name,
+          defaultBranch: "main",
+          private: item.private ?? true,
+          archived: item.archived ?? false,
+          disabled: false
+        };
       })
-    );
-    const snapshot = {
-      version: 1,
-      account,
-      repositories: repositories.map((item) => ({
-        id: item.id,
-        name: item.name,
-        defaultBranch: "main",
-        private: item.private ?? true,
-        archived: item.archived ?? false,
-        disabled: false
-      }))
-    };
-    yield* sql`INSERT INTO github_installations (installation_id) VALUES (${input.installationId})
-      ON CONFLICT DO NOTHING`;
-    yield* sql`INSERT INTO github_installation_claims (installation_id, company_id)
-      VALUES (${input.installationId}, ${input.companyId}) ON CONFLICT DO NOTHING`;
-    yield* sql`INSERT INTO connections
-      (id, company_id, integration, handle, description, mode, status, display, credentials, key_id,
-       credential_revision, metadata_revision, created_by, last_tested_at, last_discovered_at)
-      VALUES (${input.id}, ${input.companyId}, 'github', ${input.handle}, 'Repositories', 'company',
-        'connected', ${encodeDisplay(display)}::jsonb, ${sealed.credentials}, ${sealed.keyId}, 1, 1,
-        ${input.userId}, now(), now())`;
-    yield* sql`INSERT INTO connection_snapshots
-      (company_id, connection_id, integration, revision, snapshot, created_at)
-      VALUES (${input.companyId}, ${input.id}, 'github', 1, ${encodeJson(snapshot)}::jsonb, now())`;
-  });
+    });
+  };
   return {
     installations,
     people,
