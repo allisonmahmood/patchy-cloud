@@ -55,3 +55,8 @@ allowBuilds:
   "@embedded-postgres/linux-ia32": true
   "@embedded-postgres/linux-ppc64": true
   simple-git-hooks: true
+# pnpm can link the agent skills a dependency ships into .claude/skills and
+# .agents/skills once approved. Those directories hold only this repo's own
+# skills (docs/SKILL_DISTRIBUTION.md), so pnpm links none and asks about none.
+skills:
+  dirs: []
