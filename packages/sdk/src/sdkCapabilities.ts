@@ -224,6 +224,14 @@ export const sdkCapabilities: readonly SdkCapability[] = [
     limits: `Declare a connected IMAP mailbox, read-only: folders are opened with EXAMINE and fetched with BODY.PEEK, so nothing changes the mailbox or marks mail read. listFolders, folderStatus, scanMessages (oldest first from since or past a stored checkpoint, resumable), listMessages (newest first), searchMessages (newest first, a window at a time, so a page can be empty and not done) and getMessages (up to 25 refs, each message's cleaned text up to 256 KiB and its parts); stageAttachment stages one part, up to 20 MiB, as an Upload the action adopts with ctx.files.<store>.put, within the viewer's 16 staged uploads and 100 MiB. Pages hold 100 summaries; a ref from before a folder's UIDVALIDITY changed fails mailbox_reset; a refused password pauses the connection and calls fail auth_failed. ${runtimeByteLimits.imapBytes / 1024} KiB of arguments, ${runtimeByteLimits.resultBytes / 1024 ** 2} MiB results and a 15-second service deadline bounded by the action's remaining time; two reads run at once per mailbox. Queries and mutations cannot use ctx.connections; IMAP reads are not live-query dependencies.`
   },
   {
+    id: "integrations.github",
+    group: "Integrations",
+    name: "Company repositories' CI and pull requests on GitHub",
+    entrypoints: ["patchy/_generated/server.ts: ctx.connections"],
+    runs: "Tier 2 actions. patchy dev reads the real repositories through the instance as the machine key's person",
+    limits: `Declare a connected GitHub connection, read-only: a set of repositories on one account, each named by its name in the connection. repos.list and get, workflows.list, runs.list (newest first, filtered by branch, sha, workflow, event, status and created), runs.get, runs.jobs (the latest attempt's), jobs.log (the end of a job's log, at most 1 MiB, with truncated when its start was cut), commits.checks, pulls.list, pulls.get (with Patchy's review count, not GitHub's merge rule), pulls.files and pulls.reviews. A repository outside the connection fails not_found before GitHub is asked. Every list answers complete; runs reach GitHub's first 1,000, a pull request's files its first 3,000, lists without a cursor 100; limit 1–100 with a cursor. ${runtimeByteLimits.githubBytes / 1024} KiB of arguments, ${runtimeByteLimits.resultBytes / 1024 ** 2} MiB results and a 15-second service deadline bounded by the action's remaining time. GitHub's own limits fail source_rate_limited and are never retried. Queries and mutations cannot use ctx.connections; GitHub reads are not live-query dependencies.`
+  },
+  {
     id: "helpers.csv",
     group: "Helpers",
     name: "CSV text codec",
@@ -247,7 +255,7 @@ const groups = ["Core", "Primitives", "Integrations", "Helpers"] as const;
 const unavailable: Partial<Record<(typeof groups)[number], string>> = {
   Core: "window.print() works in the frame, including browser print-to-PDF.",
   Integrations:
-    "Postgres, PostHog, Pidgeon, Attio and IMAP are the shipped company integrations, called from tier 2 actions. Pidgeon has no thread assignment, per-person read state, HTML, raw headers, attachment downloads or sent attachments. Attio is read-only, with no notes, tasks, comments, meetings, emails, files, search, saved views or OR across attributes. IMAP is read-only, with no sending, moving, flagging or deleting, attachments past 20 MiB, attachments' text, raw source, server sort or threads, push, or reading without a viewer.",
+    "Postgres, PostHog, Pidgeon, Attio, IMAP and GitHub are the shipped company integrations, called from tier 2 actions. Pidgeon has no thread assignment, per-person read state, HTML, raw headers, attachment downloads or sent attachments. Attio is read-only, with no notes, tasks, comments, meetings, emails, files, search, saved views or OR across attributes. IMAP is read-only, with no sending, moving, flagging or deleting, attachments past 20 MiB, attachments' text, raw source, server sort or threads, push, or reading without a viewer. GitHub is read-only, with no re-runs, merges, comments or labels, commit history, comparisons, file contents, issues, deployments, releases, pull request comments, earlier attempts' jobs, commit statuses, member list, webhooks or reading without a viewer.",
   Helpers:
     "The SDK does not yet offer PDF generation, spreadsheets beyond CSV, time-zone arithmetic, phone parsing, component libraries, rich text, charts or HTML sanitisation."
 };

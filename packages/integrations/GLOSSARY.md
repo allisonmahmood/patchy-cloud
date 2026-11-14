@@ -164,6 +164,14 @@ _Avoid_: CRM API, Attio query (Attio's own word for one request)
 One of the operations Patchy writes for an IMAP mailbox, each its own runtime operation: the reads `imap.listFolders`, `imap.folderStatus`, `imap.scanMessages`, `imap.listMessages`, `imap.searchMessages` and `imap.getMessages`, and `imap.stageAttachment`, which downloads one part of a message and stages it through [host staging](../primitives/GLOSSARY.md) for the action to adopt into its own file store. Patchy builds every command from typed arguments, opens folders with `EXAMINE` and fetches with `BODY.PEEK`, so none changes the mailbox or marks mail as read.
 _Avoid_: IMAP command (the protocol's own word for what Patchy sends)
 
+**GitHub operation**:
+One of the twelve reads Patchy writes for a GitHub connection, each its own runtime operation: `github.listRepos`, `github.getRepo`, `github.listWorkflows`, `github.listRuns`, `github.getRun`, `github.listJobs`, `github.getJobLog`, `github.listChecks`, `github.listPulls`, `github.getPull`, `github.listPullFiles` and `github.listPullReviews`. Each names a repository of the connection's current set by its name, and Patchy builds every request, by the repository's numeric id; none writes. Every list answers whether it is complete.
+_Avoid_: GitHub API call, endpoint (GitHub's own words for what Patchy sends)
+
+**Job log**:
+The end of one CI job's log, as `github.getJobLog` answers it: at most `github.log.bytes`, saying when its start was cut off. Patchy follows GitHub's redirect to its log store itself, only to the store's own hosts, and reads the end by its length and a closed range, never a whole body; the signed URL never leaves the host. Its text is untrusted, inert data, never logged.
+_Avoid_: run log (a whole run's archive, which isn't read), logs
+
 **Message ref**:
 How a patch names one IMAP message: `{ connection, folder, uidValidity, uid }`, its UID within the folder under one UIDVALIDITY, on the connection that answered it. One from an earlier UIDVALIDITY fails `mailbox_reset`; a gone UID is `not_found`. Message-ID is threading metadata, never identity.
 _Avoid_: message id
@@ -221,7 +229,7 @@ How `patchy dev` runs an integration's operations, chosen per integration ([ADR-
 _Avoid_: Mock integration, production proxy
 
 **Dev read**:
-One live dev binding call: the instance runs a read the integration opts into on a connected connection of the machine token's company, as that token's person, and logs it as a machine call with no patch. Both local viewers read as the token's person. An Attio dev read carries the revision the repo was generated from, and the instance decodes by that snapshot of that connection. An IMAP dev read borrows from the same session pool and mailbox gate as published patches.
+One live dev binding call: the instance runs a read the integration opts into on a connected connection of the machine token's company, as that token's person, and logs it as a machine call with no patch. Both local viewers read as the token's person. An Attio dev read carries the revision the repo was generated from, and the instance decodes by that snapshot of that connection. An IMAP dev read borrows from the same session pool and mailbox gate as published patches. A GitHub dev read reaches the connection's current set, with no revision, through the installation's slots and token cache that published patches use.
 _Avoid_: Dev proxy, impersonated read
 
 **Simulated write**:
