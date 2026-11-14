@@ -31,8 +31,9 @@ export const Metrics = Schema.Struct({
 });
 export type Metrics = typeof Metrics.Type;
 
-const SKILL = /skills\/(patchy[\w-]*)\/(SKILL\.md|references\/[\w.-]+)/g;
-const OFF_SKILL = /node_modules\/patchy\/(?!skills\/)|\.d\.ts\b/;
+/** A skill's file by its folder's name, or the global skill's in the `patchy` package. */
+const SKILL = /(?:skills\/(patchy[\w-]*)|patchy\/global-skill)\/(SKILL\.md|references\/[\w.-]+)/g;
+const OFF_SKILL = /node_modules\/patchy\/(?!global-skill\/)|\.d\.ts\b/;
 const TYPECHECK = /\bpnpm\s+(?:run\s+)?typecheck\b|\btsc\b/;
 const PUBLISH = /\bpatchy\s+publish\b/;
 const DEV_START = /\bpatchy\s+dev\b(?!\s+(?:stop|status|logs|reset)\b)/;
@@ -57,11 +58,11 @@ const REFERENCE = /^references\/[a-z0-9-]{1,40}\.(?:md|html)$/;
 export const textsIn = (step: Step): ReadonlyArray<string> => {
   if (step.tool === "Skill") return SKILL_NAME.test(step.input) ? [step.input] : [];
   const target = pointedAt(step);
-  const named = [...target.matchAll(SKILL)].flatMap(([, skill, file]) =>
-    !SKILL_NAME.test(skill!)
+  const named = [...target.matchAll(SKILL)].flatMap(([, skill = "patchy", file]) =>
+    !SKILL_NAME.test(skill)
       ? []
       : file === "SKILL.md"
-        ? [skill!]
+        ? [skill]
         : REFERENCE.test(file!)
           ? [`${skill}/${file}`]
           : []
