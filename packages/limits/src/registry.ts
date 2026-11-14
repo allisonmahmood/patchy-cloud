@@ -464,7 +464,8 @@ export const registry = {
     default: 50,
     unit: "repositories",
     scope: "viewer",
-    measure: "Repositories the connect page lists at once; a filter finds the others",
+    measure:
+      "Repositories the connect page and Change repositories list at once; a filter finds the others",
     refusal: null,
     overridable: false
   },

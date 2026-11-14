@@ -73,6 +73,11 @@ export interface ConnectSpec {
    * locked. Absent, they follow `choose` and the script.
    */
   readonly ready?: boolean;
+  /**
+   * Trusted HTML after the connect form: forms of their own that buttons inside it join with a
+   * `form` attribute, as GitHub's sign-in buttons do, so Enter in its fields never presses them.
+   */
+  readonly outside?: string;
   /** Name it: an example handle and what a description might say. */
   readonly name: { readonly example: string; readonly describe: string };
   /**
@@ -240,7 +245,8 @@ export const render = (input: {
     title: `Connect ${integration.label}`,
     form: {
       action: View.connectPath(integration.key),
-      ...(spec.script === undefined ? {} : { fields: spec.script.fields(submitted) })
+      ...(spec.script === undefined ? {} : { fields: spec.script.fields(submitted) }),
+      ...(spec.outside === undefined ? {} : { outside: spec.outside })
     },
     sections: [
       ...(spec.getIt === undefined ? [] : [{ title: spec.getIt.title, body: getIt(spec.getIt) }]),

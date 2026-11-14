@@ -237,11 +237,18 @@ export interface ConnectState {
   readonly chosen: ReadonlyArray<string>;
 }
 
+/**
+ * The form the sign-in buttons post, drawn outside the connection's own form: a button joins it
+ * by its `form` attribute, so Enter in the name or filter field never starts a sign-in.
+ */
+const signInFormId = "github-sign-in";
+export const signInForm = `<form id="${signInFormId}" method="post" hidden></form>`;
+
 /** Section 1: Continue with GitHub, or who GitHub signed them in as and the way to switch. */
 const signInBody = (signIn: SignIn, purpose: Flows.Purpose, connectionId?: string) =>
   signIn.kind === "signed-out"
-    ? `<p class="prose">Patchy asks GitHub which repositories you administer.</p><div class="btn-group">${button("Continue with GitHub", { formAction: start(purpose, connectionId) })}</div>`
-    : `<div class="cluster"><p class="prose">Signed in as <strong>${escapeHtml(signIn.login)}</strong>.</p>${button("Use another GitHub account", { kind: "quiet", size: "sm", formAction: start(purpose, connectionId, true) })}</div>`;
+    ? `<p class="prose">Patchy asks GitHub which repositories you administer.</p><div class="btn-group">${button("Continue with GitHub", { form: signInFormId, formAction: start(purpose, connectionId) })}</div>`
+    : `<div class="cluster"><p class="prose">Signed in as <strong>${escapeHtml(signIn.login)}</strong>.</p>${button("Use another GitHub account", { kind: "quiet", size: "sm", form: signInFormId, formAction: start(purpose, connectionId, true) })}</div>`;
 
 const describe = (item: { readonly private: boolean; readonly archived: boolean }) =>
   `${item.private ? "Private" : "Public"}${item.archived ? " · archived" : ""}`;
@@ -255,6 +262,37 @@ const notListed = (installUrl: string) =>
 const offered = (listing: Flows.Listing) =>
   listing.accounts.some((account) => account.repositories.length > 0);
 
+const shownMax = registry["github.picker.shown"].default;
+/**
+ * Which repositories a list of them shows: every ticked one, and of the rest those whose name
+ * holds `query`, until `github.picker.shown` have, counted across every list it's asked about.
+ */
+const showing = (query: string, chosen: ReadonlySet<string>) => {
+  const wanted = query.trim().toLowerCase();
+  let budget = shownMax;
+  return (name: string, value: string) => {
+    if (chosen.has(value)) return true;
+    if (budget <= 0 || (wanted !== "" && !name.toLowerCase().includes(wanted))) return false;
+    budget--;
+    return true;
+  };
+};
+/**
+ * The filter by name over a list longer than it shows, a GET of the form to `get` that keeps its
+ * text and ticks, and how many it shows of how many.
+ */
+const filterField = (input: {
+  readonly id: string;
+  readonly get: string;
+  readonly query: string;
+  readonly total: number;
+  readonly shown: number;
+}) =>
+  input.total > shownMax || input.query.trim() !== ""
+    ? `${searchField({ id: input.id, inForm: true, get: input.get, query: input.query, placeholder: "Filter by name", label: "Filter repositories" })}${input.shown < input.total ? `<p class="meta">${escapeHtml(`Showing ${input.shown} of ${input.total}.${input.query.trim() === "" ? " Filter by name to find the others." : ""}`)}</p>` : ""}`
+    : "";
+const noMatch = `<p class="meta">Nothing matches that filter.</p>`;
+
 /**
  * Section 2: the repositories the person administers, one list per account, the ticked account's
  * setting back the others. At most `github.picker.shown` show at once, ticked ones always; a
@@ -267,29 +305,22 @@ const chooseBody = (state: ConnectState) => {
   if (signIn.listed === null)
     return `<p class="meta">Patchy couldn't read them from GitHub. Press Use another GitHub account, or reload the page, to try again.</p>`;
   if (!offered(signIn.listed)) return notInstalled(signIn.installUrl);
-  const shownMax = registry["github.picker.shown"].default;
-  const query = state.query.trim().toLowerCase();
   const chosen = new Set(state.chosen);
-  const total = signIn.listed.accounts.reduce(
-    (sum, account) => sum + account.repositories.length,
-    0
-  );
-  let budget = shownMax;
-  const groups = signIn.listed.accounts
+  const accounts = signIn.listed.accounts;
+  const total = accounts.reduce((sum, account) => sum + account.repositories.length, 0);
+  const shows = showing(state.query, chosen);
+  const groups = accounts
     .filter((account) => account.repositories.length > 0)
     .map((account) => {
       const items = account.repositories.flatMap((repository) => {
         const value = Connection.choiceValue(account.installationId, repository.id);
-        const ticked = chosen.has(value);
-        const matches = query === "" || repository.name.toLowerCase().includes(query);
-        if (!ticked && (!matches || budget <= 0)) return [];
-        if (!ticked) budget--;
+        if (!shows(repository.name, value)) return [];
         return [
           {
             value,
             label: repository.name,
             description: describe(repository),
-            checked: ticked && !account.suspended,
+            checked: chosen.has(value) && !account.suspended,
             disabled: account.suspended
           }
         ];
@@ -297,18 +328,20 @@ const chooseBody = (state: ConnectState) => {
       return { account, items };
     })
     .filter((group) => group.items.length > 0);
-  const shown = groups.reduce((sum, group) => sum + group.items.length, 0);
-  const filter =
-    total > shownMax || query !== ""
-      ? `${searchField({ id: "github-filter", inForm: true, get: connectPath, query: state.query, placeholder: "Filter by name", label: "Filter repositories" })}${shown < total ? `<p class="meta">${escapeHtml(`Showing ${shown} of ${total}.${query === "" ? " Filter by name to find the others." : ""}`)}</p>` : ""}`
-      : "";
+  const filter = filterField({
+    id: "github-filter",
+    get: connectPath,
+    query: state.query,
+    total,
+    shown: groups.reduce((sum, group) => sum + group.items.length, 0)
+  });
   // Past the installations Patchy reads, the rest aren't listed: said, never passed off as all.
   const more = signIn.listed.complete
     ? ""
     : `<p class="meta">${escapeHtml(`Showing what you administer on the first ${registry["github.picker.installations"].default.toLocaleString("en-US")} accounts GitHub listed for you.`)}</p>`;
   return `<p class="meta">Repositories you administer where Patchy Cloud is installed. One account per connection.</p>${filter}${
     groups.length === 0
-      ? `<p class="meta">Nothing matches that filter.</p>`
+      ? noMatch
       : checklistGroups(
           groups.map(({ account, items }) => ({
             id: `github-${account.installationId}`,
@@ -345,6 +378,7 @@ export const connectSpec = (state: ConnectState): ConnectFrame.ConnectSpec => ({
     state.signIn.kind === "signed-in" &&
     state.signIn.listed !== null &&
     offered(state.signIn.listed),
+  outside: signInForm,
   name: { example: "platform", describe: "The platform team's repositories" },
   once: {
     reads: "the code, pull requests and CI logs of these repositories",
@@ -406,12 +440,16 @@ export const reconnectDialog = (connection: Connection, signIn: SignIn) => ({
   submit: "Reconnect",
   fields: () =>
     `<input type="hidden" name="action" value="reconnect">${signInBody(signIn, "reconnect", connection.id)}`,
+  outside: signInForm,
   shows: [] as ReadonlyArray<View.Field>
 });
 
 /**
  * Change repositories, over a connection's Settings: untick to remove, which needs no sign-in;
- * sign in to add ones GitHub shows you administering on the connection's account.
+ * sign in to add ones GitHub shows you administering on the connection's account, at most
+ * `github.picker.shown` at once with a filter by name for the rest, as on the connect page.
+ * The filter is a GET of the dialog, and it and a refused save draw the boxes as they were
+ * ticked; opened afresh, every repository it holds is kept.
  */
 export const repositoriesDialog = (connection: Connection, signIn: SignIn) => {
   const known = new Set(connection.display.repositories.map((item) => item.id));
@@ -422,30 +460,36 @@ export const repositoriesDialog = (connection: Connection, signIn: SignIn) => {
         )
       : undefined;
   const addable = (here?.repositories ?? []).filter((item) => !known.has(item.id));
-  const add =
-    signIn.kind === "signed-out"
-      ? `<p class="meta">To add repositories, sign in to GitHub as someone who administers them.</p>${signInBody(signIn, "add", connection.id)}`
-      : `${signInBody(signIn, "add", connection.id)}${
-          addable.length === 0
-            ? `<p class="meta">${escapeHtml(`GitHub shows you administering nothing more on ${connection.display.account.login} where Patchy Cloud is installed.`)}</p>`
-            : checklist({
-                id: "github-add",
-                legend: "Add",
-                name: "repository",
-                items: addable.slice(0, registry["github.picker.shown"].default).map((item) => ({
-                  value: Connection.choiceValue(connection.display.installationId, item.id),
-                  label: item.name,
-                  description: describe(item)
-                }))
-              })
-        }${signIn.listed === null ? "" : notListed(signIn.installUrl)}`;
+  const add = (query: string, chosen: ReadonlySet<string>) => {
+    if (signIn.kind === "signed-out")
+      return `<p class="meta">To add repositories, sign in to GitHub as someone who administers them.</p>${signInBody(signIn, "add", connection.id)}`;
+    const shows = showing(query, chosen);
+    const items = addable.flatMap((item) => {
+      const value = Connection.choiceValue(connection.display.installationId, item.id);
+      return shows(item.name, value)
+        ? [{ value, label: item.name, description: describe(item), checked: chosen.has(value) }]
+        : [];
+    });
+    return `${signInBody(signIn, "add", connection.id)}${
+      addable.length === 0
+        ? `<p class="meta">${escapeHtml(`GitHub shows you administering nothing more on ${connection.display.account.login} where Patchy Cloud is installed.`)}</p>`
+        : `${filterField({
+            id: "github-add-filter",
+            get: View.connectionPath(connection.id, "access"),
+            query,
+            total: addable.length,
+            shown: items.length
+          })}${items.length === 0 ? noMatch : checklist({ id: "github-add", legend: "Add", name: "repository", items })}`
+    }${signIn.listed === null ? "" : notListed(signIn.installUrl)}`;
+  };
   return {
     title: (name: string) => `Change the repositories of ${name}`,
     consequence:
       "Calls reach the new set at once. Published patches keep the snapshot they were published with; the next publish needs patchy refresh.",
     submit: "Save repositories",
-    fields: () =>
-      `<input type="hidden" name="action" value="repositories">${checklist({
+    fields: (submitted: Submitted) => {
+      const kept = submitted.keep === undefined ? undefined : new Set(values(submitted.keep));
+      return `<input type="hidden" name="action" value="repositories">${checklist({
         id: "github-keep",
         legend: "Keep",
         name: "keep",
@@ -453,9 +497,11 @@ export const repositoriesDialog = (connection: Connection, signIn: SignIn) => {
           value: String(item.id),
           label: item.name,
           description: `${item.private ? "Private" : "Public"}${item.left === true ? " · left the installation" : ""}`,
-          checked: true
+          checked: kept?.has(String(item.id)) ?? true
         }))
-      })}${add}`,
+      })}${add(submitted.q ?? "", new Set(values(submitted.repository)))}`;
+    },
+    outside: signInForm,
     shows: [] as ReadonlyArray<View.Field>
   };
 };

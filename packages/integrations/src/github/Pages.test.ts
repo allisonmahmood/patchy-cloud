@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import type { Users } from "@patchy/companies";
+import { registry } from "@patchy/limits/registry";
 import * as Effect from "effect/Effect";
 import * as GithubDouble from "../test/github.js";
 import * as PidgeonTest from "../test/pidgeon.js";
@@ -32,9 +33,25 @@ world.person("mira", {
 world.person("ana", { id: 7102, login: "ana-lind", sees: new Set(), admin: new Set() });
 const installUrl = "https://github.com/apps/patchy-cloud-test/installations/new";
 
+/**
+ * The submit button a form owns that comes first, which Enter in one of its fields presses: a
+ * button joined to another form by its `form` attribute isn't one.
+ */
+const enterPresses = (html: string, action: string) => {
+  const start = html.indexOf(`<form method="post" action="${action}"`);
+  const form = html.slice(start, html.indexOf("</form>", start));
+  return /<button(?![^>]*\sform=)[^>]*type="submit"[^>]*>.*?<\/button>/s.exec(form)?.[0] ?? "";
+};
+const connectionId = (response: Response) =>
+  new URL(response.headers.get("location")!, "https://patchy.test").pathname.split("/").at(-1)!;
+
 /** Continue with GitHub, then back from GitHub signed in as `login`: where the callback lands. */
-const signIn = Effect.fn("test.signIn")(function* (user: Users.User, login: string) {
-  const started = yield* send(`${Page.startPath}?purpose=connect`, post(user));
+const signIn = Effect.fn("test.signIn")(function* (
+  user: Users.User,
+  login: string,
+  start = `${Page.startPath}?purpose=connect`
+) {
+  const started = yield* send(start, post(user));
   assert.strictEqual(started.status, 303);
   const authorize = new URL(started.headers.get("location")!);
   assert.strictEqual(authorize.origin, "https://github.com");
@@ -99,6 +116,10 @@ it.layer(services(PidgeonTest.canned().layer, AttioSource.layer, ImapTest.offlin
           assert.include(page.html, part);
         // Read-only for this person, so never offered.
         assert.notInclude(page.html, 'value="4101/13"');
+        // Enter in the name field presses the connect form's own submit, never a sign-in, whose
+        // buttons post a form of their own after it.
+        assert.include(enterPresses(page.html, Page.connectPath), "Test and connect");
+        assert.include(page.html, `</form>${Page.signInForm}`);
         assert.notInclude(
           page.html,
           '<fieldset class="fieldset" disabled><button class="btn btn-primary"'
@@ -118,9 +139,7 @@ it.layer(services(PidgeonTest.canned().layer, AttioSource.layer, ImapTest.offlin
 
         // Suspended on GitHub: refused and said so, in place of Connected, never paused.
         org.suspended = true;
-        const id = new URL(connected.headers.get("location")!, "https://patchy.test").pathname
-          .split("/")
-          .at(-1)!;
+        const id = connectionId(connected);
         yield* send(`/settings/integrations/${id}/test`, post(owner.user));
         const suspended = yield* read(`/settings/integrations/${id}`, owner.user);
         assert.include(suspended.html, "Suspended on GitHub, last checked");
@@ -129,6 +148,54 @@ it.layer(services(PidgeonTest.canned().layer, AttioSource.layer, ImapTest.offlin
         const index = yield* read("/settings/integrations", owner.user);
         assert.include(index.html, "Suspended on GitHub, last checked");
         org.suspended = false;
+      })
+    );
+
+    it.effect("Change repositories finds by name what it doesn't list at once", () =>
+      Effect.gen(function* () {
+        const owner = yield* createCompany("github-add");
+        const shown = registry["github.picker.shown"].default;
+        const ids = Array.from({ length: shown + 10 }, (_, at) => 5000 + at);
+        world.add({
+          id: 4102,
+          account: { id: 9102, login: "fabrikam", type: "Organization" },
+          repositories: ids.map((id, at) => ({ id, name: `tool-${String(at).padStart(2, "0")}` }))
+        });
+        world.person("lena", {
+          id: 7103,
+          login: "lena-berg",
+          sees: new Set([4102]),
+          admin: new Set(ids)
+        });
+        yield* signIn(owner.user, "lena");
+        const id = connectionId(
+          yield* send(Page.connectPath, {
+            ...post(owner.user),
+            body: new URLSearchParams([
+              ["handle", "tools"],
+              ["description", ""],
+              ["repository", "4102/5000"]
+            ])
+          })
+        );
+        const access = `/settings/integrations/${id}/access`;
+        yield* signIn(owner.user, "lena", `${Page.startPath}?purpose=add&connection=${id}`);
+        const dialog = yield* read(access, owner.user);
+        assert.include(dialog.html, `Showing ${shown} of ${ids.length - 1}.`);
+        assert.notInclude(dialog.html, `value="4102/${ids.at(-1)}"`);
+        // Enter in the filter searches; it never starts a sign-in.
+        assert.include(enterPresses(dialog.html, access), 'aria-label="Filter repositories"');
+        // The filter is a GET of the dialog, which keeps what was ticked and unticked.
+        const found = yield* read(
+          `${access}?${new URLSearchParams([
+            ["q", `tool-${ids.length - 1}`],
+            ["repository", "4102/5001"]
+          ]).toString()}`,
+          owner.user
+        );
+        assert.include(found.html, `value="4102/${ids.at(-1)}"`);
+        assert.include(found.html, 'value="4102/5001" checked');
+        assert.notInclude(found.html, 'value="5000" checked');
       })
     );
 

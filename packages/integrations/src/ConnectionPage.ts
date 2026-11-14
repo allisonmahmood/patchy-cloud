@@ -69,6 +69,8 @@ interface CredentialsPage {
   readonly shows: ReadonlyArray<View.Field>;
   /** What the form starts with, such as a Change access dialog's current access. */
   readonly initial?: (connection: ConnectionStore.Connection) => Submitted;
+  /** Forms of their own after the dialog's, which its buttons may join, as GitHub's sign-in does. */
+  readonly outside?: string;
 }
 
 /** What the pages say about one integration; the layout around it is the same for every one. */
@@ -824,7 +826,8 @@ const confirmationPage = Effect.fn("ConnectionPage.confirmationPage")(function* 
               yield* withAttempt(form.submitted ?? credentials.initial?.(connection) ?? {}),
               notice
             ),
-            ...(credentials.submit === undefined ? {} : { submit: credentials.submit })
+            ...(credentials.submit === undefined ? {} : { submit: credentials.submit }),
+            ...(credentials.outside === undefined ? {} : { outside: credentials.outside })
           }
         }),
     ...(page.consequences === undefined ? {} : { consequences: page.consequences }),
@@ -889,7 +892,21 @@ export const read = Effect.fn("ConnectionPage.read")(function* (
       return yield* connectionPage(viewer, target.id, target.tab, done);
     case "confirm":
       if (!admin) return yield* connectionPage(viewer, target.id, "overview", forbidden);
-      return yield* confirmationPage(viewer, target.id, target.action);
+      // GitHub's Change repositories filter is a GET of its dialog: its text and ticks come back.
+      return yield* confirmationPage(
+        viewer,
+        target.id,
+        target.action,
+        target.action === "access" && query.has("q")
+          ? {
+              submitted: {
+                q: query.get("q") ?? "",
+                keep: query.getAll("keep").join(","),
+                repository: query.getAll("repository").join(",")
+              }
+            }
+          : {}
+      );
   }
 });
 
@@ -1055,7 +1072,11 @@ const act = Effect.fn("ConnectionPage.act")(function* (
         case "rotate":
         case "retarget":
         case "access":
-          return yield* confirmationPage(viewer, id, kind, { submitted, notice });
+          // GitHub's ticked boxes repeat, so they're kept joined, as its dialog reads them.
+          return yield* confirmationPage(viewer, id, kind, {
+            submitted: form === null ? submitted : withTicks(submitted, form),
+            notice
+          });
         case "audience":
           return yield* confirmationPage(viewer, id, kind, { audience: chosen, notice });
         case "description":

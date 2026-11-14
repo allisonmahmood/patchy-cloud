@@ -1123,6 +1123,8 @@ export const renderDialog = (input: {
     readonly submit?: string;
     /** Trusted HTML: a warning the form must be submitted again past, in a refusal's place. */
     readonly warning?: string;
+    /** Trusted HTML after the form: forms of their own its buttons may join, as `dialog` says. */
+    readonly outside?: string;
   };
   /** The integration's own words for what pausing or disconnecting does, where they differ. */
   readonly consequences?: Partial<Record<"delete" | "disconnect", string>>;
@@ -1184,7 +1186,10 @@ export const renderDialog = (input: {
     title: page.title,
     closeHref: back,
     size: "lg",
-    form: { action: connectionPath(connection.id, action) },
+    form: {
+      action: connectionPath(connection.id, action),
+      ...(input.form?.outside === undefined ? {} : { outside: input.form.outside })
+    },
     body: page.body,
     foot: page.foot
   });

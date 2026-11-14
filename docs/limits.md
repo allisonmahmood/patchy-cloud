@@ -65,7 +65,7 @@ Host-wide limits cannot have company overrides. Per-company admission counters r
 | `github.response.bytes` | contract | 4194304 | bytes | company | One GitHub answer as collected, before it is decoded | `too_large` | No | release |
 | `github.picker.repositories` | contract | 1000 | repositories | viewer | Repositories read in one installation when connecting, from the GitHub listing of the person signing in; more and the rest aren't offered | None | No | release |
 | `github.picker.installations` | contract | 200 | installations | viewer | Installations of the App read when connecting, from the GitHub listing of the person signing in; more and the rest aren't offered, and the page says so | None | No | release |
-| `github.picker.shown` | contract | 50 | repositories | viewer | Repositories the connect page lists at once; a filter finds the others | None | No | release |
+| `github.picker.shown` | contract | 50 | repositories | viewer | Repositories the connect page and Change repositories list at once; a filter finds the others | None | No | release |
 | `github.installation.repositories` | contract | 5000 | repositories | company | Repositories read from one installation to find which of a connection's repositories left it; more and the call fails source_unavailable | None | No | release |
 | `github.cooldown.default` | contract | 60000 | milliseconds | company | How long an installation's calls are refused after a GitHub limit answer that names no time of its own | `source_rate_limited` | No | release |
 | `github.flow.ttl` | contract | 600000 | milliseconds | viewer | How long a sign-in to GitHub lasts for choosing repositories, from pressing Continue with GitHub | None | No | release |

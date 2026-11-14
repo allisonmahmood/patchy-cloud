@@ -1840,8 +1840,8 @@ App, which GitHub counts as a new installation nobody holds. The claim holds
 through Pause and every state that needs attention, and ends when the company's
 last connection on it is Disconnected. A personal account's installation may be
 connected to any company by its own user, the person signed in to GitHub matching
-the account by numeric id, on Connect, Add and Reconnect alike. A connection survives
-its connector later losing admin: it ends in Patchy, by Remove, Pause or
+the account by numeric id, on Connect, Add and Reconnect alike. A connection
+survives its connector later losing admin: it ends in Patchy, by Remove, Pause or
 Disconnect, or on GitHub, by taking a repository out of the installation,
 suspending or uninstalling the App.
 
@@ -1878,13 +1878,13 @@ ones as left, under a new snapshot and credential revision, checks the asked-for
 repository again and mints once for what remains. If GitHub refuses that mint too,
 the call answers unavailable and the left marks stay, since the complete listing
 showed those repositories gone. One reconciliation and one replacement mint per
-call, never a loop. A 401 is Patchy's own key, an operator's
-alert, never a connection's state. A pause or a reconciliation applies only
-while the connection is as the attempt found it, so a failure that began before a
-newer success changes nothing. A private repository taken out of the installation
-is refused by GitHub at once; a public one stays readable until the next mint.
-Leaving isn't final: one put back reads again, after a Refresh or a Resume if
-Patchy marked it left. To end a repository's access for good, remove it from the connection.
+call, never a loop. A 401 is Patchy's own key, an operator's alert, never a
+connection's state. A pause or a reconciliation applies only while the connection
+is as the attempt found it, so a failure that began before a newer success changes
+nothing. A private repository taken out of the installation is refused by GitHub
+at once; a public one stays readable until the next mint. Leaving isn't final: one
+put back reads again, after a Refresh or a Resume if Patchy marked it left. To end
+a repository's access for good, remove it from the connection.
 
 **Limits.** A limit answer, a 429, a 403 with `Retry-After` or
 `X-RateLimit-Remaining: 0`, or a 403 carrying GitHub's secondary-limit message
@@ -1899,17 +1899,17 @@ left and cools nothing. Nothing is retried.
 permission Patchy reads with and none above read, and that a token for the set can
 be minted. Refresh does that and reads every repository again by id: its name now,
 default branch, and whether it's private, archived or disabled, or left or back,
-as a new snapshot. A connection holds at most 100 repositories, and the picker
-shows 50 at a time with a filter. **Change repositories** adds, through a sign-in
-under the same rule, or removes, which needs none; both take a new credential and
-metadata revision. Snapshots, revisions, `stale_generated` and deletion protection
-work as for Postgres; a published version keeps the snapshot it names, and what a
-call reaches is the current set. Pause keeps the connection and its claim; Resume
-checks first, and where repositories are marked left it reads which of them the
-installation holds now, marking them back as Refresh does, so a connection whose
-repositories all left can resume once they're back. Disconnect forgets it, frees the name and revokes its cached tokens;
-Patchy Cloud stays installed on GitHub, and the dialog links to where an owner
-removes it.
+as a new snapshot. A connection holds at most 100 repositories, and the picker and
+Change repositories show 50 at a time with a filter. **Change repositories** adds,
+through a sign-in under the same rule, or removes, which needs none; both take a
+new credential and metadata revision. Snapshots, revisions, `stale_generated` and
+deletion protection work as for Postgres; a published version keeps the snapshot
+it names, and what a call reaches is the current set. Pause keeps the connection
+and its claim; Resume checks first, and where repositories are marked left it
+reads which of them the installation holds now, marking them back as Refresh does,
+so a connection whose repositories all left can resume once they're back.
+Disconnect forgets it, frees the name and revokes its cached tokens; Patchy Cloud
+stays installed on GitHub, and the dialog links to where an owner removes it.
 
 The connect page says that every member reads the code, pull requests and CI logs
 of these repositories through patches that use it, builders' agents while they
