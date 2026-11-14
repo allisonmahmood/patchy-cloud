@@ -5,6 +5,10 @@ import { ReleaseMismatch } from "./CliError.js";
 import * as Instance from "./Instance.js";
 import { RELEASE } from "./release.js";
 
+/** The instance's install line in this platform's shell, which replaces the global CLI and skill. */
+export const installLine = (instanceUrl: string) =>
+  installCommand(instanceUrl, process.platform === "win32" ? "powershell" : "posix");
+
 /**
  * Outside a repo only cli is supplied, with `outsideRepo` naming the instance whose
  * installer upgrades the global CLI; repo publish and dev also supply pin and runtime.
@@ -21,14 +25,7 @@ export const checkRelease = Effect.fn("checkRelease")(function* (
         component,
         loaded: release,
         current,
-        ...(outsideRepo === undefined
-          ? {}
-          : {
-              installer: installCommand(
-                outsideRepo.instanceUrl,
-                process.platform === "win32" ? "powershell" : "posix"
-              )
-            })
+        ...(outsideRepo === undefined ? {} : { installer: installLine(outsideRepo.instanceUrl) })
       });
     }
   }

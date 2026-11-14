@@ -161,6 +161,18 @@ read access to every file in the store. `pnpm patchy remove <alias>`
 reverses it while leaving its fixture. `pnpm patchy refresh` updates the managed
 pins, generated server module list, other generated files and present skills
 transactionally, removing stale generated context while preserving application source.
+Then, on this machine's own instance (no `PATCHY_STATE_DIR`, no worktree
+`.local/dev/env`, and the instance saved in `~/.patchy` is the repo's), it brings
+this machine's global CLI and skill to the instance's release: an install under
+`~/.patchy/cli` older than that release is updated by the instance's installer,
+and the result's `globalCli: { from, to, skill }` names the version installed
+and the updated copy of this skill. If the update stops, including when the
+instance moved to another release meanwhile, the refresh still succeeds with a
+warning holding the reason and the install line. A global skill
+from an install made before the installer kept the CLI under `~/.patchy` gets a
+warning with the install line; once it has run, refreshes keep both current. A
+refresh started by a pinned CLI from before this check moves the repo without
+it; the next refresh checks.
 To move between tiers 1 and 2, edit `tier` in `patchy.config.ts`, then refresh.
 Follow the loop skill's "Moving tiers" steps to migrate calls and add or remove
 `server/`. Refresh adds or removes the `workerd` pin, generated `server.ts` and
@@ -395,9 +407,10 @@ skill paths. When it fails, its message names the fix: relay it. When the fix is
 putting `~/.local/bin` on `PATH`, the install itself worked: call the printed
 executable by its path in place of `patchy` until the person's shells find it.
 Rerunning it upgrades, and moves an install an earlier installer left in the
-current Node's npm prefix. A real directory already at a skill path is
-`skill_conflict`: ask the person before moving it, then run `patchy setup`
-again. In Windows PowerShell, use the PowerShell line from `/llms.txt` and call
+current Node's npm prefix. A refresh in a patch repo on this machine's instance
+reruns it when the install is older than the instance's release. A real
+directory already at a skill path is `skill_conflict`: ask the person before
+moving it, then run `patchy setup` again. In Windows PowerShell, use the PowerShell line from `/llms.txt` and call
 every `patchy` command as `patchy.cmd`.
 Contributors in a source checkout may instead run `pnpm --filter patchy build`
 and symlink `packages/patchy/dist/bin.js` as `patchy` into a directory on `PATH`.

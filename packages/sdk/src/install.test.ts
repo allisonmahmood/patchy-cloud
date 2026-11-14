@@ -91,9 +91,13 @@ const machine = (url: string) => {
       // The launcher's directory, then Node's directory with npm, then the shell npm runs under.
       PATH: [bin, ...system].join(path.delimiter)
     },
-    run: (env: Record<string, string>, node: ReadonlyArray<string> = []) =>
+    run: (
+      env: Record<string, string>,
+      node: ReadonlyArray<string> = [],
+      args: ReadonlyArray<string> = []
+    ) =>
       new Promise<{ status: number | null; stdout: string; stderr: string }>((resolve, reject) => {
-        const child = spawn(process.execPath, [...node, installer], { cwd: dir, env });
+        const child = spawn(process.execPath, [...node, installer, ...args], { cwd: dir, env });
         let stdout = "";
         let stderr = "";
         child.stdout.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));
@@ -209,6 +213,37 @@ describe.skipIf(process.platform === "win32")("the instance installer", () => {
     );
     expect(stub.requests).toEqual(["/api/release", `/sdk/${filename}`]);
     expect(existsSync(path.join(home, ".patchy/cli"))).toBe(false);
+  });
+
+  // Refresh names the release it saw; one the instance moved to since, a rollback included, waits.
+  it("installs nothing when the instance now serves another release than --release names", async () => {
+    const stub = await instance();
+    const { home, env, run } = machine(stub.url);
+    const result = await run(env, [], ["--release", "0.0.1"]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      `${stub.url} now serves patchy ${CURRENT_RELEASE}, not the 0.0.1 this install was asked for, so nothing was installed.`
+    );
+    expect(stub.requests).toEqual(["/api/release"]);
+    expect(existsSync(path.join(home, ".patchy"))).toBe(false);
+  });
+
+  it.each([
+    ["a bare --release", ["--release"]],
+    ["an empty --release", ["--release", ""]],
+    ["a repeated --release", ["--release", CURRENT_RELEASE, "--release", "0.0.1"]],
+    ["an unknown argument", ["--force"]]
+  ])("refuses %s before downloading or writing anything", async (_, args) => {
+    const stub = await instance();
+    const { home, env, run } = machine(stub.url);
+    const result = await run(env, [], args);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      `This installer takes no arguments, or only --release <version>; it was given ${JSON.stringify(args)}.`
+    );
+    expect(stub.requests).toEqual([]);
+    expect(readdirSync(env.TMPDIR)).toEqual([]);
+    expect(existsSync(path.join(home, ".patchy"))).toBe(false);
   });
 
   it("names the fix for old Node and for missing npm before asking the instance anything", async () => {

@@ -107,7 +107,10 @@ A **publish key** identifies one attempt for its owning user. Before sending, th
 client and local dev runtime. Its version is the **release**. The instance serves
 its immutable tarball and reports its SHA-512 integrity through `GET /api/release`,
 and its `/install.mjs` installs that release under `~/.patchy`, where a Node
-version change cannot take it; rerunning it upgrades.
+version change cannot take it; rerunning it upgrades. `refresh` in a patch repo
+on the machine's own instance reruns it when that install is older, so the global
+CLI and skill follow the instance's releases without a separate step; a machine
+set up before the installer kept the CLI under `~/.patchy` is told to run it once.
 Public npm distribution remains future work. A repo pins that tarball as one
 devDependency, and `pnpm patchy …` runs the pinned copy.
 
@@ -269,7 +272,9 @@ reverses the declaration and generated surface, retaining its fixture.
 
 `patchy refresh` binds the whole change to one release: fetch, reconcile managed
 pins with the release and tier, install as needed, re-exec the CLI, generate,
-stage and activate. Failure leaves the old managed set intact. The **managed
+stage and activate. Failure leaves the old managed set intact. Afterwards it
+brings the machine's global CLI and skill to that release, as described under
+[The package and its release](#the-package-and-its-release). The **managed
 files** are exactly the `patchy` pin and tier 2's `workerd` pin,
 `patchy/_generated/`, `.agents/skills/patchy-*/`, missing fixture stubs, the
 lockfile through install and the one `uses` edit for add/remove. Refresh alone
