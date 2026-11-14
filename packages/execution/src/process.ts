@@ -3,13 +3,13 @@ import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 import { chown, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import * as GuestProtocol from "@patchy/api/guest";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 export class WorkerdError extends Schema.TaggedError<WorkerdError>()("WorkerdError", {
@@ -21,7 +21,6 @@ export class WorkerdError extends Schema.TaggedError<WorkerdError>()("WorkerdErr
     "unsupported_import",
     "empty_output",
     "invalid_callback_url",
-    "unavailable_port",
     "acquisition_failed",
     "exited",
     "timeout",
@@ -167,20 +166,19 @@ const config :Workerd.Config = (
 `;
 }
 
-function reservePort(): Promise<number> {
-  // Promise.withResolvers is outside this package's ES2022 library contract.
-  return new Promise((resolve, reject) => {
-    const server = createServer();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (address === null || typeof address === "string") {
-        server.close();
-        reject(new WorkerdError({ stage: "spawn", reason: "unavailable_port" }));
-      } else server.close((error) => (error === undefined ? resolve(address.port) : reject(error)));
-    });
-  });
-}
+/**
+ * What workerd writes on its `--control-fd` once a socket listens. The config binds `http` to
+ * port 0, so this is the only place its port is known; other messages are not ours to read.
+ */
+const decodeListening = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      event: Schema.Literal("listen"),
+      socket: Schema.Literal("http"),
+      port: Schema.Int
+    })
+  )
+);
 
 export interface WorkerdProcess {
   readonly url: string;
@@ -294,7 +292,6 @@ export const startWorkerd = Effect.fn("Execution.startWorkerd")(function* (
               chown(join(directory, "config.capnp"), uid, uid)
             ]);
           }
-          const port = await reservePort();
           // An inherited descriptor lets a dropped UID execute the pinned binary even
           // when the package manager keeps it below a root-only home directory.
           const executableFd =
@@ -303,19 +300,16 @@ export const startWorkerd = Effect.fn("Execution.startWorkerd")(function* (
               : undefined;
           let child: ChildProcess;
           try {
+            // workerd binds its own port and reports it on descriptor 3. A port picked here and
+            // released for it could be taken by another process before workerd binds it.
             child = spawn(
-              executableFd === undefined ? executable : "/proc/self/fd/3",
-              [
-                "serve",
-                join(directory, "config.capnp"),
-                "--experimental",
-                `--socket-addr=http=127.0.0.1:${port}`
-              ],
+              executableFd === undefined ? executable : "/proc/self/fd/4",
+              ["serve", join(directory, "config.capnp"), "--experimental", "--control-fd=3"],
               {
                 stdio:
                   executableFd === undefined
-                    ? ["ignore", "ignore", "pipe"]
-                    : ["ignore", "ignore", "pipe", executableFd],
+                    ? ["ignore", "ignore", "pipe", "pipe"]
+                    : ["ignore", "ignore", "pipe", "pipe", executableFd],
                 env: {},
                 ...(uid === undefined ? {} : { uid, gid: uid })
               }
@@ -331,6 +325,24 @@ export const startWorkerd = Effect.fn("Execution.startWorkerd")(function* (
           child.once("error", (error) => {
             spawnError = error;
           });
+          let port: number | undefined;
+          let control = "";
+          let controlError: Error | undefined;
+          const channel = child.stdio[3];
+          channel?.on("data", (chunk: Buffer) => {
+            control += chunk.toString("utf8");
+            const lines = control.split("\n");
+            control = lines.pop() ?? "";
+            for (const line of lines) {
+              const listening = decodeListening(line);
+              if (port === undefined && Option.isSome(listening)) port = listening.value.port;
+            }
+          });
+          // A broken channel can't report a port: startup then fails as `timeout` with this
+          // cause, instead of the error escaping the process.
+          channel?.on("error", (error: Error) => {
+            controlError ??= error;
+          });
           const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
           let disposal: Promise<void> | undefined;
           const dispose = () =>
@@ -339,19 +351,22 @@ export const startWorkerd = Effect.fn("Execution.startWorkerd")(function* (
               await closed;
             })());
           return {
-            url: `http://127.0.0.1:${port}`,
+            /** Undefined until workerd reports its socket listening. */
+            url: () => (port === undefined ? undefined : `http://127.0.0.1:${port}`),
             child,
             directory,
             dispose,
-            failure: (reason: "exited" | "timeout") =>
-              new WorkerdError({
+            failure: (reason: "exited" | "timeout") => {
+              const cause = spawnError ?? controlError;
+              return new WorkerdError({
                 stage: "startup",
                 reason,
                 exitCode: child.exitCode,
                 signal: child.signalCode,
                 stderrBytes,
-                ...(spawnError === undefined ? {} : { cause: spawnError })
-              })
+                ...(cause === undefined ? {} : { cause })
+              });
+            }
           };
         } catch (cause) {
           await rm(directory, { recursive: true, force: true });
@@ -377,7 +392,7 @@ export const startWorkerd = Effect.fn("Execution.startWorkerd")(function* (
         );
       })
   );
-  yield* Effect.tryPromise({
+  const url = yield* Effect.tryPromise({
     try: async (signal) => {
       const deadline = performance.now() + 5_000;
       while (performance.now() < deadline) {
@@ -388,15 +403,18 @@ export const startWorkerd = Effect.fn("Execution.startWorkerd")(function* (
           resource.child.pid === undefined
         )
           throw resource.failure("exited");
-        const response = await fetch(`${resource.url}/healthz`, {
-          signal: AbortSignal.any([
-            signal,
-            AbortSignal.timeout(Math.max(1, Math.ceil(deadline - performance.now())))
-          ])
-        }).catch(() => undefined);
-        if (response !== undefined) {
-          await response.body?.cancel();
-          if (response.ok) return;
+        const url = resource.url();
+        if (url !== undefined) {
+          const response = await fetch(`${url}/healthz`, {
+            signal: AbortSignal.any([
+              signal,
+              AbortSignal.timeout(Math.max(1, Math.ceil(deadline - performance.now())))
+            ])
+          }).catch(() => undefined);
+          if (response !== undefined) {
+            await response.body?.cancel();
+            if (response.ok) return url;
+          }
         }
         await delay(10, undefined, { signal });
       }
@@ -408,7 +426,7 @@ export const startWorkerd = Effect.fn("Execution.startWorkerd")(function* (
         : new WorkerdError({ stage: "startup", reason: "request_failed", cause })
   }).pipe(Effect.onError(() => Effect.promise(resource.dispose)));
   return {
-    url: resource.url,
+    url,
     child: resource.child,
     directory: resource.directory
   } satisfies WorkerdProcess;
