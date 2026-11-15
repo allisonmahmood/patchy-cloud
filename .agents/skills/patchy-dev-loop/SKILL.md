@@ -121,9 +121,9 @@ Done when `pnpm dev status` exits 0.
   project.
   Pidgeon here is Pidgeon itself, in test mode: `pnpm dev up pidgeon` makes a
   new test inbox with the person's test admin key, `PIDGEON_TEST_ADMIN_KEY` from
-  their dev.env or the environment, connects `pidgeon/support` to it through the
-  connect page with their Send test key, `PIDGEON_TEST_SEND_KEY` (the admin key
-  without one), delivers the scenario's customer mail to it, and publishes the
+  their dev.env or the environment, delivers the scenario's customer mail to it,
+  connects `pidgeon/support` to it through the connect page with their Send test
+  key, `PIDGEON_TEST_SEND_KEY` (the admin key without one), and publishes the
   Support desk, whose repo in the agent workspace reads that inbox through
   `patchy dev`. Without the admin key it says so and skips Pidgeon and the
   Support desk; never ask for a live key. The account holds an inbox that isn't

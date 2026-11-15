@@ -29,7 +29,7 @@ An admin's reversible stop of a connection, stored as disconnected: patches that
 _Avoid_: disconnect (what ending a connection is called), suspend, disable
 
 **Disconnect**:
-Ending a connection: Patchy forgets its credentials and frees its handle, keeping the snapshots patches were published against; stored as a delete. Refused while any stored version declares it, naming the live patches to remove it from and every other patch whose stored versions declare it; a Pidgeon one revokes its key in Pidgeon.
+Ending a connection: Patchy forgets its credentials and frees its handle, keeping the snapshots patches were published against; stored as a delete. Refused while any stored version declares it, naming the live patches to remove it from and every other patch whose stored versions declare it. A Pidgeon one forgets its key, which stays valid in Pidgeon: Patchy can't revoke it, so the admin does, in Pidgeon.
 _Avoid_: delete, revoke, remove
 
 **Replace key**:

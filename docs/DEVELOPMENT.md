@@ -876,15 +876,17 @@ can quote it.
   Pidgeon is Pidgeon itself, in test mode, where a test key's mail never leaves
   Pidgeon. `pnpm dev up pidgeon` makes a new test inbox on pidgeon.email with the
   test admin key, `PIDGEON_TEST_ADMIN_KEY` from the environment or from
-  `~/.config/patchy-cloud/dev.env` as Clerk's keys are, then connects
-  `pidgeon/support` to it through the connect page in a browser with the Send
-  test key, `PIDGEON_TEST_SEND_KEY` (the admin key without one), as an admin
-  pastes a key from Pidgeon's dashboard. It delivers the scenario's mail to it as
-  mail from outside, through Pidgeon's `POST /email/test/inbound` (which carries
-  no attachments), with the desk's replies sent from the inbox, a customer's
-  follow-up threaded by the first message's RFC Message-ID from the event log,
-  and its labels and statuses. Pidgeon doesn't dedupe, so a resumed `up` looks
-  for each conversation's subject in the inbox and skips one already there.
+  `~/.config/patchy-cloud/dev.env` as Clerk's keys are, and delivers the
+  scenario's mail to it as mail from outside, through Pidgeon's `POST
+/email/test/inbound` (which carries no attachments), with the desk's replies
+  sent from the inbox, a customer's follow-up threaded by the first message's
+  RFC Message-ID from the event log, and its labels and statuses. Then it
+  connects `pidgeon/support` to it through the connect page in a browser with
+  the Send test key, `PIDGEON_TEST_SEND_KEY` (the admin key without one), as an
+  admin pastes a key from Pidgeon's dashboard, so its snapshot holds the labels.
+  Pidgeon doesn't dedupe, so the environment records whether an inbox's mail all
+  arrived: a resumed `up` delivers nothing to one whose did, and deletes one
+  whose didn't and makes a new one, at a new address, filled from the start.
   Without the admin key, or with a key that isn't a test key, it says so and
   skips Pidgeon and the patches that declare it. `up` records each test inbox's
   name in the environment folder before asking Pidgeon for it, and `pnpm dev
@@ -910,7 +912,11 @@ down` and `reset` delete those inboxes with the test key, needing no instance,
   out a 429, and stops using Pidgeon 20 minutes after it starts. Lost answers are
   an offline matter: the new API has no fault header. Before it starts it sweeps
   what nobody can still be using, run-tagged inboxes older than an hour; when it
-  ends, its own, however it ended. The sweep never touches anything else. CI runs
+  ends, its own, however it ended, failing the run, with how many, when any of
+  its own is left. Every live file shares the run's tag, as CI gives them one,
+  and Pidgeon never gives a deleted address out again, so each file's inbox names
+  carry the file (`connect-desk`, `ops-desk`). The sweep never touches anything
+  else. CI runs
   it in its own workflow, `Pidgeon live`: `pidgeon-changes` decides whether it
   runs, `pidgeon-suite` runs it one run at a time, queued and never cancelled,
   then `pnpm test:pidgeon:sweep` however it ended, and `pidgeon-live`, the check
