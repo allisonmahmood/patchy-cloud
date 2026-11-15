@@ -80,15 +80,8 @@ const changes = (requests: ReadonlyArray<PidgeonTest.Built>) =>
   requests.filter(
     (sent) =>
       sent.method !== "GET" &&
-      !(
-        sent.method === "POST" &&
-        sent.path === "/email/drafts/00000000-0000-0000-0000-000000000000/send"
-      ) &&
-      !(
-        sent.method === "POST" &&
-        sent.path === "/email/inboxes" &&
-        JSON.stringify(sent.body) === '{"name":"","kind":""}'
-      )
+      !(sent.method === "POST" && sent.path === `/email/drafts/${Keys.NOTHING}/send`) &&
+      !(sent.method === "DELETE" && sent.path === `/email/inboxes/${Keys.NOTHING}`)
   );
 /** Waits, on the real clock, for work a test can't join. */
 const eventually = (done: () => boolean) =>
@@ -138,7 +131,14 @@ it.layer(fixture)("Pidgeon connections, offline", (it) => {
         test: false,
         level: "send"
       });
-      assert.include(yield* list(pidgeon.key("admin")), { level: "admin" });
+      const adminKey = pidgeon.key("admin");
+      assert.include(yield* list(adminKey), { level: "admin" });
+      // An answer the admin check doesn't know leaves the key not shown to be one, and lists.
+      pidgeon.fault(PidgeonTest.route("DELETE", `/email/inboxes/${Keys.NOTHING}`), {
+        status: 500,
+        body: "<html>oops</html>"
+      });
+      assert.include(yield* list(adminKey), { level: "send" });
       assert.deepStrictEqual(changes(pidgeon.requests), []);
       assert.instanceOf(
         yield* list(`pgn_test_${"r".repeat(32)}`).pipe(Effect.flip),

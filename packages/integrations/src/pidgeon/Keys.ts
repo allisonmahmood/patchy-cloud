@@ -139,8 +139,11 @@ export const deadline = Effect.map(
   (now) => now + registry["pidgeon.connect.deadline"].default
 );
 
-/** No Pidgeon id is the nil UUID, so the level checks below name nothing that exists. */
-const NOTHING = "00000000-0000-0000-0000-000000000000";
+/**
+ * An id Pidgeon never issues, so the level checks below name nothing that exists and change
+ * nothing: the probes asked Pidgeon with this one.
+ */
+export const NOTHING = "00000000-0000-4000-8000-000000000000";
 
 /**
  * Whether a key may send, asked without changing anything: sending a draft that doesn't exist
@@ -162,8 +165,10 @@ const canSend = Effect.fn("PidgeonKeys.canSend")(function* (
     );
 });
 /**
- * Whether a key is an admin key, asked without changing anything: making an inbox with an empty
- * name answers 403 below `admin`, and 400 for `admin`, whose access is checked first.
+ * Whether a key is shown to be an admin key, asked without changing anything: deleting an inbox
+ * that doesn't exist answers 403 below `admin`, and 404 for `admin`. Any other answer leaves the
+ * level unknown, so the key isn't shown to be one. It only words the page's status line, so
+ * nothing ever fails over it.
  */
 const isAdmin = Effect.fn("PidgeonKeys.isAdmin")(function* (
   token: Redacted.Redacted<string>,
@@ -171,13 +176,11 @@ const isAdmin = Effect.fn("PidgeonKeys.isAdmin")(function* (
 ) {
   const source = yield* Source.Source;
   return yield* source
-    .call(token, { method: "POST", path: "/email/inboxes", body: { name: "", kind: "" } }, until)
+    .call(token, { method: "DELETE", path: `/email/inboxes/${NOTHING}` }, until)
     .pipe(
-      Effect.flatMap(() => Effect.fail(new Source.Unavailable({ stage: "response" }))),
-      Effect.catchTags({
-        PidgeonInvalid: () => Effect.succeed(true),
-        PidgeonForbidden: () => Effect.succeed(false)
-      })
+      Effect.as(false),
+      Effect.catchTags({ PidgeonNotFound: () => Effect.succeed(true) }),
+      Effect.catch(() => Effect.succeed(false))
     );
 });
 
