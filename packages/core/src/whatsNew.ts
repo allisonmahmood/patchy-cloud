@@ -60,6 +60,59 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 44,
+    date: "2026-11-15",
+    through: "b653816089b808ff28989e6fd179a43bdfa48810",
+    changes: [
+      {
+        kind: "New",
+        title: "Connect GitHub",
+        detail:
+          "Admins can connect GitHub in Settings › Integrations: sign in to GitHub, then tick the repositories to connect. Patches built with the connection can show workflow runs, which job failed and the end of its log, and pull requests with their checks and reviews. Patchy only reads: nothing a patch does can change anything on GitHub.",
+        prs: [1448, 1451]
+      },
+      {
+        kind: "New",
+        title: "Pin patches to your sidebar",
+        detail:
+          "Pin a page or a tool from its menu, on Home, All patches or the patch's own page, and it stays in your sidebar wherever you are. Pins are yours alone. On a phone they're in Menu.",
+        prs: [1437]
+      },
+      {
+        kind: "Improved",
+        title: "Patchy works in Firefox",
+        detail:
+          "Firefox on a computer is now supported, beside Chrome and the browsers built on it.",
+        prs: [1427]
+      },
+      {
+        kind: "Improved",
+        title: "Your agent's Patchy skill keeps up",
+        detail:
+          "When your agent refreshes a patch's repo, it now also updates the Patchy CLI and skill installed on that computer, so it stops working from old instructions.",
+        prs: [1446]
+      },
+      {
+        kind: "Fixed",
+        title: "Dialogs close in Firefox",
+        detail:
+          "In Firefox, a dialog such as Share stayed open once you had submitted its form: Done, Close and Escape did nothing. It closes now.",
+        prs: [1427]
+      },
+      {
+        kind: "Fixed",
+        title: "Publishing a tool no longer fails by chance",
+        detail:
+          "Publishing a tool could now and then be refused with “Invalid server manifest: inspection.” when nothing was wrong with it. That no longer happens.",
+        prs: [1444]
+      }
+    ],
+    behindTheScenes: [
+      "Agents starting a new tool now read what each tier means before they pick one."
+    ],
+    patchChanges: []
+  },
+  {
     id: 43,
     date: "2026-11-13",
     through: "1cbd39f8dc59842cbb773feb5ac368e0bacfd98f",
