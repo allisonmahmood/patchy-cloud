@@ -202,9 +202,18 @@ const inboxes = Effect.gen(function* () {
   return found;
 });
 
+/** A refusal by its name, and the status Pidgeon answered, never Pidgeon's words or a key. */
+const named = (error: Source.CallError) =>
+  error._tag === "PidgeonUnavailable" && error.upstreamStatus !== undefined
+    ? `${error._tag} ${error.upstreamStatus}`
+    : error._tag;
+
 /**
  * Makes one of the run's own inboxes, `patchy-<run>-<name>@pidgeon.email`, with the admin key,
- * recording its id. An answer lost on the way back is found again by its name.
+ * recording its id. An answer lost on the way back is found again by its name, so names are
+ * fixed. Every live file shares the run's tag, as CI gives all of them one, and Pidgeon never
+ * gives a deleted address out again, so each file's names carry the file: `connect-desk`,
+ * `ops-desk`.
  */
 export const inbox = Effect.fn("live.inbox")(function* (name: string, displayName?: string) {
   const address = `${PREFIX}${name}@pidgeon.email`;
@@ -218,13 +227,19 @@ export const inbox = Effect.fn("live.inbox")(function* (name: string, displayNam
     }
   }).pipe(
     Effect.map((answer) => decodeInbox(answer.body)),
-    Effect.catch(() => Effect.succeed(Option.none<typeof Inbox.Type>()))
+    Effect.mapError(named),
+    Effect.result
   );
-  const found = Option.isSome(made)
-    ? made.value
+  const answered = made._tag === "Success" ? made.success : Option.none<typeof Inbox.Type>();
+  const found = Option.isSome(answered)
+    ? answered.value
     : (yield* inboxes).find((item) => item.address === address);
   if (found === undefined || found.address !== address)
-    return yield* Effect.die(new Error(`Pidgeon didn't make the run's inbox ${name}.`));
+    return yield* Effect.die(
+      new Error(
+        `Pidgeon didn't make the run's inbox ${name}: ${made._tag === "Failure" ? `it answered ${made.failure}` : "its answer wasn't an inbox of that name"}.`
+      )
+    );
   created.add(found.id);
   return found;
 });
@@ -272,9 +287,14 @@ export const route =
     request.method === method &&
     (typeof path === "string" ? request.path === path : path.test(request.path));
 
-/** One sweep's count, and what stopped it when it couldn't list. */
+/**
+ * One sweep's counts: what it deleted, the deletions that failed, how many of those were this
+ * run's own, and what stopped it when it couldn't list.
+ */
 export interface Swept {
   readonly inboxes: number;
+  readonly failed: number;
+  readonly left: number;
   readonly problem?: string;
 }
 
@@ -282,46 +302,96 @@ export interface Swept {
  * Deletes inboxes the live tier left: this run's, by the ids it recorded and its tag, and, when
  * `stale`, run-tagged ones older than any run can still be using, three run limits. It only ever
  * deletes an inbox named `patchy-lv…-` on pidgeon.email: never the account's own inbox, nor any
- * other.
+ * other. A deletion that fails doesn't stop the rest; it's counted, and `left` says how many of
+ * the run's own are still there.
  */
 export const sweep = (stale: boolean) =>
   Effect.gen(function* () {
     const source = yield* Source.Source;
     let deleted = 0;
+    let failed = 0;
+    let left = 0;
     for (const found of yield* inboxes) {
       const local = found.address.endsWith("@pidgeon.email")
         ? found.address.slice(0, -"@pidgeon.email".length)
         : "";
       const ours = local.startsWith(PREFIX) || created.has(found.id);
-      const left =
+      const old =
         stale &&
         /^patchy-lv[a-z0-9]+-/.test(local) &&
         Date.now() - Date.parse(found.created_at) > STALE_MS;
-      if (!(local.startsWith("patchy-lv") && (ours || left))) continue;
+      if (!(local.startsWith("patchy-lv") && (ours || old))) continue;
       const gone = yield* source
         .call(
           admin(),
           { method: "DELETE", path: `/email/inboxes/${encodeURIComponent(found.id)}` },
           Date.now() + 60_000
         )
-        .pipe(Effect.option);
+        .pipe(
+          Effect.asVoid,
+          // Gone already, as when a test deleted it: done all the same.
+          Effect.catchTags({ PidgeonNotFound: () => Effect.void }),
+          Effect.option
+        );
       if (Option.isSome(gone)) {
         deleted++;
         created.delete(found.id);
+      } else {
+        failed++;
+        if (ours) left++;
       }
     }
-    const swept: Swept = { inboxes: deleted };
+    const swept: Swept = { inboxes: deleted, failed, left };
     return swept;
   }).pipe(
     // A sweep that couldn't list says so by the refusal's name, never its words or what it listed.
-    Effect.catch((error) => Effect.succeed<Swept>({ inboxes: 0, problem: error._tag }))
+    Effect.catch((error) =>
+      Effect.succeed<Swept>({ inboxes: 0, failed: 0, left: 0, problem: error._tag })
+    )
   );
 
+/**
+ * Fails, saying how many, when any of the run's own inboxes is still in Pidgeon after its sweep,
+ * or the sweep couldn't list them to tell.
+ */
+export const requireSwept = (swept: Swept) =>
+  swept.problem !== undefined
+    ? Effect.die(
+        new Error(`Pidgeon run ${RUN}'s sweep couldn't list its inboxes (${swept.problem}).`)
+      )
+    : swept.left > 0
+      ? Effect.die(
+          new Error(
+            `Pidgeon run ${RUN} left ${swept.left} of its own ${swept.left === 1 ? "inbox" : "inboxes"}: ${swept.left === 1 ? "its deletion" : "their deletions"} failed.`
+          )
+        )
+      : Effect.void;
+
 const told = (swept: Swept, what: string) =>
-  swept.problem === undefined ? `${swept.inboxes} ${what}inboxes` : `nothing (${swept.problem})`;
+  swept.problem === undefined
+    ? `${swept.inboxes} ${what}inboxes${swept.failed === 0 ? "" : ` (${swept.failed} failed to delete)`}`
+    : `nothing (${swept.problem})`;
 
 /** What a run cost the account's shared budget, and what the sweeps took: counts only. */
 export const summary = (swept: { readonly before: Swept; readonly after: Swept }) =>
   console.log(
     `Pidgeon live run ${RUN}: ${sent.length} calls; swept ${told(swept.before, "stale ")} before, ${told(swept.after, "")} after.`
   );
+
+/**
+ * A live file's cleanup, as a layer: refuses keys that aren't test keys, then sweeps stale
+ * leftovers of any run before the tests; after them, however they ended, sweeps everything this
+ * run made and fails the file when any of it is left.
+ */
+export const cleanup = Layer.effectDiscard(
+  Effect.gen(function* () {
+    yield* requireTestKey;
+    const before = yield* sweep(true);
+    yield* Effect.addFinalizer(() =>
+      sweep(false).pipe(
+        Effect.tap((after) => Effect.sync(() => summary({ before, after }))),
+        Effect.flatMap(requireSwept)
+      )
+    );
+  })
+).pipe(Layer.provide(sweepLayer));

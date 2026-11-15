@@ -40,19 +40,7 @@ const handle = (name: string) => `${Live.RUN}-${name}`;
  * after them, everything this run made, however it ended.
  */
 const services = pageServices(Live.layer).pipe(
-  Layer.merge(
-    Layer.effectDiscard(
-      Effect.gen(function* () {
-        yield* Live.requireTestKey;
-        const before = yield* Live.sweep(true);
-        yield* Effect.addFinalizer(() =>
-          Live.sweep(false).pipe(
-            Effect.flatMap((after) => Effect.sync(() => Live.summary({ before, after })))
-          )
-        );
-      })
-    ).pipe(Layer.provide(Live.sweepLayer))
-  ),
+  Layer.merge(Live.cleanup),
   Layer.provideMerge(NodeCryptography.layer)
 );
 
@@ -61,13 +49,16 @@ const pidgeon = (connection: ConnectionStore.Connection): Pidgeon => {
   if (connection.integration !== "pidgeon") return assert.fail("A Pidgeon connection");
   return connection;
 };
-/** Requests that could change something in Pidgeon, leaving out the level checks' own. */
+/**
+ * Requests that could change something in Pidgeon: every POST, PATCH and DELETE, but the two
+ * level checks, which name an id that doesn't exist.
+ */
 const changes = () =>
   Live.sent.filter(
     (sent) =>
       sent.method !== "GET" &&
-      sent.path !== "/email/drafts/00000000-0000-0000-0000-000000000000/send" &&
-      !(sent.method === "POST" && sent.path === "/email/inboxes")
+      !(sent.method === "POST" && sent.path === `/email/drafts/${Keys.NOTHING}/send`) &&
+      !(sent.method === "DELETE" && sent.path === `/email/inboxes/${Keys.NOTHING}`)
   ).length;
 
 /** What one run carries from a test to the next. */
@@ -80,8 +71,8 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon, live in test mode", () =
     (it) => {
       it.effect("lists what a pasted key reaches and may do, changing nothing in Pidgeon", () =>
         Effect.gen(function* () {
-          made.desk = yield* Live.inbox("desk", "Lumen Bikes Support");
-          yield* Live.inbox("hooks").pipe(Effect.asVoid);
+          made.desk = yield* Live.inbox("connect-desk", "Lumen Bikes Support");
+          yield* Live.inbox("connect-hooks").pipe(Effect.asVoid);
           const before = changes();
           const listed = (key: string) => Keys.inboxes(Redacted.make(key));
           const asAdmin = yield* listed(Redacted.value(Live.admin()));
@@ -170,7 +161,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon, live in test mode", () =
           const events = yield* Live.call(Live.admin(), {
             method: "POST",
             path: "/email/inboxes",
-            body: { name: `patchy-${Live.RUN}-events`, kind: "events" }
+            body: { name: `patchy-${Live.RUN}-connect-events`, kind: "events" }
           });
           const eventsId = (events.body as { readonly id: string }).id;
           Live.created.add(eventsId);
@@ -182,7 +173,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon, live in test mode", () =
           assert.strictEqual(
             (yield* connect("missing", {
               key: Live.sender(),
-              inboxId: "00000000-0000-0000-0000-000000000000",
+              inboxId: Keys.NOTHING,
               access: "read"
             }))._tag,
             "PidgeonInboxNotFound"
@@ -260,7 +251,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon, live in test mode", () =
       it.effect("connects through the pages with a test key, never showing the key back", () =>
         Effect.gen(function* () {
           const owner = yield* createCompany(`pidgeon-${Live.RUN}`);
-          const inbox = yield* Live.inbox("page", "Patchy live page");
+          const inbox = yield* Live.inbox("connect-page", "Patchy live page");
           const key = Live.sender();
           const found = yield* send(Page.addressesPath, post(owner.user, { key }));
           assert.strictEqual(found.status, 200);

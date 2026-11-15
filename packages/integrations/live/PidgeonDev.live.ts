@@ -53,19 +53,6 @@ const owner: Viewer = {
   admin: true
 };
 
-/** Before the block, stale leftovers of any run go; after it, everything this run made. */
-const swept = Layer.effectDiscard(
-  Effect.gen(function* () {
-    yield* Live.requireTestKey;
-    const before = yield* Live.sweep(true);
-    yield* Effect.addFinalizer(() =>
-      Live.sweep(false).pipe(
-        Effect.flatMap((after) => Effect.sync(() => Live.summary({ before, after })))
-      )
-    );
-  })
-).pipe(Layer.provide(Live.sweepLayer));
-
 /** The runtime this door drains with; it serves no published versions here. */
 const runtime = Layer.effect(
   Runtime.Runtime,
@@ -119,7 +106,7 @@ const door = HttpRouter.serve(routes, { disableLogger: true, disableListenLog: t
   ),
   Layer.provideMerge(Teams.layer),
   Layer.provideMerge(Testing.layer()),
-  Layer.merge(swept),
+  Layer.merge(Live.cleanup),
   Layer.provideMerge(NodeCryptography.layer)
 );
 
@@ -237,7 +224,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon in patchy dev, live in te
         () =>
           Effect.gen(function* () {
             const store = yield* ConnectionStore.ConnectionStore;
-            const inbox = yield* Live.inbox("dev", "Lumen Bikes Support");
+            const inbox = yield* Live.inbox("dev-desk", "Lumen Bikes Support");
             const connection = yield* store.connect({
               integration: "pidgeon",
               ...who,
