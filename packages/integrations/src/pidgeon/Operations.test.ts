@@ -25,7 +25,9 @@ import * as SqlConnectionStore from "../SqlConnectionStore.js";
 import * as PidgeonTest from "../test/pidgeon.js";
 import { seedPatch } from "../test/runtime.js";
 import * as Keys from "./Keys.js";
+import type * as Ledger from "./Ledger.js";
 import * as Operations from "./Operations.js";
+import * as Source from "./Source.js";
 
 /**
  * Patchy's side of Pidgeon's operations, offline, against the scripted double of the new API: the
@@ -156,10 +158,22 @@ const setup = (
       effect.pipe(Effect.flip, Effect.map(Runtime.toFailure));
     const reply = (id: string, draft: string, text = "Thanks, it's on its way.") =>
       call("pidgeon.write", "messages.reply", { id, text, idempotencyKey: draft });
-    /** How many sends Pidgeon was asked to issue, leaving out Patchy's checks of a key's level. */
-    const issued = () =>
-      pidgeon.requests.filter(PidgeonTest.route("POST", /^\/email\/drafts\/(?!0{8}-)[^/]+\/send$/))
-        .length;
+    /** The sends Pidgeon was asked to issue, leaving out Patchy's checks of a key's level. */
+    const sends = () =>
+      pidgeon.requests.filter(
+        (sent) =>
+          PidgeonTest.route("POST", /^\/email\/drafts\/[^/]+\/send$/)(sent) &&
+          sent.path !== `/email/drafts/${Keys.NOTHING}/send`
+      );
+    const issued = () => sends().length;
+    /** The drafts Patchy asked Pidgeon to write in the inbox. */
+    const written = () =>
+      pidgeon.requests.filter(PidgeonTest.route("POST", `/email/inboxes/${ours}/drafts`)).length;
+    /** The ledger row of `draft`, a draft key of the page's, as it stands. */
+    const row = (draft: string) =>
+      Effect.flatMap(Operations.draftKey(send.id, "deskpatch001", draft), (hashed) =>
+        store.readDraft({ companyId: who.companyId, connectionId: send.id, draft: hashed, now: 0 })
+      );
     return {
       pidgeon,
       store,
@@ -172,7 +186,10 @@ const setup = (
       call,
       refused,
       reply,
-      issued
+      sends,
+      issued,
+      written,
+      row
     };
   });
 
@@ -382,20 +399,24 @@ it.layer(fixture)("Pidgeon operations, offline", (it) => {
             "their label off their thread",
             call("pidgeon.write", "threads.unlabel", { id: other.threadId, labelId: otherLabel })
           ],
+          [
+            // Our thread passes its check, so only the label's own refuses this.
+            "their label off our thread",
+            call("pidgeon.write", "threads.unlabel", { id: mine.threadId, labelId: otherLabel })
+          ],
           ["their label as a filter", call("pidgeon.read", "threads.list", { labelId: otherLabel })]
         ];
         for (const [what, effect] of cases)
           assert.deepStrictEqual(yield* failure(effect), missing, what);
-        // Nothing changed: no status, no label, no draft, no send.
+        // Nothing changed: no status, no label, no draft, no send. Pidgeon was only ever read.
         assert.strictEqual(pidgeon.thread(other.threadId)!.status, "open");
         assert.strictEqual(pidgeon.thread(mine.threadId)!.labels.size, 0);
         assert.strictEqual(pidgeon.thread(other.threadId)!.labels.size, 0);
         assert.deepStrictEqual(pidgeon.drafts(), []);
         assert.strictEqual(issued(), 0);
-        assert.isFalse(
-          pidgeon.requests.some(
-            (sent) => sent.method !== "GET" && sent.path.includes(other.threadId)
-          )
+        assert.deepStrictEqual(
+          pidgeon.requests.filter((sent) => sent.method !== "GET"),
+          []
         );
         // Lists and search always name the inbox, a cursor included, and show only its own.
         const listed = (yield* call("pidgeon.read", "threads.list", { cursor: "0" })) as {
@@ -479,6 +500,57 @@ it.layer(fixture)("Pidgeon operations, offline", (it) => {
         assert.notInclude(JSON.stringify(failure), "Leaked");
       }
     })
+  );
+
+  it.effect(
+    "refuses a conversation carrying another one's message, and an answer about another id",
+    () =>
+      Effect.gen(function* () {
+        const { call, refused, pidgeon, ours, token } = yield* setup();
+        const mine = pidgeon.deliver(ours, { from: "a@x.example", subject: "Mine", text: "Hi" });
+        const elsewhere = pidgeon.deliver(ours, {
+          from: "b@x.example",
+          subject: "Elsewhere",
+          text: "Another conversation"
+        });
+        /** Pidgeon's own answer to `path`, as the double gives it. */
+        const raw = (path: string) =>
+          Source.Source.use((source) =>
+            source.call(
+              Redacted.make(token),
+              { method: "GET", path, query: { body: "clean" } },
+              Number.MAX_SAFE_INTEGER
+            )
+          ).pipe(
+            Effect.map((answer) => answer.body as Readonly<Record<string, unknown>>),
+            Effect.provide(pidgeon.layer)
+          );
+        const ownThread = yield* raw(`/email/threads/${mine.threadId}`);
+        const otherThread = yield* raw(`/email/threads/${elsewhere.threadId}`);
+        const otherMessage = yield* raw(`/email/messages/${elsewhere.messageId}`);
+        const answered = (path: string, body: unknown) =>
+          pidgeon.fault(PidgeonTest.route("GET", path), { status: 200, body });
+        // The inbox's own message, embedded under the conversation asked for: refused whole.
+        answered(`/email/threads/${mine.threadId}`, {
+          ...ownThread,
+          messages: otherThread.messages
+        });
+        const mixed = yield* refused(call("pidgeon.read", "threads.get", { id: mine.threadId }));
+        assert.strictEqual(mixed.code, "source_unavailable");
+        // A conversation or message of the inbox's, but not the one asked for, isn't there.
+        answered(`/email/threads/${mine.threadId}`, otherThread);
+        answered(`/email/messages/${mine.messageId}`, otherMessage);
+        const asked = [
+          yield* refused(call("pidgeon.read", "threads.get", { id: mine.threadId })),
+          yield* refused(call("pidgeon.read", "messages.get", { id: mine.messageId }))
+        ];
+        for (const failure of [mixed, ...asked])
+          assert.notInclude(JSON.stringify(failure), "Another conversation");
+        assert.deepStrictEqual(
+          asked.map((failure) => failure.code),
+          ["not_found", "not_found"]
+        );
+      })
   );
 
   it.effect("triages a thread of the inbox, reading it and checking the label first", () =>
@@ -628,9 +700,11 @@ it.layer(fixture)("Pidgeon operations, offline", (it) => {
 
   it.effect("a send Pidgeon hasn't answered stays unconfirmed and is never sent again", () =>
     Effect.gen(function* () {
-      const { reply, refused, pidgeon, ours, issued } = yield* setup();
+      const { reply, refused, pidgeon, ours, issued, written, row } = yield* setup();
       const mail = pidgeon.deliver(ours, { from: "a@x.example", subject: "Hi", text: "Hi" });
       // Each of these leaves Patchy unable to tell whether the send ran: it never sends again.
+      // Only a refusal Patchy read in Pidgeon's words frees a key, and a 429 that isn't one, or a
+      // status Pidgeon doesn't document, isn't.
       const unknowns = [
         { status: 500, body: "<html>oops</html>" },
         { status: 503, body: "<html>busy</html>" },
@@ -640,19 +714,33 @@ it.layer(fixture)("Pidgeon operations, offline", (it) => {
           body: {
             error: { code: "draft_not_editable", message: "This draft is no longer a draft." }
           }
+        },
+        { status: 429, body: "<html>Too Many Requests</html>" },
+        { status: 429, body: "" },
+        {
+          status: 422,
+          body: { error: { code: "invalid", message: "Send `to`: at least one address." } }
         }
       ];
       for (const [index, answer] of unknowns.entries()) {
         const draft = `draft-unknown-${index}0000`;
+        const what = `${answer.status} ${JSON.stringify(answer.body)}`;
         pidgeon.fault(PidgeonTest.route("POST", /\/send$/), answer);
-        assert.deepInclude(yield* refused(reply(mail.messageId, draft)), {
-          details: { reason: "unconfirmed" }
-        });
-        // Asking again looks: the draft is still a draft, which says nothing more.
-        assert.deepInclude(yield* refused(reply(mail.messageId, draft)), {
-          details: { reason: "unconfirmed" }
-        });
-        assert.strictEqual(issued(), index + 1);
+        assert.deepInclude(
+          yield* refused(reply(mail.messageId, draft)),
+          { details: { reason: "unconfirmed" } },
+          what
+        );
+        assert.deepInclude(yield* row(draft), { state: "sending" }, what);
+        // Asking again looks, writing nothing: the draft is still a draft, which says no more.
+        assert.deepInclude(
+          yield* refused(reply(mail.messageId, draft)),
+          { details: { reason: "unconfirmed" } },
+          what
+        );
+        assert.deepInclude(yield* row(draft), { state: "sending" }, what);
+        assert.strictEqual(written(), index + 1, what);
+        assert.strictEqual(issued(), index + 1, what);
       }
       assert.deepStrictEqual(pidgeon.sentFrom(ours), []);
     })
@@ -672,6 +760,87 @@ it.layer(fixture)("Pidgeon operations, offline", (it) => {
       });
       assert.strictEqual(issued(), 1);
       assert.deepStrictEqual(pidgeon.sentFrom(ours), []);
+    })
+  );
+
+  it.effect("recovers a send by its draft's id only as a message this inbox sent", () =>
+    Effect.gen(function* () {
+      const { reply, refused, pidgeon, ours, theirs, email, row, issued } = yield* setup();
+      const mail = pidgeon.deliver(ours, { from: "a@x.example", subject: "Hi", text: "Hi" });
+      /** A message the inbox sent, by the draft's id, as Pidgeon answers one. */
+      const sent = (id: string) => ({
+        id,
+        thread_id: mail.threadId,
+        inbox_id: ours,
+        direction: "out",
+        status: "sent",
+        from: { address: email, name: null },
+        to: ["a@x.example"],
+        cc: [],
+        subject: "Re: Hi",
+        text: "Thanks, it's on its way.",
+        test: true,
+        is_held: false,
+        created_at: "2026-11-15T09:00:00.000Z",
+        attachments: [],
+        firewall: null
+      });
+      // Each answer differs from a sent message of the inbox's in one field alone.
+      const cases = [
+        ["incoming", { direction: "in" }],
+        ["not sent", { status: "queued" }],
+        ["another inbox's", { inbox_id: theirs }],
+        ["this inbox's, sent", {}]
+      ] as const;
+      for (const [index, [what, change]] of cases.entries()) {
+        const draft = `draft-recover-${index}000`;
+        // The send's answer can't be read, so the row stays `sending`; then the draft is gone
+        // from Pidgeon's drafts, and a message by its id answers as `change` makes it.
+        pidgeon.fault(PidgeonTest.route("POST", /\/send$/), { status: 500, body: "<html></html>" });
+        yield* refused(reply(mail.messageId, draft));
+        const [unsent] = pidgeon.drafts();
+        pidgeon.reject(unsent!.id);
+        pidgeon.fault(PidgeonTest.route("GET", `/email/messages/${unsent!.id}`), {
+          status: 200,
+          body: { ...sent(unsent!.id), ...change }
+        });
+        const again = reply(mail.messageId, draft);
+        if (index < 3) {
+          assert.deepInclude(yield* refused(again), { details: { reason: "unconfirmed" } }, what);
+          assert.deepInclude(yield* row(draft), { state: "sending", messageId: null }, what);
+        } else {
+          assert.deepInclude(yield* again, { status: "sent", replayed: true }, what);
+          assert.deepInclude(yield* row(draft), { state: "sent", messageId: unsent!.id }, what);
+        }
+      }
+      assert.strictEqual(issued(), cases.length);
+    })
+  );
+
+  it.effect("never deletes a draft Patchy hasn't shown is the inbox's", () =>
+    Effect.gen(function* () {
+      const { reply, refused, pidgeon, ours, theirs, issued } = yield* setup();
+      const mail = pidgeon.deliver(ours, { from: "a@x.example", subject: "Hi", text: "Hi" });
+      const foreign = pidgeon.draft(theirs, {
+        to: ["b@x.example"],
+        subject: "Theirs",
+        text: "Not this connection's"
+      });
+      const before = pidgeon.drafts().map((draft) => ({ ...draft }));
+      // Asked for a draft in the inbox, Pidgeon answers with another inbox's existing one.
+      pidgeon.fault(PidgeonTest.route("POST", `/email/inboxes/${ours}/drafts`), {
+        status: 201,
+        body: { id: foreign.id, inbox_id: theirs, thread_id: foreign.thread_id, status: "draft" }
+      });
+      assert.include(yield* refused(reply(mail.messageId, "draft-foreign-03")), {
+        code: "source_unavailable"
+      });
+      assert.isFalse(pidgeon.requests.some((sent) => sent.method === "DELETE"));
+      assert.deepStrictEqual(
+        pidgeon.drafts().map((draft) => ({ ...draft })),
+        before
+      );
+      assert.strictEqual(issued(), 0);
     })
   );
 
@@ -898,6 +1067,39 @@ it.layer(fixture)("Pidgeon operations, offline", (it) => {
       })
   );
 
+  it.effect("a claim whose acknowledgement was lost is read back, and only its own goes on", () =>
+    Effect.gen(function* () {
+      // The first claim fails before it commits; the second commits and loses its answer.
+      let claims = 0;
+      const { reply, refused, pidgeon, ours, issued, written } = yield* setup((store) =>
+        ConnectionStore.ConnectionStore.of({
+          ...store,
+          claimDraft: (input) => {
+            claims++;
+            if (claims === 1) return Effect.fail(lostAck());
+            return claims === 2
+              ? store.claimDraft(input).pipe(Effect.andThen(Effect.fail(lostAck())))
+              : store.claimDraft(input);
+          }
+        })
+      );
+      const mail = pidgeon.deliver(ours, { from: "a@x.example", subject: "Hi", text: "Hi" });
+      // Nothing of this attempt's is in the row, so it does nothing.
+      assert.include(yield* refused(reply(mail.messageId, "draft-claim-00001")), {
+        code: "source_unavailable"
+      });
+      assert.strictEqual(written(), 0);
+      // This one's token and email are in the row: it's the claim's owner, and sends once.
+      assert.deepInclude(yield* reply(mail.messageId, "draft-claim-00001"), {
+        status: "sent",
+        replayed: false
+      });
+      assert.deepInclude(yield* reply(mail.messageId, "draft-claim-00001"), { replayed: true });
+      assert.strictEqual(written(), 1);
+      assert.strictEqual(issued(), 1);
+    })
+  );
+
   it.effect("a storage failure before `sending` is recorded sends nothing", () =>
     Effect.gen(function* () {
       const { reply, refused, pidgeon, ours, issued } = yield* setup((store) =>
@@ -916,40 +1118,62 @@ it.layer(fixture)("Pidgeon operations, offline", (it) => {
     })
   );
 
-  it.effect("Replace key, Pause and Resume between attempts change nothing about the email", () =>
-    Effect.gen(function* () {
-      const { reply, refused, pidgeon, ours, token, store, send, issued } = yield* setup();
-      const mail = pidgeon.deliver(ours, { from: "a@x.example", subject: "Hi", text: "Hi" });
-      // The key is revoked once the draft is written: its send is refused before anything runs.
-      pidgeon.fault(PidgeonTest.route("POST", /\/send$/), {
-        status: 401,
-        body: { error: { code: "unauthenticated", message: "That API key is not valid." } }
-      });
-      assert.include(yield* refused(reply(mail.messageId, "draft-swap-00001")), {
-        code: "source_unavailable"
-      });
-      pidgeon.revoke(token);
-      const replacement = pidgeon.key("send");
-      yield* store.rotate({
-        ...who,
-        id: send.id,
-        credentials: Keys.changeSecret({ key: replacement })
-      });
-      // Pause, then Resume: the draft waits; then the same key sends the draft it wrote.
-      yield* store.disconnect({ ...who, id: send.id });
-      assert.include(yield* refused(reply(mail.messageId, "draft-swap-00001")), {
-        code: "access_denied"
-      });
-      yield* store.reconnect({ ...who, id: send.id });
-      assert.deepInclude(yield* reply(mail.messageId, "draft-swap-00001"), { status: "sent" });
-      assert.strictEqual(
-        pidgeon.requests.filter(PidgeonTest.route("POST", `/email/inboxes/${ours}/drafts`)).length,
-        1
-      );
-      assert.strictEqual(issued(), 2);
-      assert.strictEqual(pidgeon.sentFrom(ours).length, 1);
-      assert.strictEqual(pidgeon.requests.at(-1)?.authorization, `Bearer ${replacement}`);
-    })
+  it.effect(
+    "a key Pidgeon refuses frees the draft key, so after Replace key a new draft goes once",
+    () =>
+      Effect.gen(function* () {
+        const { reply, refused, pidgeon, ours, token, store, send, sends, written, row } =
+          yield* setup();
+        const mail = pidgeon.deliver(ours, { from: "a@x.example", subject: "Hi", text: "Hi" });
+        // The key is revoked once the draft is written: its send is refused before anything runs.
+        pidgeon.fault(PidgeonTest.route("POST", /\/send$/), {
+          status: 401,
+          body: { error: { code: "unauthenticated", message: "That API key is not valid." } }
+        });
+        assert.include(yield* refused(reply(mail.messageId, "draft-swap-00001")), {
+          code: "source_unavailable"
+        });
+        // Nothing left, so the key is free; the row keeps the draft for the takeover to delete.
+        const [first] = pidgeon.drafts();
+        assert.deepInclude(yield* row("draft-swap-00001"), {
+          state: "refused",
+          draftId: first!.id,
+          owner: null
+        });
+        pidgeon.revoke(token);
+        const replacement = pidgeon.key("send");
+        yield* store.rotate({
+          ...who,
+          id: send.id,
+          credentials: Keys.changeSecret({ key: replacement })
+        });
+        // Pause, then Resume: nothing happens while paused; then the same key writes a new draft
+        // and sends it, and the refused one is deleted.
+        yield* store.disconnect({ ...who, id: send.id });
+        assert.include(yield* refused(reply(mail.messageId, "draft-swap-00001")), {
+          code: "access_denied"
+        });
+        yield* store.reconnect({ ...who, id: send.id });
+        const sent = (yield* reply(mail.messageId, "draft-swap-00001")) as {
+          readonly status: string;
+          readonly messageId: string;
+          readonly replayed: boolean;
+        };
+        assert.deepInclude(sent, { status: "sent", replayed: false });
+        assert.strictEqual(written(), 2);
+        assert.notStrictEqual(sent.messageId, first!.id);
+        // One send request for each draft, ever, and one email.
+        assert.deepStrictEqual(
+          sends().map((request) => request.path),
+          [`/email/drafts/${first!.id}/send`, `/email/drafts/${sent.messageId}/send`]
+        );
+        assert.strictEqual(pidgeon.sentFrom(ours).length, 1);
+        assert.isTrue(
+          pidgeon.requests.some(PidgeonTest.route("DELETE", `/email/drafts/${first!.id}`))
+        );
+        assert.deepStrictEqual(pidgeon.drafts(), []);
+        assert.strictEqual(pidgeon.requests.at(-1)?.authorization, `Bearer ${replacement}`);
+      })
   );
 
   it.effect("keeps the budget for new emails: replays, looks and retries charge nothing", () =>
@@ -1037,7 +1261,9 @@ it.layer(fixture)("Pidgeon operations, offline", (it) => {
       assert.strictEqual((yield* claim("second", 500))._tag, "Busy");
       // The first worker's claim expires and a second takes the row over.
       assert.strictEqual((yield* claim("second", 2_000))._tag, "Claimed");
-      // The stale worker's change is refused by its token; the holder's isn't.
+      // The stale worker's release and change are refused by its token; the holder's aren't.
+      yield* store.releaseDraft({ ...key, owner: "first" });
+      assert.deepInclude(yield* store.readDraft(key), { state: "writing", owner: "second" });
       assert.isFalse(yield* store.recordDraft({ ...key, owner: "first", state: "sending" }));
       assert.isTrue(
         yield* store.recordDraft({ ...key, owner: "second", state: "drafted", draftId: "d1" })
@@ -1072,6 +1298,85 @@ it.layer(fixture)("Pidgeon operations, offline", (it) => {
         "Gone"
       );
     })
+  );
+
+  it.effect(
+    "ages rows by state: sending and held never, sent from when it resolved, the rest from when made",
+    () =>
+      Effect.gen(function* () {
+        const { store, send } = yield* setup();
+        const HOUR = 3_600_000;
+        const DAY = 24 * HOUR;
+        const key = (draft: string, now: number) => ({
+          companyId: who.companyId,
+          connectionId: send.id,
+          draft,
+          now
+        });
+        const claim = (draft: string, now: number) =>
+          store.claimDraft({
+            ...key(draft, now),
+            digest: "digest",
+            owner: `${draft}@${now}`,
+            until: now + 1_000,
+            day: "1970-01-01",
+            budget: 100
+          });
+        /** A row made at `made` and left in `state` at `at`, its claim ended. */
+        const leave = (draft: string, state: Ledger.State, made: number, at = made) =>
+          Effect.gen(function* () {
+            assert.strictEqual((yield* claim(draft, made))._tag, "Claimed");
+            const ids =
+              state === "sent" || state === "held" ? { messageId: "m", threadId: "t" } : {};
+            yield* store.recordDraft({
+              ...key(draft, at),
+              owner: `${draft}@${made}`,
+              state,
+              ...(state === "writing" ? {} : { draftId: "d" }),
+              ...ids,
+              release: true
+            });
+          });
+        yield* leave("writing", "writing", 0);
+        yield* leave("drafted", "drafted", 0);
+        yield* leave("sending", "sending", 0);
+        yield* leave("held", "held", 0);
+        yield* leave("sent", "sent", 0);
+        // Refused late in its day: it still ages from when it was made.
+        yield* leave("refused", "refused", 0, 20 * HOUR);
+        // Held at first; approved and found sent five days on, below.
+        yield* leave("approved", "held", 0);
+        /** Which rows are left once a claim at `now` forgets what can no longer matter. */
+        const left = (now: number) =>
+          Effect.gen(function* () {
+            yield* claim(`probe-${now}`, now);
+            const names = ["writing", "drafted", "sending", "held", "sent", "refused", "approved"];
+            const found = yield* Effect.forEach(names, (name) => store.readDraft(key(name, now)));
+            return names.filter((_, index) => found[index] !== undefined);
+          });
+        assert.deepStrictEqual(yield* left(23 * HOUR), [
+          "writing",
+          "drafted",
+          "sending",
+          "held",
+          "sent",
+          "refused",
+          "approved"
+        ]);
+        assert.deepStrictEqual(yield* left(25 * HOUR), ["sending", "held", "approved"]);
+        assert.strictEqual((yield* claim("approved", 5 * DAY))._tag, "Claimed");
+        yield* store.recordDraft({
+          ...key("approved", 5 * DAY),
+          owner: `approved@${5 * DAY}`,
+          state: "sent",
+          messageId: "m",
+          threadId: "t",
+          release: true
+        });
+        assert.deepStrictEqual(yield* left(5 * DAY + 23 * HOUR), ["sending", "held", "approved"]);
+        assert.deepStrictEqual(yield* left(5 * DAY + 25 * HOUR), ["sending", "held"]);
+        assert.deepStrictEqual(yield* left(365 * DAY), ["sending", "held"]);
+      })
   );
 
   it.effect("records a send's subject and recipients, never a body or search text", () =>

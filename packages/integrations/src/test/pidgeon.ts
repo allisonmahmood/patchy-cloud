@@ -605,6 +605,36 @@ export const double = () => {
       messages.set(message.id, message);
       return { messageId: message.id, threadId: thread.id };
     },
+    /** A draft someone else wrote in `inboxId`, in a new conversation, as Pidgeon keeps it. */
+    draft: (
+      inboxId: string,
+      mail: { readonly to: ReadonlyArray<string>; readonly subject: string; readonly text: string }
+    ) => {
+      const thread: Thread = {
+        id: next("thr"),
+        inbox_id: inboxId,
+        subject: mail.subject,
+        folder: "inbox",
+        status: "open",
+        labels: new Set(),
+        created_at: now(),
+        last_message_at: null
+      };
+      threads.set(thread.id, thread);
+      const draft: Draft = {
+        id: next("msg"),
+        inbox_id: inboxId,
+        thread_id: thread.id,
+        status: "draft",
+        to: mail.to,
+        cc: [],
+        subject: mail.subject,
+        text: mail.text,
+        test: true
+      };
+      drafts.set(draft.id, draft);
+      return draft;
+    },
     /** A member releases a held message: keys read it from now on. */
     release: (messageId: string) => {
       messages.get(messageId)!.held = false;

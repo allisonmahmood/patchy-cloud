@@ -628,14 +628,31 @@ const sendOnce = Effect.fn("PidgeonOperations.sendOnce")(function* (
   };
   const owner = yield* cryptography.randomUUID;
   const budget = yield* ContractLimits.get("pidgeon.sends.daily");
-  const claim = yield* store.claimDraft({
-    ...key,
-    digest: yield* digestOf(email),
-    owner,
-    until: context.deadline + CLAIM_MARGIN_MS,
-    day: DateTime.formatIsoDateUtc(DateTime.makeUnsafe(now)),
-    budget
-  });
+  const digest = yield* digestOf(email);
+  const claim = yield* store
+    .claimDraft({
+      ...key,
+      digest,
+      owner,
+      until: context.deadline + CLAIM_MARGIN_MS,
+      day: DateTime.formatIsoDateUtc(DateTime.makeUnsafe(now)),
+      budget
+    })
+    .pipe(
+      // A claim whose answer was lost is read back: the row with this attempt's token and email
+      // is this attempt's to carry on with. Anything else is the storage's failure.
+      Effect.catchTags({
+        ConnectionStorageFailed: (failed) =>
+          store.readDraft(key).pipe(
+            Effect.catch(() => Effect.fail(failed)),
+            Effect.flatMap((found) =>
+              found !== undefined && found.owner === owner && found.digest === digest
+                ? Effect.succeed<Ledger.Claim>({ _tag: "Claimed", row: found, discard: null })
+                : Effect.fail(failed)
+            )
+          )
+      })
+    );
   switch (claim._tag) {
     case "Gone":
       return yield* new ConnectionStore.ConnectionNotFound({
@@ -759,9 +776,11 @@ const sendOnce = Effect.fn("PidgeonOperations.sendOnce")(function* (
               yield* discard(draftId);
               return yield* error;
             }
-            // A 401 is refused before anything runs: the draft waits for a key that works.
+            // A 401 is refused before anything runs, so nothing left and the key is free; this
+            // draft is never sent again. The next attempt, once the key is replaced, takes the row
+            // over and writes a new draft, and the takeover deletes this one, which the row keeps.
             if (error._tag === "PidgeonKeyRejected") {
-              yield* commit({ state: "drafted" });
+              yield* commit({ state: "refused", release: true });
               return yield* error;
             }
             return yield* new Unconfirmed({});
@@ -809,10 +828,9 @@ const sendOnce = Effect.fn("PidgeonOperations.sendOnce")(function* (
       })
       .pipe(Effect.tapError(refused));
     const draft = yield* read.draft(answer);
-    if (draft.inbox_id !== inboxId(context)) {
-      yield* discard(draft.id);
+    // A draft Patchy hasn't shown is the inbox's is never touched, not even to delete it.
+    if (draft.inbox_id !== inboxId(context))
       return yield* new Source.Unavailable({ stage: "response" });
-    }
     if (!(yield* commit({ state: "drafted", draftId: draft.id }))) {
       yield* discard(draft.id);
       return yield* lost;

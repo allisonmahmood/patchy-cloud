@@ -311,8 +311,10 @@ const retryAfter = (value: string | undefined): number | undefined => {
 
 /**
  * Pidgeon's statuses as Patchy's refusals, from an answer already read under the cap. Pidgeon
- * says `{ error: { code, message, field? } }`; a 5xx is Pidgeon's own word only with the code its
- * docs give it, and anything else Patchy can't read is unavailable. A 204 has no body.
+ * says `{ error: { code, message, field? } }`, and a refusal is its own word only in that shape:
+ * a 5xx also needs the code its docs give it. A status it doesn't document, such as a 422, or an
+ * answer in any other shape, such as a proxy's page, is unavailable, since Patchy can't tell
+ * whether the request ran. A 204 has no body.
  */
 export const classify = (
   status: number,
@@ -342,9 +344,9 @@ export const classify = (
   if (status === 404 && error !== undefined) return Effect.fail(new NotFound({}));
   if (status === 409 && error !== undefined)
     return Effect.fail(new Conflict({ details: { ...field, message } }));
-  if ((status === 400 || status === 422) && error !== undefined)
+  if (status === 400 && error !== undefined)
     return Effect.fail(new Invalid({ details: { ...field, message } }));
-  if (status === 429) {
+  if (status === 429 && error !== undefined) {
     const seconds = retryAfter(headers["retry-after"]);
     return Effect.fail(
       new RateLimited({

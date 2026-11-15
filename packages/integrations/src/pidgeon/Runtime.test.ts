@@ -54,6 +54,7 @@ const SENTINEL = "SENTINEL-7f3a-body-or-search";
 const support = { id: "conn_journey_send", handle: "journey-send" };
 const invoices = { id: "conn_journey_read", handle: "journey-read" };
 const email = `${support.handle}@acme.example`;
+const invoicesEmail = `${invoices.handle}@acme.example`;
 const snapshot = <const Access extends "read" | "send">(access: Access, address: string) => ({
   version: 2 as const,
   address: { email: address, displayName: null },
@@ -67,18 +68,25 @@ const uses = {
 };
 
 /**
- * The Pidgeon handlers as the server builds them, over a double holding the support inbox and a
- * customer's mail in it, and two connections to it: one that sends and one that reads.
+ * The Pidgeon handlers as the server builds them, over a double holding two inboxes of one
+ * account, each with a customer's mail, and one key that reaches both, as a dashboard key does:
+ * `support` sends from the first, and `invoices` reads the second.
  */
 const handlers = Effect.gen(function* () {
   const pidgeon = PidgeonTest.double();
   const inbox = pidgeon.inbox(email);
+  const other = pidgeon.inbox(invoicesEmail);
   const mail = pidgeon.deliver(inbox, {
     from: "ana@customer.example",
     name: "Ana",
     subject: "Cracked chainstay",
     text: "Is this covered?",
     attachments: [{ filename: "receipt.pdf", size: 64 }]
+  });
+  const invoice = pidgeon.deliver(other, {
+    from: "billing@supplier.example",
+    subject: "Invoice 88",
+    text: "Due in 30 days."
   });
   const key = pidgeon.key("send");
   const store = yield* SqlConnectionStore.make.pipe(Effect.provide([pidgeon.layer, Teams.layer]));
@@ -87,8 +95,8 @@ const handlers = Effect.gen(function* () {
     ...who,
     ...invoices,
     access: "read",
-    inboxId: inbox,
-    email,
+    inboxId: other,
+    email: invoicesEmail,
     key,
     test: true
   });
@@ -96,7 +104,7 @@ const handlers = Effect.gen(function* () {
     Effect.provide(Layer.merge(pidgeon.layer, Directory.layer)),
     Effect.provideService(ConnectionStore.ConnectionStore, store)
   );
-  return { handlers: built, pidgeon, inbox, mail };
+  return { handlers: built, pidgeon, inbox, mail, invoice };
 });
 
 /** Every recent call and log line, as text, for the sentinel to be looked for in. */
@@ -149,7 +157,7 @@ it.layer(tier1)("Pidgeon from a tier 2 action's callbacks", (it) => {
     () => {
       const logs: string[] = [];
       return Effect.gen(function* () {
-        const { handlers: built, pidgeon, inbox: inboxId, mail } = yield* handlers;
+        const { handlers: built, pidgeon, inbox: inboxId, mail, invoice } = yield* handlers;
         const requests = pidgeon.requests;
         const call = yield* RuntimeTest.page(built, patchId, versionId);
         const inbox = yield* RuntimeTest.pidgeonClient(
@@ -161,7 +169,7 @@ it.layer(tier1)("Pidgeon from a tier 2 action's callbacks", (it) => {
         const readOnly = yield* RuntimeTest.pidgeonClient(
           "invoices",
           invoices,
-          snapshot("read", email),
+          snapshot("read", invoicesEmail),
           call
         );
 
@@ -173,6 +181,25 @@ it.layer(tier1)("Pidgeon from a tier 2 action's callbacks", (it) => {
           threads.map((thread) => thread.id),
           [mail.threadId]
         );
+        // The key reaches both inboxes; each connection shows its own, and the other's mail by
+        // id isn't there, as an unknown id isn't.
+        assert.deepStrictEqual(
+          (yield* Effect.promise(() => readOnly.threads.list({}))).threads.map(
+            (thread) => thread.id
+          ),
+          [invoice.threadId]
+        );
+        for (const [operation, id] of [
+          ["threads.get", invoice.threadId],
+          ["messages.get", invoice.messageId]
+        ] as const)
+          assert.include(
+            yield* Effect.promise(() =>
+              call("pidgeon.read", { connection: "support", operation, input: { id } })
+            ),
+            { code: "not_found" },
+            operation
+          );
         const read = yield* Effect.promise(() => inbox.threads.get(mail.threadId));
         assert.strictEqual(read.nextCursor, null);
         assert.deepStrictEqual(
@@ -249,6 +276,19 @@ it.layer(tier1)("Pidgeon from a tier 2 action's callbacks", (it) => {
         );
         // Each reply reads its target, writes its draft and sends it once.
         assert.strictEqual(requests.length, before + 6);
+        // A reply to the other inbox's mail is refused as a reply to an unknown id is, unwritten.
+        assert.include(
+          yield* Effect.promise(() =>
+            call("pidgeon.write", {
+              connection: "support",
+              operation: "messages.reply",
+              input: { id: invoice.messageId, text: "Paid.", idempotencyKey: "journey-foreign-01" }
+            })
+          ),
+          { code: "not_found" }
+        );
+        assert.strictEqual(pidgeon.sentFrom(inboxId).length, 3);
+        assert.deepStrictEqual(pidgeon.drafts(), []);
 
         // Recent calls name each call; neither they nor a log line hold a body or search text.
         const log = yield* RuntimeLog.RuntimeLog;

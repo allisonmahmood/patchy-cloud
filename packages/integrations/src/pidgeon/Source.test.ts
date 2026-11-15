@@ -107,6 +107,20 @@ it.effect("names each of Pidgeon's answers as Patchy's refusal, by status and co
         (error) => assert.include(error.message, "Try again in 25 minutes.")
       ],
       [
+        // A 429 in any other shape, a proxy's say, isn't Pidgeon's: Patchy can't tell it ran.
+        new Response("<html>Too Many Requests</html>", { status: 429 }),
+        (error) => assert.deepInclude(error, { stage: "status", upstreamStatus: 429 })
+      ],
+      [
+        new Response("", { status: 429 }),
+        (error) => assert.deepInclude(error, { stage: "status", upstreamStatus: 429 })
+      ],
+      [
+        // Pidgeon documents no 422, so it's no refusal of Pidgeon's, whatever it says.
+        json(422, refusal("invalid", "Send `to`: at least one address.", "to")),
+        (error) => assert.deepInclude(error, { stage: "status", upstreamStatus: 422 })
+      ],
+      [
         json(502, refusal("send_failed", "The mail service refused the message.")),
         (error) => assert.deepInclude(error, { _tag: "PidgeonMailRefused", reason: "send_failed" })
       ],
