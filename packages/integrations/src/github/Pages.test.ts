@@ -237,7 +237,9 @@ it.layer(services(PidgeonTest.canned().layer))("GitHub pages without an App", (i
     Effect.gen(function* () {
       const owner = yield* createCompany("github-unoffered");
       const catalogue = yield* read("/settings/integrations/connect", owner.user);
-      assert.notInclude(catalogue.html, "GitHub");
+      // The catalogue's own card and link: What's new may name GitHub in the page around it.
+      assert.notInclude(catalogue.html, "Code, pull requests and CI runs");
+      assert.notInclude(catalogue.html, Page.connectPath);
       assert.strictEqual((yield* read(Page.connectPath, owner.user)).status, 404);
     })
   );
