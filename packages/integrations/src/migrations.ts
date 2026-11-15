@@ -134,11 +134,23 @@ export const migrations: Migrations = {
     )`,
     `CREATE INDEX github_flows_expiry ON github_flows(expires_at)`
   ),
-  // Each Pidgeon connection's emails by draft key (a hash of the connection, the patch and the
-  // patch's key): the Pidgeon draft that is the email, how far it got, and the claim of the
+  // Pidgeon's new API. What the old integration left can't be read by this release: a connection
+  // keeps the old display and credentials, which would fail its company's whole connection list,
+  // and a snapshot is version 1. Neither could work on the new API, so both go: the connections
+  // with what hangs off them (their day counts and team grants, by their foreign keys), and every
+  // Pidgeon snapshot, past the immutability trigger for this one statement. A patch version that
+  // declares one keeps its manifest, and its calls are refused as through any connection that
+  // isn't there; its patch works again once republished against a new connection.
+  //
+  // Then each Pidgeon connection's emails by draft key (a hash of the connection, the patch and
+  // the patch's key): the Pidgeon draft that is the email, how far it got, and the claim of the
   // worker sending it. Pidgeon doesn't dedupe sends, so this row is what makes a draft key one
   // email. Rows go with their connection.
   "0044_pidgeon_drafts": ddl(
+    `DELETE FROM connections WHERE integration = 'pidgeon'`,
+    `ALTER TABLE connection_snapshots DISABLE TRIGGER connection_snapshots_immutable`,
+    `DELETE FROM connection_snapshots WHERE integration = 'pidgeon'`,
+    `ALTER TABLE connection_snapshots ENABLE TRIGGER connection_snapshots_immutable`,
     `CREATE TABLE pidgeon_drafts (
       connection_id TEXT NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
       draft TEXT NOT NULL,

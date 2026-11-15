@@ -487,3 +487,80 @@ it.layer(Testing.emptyLayer(before("0041_connection_audiences")))(
     );
   }
 );
+
+it.layer(Testing.emptyLayer(before("0044_pidgeon_drafts")))("the Pidgeon new-API upgrade", (it) => {
+  it.effect(
+    "removes what the old Pidgeon integration left, so the company's connections read again",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const who = { companyId: "cmp_pidgeon", userId: "usr_pidgeon" };
+        yield* sql`INSERT INTO companies (id, handle, name) VALUES (${who.companyId}, 'pidgeon', 'Northwind')`;
+        yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
+          VALUES (${who.userId}, 'clerk_pidgeon', ${who.companyId}, 'sam@example.com', 'Sam', 'admin')`;
+        yield* sql`INSERT INTO company_teams (id, company_id, name) VALUES ('team_desk', ${who.companyId}, 'Desk')`;
+        const connect = (id: string, integration: string, handle: string, display: unknown) =>
+          sql`INSERT INTO connections
+            (id, company_id, integration, handle, description, mode, status, display, credentials,
+              key_id, credential_revision, metadata_revision, created_by)
+            VALUES (${id}, ${who.companyId}, ${integration}, ${handle}, '', 'company', 'connected',
+              ${JSON.stringify(display)}, 'sealed', 'key', 1, 1, ${who.userId})`;
+        const snapshot = (id: string, integration: string, value: unknown) =>
+          sql`INSERT INTO connection_snapshots
+            (connection_id, company_id, integration, revision, snapshot, created_at)
+            VALUES (${id}, ${who.companyId}, ${integration}, 1, ${JSON.stringify(value)},
+              '2026-10-01T00:00:00Z')`;
+        const warehouse = { version: 1, relations: [], enums: [], exclusions: [] };
+        yield* connect("conn_kept", "postgres", "warehouse", {
+          host: "warehouse.example",
+          port: 5432,
+          database: "sales",
+          role: "reader"
+        });
+        yield* snapshot("conn_kept", "postgres", warehouse);
+        // As the old integration stored one: a minted key for one address, and a version 1
+        // snapshot, with a day's sends and a team grant hanging off it.
+        yield* connect("conn_old_pidgeon", "pidgeon", "support", {
+          email: "support@acme.example",
+          identityId: "idn_1",
+          sendPolicy: "reply_only",
+          access: "send",
+          test: false,
+          key: { id: "key_1", name: "Patchy support", madeAt: "2026-10-01T00:00:00Z" }
+        });
+        const old = {
+          version: 1,
+          address: { email: "support@acme.example", displayName: null, sendPolicy: "reply_only" },
+          access: "send",
+          test: false,
+          labels: [],
+          plan: "free"
+        };
+        yield* snapshot("conn_old_pidgeon", "pidgeon", old);
+        // A snapshot outlives its connection: one whose connection was deleted goes too.
+        yield* snapshot("conn_deleted_pidgeon", "pidgeon", old);
+        yield* sql`INSERT INTO pidgeon_sends (connection_id, day, sends) VALUES ('conn_old_pidgeon', '2026-10-01', 3)`;
+        yield* sql`INSERT INTO connection_team_grants (connection_id, company_id, team_id)
+          VALUES ('conn_old_pidgeon', ${who.companyId}, 'team_desk')`;
+
+        yield* migrate(migrations);
+
+        const store = yield* SqlConnectionStore.make.pipe(Effect.provide(Teams.layer));
+        assert.deepStrictEqual(
+          (yield* store.list(who.companyId)).map(({ id }) => id),
+          ["conn_kept"]
+        );
+        assert.deepStrictEqual(
+          yield* sql`SELECT connection_id FROM connection_snapshots ORDER BY connection_id`,
+          [{ connection_id: "conn_kept" }]
+        );
+        assert.deepStrictEqual(yield* sql`SELECT * FROM pidgeon_sends`, []);
+        assert.deepStrictEqual(yield* sql`SELECT * FROM connection_team_grants`, []);
+        // Snapshots are immutable again: a delete is refused, and the kept one stays.
+        yield* sql`DELETE FROM connection_snapshots WHERE connection_id = 'conn_kept'`.pipe(
+          Effect.flip
+        );
+        assert.lengthOf(yield* sql`SELECT 1 FROM connection_snapshots`, 1);
+      }).pipe(Effect.provide(services))
+  );
+});
