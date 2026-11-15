@@ -27,7 +27,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
-import * as Random from "effect/Random";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -46,13 +45,11 @@ import {
 } from "./developerEnv.js";
 import {
   decodeMail,
-  deliverMail,
   DOMAIN as PIDGEON_DOMAIN,
-  isRecorded,
   isTestKey,
   MailFailed,
-  makeInbox,
-  recordAddress
+  readyInbox,
+  recordedInbox
 } from "./pidgeon.js";
 import { hostLabel, type Plan, worktreeHash } from "./plan.js";
 import { startMailbox, type Login } from "./mailbox.js";
@@ -1083,54 +1080,56 @@ const materialize = Effect.fn("materialize")(function* (
       );
       continue;
     }
-    // An earlier start that connected it, then stopped, left its inbox: its mail resumes there.
+    // An earlier start connected it: the inbox it made keeps whatever mail reached it.
     const existing = yield* connectedLocalPart(layout, env, name);
-    let localPart: string;
     if (Option.isSome(existing)) {
-      if (
-        Option.isNone(existing.value) ||
-        !(yield* isRecorded(layout.pidgeon, existing.value.value))
-      ) {
-        yield* Console.error(
-          `  ${name}: already connected to an inbox this environment didn't make, so it gets no mail.`
-        );
-        continue;
-      }
-      localPart = existing.value.value;
-      yield* Console.error(`  ${name}: already connected`);
-    } else {
-      // A code of this environment's after the name makes the inbox its own. It's recorded before
-      // Pidgeon is asked, so `down` finds the inbox even if the answer to making it is lost.
-      localPart = `${connection.localPart}-${(yield* Random.next).toString(36).slice(2, 8)}`;
-      yield* recordAddress(layout.pidgeon, localPart);
-      yield* makeInbox(pidgeonKey.value, localPart, connection.displayName).pipe(
-        Effect.provide(PidgeonSource.layer),
-        Effect.mapError((cause) => connectFailed(name, "making its inbox", cause))
-      );
-      yield* Console.error(`  ${name}: connecting as ${publisher.name}`);
-      yield* connectSource(
-        manifest.apiUrl,
-        publisher.email,
-        connection,
-        connectKey,
-        `${localPart}@${PIDGEON_DOMAIN}`
-      );
-    }
-    if (connection.mail !== undefined) {
-      const mail = yield* decodeMail(
-        yield* fs.readFileString(path.join(scenarioDir, connection.mail))
-      ).pipe(Effect.mapError((cause) => new MailFailed({ step: "reading the mail", cause })));
-      const delivered = yield* deliverMail(pidgeonKey.value, localPart, mail).pipe(
-        Effect.provide(PidgeonSource.layer)
-      );
+      const made = Option.isSome(existing.value)
+        ? yield* recordedInbox(layout.pidgeon, existing.value.value)
+        : Option.none();
       yield* Console.error(
-        Option.match(delivered, {
-          onNone: () => `  ${name}: its inbox isn't in Pidgeon any more, so it gets no mail.`,
+        Option.match(made, {
+          onNone: () =>
+            `  ${name}: already connected to an inbox this environment didn't make, so it gets no mail.`,
+          onSome: (entry) =>
+            entry.seeded
+              ? `  ${name}: already connected`
+              : `  ${name}: already connected, though its mail may not all have arrived; \`pnpm dev reset\` starts it over.`
+        })
+      );
+      continue;
+    }
+    // Made and filled before it's connected, so its snapshot holds the scenario's labels. An
+    // inbox whose mail didn't all arrive is replaced; one whose did is used as it is.
+    const mail =
+      connection.mail === undefined
+        ? undefined
+        : yield* decodeMail(yield* fs.readFileString(path.join(scenarioDir, connection.mail))).pipe(
+            Effect.mapError((cause) => new MailFailed({ step: "reading the mail", cause }))
+          );
+    const ready = yield* readyInbox({
+      file: layout.pidgeon,
+      adminKey: pidgeonKey.value,
+      connection: name,
+      localPart: connection.localPart,
+      displayName: connection.displayName,
+      mail
+    }).pipe(Effect.provide(PidgeonSource.layer));
+    if (mail !== undefined)
+      yield* Console.error(
+        Option.match(ready.delivered, {
+          onNone: () => `  ${name}: its inbox's mail arrived on an earlier start`,
           onSome: (done) =>
             `  ${name}: ${done.messages} messages in ${done.conversations} conversations delivered through Pidgeon's test inbound mail.`
         })
       );
-    }
+    yield* Console.error(`  ${name}: connecting as ${publisher.name}`);
+    yield* connectSource(
+      manifest.apiUrl,
+      publisher.email,
+      connection,
+      connectKey,
+      `${ready.localPart}@${PIDGEON_DOMAIN}`
+    );
   }
   for (const patch of scenario.patches) {
     const key = "repo" in patch ? patch.repo : patch.name;

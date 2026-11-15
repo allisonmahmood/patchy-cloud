@@ -1,9 +1,10 @@
 /**
  * An environment's Pidgeon: the developer's test admin key, checked to be a test key before
  * anything is made with it, the test inboxes `up` made with it, recorded in the environment
- * folder, and the mail `up` delivers to them. `down` and `reset` delete those inboxes before the
- * folder that names them goes. The Pidgeon account is shared, and holds an inbox that isn't the
- * environment's: only an inbox whose name the environment recorded is ever changed or deleted.
+ * folder with whether their mail all arrived, and the mail `up` delivers to them. `down` and
+ * `reset` delete those inboxes before the folder that names them goes. The Pidgeon account is
+ * shared, and holds an inbox that isn't the environment's: only an inbox whose name the
+ * environment recorded is ever changed or deleted.
  */
 import { PidgeonSource } from "@patchy/integrations";
 import * as Clock from "effect/Clock";
@@ -12,6 +13,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
+import * as Random from "effect/Random";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { readPidgeonTestKey } from "./developerEnv.js";
@@ -36,9 +38,21 @@ const Page = Schema.Struct({
 const decodePage = Schema.decodeUnknownOption(Page);
 const Inbox = Schema.Struct({ id: Schema.String, address: Schema.String });
 const decodeInbox = Schema.decodeUnknownOption(Inbox);
-const Recorded = Schema.fromJsonString(Schema.Array(Schema.String));
-const decodeRecorded = Schema.decodeUnknownOption(Recorded);
-const encodeRecorded = Schema.encodeSync(Recorded);
+/**
+ * One test inbox `up` made: the scenario connection it's for, its name on pidgeon.email, and
+ * whether the scenario's mail all arrived in it.
+ */
+const Entry = Schema.Struct({
+  connection: Schema.NullOr(Schema.String),
+  localPart: Schema.String,
+  seeded: Schema.Boolean
+});
+export type Entry = typeof Entry.Type;
+// A record from before seeding was recorded names each inbox alone.
+const decodeRecorded = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Array(Schema.Union([Schema.String, Entry])))
+);
+const encodeRecorded = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Entry)));
 
 const soon = Effect.map(Clock.currentTimeMillis, (now) => now + 15_000);
 
@@ -75,31 +89,15 @@ const listed = Effect.fn("listed")(function* <A>(
   return items;
 });
 
-/** The environment's inbox named `localPart`, when Pidgeon still has it. */
-const inboxNamed = Effect.fn("inboxNamed")(function* (
-  key: Redacted.Redacted<string>,
-  localPart: string
-) {
-  const address = `${localPart}@${DOMAIN}`;
-  return Option.fromNullishOr(
-    (yield* listed(key, "/email/inboxes", decodeInbox, { limit: 100 })).find(
-      (inbox) => inbox.address === address
-    )
-  );
-});
-
 /**
- * Makes the environment's test inbox `localPart` on pidgeon.email with the test admin key, or
- * finds the one an earlier start made under that name. The name is recorded before this runs, so
- * `down` finds the inbox even when this answer is lost.
+ * Makes the environment's test inbox `localPart` on pidgeon.email with the test admin key. The
+ * name is recorded before this runs, so `down` finds the inbox even when this answer is lost.
  */
 export const makeInbox = Effect.fn("makePidgeonInbox")(function* (
   adminKey: Redacted.Redacted<string>,
   localPart: string,
   displayName: string
 ) {
-  const found = yield* inboxNamed(adminKey, localPart);
-  if (Option.isSome(found)) return found.value;
   const source = yield* PidgeonSource.Source;
   const made = yield* source.call(
     adminKey,
@@ -204,8 +202,6 @@ const Message = Schema.Struct({ id: Schema.String, thread_id: Schema.String });
 const decodeMessage = Schema.decodeUnknownOption(Message);
 const LabelItem = Schema.Struct({ id: Schema.String, name: Schema.String });
 const decodeLabels = Schema.decodeUnknownOption(Schema.Struct({ data: Schema.Array(LabelItem) }));
-const Subject = Schema.Struct({ subject: Schema.NullOr(Schema.String) });
-const decodeSubject = Schema.decodeUnknownOption(Subject);
 const Received = Schema.Struct({
   data: Schema.Struct({
     message_id: Schema.optionalKey(Schema.String),
@@ -214,13 +210,16 @@ const Received = Schema.Struct({
 });
 const decodeReceived = Schema.decodeUnknownOption(Received);
 
-/** Mail couldn't be delivered to the environment's inbox; `down` still takes the inbox down. */
+/**
+ * The scenario's inbox couldn't be made or filled. Its record says its mail didn't all arrive, so
+ * the next `up` replaces it, and `down` still takes it down.
+ */
 export class MailFailed extends Schema.TaggedError<MailFailed>()("PidgeonMailFailed", {
   step: Schema.String,
   cause: Schema.optionalKey(Schema.Defect())
 }) {
   override get message() {
-    return `Pidgeon didn't take the scenario's mail at ${this.step}. The inbox stays recorded, so \`pnpm dev down\` still takes it down.`;
+    return `The scenario's Pidgeon mail stopped at ${this.step}. The next \`pnpm dev up\` replaces its inbox with a new one and starts again, and \`pnpm dev down\` takes it down.`;
   }
 }
 
@@ -235,16 +234,15 @@ const sender = (from: string) => {
 };
 
 /**
- * Delivers `mail` to the environment's test inbox `localPart` with the test admin key. Pidgeon
- * doesn't dedupe, and an answer can be lost, so before each conversation it looks in the inbox for
- * the conversation's subject, unique per scenario, and skips one already there: an `up` that runs
- * again sends nothing twice. A customer's follow-up names their first message's RFC Message-ID,
- * from the event log, which is what threads it. A 429 is waited out, a few times. Answers none
- * when Pidgeon has no such inbox any more.
+ * Delivers all of `mail` to a test inbox `up` just made, with the test admin key, from the start.
+ * Pidgeon doesn't dedupe, so it never runs twice on one inbox: an `up` cut short leaves the inbox
+ * recorded unfinished, and the next makes a new one (`readyInbox`). A customer's follow-up names
+ * their first message's RFC Message-ID, from the event log, which is what threads it. A 429 is
+ * waited out, a few times.
  */
 export const deliverMail = Effect.fn("deliverPidgeonMail")(function* (
   adminKey: Redacted.Redacted<string>,
-  localPart: string,
+  inbox: { readonly id: string },
   mail: Mail
 ) {
   const source = yield* PidgeonSource.Source;
@@ -260,12 +258,6 @@ export const deliverMail = Effect.fn("deliverPidgeonMail")(function* (
       Effect.retry({ times: 3, while: (error) => error._tag === "PidgeonRateLimited" }),
       Effect.mapError(failed(step))
     );
-  const found = yield* inboxNamed(adminKey, localPart).pipe(
-    Effect.mapError(failed("finding the inbox"))
-  );
-  if (Option.isNone(found))
-    return Option.none<{ readonly conversations: number; readonly messages: number }>();
-  const inbox = found.value;
   const path = `/email/inboxes/${encodeURIComponent(inbox.id)}`;
   const labels = new Map(
     Option.match(
@@ -290,14 +282,6 @@ export const deliverMail = Effect.fn("deliverPidgeonMail")(function* (
     if (Option.isNone(made)) return yield* new MailFailed({ step: `label ${label.name}` });
     labels.set(label.name, made.value.id);
   }
-  const there = new Set(
-    (yield* listed(adminKey, "/email/threads", decodeSubject, {
-      inbox_id: inbox.id,
-      limit: 100
-    }).pipe(Effect.mapError(failed("listing its conversations")))).flatMap((thread) =>
-      thread.subject === null ? [] : [thread.subject]
-    )
-  );
   /** The RFC Message-ID Pidgeon gave a received message, as its event log keeps it. */
   const rfcOf = Effect.fnUntraced(function* (messageId: string, step: string) {
     for (let tries = 0; tries < 10; tries++) {
@@ -319,8 +303,6 @@ export const deliverMail = Effect.fn("deliverPidgeonMail")(function* (
   let delivered = 0;
   let messages = 0;
   for (const thread of mail.threads) {
-    // Delivered by an earlier start: its subject is the scenario's own.
-    if (there.has(thread.subject)) continue;
     let threadId: string | undefined;
     let last: string | undefined;
     let customer: string | undefined;
@@ -415,44 +397,103 @@ export const deliverMail = Effect.fn("deliverPidgeonMail")(function* (
       });
     delivered++;
   }
-  return Option.some({ conversations: delivered, messages });
+  return { conversations: delivered, messages };
 });
 
-/** The local parts recorded in `file`: none when there is no file. */
+/** The inboxes recorded in `file`: none when there is no file. */
 const recorded = Effect.fn("recordedPidgeon")(function* (file: string) {
   const fs = yield* FileSystem.FileSystem;
-  if (!(yield* fs.exists(file))) return Option.none<ReadonlyArray<string>>();
+  if (!(yield* fs.exists(file))) return Option.none<ReadonlyArray<Entry>>();
   const read = decodeRecorded(yield* fs.readFileString(file));
   if (Option.isNone(read))
     return yield* new PidgeonLeft({ addresses: [], why: `${file} couldn't be read` });
-  return read;
-});
-
-/** Whether `up` recorded `localPart` in `file`: an inbox it made, never one connected by hand. */
-export const isRecorded = Effect.fn("isRecordedPidgeon")(function* (
-  file: string,
-  localPart: string
-) {
-  return Option.match(yield* recorded(file), {
-    onNone: () => false,
-    onSome: (localParts) => localParts.includes(localPart)
-  });
+  return Option.some(
+    read.value.map((entry): Entry =>
+      typeof entry === "string" ? { connection: null, localPart: entry, seeded: false } : entry
+    )
+  );
 });
 
 /**
- * Records a test inbox's name in `file` before `up` asks Pidgeon to make it, so `down` finds it
- * even when the answer to making it was lost. The new record is written beside
- * the old and renamed over it, so a write cut short never loses what was recorded before.
+ * Writes `entries` as the record: beside the old and renamed over it, so a write cut short never
+ * loses what was recorded before.
  */
-export const recordAddress = Effect.fn("recordPidgeonAddress")(function* (
+const write = Effect.fn("writePidgeonRecord")(function* (
+  file: string,
+  entries: ReadonlyArray<Entry>
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const next = `${file}.next`;
+  yield* fs.writeFileString(next, encodeRecorded(entries));
+  yield* fs.rename(next, file);
+});
+const entries = (file: string) =>
+  Effect.map(
+    recorded(file),
+    Option.getOrElse((): ReadonlyArray<Entry> => [])
+  );
+
+/** The inbox `up` recorded as `localPart` in `file`: one it made, never one connected by hand. */
+export const recordedInbox = Effect.fn("recordedPidgeonInbox")(function* (
   file: string,
   localPart: string
 ) {
-  const fs = yield* FileSystem.FileSystem;
-  const before = Option.getOrElse(yield* recorded(file), () => []);
-  const next = `${file}.next`;
-  yield* fs.writeFileString(next, encodeRecorded([...before, localPart]));
-  yield* fs.rename(next, file);
+  return Option.fromNullishOr(
+    (yield* entries(file)).find((entry) => entry.localPart === localPart)
+  );
+});
+
+/** Records `entry` in `file`, in place of any entry by its name. */
+export const recordInbox = Effect.fn("recordPidgeonInbox")(function* (file: string, entry: Entry) {
+  const before = yield* entries(file);
+  yield* write(file, [...before.filter((item) => item.localPart !== entry.localPart), entry]);
+});
+
+/**
+ * The test inbox `up` connects for the scenario's connection `connection`, made and filled before
+ * it's connected, so its snapshot holds the scenario's labels. The record says whether its mail
+ * all arrived. If so it is used as it is, and nothing is delivered. If not, Patchy can't tell
+ * what's there, so the inbox is deleted and a new one made, at a new address since Pidgeon never
+ * gives a deleted one out again, and filled from the start. Each inbox is recorded before Pidgeon
+ * is asked to make it, so `down` finds it whatever happens next. `delivered` is none when the mail
+ * had all arrived before.
+ */
+export const readyInbox = Effect.fn("readyPidgeonInbox")(function* (input: {
+  readonly file: string;
+  readonly adminKey: Redacted.Redacted<string>;
+  readonly connection: string;
+  /** The scenario's name for the inbox; a code of this environment's follows it. */
+  readonly localPart: string;
+  readonly displayName: string;
+  readonly mail: Mail | undefined;
+}) {
+  const before = (yield* entries(input.file)).find(
+    (entry) => entry.connection === input.connection
+  );
+  if (before?.seeded === true)
+    return {
+      localPart: before.localPart,
+      delivered: Option.none<{ readonly conversations: number; readonly messages: number }>()
+    };
+  if (before !== undefined) {
+    yield* takeDown(input.adminKey, [before.localPart]);
+    yield* write(
+      input.file,
+      (yield* entries(input.file)).filter((entry) => entry.localPart !== before.localPart)
+    );
+  }
+  const localPart = `${input.localPart}-${(yield* Random.next).toString(36).slice(2, 8)}`;
+  const entry: Entry = { connection: input.connection, localPart, seeded: false };
+  yield* recordInbox(input.file, entry);
+  const inbox = yield* makeInbox(input.adminKey, localPart, input.displayName).pipe(
+    Effect.mapError((cause) => new MailFailed({ step: "making its inbox", cause }))
+  );
+  const delivered =
+    input.mail === undefined
+      ? { conversations: 0, messages: 0 }
+      : yield* deliverMail(input.adminKey, inbox, input.mail);
+  yield* recordInbox(input.file, { ...entry, seeded: true });
+  return { localPart, delivered: Option.some(delivered) };
 });
 
 /**
@@ -463,7 +504,9 @@ export const takeDownRecorded = Effect.fn("takeDownRecordedPidgeon")(function* (
   file: string,
   devEnvFile: string
 ) {
-  const localParts = yield* recorded(file);
+  const localParts = Option.map(yield* recorded(file), (found) =>
+    found.map((entry) => entry.localPart)
+  );
   if (Option.isNone(localParts) || localParts.value.length === 0) return;
   const adminKey = yield* readPidgeonTestKey(devEnvFile);
   if (Option.isNone(adminKey))
