@@ -119,20 +119,18 @@ Done when `pnpm dev status` exits 0.
   Connecting PostHog here takes a real key and project, so check dev reads
   through the suites' PostHog double unless the person hands you a disposable
   project.
-  Pidgeon here is Pidgeon itself, in test mode: `pnpm dev up pidgeon` pastes
-  the person's test admin key, `PIDGEON_TEST_ADMIN_KEY` from their dev.env or
-  the environment, connects `pidgeon/support` to a new test address, which
-  Pidgeon deletes a day later, delivers the scenario's customer mail to it, and
-  publishes the Support desk, whose repo in the agent workspace reads that
-  address through `patchy dev`. Without that key it says so and skips Pidgeon and
-  the Support desk;
-  never ask for a live key. The account holds ten active keys, test keys
-  included: `pnpm dev down` revokes the keys and deletes the test addresses the
+  Pidgeon here is Pidgeon itself, in test mode: `pnpm dev up pidgeon` makes a
+  new test inbox with the person's test admin key, `PIDGEON_TEST_ADMIN_KEY` from
+  their dev.env or the environment, connects `pidgeon/support` to it through the
+  connect page with their Send test key, `PIDGEON_TEST_SEND_KEY` (the admin key
+  without one), delivers the scenario's customer mail to it, and publishes the
+  Support desk, whose repo in the agent workspace reads that inbox through
+  `patchy dev`. Without the admin key it says so and skips Pidgeon and the
+  Support desk; never ask for a live key. The account holds an inbox that isn't
+  the environment's: `pnpm dev down` deletes only the test inboxes the
   environment's `up` made, before wiping it, so take environments down when
-  done. If it can't, it names the addresses and removes nothing. An address
-  Pidgeon already deleted is named and passed over; its key reaches nothing,
-  and `pnpm test:pidgeon:sweep` revokes it. An address you connect by hand
-  isn't recorded: delete its connection before `down`, which revokes its key.
+  done. If it can't, it names the inboxes and removes nothing. An inbox you
+  connect by hand isn't recorded, and `down` leaves it.
   Attio here is Patchy's probe workspace on Attio itself: `pnpm dev up attio`
   pastes the person's read-only key, `ATTIO_TEST_READ_KEY` from their dev.env
   or the environment, into the connect page as `attio/crm`. Without it, it says

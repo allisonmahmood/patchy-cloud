@@ -414,15 +414,6 @@ const catalogue = Effect.fn("ConnectionPage.catalogue")(function* (
  * the company has no connections, since that empty page lists the integrations; else the catalogue.
  */
 /**
- * A refused submit's attempt, or a fresh one: a form keeps its attempt across a refused submit,
- * so a retry repeats it.
- */
-const withAttempt = (submitted: Submitted) =>
-  PidgeonKeys.isAttempt(submitted.attempt ?? "")
-    ? Effect.succeed(submitted)
-    : Effect.map(PidgeonKeys.newAttempt, (attempt): Submitted => ({ ...submitted, attempt }));
-
-/**
  * What the admin's sign-in to GitHub shows them, for `purpose` and the connection it's for: who
  * they are and what they administer where the App is installed, or that they haven't signed in.
  * A listing GitHub refuses leaves them signed in, with its refusal for the page to say.
@@ -486,7 +477,7 @@ const connectForm = Effect.fn("ConnectionPage.connectForm")(function* (
       companyId: viewer.company.id,
       lookup: { integration, handle: "" }
     });
-  const submitted = yield* withAttempt(given);
+  const submitted = given;
   const connections = yield* (yield* ConnectionStore.ConnectionStore).list(viewer.company.id);
   const github =
     integration === "github" ? yield* githubSignIn(viewer, "connect", null) : undefined;
@@ -711,6 +702,31 @@ const inUse = (usage: ConnectionStore.Usage): View.Notice => ({
  * Replace key, Change project or Point elsewhere, Change access, Who can build with it, Pause and
  * Disconnect. Edit description's old address opens Settings with its field in focus.
  */
+/**
+ * What pausing or disconnecting does, in the integration's words. Disconnecting a Pidgeon
+ * connection also says when emails it sent may still leave without Patchy, as a member approves
+ * them; a count that can't be read leaves that out.
+ */
+const consequencesOf = Effect.fn("ConnectionPage.consequencesOf")(function* (
+  consequences: NonNullable<IntegrationPage["consequences"]>,
+  connection: ConnectionStore.Connection,
+  action: View.Confirmation
+) {
+  if (
+    action !== "delete" ||
+    connection.integration !== "pidgeon" ||
+    consequences.delete === undefined
+  )
+    return consequences;
+  const count = yield* (yield* ConnectionStore.ConnectionStore)
+    .unsettledSends(connection.companyId, connection.id)
+    .pipe(Effect.orElseSucceed(() => 0));
+  const more = PidgeonPage.unsettled(count);
+  return more === undefined
+    ? consequences
+    : { ...consequences, delete: `${consequences.delete} ${more}` };
+});
+
 const confirmationPage = Effect.fn("ConnectionPage.confirmationPage")(function* (
   viewer: RequireSession.Viewer["Service"],
   id: string,
@@ -823,14 +839,16 @@ const confirmationPage = Effect.fn("ConnectionPage.confirmationPage")(function* 
                 ? credentials.consequence
                 : credentials.consequence(connection),
             fields: credentials.fields(
-              yield* withAttempt(form.submitted ?? credentials.initial?.(connection) ?? {}),
+              form.submitted ?? credentials.initial?.(connection) ?? {},
               notice
             ),
             ...(credentials.submit === undefined ? {} : { submit: credentials.submit }),
             ...(credentials.outside === undefined ? {} : { outside: credentials.outside })
           }
         }),
-    ...(page.consequences === undefined ? {} : { consequences: page.consequences }),
+    ...(page.consequences === undefined
+      ? {}
+      : { consequences: yield* consequencesOf(page.consequences, connection, action) }),
     ...(() => {
       const removal = page.removal?.(connection);
       return removal === undefined ? {} : { removal };
@@ -1153,14 +1171,6 @@ const act = Effect.fn("ConnectionPage.act")(function* (
     } else if (kind === "delete") {
       const deleted = yield* store.delete(input, yield* reporter(viewer, "connection.deleted"));
       integration = deleted.connection.integration;
-      // The connection is gone, but a key it held is still live in Pidgeon: say which.
-      if (deleted.keyLeft !== null)
-        return yield* index(viewer, new URLSearchParams(), {
-          title: "Disconnected, but its key is still active in Pidgeon",
-          message: `Patchy couldn't revoke it: ${deleted.keyLeft}. Revoke it in Pidgeon under Developers › API keys. The address and its mail stay in Pidgeon.`,
-          code: "pidgeon_key_left",
-          status: 200
-        });
     } else {
       yield* store[kind](input);
     }
@@ -1221,8 +1231,8 @@ export interface Fragment {
 }
 
 /**
- * Pidgeon's Find addresses: the admin key, posted in the body, checked and used once to list the
- * addresses it reaches. The answer never holds the key; a refusal is shown under it.
+ * Pidgeon's Find inboxes: the key, posted in the body, checked and used once to list the inboxes
+ * it reaches. The answer never holds the key; a refusal is shown under it.
  */
 export const pidgeonAddresses = Effect.fn("ConnectionPage.pidgeonAddresses")(function* (
   viewer: RequireSession.Viewer["Service"]
@@ -1237,12 +1247,12 @@ export const pidgeonAddresses = Effect.fn("ConnectionPage.pidgeonAddresses")(fun
   const key = typeof form?.key === "string" ? form.key.trim() : "";
   if (key === "")
     return refused({
-      message: "Paste a Pidgeon admin key: it starts with pgn_live_.",
+      message: PidgeonPage.copy.key.missing,
       code: "invalid_credentials",
       status: 422
     });
-  return yield* PidgeonKeys.addresses(Redacted.make(key)).pipe(
-    Effect.map((found): Fragment => ({ status: 200, body: PidgeonPage.addressesFragment(found) })),
+  return yield* PidgeonKeys.inboxes(Redacted.make(key)).pipe(
+    Effect.map((found): Fragment => ({ status: 200, body: PidgeonPage.inboxesFragment(found) })),
     Effect.catch((error) => Effect.succeed(refused(refusal(error))))
   );
 });

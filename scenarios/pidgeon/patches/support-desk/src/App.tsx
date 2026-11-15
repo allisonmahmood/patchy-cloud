@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "patchy/preact";
 import { isPatchyError, patchy } from "../patchy/_generated/client.js";
 import { address } from "../patchy/_generated/uses/support.js";
 
-// The support address is read and answered by server/desk.ts, as the person viewing.
+// The support inbox is read and answered by server/desk.ts, as the person viewing.
 const desk = patchy.server.desk;
 type Thread = Awaited<ReturnType<typeof desk.inbox>>[number];
 type ThreadStatus = Thread["status"];
@@ -44,21 +44,25 @@ const explain = (error: unknown) => {
   if (isPatchyError(error, "idempotency_conflict", "pidgeon"))
     return error.details.reason === "in_progress"
       ? `Still sending. Press Send again${error.retryAfter === undefined ? "" : ` in ${error.retryAfter}s`} to see how it went.`
-      : "This draft already went out with different text. Start a new email to send this one.";
+      : error.details.reason === "unconfirmed"
+        ? "Pidgeon hasn't said whether this went. Press Send again later to check; it won't go twice."
+        : "This draft already went out with different text. Start a new email to send this one.";
+  if (
+    isPatchyError(error, "access_denied", "pidgeon") &&
+    error.details.reason === "exfiltration_blocked"
+  )
+    return "Not sent: it quotes another conversation. Put it in your own words.";
   if (isPatchyError(error, "access_denied", "pidgeon") && error.details.message !== undefined)
     return `Not sent: ${error.details.message}`;
   if (isPatchyError(error, "source_rate_limited", "pidgeon") && error.details.limit === "budget")
     return "Today's sends from this address are used up. Nothing was sent.";
   return error instanceof Error ? error.message : String(error);
 };
-/** What to tell the person once Pidgeon answered a send; held sends went nowhere yet. */
-const outcome = (sent: Sent, to: string) => {
-  if (sent.status === "pending_approval")
-    return `Waiting for approval in Pidgeon until ${new Date(sent.expiresAt ?? "").toLocaleString()}. Nothing has gone to ${to} yet.`;
-  return sent.rejected.length === 0
-    ? `Sent to ${to}.`
-    : `Sent, but ${sent.rejected.join(", ")} refused it.`;
-};
+/** What to tell the person once a send answered; a held one went nowhere yet. */
+const outcome = (sent: Sent, to: string) =>
+  sent.status === "held"
+    ? `Waiting for someone in Pidgeon to approve it. Nothing has gone to ${to} yet.`
+    : `Sent to ${to}.`;
 
 export function App() {
   const [threads, setThreads] = useState<readonly Thread[] | undefined>(undefined);
@@ -150,14 +154,16 @@ export function App() {
                   onClick={() => (setSelected(thread.id), setCompose(undefined))}
                 >
                   <span className="row-top">
-                    <strong>{who(thread.from)}</strong>
+                    <strong>{thread.subject ?? "Held for review"}</strong>
                     <span className="muted">{ago(thread.lastMessageAt)}</span>
                   </span>
-                  <span className="row-subject">
-                    {thread.subject ?? "(no subject)"}
-                    {thread.hasAttachments ? <span className="clip"> · attachment</span> : null}
+                  <span className="muted row-preview">
+                    {thread.messageCount} message{thread.messageCount === 1 ? "" : "s"}
+                    {thread.unreadCount === 0 ? "" : ` · ${thread.unreadCount} unread`}
+                    {thread.labels.length === 0
+                      ? ""
+                      : ` · ${thread.labels.map((label) => label.name).join(", ")}`}
                   </span>
-                  <span className="muted row-preview">{thread.preview}</span>
                 </button>
               ))}
             </>
@@ -381,7 +387,6 @@ function Conversation({
 }
 
 function MessageView({ message }: { message: Message }) {
-  const [opened, setOpened] = useState<Record<string, string>>({});
   const mine = ours(message.from.email);
   return (
     <section className={mine ? "message ours" : "message"}>
@@ -390,7 +395,6 @@ function MessageView({ message }: { message: Message }) {
         <span className="muted">
           {mine ? `to ${message.to.map((party) => party.email).join(", ")}` : message.from.email} ·{" "}
           {ago(message.createdAt)} ago
-          {message.delivery?.state === "bounced" ? " · bounced" : ""}
         </span>
       </header>
       {message.firewall?.verdict === "suspicious" ? (
@@ -407,31 +411,12 @@ function MessageView({ message }: { message: Message }) {
       )}
       {message.attachments.length === 0 ? null : (
         <ul className="files">
-          {message.attachments.map((file) => {
-            const read = opened[file.id];
-            return (
-              <li key={file.id}>
-                <span>
-                  {file.filename}{" "}
-                  <span className="muted">{`${Math.max(1, Math.round(file.size / 1024))} KB`}</span>
-                </span>
-                {file.contentType.startsWith("text/") && read === undefined ? (
-                  <button
-                    className="link"
-                    onClick={() =>
-                      desk.attachment({ id: file.id }).then(
-                        (text) => setOpened({ ...opened, [file.id]: text }),
-                        (failure: unknown) => setOpened({ ...opened, [file.id]: explain(failure) })
-                      )
-                    }
-                  >
-                    Read
-                  </button>
-                ) : null}
-                {read === undefined ? null : <pre className="file-text">{read}</pre>}
-              </li>
-            );
-          })}
+          {message.attachments.map((file) => (
+            <li key={file.id}>
+              {file.filename}{" "}
+              <span className="muted">{`${Math.max(1, Math.round(file.size / 1024))} KB`}</span>
+            </li>
+          ))}
         </ul>
       )}
     </section>
@@ -463,7 +448,7 @@ function Compose({
   const [text, setText] = useState(start.text ?? "");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | undefined>(undefined);
-  // Pidgeon answered this email without sending all of it: it's done, and what comes next is new.
+  // Pidgeon is holding this email for a member to approve: it's done here, and what comes next is new.
   const [answered, setAnswered] = useState<Sent | undefined>(undefined);
   // Names this email from its first Send until Pidgeon answers it: a failed Send sent again with
   // it can't mail twice. A new email gets a new Compose, and so a new key.
@@ -478,8 +463,7 @@ function Compose({
     setNotice(undefined);
     try {
       const sent = await desk.send({ to: recipients, subject, text, idempotencyKey: draft });
-      if (sent.status === "sent" && sent.rejected.length === 0)
-        return onDone(start.key, sent.threadId);
+      if (sent.status === "sent") return onDone(start.key, sent.threadId);
       setAnswered(sent);
       setNotice(outcome(sent, recipients.join(", ")));
     } catch (failure) {
@@ -529,18 +513,8 @@ function Compose({
             {busy ? "Sending…" : "Send"}
           </button>
         ) : (
-          <button
-            type="button"
-            className="primary"
-            onClick={() =>
-              onNew(
-                answered.status === "sent"
-                  ? { to: answered.rejected.join(", "), subject, text }
-                  : {}
-              )
-            }
-          >
-            {answered.status === "sent" ? "Write to them in a new email" : "New email"}
+          <button type="button" className="primary" onClick={() => onNew({})}>
+            New email
           </button>
         )}
       </div>

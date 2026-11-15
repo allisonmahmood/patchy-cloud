@@ -219,7 +219,7 @@ export const layer: Layer.Layer<
         headers: { "cache-control": "no-cache", "x-content-type-options": "nosniff" }
       })
     );
-    // Find addresses: the admin key arrives in this POST's body and is never written back.
+    // Find inboxes: the key arrives in this POST's body and is never written back.
     yield* router.add(
       "POST",
       PidgeonPage.addressesPath,

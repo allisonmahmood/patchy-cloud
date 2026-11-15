@@ -732,8 +732,8 @@ integration's mark, then its state, the live patches that use it and, for admins
 the newest its Calls tab would show them, and a menu. A connection is **Connected**, a quiet dot; **Paused**, a badge, when an admin
 paused it; or **Needs attention**, a badge, when Patchy stopped it or something about it waits
 on an admin, in its integration's own words with its fix: an Attio key a check found writable,
-an IMAP login its mail server refused (its login pause), a Pidgeon key Patchy replaced but
-couldn't revoke, a Pidgeon test address, or a GitHub App uninstalled, its permissions changed or
+an IMAP login its mail server refused (its login pause), a Pidgeon test key, or a GitHub App
+uninstalled, its permissions changed or
 a repository gone from its installation. A GitHub connection whose account suspended the App
 shows "Suspended on GitHub, last checked …" in its place, a state of its own rather than a pause. From nine connections the page adds search over names and descriptions and the
 views All, Needs attention and Paused while any are, and for admins Unused, then the
@@ -1180,8 +1180,8 @@ A shared table or store is read as the initiating viewer: each read and each liv
 Company Postgres connections, discovery, publish binding and constrained runtime
 reads are built, with generated relation clients and local fixtures. Company
 PostHog connections read one PostHog Cloud project through named HogQL queries.
-Company Pidgeon connections connect one email address with a key Patchy mints for
-it, and patches read and send from it. Company Attio connections read one CRM
+Company Pidgeon connections connect one inbox with a key an admin made in
+Pidgeon, which Patchy keeps patches to, and patches read and send from it. Company Attio connections read one CRM
 workspace through a read-only key: its records, list entries and members.
 Company Email (IMAP) connections log in to one mailbox with its password, and
 patches read its folders and messages without ever changing it. Company GitHub
@@ -1200,8 +1200,8 @@ Today every integration supports **company** connections only: an admin connects
 a source and decides who may build with it, and anyone who can open a tier 2 patch
 whose handlers declare it uses it through them; a page below tier 2 reaches no connection. There is no per-patch grant. “As the viewer” means Patchy
 checks company access and records the user; the source sees the shared role from
-the connection string, the admin's PostHog key, the key Patchy minted for a
-Pidgeon address, the admin's read-only Attio workspace key, a mailbox's IMAP
+the connection string, the admin's PostHog key, the admin's Pidgeon key for an
+inbox, the admin's read-only Attio workspace key, a mailbox's IMAP
 login, or a token Patchy mints through its GitHub App, not a separate identity
 for each person.
 
@@ -1226,7 +1226,7 @@ A connection is open to build with for the company, as every existing connection
 Every integration connects through one page, the same frame drawn from what the
 integration says: 1 what to make in the other system first, which nothing marks
 done; 2 the credential's fields, secrets masked with Show; any sections a check
-unlocks (Pidgeon's address and what patches may do); Name it, behind the fixed
+unlocks (Pidgeon's inbox and what patches may do); Name it, behind the fixed
 `kind/` prefix; Once connected, what it can and can't do, which the frame writes
 the same way for every integration, with at most one caveat; then Test and
 connect and Cancel. A refusal about a field reads under it, any other right above
@@ -1326,140 +1326,120 @@ text, never its values or rows, appear in the connection's recent calls.
 
 ### Connecting Pidgeon
 
-[Pidgeon](https://pidgeon.ai) gives software real email addresses. One Pidgeon
-connection is one address, company-wide: `pidgeon/support` is `support@…`, and
-Patchy fills in the address on every call, so a patch can't read or send as
-another. The credentialed server makes every call, only to
-`https://pidgeon.ai/api/v1`, never following a redirect, with answers, refusals
-included, read under the 8 MiB cap before they're decoded.
+[Pidgeon](https://pidgeon.ai) gives software real email inboxes. One Pidgeon
+connection is one inbox, company-wide: `pidgeon/support` is `support@…`. The
+key a connection holds is one an admin made in Pidgeon's dashboard, and such a
+key reaches the whole Pidgeon account: Pidgeon makes no key for one inbox. So
+Patchy keeps the boundary itself, on every call (**Operations** below). The
+credentialed server makes every call, only to `https://pidgeon.ai/v1`, never
+following a redirect, with answers, refusals included, read under the 8 MiB cap
+before they're decoded.
 
-**Connect.** The connect page is the shared frame, in one form. An admin pastes a Pidgeon admin key
-over the whole account, live or test, and presses Find addresses: the page's
-script posts the key in the body of that one request, and Patchy answers with the
-addresses it reaches in its own mode. The admin picks one, or creates one on
-Pidgeon's shared `pidgeon.email` or a domain the workspace has, with a display
-name and a send policy, then chooses what patches may do, **Read** or **Read and
-send**, and names it. The page needs its script, because the server never writes
-the admin key back into a page; a refused submit keeps everything typed except
-the key. The address, what patches may do and the name stay locked until Find
-addresses has checked the key, and a key changed after that locks them again. The
-page says where to make the key, that Patchy never stores it, who reads the mail,
-that builders' agents read it while they build and what they send there goes
-nowhere, and that revoking the admin key in Pidgeon later disconnects the
-addresses connected with it.
+**Connect.** The connect page is the shared frame, in one form. An admin makes a
+key in Pidgeon's dashboard, Send if patches will reply and send or Read if they
+only read, pastes it and presses Find inboxes: the page's script posts the key in
+the body of that one request, and Patchy answers with its mode, test or live by
+its prefix, what it may do, and the inboxes it reaches. An Admin key works too,
+and the page says a Send key is enough. The admin picks an inbox, chooses what
+patches may do, **Read** or **Read and send**, and names it. The page needs its
+script, because the server never writes the key back into a page; a refused
+submit keeps everything typed except the key. The inbox, what patches may do and
+the name stay locked until Find inboxes has checked the key, and a key changed
+after that locks them again. The page says the key reaches the whole Pidgeon
+account and that patches reach only the inbox chosen, who reads the mail, that
+builders' agents read it while they build and what they send there goes nowhere,
+and that revoking the key in Pidgeon stops the connection until a new key
+replaces it.
 
-Patchy then, in order: reads `/me` and refuses a key that isn't admin or doesn't
-reach the whole account; finds the address, refusing one without an inbox or in
-the other mode, or creates it with an inbox, which a test key makes a test
-address, under an `Idempotency-Key` from the page's attempt, so a connect retried
-within the day Pidgeon keeps that key makes no second address; mints a key for that
-address alone at `read` or `send`, named `Patchy <handle> <attempt>`; and checks
-the new key, whose `/me` must show the chosen access, the admin key's mode and no
-reach over the whole account, and whose `/identities` must list exactly the
-address. It then reads the snapshot with it. Only that key is saved, encrypted
-under the keyring, and only after all of that; the admin key is used for the
-request and never stored, logged or shown.
+Patchy then checks, changing nothing in Pidgeon: the key reaches the inbox
+picked, which keeps mail (an `events` inbox doesn't), and, for Read and send,
+can send, which it asks by sending a draft that doesn't exist (403 below `send`,
+404 from it up); an Admin key shows by making an inbox with an empty name (403
+below `admin`, 400 for it). It reads the snapshot with the key and saves the key
+with the inbox's id, encrypted under the keyring; the key is never logged or
+shown. **Access** is Patchy's own setting, enforced before Pidgeon sees anything:
+Change access lowers it locally, and raises it to send only once the stored key
+is shown to send.
 
-Every write Patchy sends carries an `Idempotency-Key`, so one whose answer was
-lost is sent again with the same key, admin key and request, and Pidgeon answers
-with the first result, doing nothing twice; while that first request is still
-running, Patchy waits as long as Pidgeon asks. A lost mint answer comes back that
-way naming the key it made but, as Pidgeon shows a secret once, without its
-secret: Patchy revokes that key with the admin key and mints once more. Anything
-that fails before the save revokes the minted key with its own secret. If the
-save's own outcome is unknown, nothing is revoked and the page says to check the
-connections list. A key Patchy couldn't revoke, or couldn't tell it made by the
-deadline, is named, so an admin can revoke it in Pidgeon.
+**Test mode.** A test key's mail never leaves Pidgeon: sends are stored as sent
+and reach only the account's own inboxes. The connection shows "Test key, mail
+stays in Pidgeon" beside its name wherever it's listed, its page says how to
+replace it with a live key of the same account, and its snapshot, `patchy list
+connections` (`test: true` in its JSON) and generated context say so.
 
-**Test mode.** A test admin key connects test addresses: their mail stays in
-Pidgeon, sends are stored as sent and reach only that Pidgeon account, and
-Pidgeon deletes a test address a day after it's made, when the connection says
-the address is gone. The connection keeps its mode, shows "Test, mail stays in
-Pidgeon" beside its name wherever it's listed, and its snapshot, `patchy list
-connections` (`test: true` in its JSON) and generated context say so; Replace key and Change access take an admin key in the
-same mode.
+**The snapshot** keeps the inbox's address and display name, what patches may
+do, whether the key is a test key and the inbox's labels, never mail. It is
+immutable, with the same revisions, `stale_generated` and deletion protection as
+Postgres; the connection is bound to Pidgeon's inbox id. Refresh labels takes a
+new one with the stored key.
 
-**The snapshot** keeps the address, its display name and send policy, the key's
-access, whether it's a test address, the address's labels and the account's plan,
-never mail. It is immutable, with the same revisions, `stale_generated` and
-deletion protection as Postgres; the connection is bound to Pidgeon's address id.
-Refresh labels takes a new one with the stored key.
+**Replace key** takes a new key, checked to reach the same inbox and do what
+patches may, saved with a fresh snapshot; there's no retarget, since another
+inbox is another connection. The old key isn't revoked: Patchy can't, so the
+admin revokes it in Pidgeon. A stored key Pidgeon refuses, or whose inbox is gone,
+is named on Test connection and Resume. **Pause and Resume** keep the key, so
+resuming only checks it still works. **Disconnect** is refused while a stored
+version declares the connection, as for every integration; it forgets the key and
+tells the admin to revoke it in Pidgeon, and when emails the connection sent are
+still waiting on a member's approval or Pidgeon's word, its confirmation says
+they may still go out. The inbox and its mail stay in Pidgeon.
 
-**Send policy.** Pidgeon's own: an address may be `reply_only`, answering only
-people who wrote first and never starting a conversation with a stranger, `open`,
-or limited to an allow-list. Addresses Patchy creates start reply-only unless the
-admin picks Anyone; existing addresses keep theirs, and the connection page shows
-it.
-
-**Change access and Replace key** take an admin key, and are the one way to give
-a connection a new key. Holding the connection's lock, Patchy mints a new key for
-the same address, checks it, takes a fresh snapshot and saves both, keeping the
-old key as retired in the same save; then the old key revokes itself, a 401
-counting as already done. A failure before the save leaves the connection as it
-was. An old key that won't revoke, or whose save's answer was lost, stays retired
-and named on the page until a later Test connection or Delete revokes it.
-Replace key is for a key that stopped working, for example because its admin key
-was revoked: revoking an admin key revokes every key minted from it, while
-rotating it in Pidgeon leaves them working. A key whose address was deleted in
-Pidgeon still signs in but reaches nothing, so the page says the address is gone;
-Replace key can't bring it back. There's no retarget: a different address is a
-new connection. Pidgeon's 429 changed nothing, and the page says when to try
-again from its `Retry-After`.
-
-**Pause and Resume** keep the key, so resuming needs no admin key, only a check
-that it still works. **Disconnect** is refused while a stored version declares the
-connection, as for every integration; once the row is gone, the stored key
-and any retired ones revoke themselves, even if the request was interrupted or
-the COMMIT's answer lost, and one that won't is named. The address and its mail stay in
-Pidgeon.
-
-**Calls** reach an address through one gate per server process: at most four at
-once per address, shared by `patchy dev` and published patches, an excess call
+**Calls** reach an inbox through one gate per server process: at most four at
+once per inbox, shared by `patchy dev` and published patches, an excess call
 waiting within its deadline, keeping a second's reserve, then failing `busy` with
 nothing sent. A call that waited checks its caller and connection again and loads
 the key as it stands before it sends. Pidgeon's 429 and 402 fail
 `source_rate_limited`, with `retryAfter` when Pidgeon sent one, and Patchy never
-retries a call Pidgeon might have run without its Idempotency-Key.
+retries a call Pidgeon might have run.
 
 A Pidgeon declaration carries `{ kind: "pidgeon", handle, id, revision }`, and
-`patchy add pidgeon/<handle>` writes it with the address's client, context and
-`patchy-pidgeon` skill. There is no fixture: `patchy dev` reads the real address
+`patchy add pidgeon/<handle>` writes it with the inbox's client, context and
+`patchy-pidgeon` skill. There is no fixture: `patchy dev` reads the real inbox
 and simulates every write ([Development](#development)).
 
 **Operations.** Patch code calls operations Patchy writes, never a path, an
-address id or a key, and Patchy fills in the address on every call: a thread,
-message or attachment on another address answers `not_found`. Reads travel as
-`pidgeon.read`: `threads.list`, `threads.get` (the thread, its labels and a page
-of its messages, oldest first, with `nextCursor`), `messages.get`,
-`messages.search`, `labels.list` and `attachments.text`. A message is its
+inbox id or a key, and Patchy fills in the inbox on every call. Nothing is
+returned or changed unless Patchy has shown it's the inbox's, and anything it
+can't show answers `not_found`, as an unknown id does: lists and search name the
+inbox and refuse an answer carrying another's row; a thread or message read by
+id is shown only when it says it's the inbox's; a held message read or answered
+by id, whose refusal names no inbox, answers `not_found`; triage reads the
+thread first and checks a label against the inbox's own list. Reads travel as
+`pidgeon.read`: `threads.list` (by status, folder or label), `threads.get` (the
+thread, its labels and a page of its messages, oldest first, with `nextCursor`),
+`messages.get`, `messages.search` (by words) and `labels.list`. A message is its
 parties, subject, time, `test` marker, Pidgeon's firewall-cleaned plain text with
-the verdict and the kinds it found, its attachments' metadata and, for mail it
-sent, its delivery state; a message the firewall holds for a person has none of
-its content and can't be read or answered until someone releases it in Pidgeon.
-No raw headers, HTML or source leave the host. With a `send` key,
-`pidgeon.write` carries `messages.reply`, `messages.send`, `threads.update`,
-`threads.label` and `threads.unlabel`; a `read` connection's client has none,
-and Patchy refuses one forced past its types, whatever Pidgeon's key would allow.
+the verdict and the kinds it found, and its attachments' metadata; a held message
+shows in its conversation with none of its content. No raw headers, HTML, source
+or attachment contents leave the host. With send access, `pidgeon.write` carries
+`messages.reply`, `messages.send`, `threads.update`, `threads.label` and
+`threads.unlabel`; a `read` connection's client has none, and Patchy refuses one
+forced past its types, whatever the key would allow.
 
-**A draft is one email.** Every send and reply takes an `idempotencyKey` the
-patch keeps for that email; Pidgeon's Idempotency-Key is a hash of the
-connection, the patch and that key, so the same draft within Pidgeon's 24 hours
-is one email, answering the first send's result with `replayed: true`. Pidgeon's
-409 fails `idempotency_conflict`, sending nothing: `mismatch` when the key went
-with other mail or from another Pidgeon key, as after Replace key, and
-`in_progress`, with `retryAfter`, while the first send runs. A send answers
-`status`: `sent`, with the recipients the provider `rejected`, or
-`pending_approval`, when Pidgeon holds it as a draft for a person to approve and
-nothing was sent. The send policy, a rule, or text read from another
-conversation refuse a whole send `access_denied` with that `reason`.
+**A draft key is one email.** Every send and reply takes an `idempotencyKey` the
+patch keeps for that email. Pidgeon doesn't dedupe, so Patchy keeps a ledger, by
+a hash of the connection, the patch and that key: it writes the email as a draft
+in the inbox (a reply reads its target first, for its recipients and subject),
+records the draft, records `sending` before it issues the draft's one send, and
+never sends a draft twice. The same key again answers what became of it, with
+`replayed: true`, looking in Pidgeon for an email it held or one whose answer was
+lost. `idempotency_conflict` sends nothing more: `in_progress` while another call
+holds the email, `mismatch` when the key went with another email, and
+`unconfirmed` when Pidgeon hasn't said whether it left, when the same key asks
+again. A send answers `status` `sent`, or `held` when Pidgeon keeps it for a
+member of the account to approve. A send Pidgeon refused in its own words frees
+the key for the corrected email. Text read in another conversation is refused
+`access_denied` with `reason` `exfiltration_blocked`, in Patchy's words, since
+Pidgeon's name that conversation. A sent email's key is forgotten a day after it
+went; one in doubt or held is kept until it resolves or the connection goes.
 
-**Send budget.** Each connection makes at most `pidgeon.sends.daily` sends and
-replies a UTC day, counted durably by one atomic upsert before Pidgeon sees each,
-retries, refusals and held sends included. Past it a send fails
-`source_rate_limited` with `limit: "budget"`, and nothing is sent. The
-connection page shows today's count. Recent calls name each send's subject and
-recipients, each reply's message and CC, each triage's status or label and each
-read's ids, never a body or search text.
+**Send budget.** Each connection writes at most `pidgeon.sends.daily` emails a
+UTC day, each counted durably once, in the transaction that records its draft key,
+before Pidgeon sees it; a replay, a look and a retry count nothing. Past it a new
+email fails `source_rate_limited` with `limit: "budget"`, and nothing is sent.
+The connection page shows today's count. Recent calls name each send's subject
+and recipients, each reply's message and CC, each triage's status or label and
+each read's ids, never a body or search text.
 
 ### Connecting Attio
 
@@ -2107,7 +2087,7 @@ address's or workspace's slots, which dev and published patches share. The repo'
 only routes the call: it must name a connected connection of the token's company.
 Only reads the integration opts into run this way, under the runtime's argument
 and result bounds, its deadline, draining and a per-person rate limit across
-integrations. A Pidgeon dev read checks what comes back against the address and
+integrations. A Pidgeon dev read checks what comes back against the inbox and
 keeps held mail empty, as a published read does. An Attio dev read carries the
 revision the repo was generated from, and the instance decodes by that snapshot of
 that connection, so a client generated before a Refresh reads as generated; a
@@ -2122,13 +2102,12 @@ privately and stays out of generated files, logs and workerd; after
 **Pidgeon's simulated writes.** In dev, sends, replies and triage never reach the
 instance or Pidgeon. Dev checks each call's arguments and the connection's access
 as the host would, then answers with a well-formed result: a send or reply is
-`sent`, with ids starting `dev_` and `test: true`, and a triage returns the thread
-or labels as far as dev knows them. Dev's output names each one, with a send's
-recipients and subject. Nothing changes, so the next read doesn't show it, and
-reading a `dev_` id answers `not_found`. Dev doesn't check the send policy, since
-the snapshot can't tell who the address has written with, and keeps no daily send
-budget. A test-mode key wouldn't do instead: its replies and triage land in the
-real conversations the team reads.
+`sent`, with ids starting `dev_`, and a triage returns the thread or labels as far
+as dev knows them. Dev's output names each one, with a send's recipients and
+subject. Nothing changes, so the next read doesn't show it, and reading a `dev_` id
+answers `not_found`. Dev keeps no ledger of draft keys and no daily send budget. A
+test-mode key wouldn't do instead: its replies and triage land in the real
+conversations the team reads.
 
 The Postgres **dev binding** supplies the same Postgres execution dependency without
 loading the keyring or runtime log. One PGlite database per connection under

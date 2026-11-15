@@ -423,8 +423,8 @@ about a minute; `dense` is Brightline Studio at full size, for first-party pages
 patches owned across the studio with their history, retired and deleted ones, guests both ways,
 deactivated and invited people, and every integration's connections written offline in each state,
 in about three and a half minutes; `pidgeon` is Lumen Bikes with `pidgeon/support` connected to a
-new Pidgeon test address holding customer mail, and a tier 2 Support desk whose
-actions answer it; `patchy dev` in its workspace reads that address's mail through
+new Pidgeon test inbox holding customer mail, and a tier 2 Support desk whose
+actions answer it; `patchy dev` in its workspace reads that inbox's mail through
 this instance and simulates its sends; `attio` is Northwind Sales with
 `attio/crm` connected to Patchy's probe workspace on Attio; `github` is Northwind
 Platform with `github/platform` seeded from the developer's development GitHub App;
@@ -870,56 +870,51 @@ can quote it.
   double (`DevReads.test.ts`); in `patchy dev` they appear on the connection's
   page as Dev calls. Connecting PostHog on a local instance needs a real key and
   project, so check those by hand only with a disposable project. Pidgeon's dev
-  reads go through the same door, offline over answers recorded from Pidgeon in
-  the same suite and live in the live tier (`PidgeonDev.live.ts`); its simulated
-  writes reach neither.
-  Pidgeon is Pidgeon itself, in test mode, where mail never leaves Pidgeon and a
-  test address lasts a day. `pnpm dev up pidgeon` connects `pidgeon/support`
-  through the connect page in a browser with a test admin key,
-  `PIDGEON_TEST_ADMIN_KEY` from the environment or from
-  `~/.config/patchy-cloud/dev.env` as Clerk's keys are, creating a new test
-  address on pidgeon.email, then delivers the scenario's mail to it as mail from
-  outside, through Pidgeon's `POST /test/inbound` (which carries no
-  attachments), with the desk's replies sent from the address, its labels and
-  statuses, each write under its own Idempotency-Key so a resumed `up` sends
-  nothing twice. Without the key, or with one that isn't a test key, it says so
-  and skips Pidgeon and the patches that declare it. `up` records each test address it asks Pidgeon
-  for in the environment folder, and `pnpm dev down` and `reset` take those
-  down with the test key, needing no instance: they revoke each Patchy-named
-  test key below admin that reaches only those addresses, delete the addresses,
-  then wipe. If any of it fails, for want of the key or a refusal from Pidgeon,
-  they name the addresses and remove nothing; fix that and run them again. A
-  recorded address Pidgeon already deleted is named and passed over: its key
-  reaches nothing, and `pnpm test:pidgeon:sweep` revokes it. An
-  address connected by hand isn't recorded: delete its connection before `down`,
-  which revokes its key, or the live tier's stale sweep revokes the key once
-  Pidgeon has deleted the address, a day after it was made. `compare`, `film`
-  and `transcript` hand the key in their environment to their instances' `up`
-  and `down` alone. The offline suites need no Pidgeon: they seed connections and answer revokes and
-  reads through `packages/integrations/src/test/pidgeon.ts`. What Pidgeon does
-  is the live tier's, `pnpm test:pidgeon` with `PIDGEON_TEST_ADMIN_KEY` set
-  (`node --env-file=$HOME/.config/patchy-cloud/pidgeon-test.env node_modules/vitest/vitest.mjs run --config vitest.pidgeon-live.config.ts`),
+  reads go through the same door, offline over the scripted Pidgeon in the same
+  suite and live in the live tier (`PidgeonDev.live.ts`); its simulated writes
+  reach neither.
+  Pidgeon is Pidgeon itself, in test mode, where a test key's mail never leaves
+  Pidgeon. `pnpm dev up pidgeon` makes a new test inbox on pidgeon.email with the
+  test admin key, `PIDGEON_TEST_ADMIN_KEY` from the environment or from
+  `~/.config/patchy-cloud/dev.env` as Clerk's keys are, then connects
+  `pidgeon/support` to it through the connect page in a browser with the Send
+  test key, `PIDGEON_TEST_SEND_KEY` (the admin key without one), as an admin
+  pastes a key from Pidgeon's dashboard. It delivers the scenario's mail to it as
+  mail from outside, through Pidgeon's `POST /email/test/inbound` (which carries
+  no attachments), with the desk's replies sent from the inbox, a customer's
+  follow-up threaded by the first message's RFC Message-ID from the event log,
+  and its labels and statuses. Pidgeon doesn't dedupe, so a resumed `up` looks
+  for each conversation's subject in the inbox and skips one already there.
+  Without the admin key, or with a key that isn't a test key, it says so and
+  skips Pidgeon and the patches that declare it. `up` records each test inbox's
+  name in the environment folder before asking Pidgeon for it, and `pnpm dev
+down` and `reset` delete those inboxes with the test key, needing no instance,
+  then wipe; they never touch another of the account's inboxes. If that fails,
+  for want of the key or a refusal from Pidgeon, they name the inboxes and remove
+  nothing; fix that and run them again. An inbox connected by hand isn't
+  recorded, and `down` leaves it. `compare`, `film` and `transcript` hand the
+  keys in their environment to their instances' `up` and `down` alone. The
+  offline suites need no Pidgeon: they run over the scripted double in
+  `packages/integrations/src/test/pidgeon.ts`, two inboxes under one key with
+  held mail, drafts and injected faults. What Pidgeon does is the live tier's,
+  `pnpm test:pidgeon` with `PIDGEON_TEST_ADMIN_KEY` set, and
+  `PIDGEON_TEST_SEND_KEY` and `PIDGEON_TEST_READ_KEY` for the checks that need a
+  Send or Read key, which skip without them (`node
+--env-file=$HOME/.config/patchy-cloud/pidgeon-test.env node_modules/vitest/vitest.mjs run --config vitest.pidgeon-live.config.ts`),
   never in `pnpm test` or `pnpm verify`; CI runs it when the repository has the
-  secret. It makes failures with Pidgeon's `Pidgeon-Test-Fail`
-  header, creates only test addresses of its own, tags every key it mints with
-  its run, removes both when it ends, and asserts only on what it made: the
-  account holds an address that isn't ours. Every run and every developer's dev
-  environment share that account's budgets: 120 requests a minute, 300 test
-  mints an hour and, on the free plan, 10 active keys, test keys included, two of
-  them the admin keys. So the suite refuses a key that isn't a test key before
-  changing anything, paces itself to about 48 calls a minute, keeps at most
-  three of its own keys alive at once and fails a test that would mint past
-  six, prints the most it held, waits out a 429 or a full key count (402), and
-  stops using Pidgeon 20 minutes after it starts. It changes an address's send
-  policy, approval or holding only on its own run's test addresses, through the
-  harness. Before it starts it
-  sweeps what nobody can still be using: run-tagged test addresses older than an
-  hour, then Patchy-named test keys below admin that reach nothing; when it ends,
-  its own, however it ended. The sweep never touches anything else. CI runs it in
-  its own workflow, `Pidgeon live`: `pidgeon-changes` decides whether it runs,
-  `pidgeon-suite` runs it one run at a time, queued and never cancelled, then
-  `pnpm test:pidgeon:sweep` however it ended, and `pidgeon-live`, the check to
-  require, passes only when the suite passed or had no reason or no key to run.
+  admin key's secret. It refuses any key that isn't a test key before changing
+  anything, makes only inboxes of its own named with its run, records each id as
+  it's made, deletes them when it ends, and asserts only on what it made: the
+  account holds an inbox that isn't ours. Every run and every developer's dev
+  environment share that account's budget, so the suite paces its calls, waits
+  out a 429, and stops using Pidgeon 20 minutes after it starts. Lost answers are
+  an offline matter: the new API has no fault header. Before it starts it sweeps
+  what nobody can still be using, run-tagged inboxes older than an hour; when it
+  ends, its own, however it ended. The sweep never touches anything else. CI runs
+  it in its own workflow, `Pidgeon live`: `pidgeon-changes` decides whether it
+  runs, `pidgeon-suite` runs it one run at a time, queued and never cancelled,
+  then `pnpm test:pidgeon:sweep` however it ended, and `pidgeon-live`, the check
+  to require, passes only when the suite passed or had no reason or no key to run.
   Attio is Attio itself: Patchy's probe workspace, seeded with synthetic CRM
   data and read with its read-only key, `ATTIO_TEST_READ_KEY` from the
   environment or `~/.config/patchy-cloud/dev.env`. `pnpm dev up attio` connects

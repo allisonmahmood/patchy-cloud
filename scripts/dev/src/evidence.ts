@@ -348,10 +348,18 @@ const takeDown = (dir: string, side: SideName, env: Record<string, string>) =>
       prefix: side
     })
   );
-/** `env` and, when this environment has one, the Pidgeon test admin key: for `up` and `down` alone. */
+/** `env` and, when this environment has them, the Pidgeon test keys: for `up` and `down` alone. */
 const withPidgeonKey = (env: Record<string, string>) =>
-  Effect.map(Config.option(Config.String("PIDGEON_TEST_ADMIN_KEY")), (key) =>
-    Option.isSome(key) ? { ...env, PIDGEON_TEST_ADMIN_KEY: key.value } : env
+  Effect.map(
+    Effect.all([
+      Config.option(Config.String("PIDGEON_TEST_ADMIN_KEY")),
+      Config.option(Config.String("PIDGEON_TEST_SEND_KEY"))
+    ]),
+    ([admin, send]) => ({
+      ...env,
+      ...(Option.isSome(admin) ? { PIDGEON_TEST_ADMIN_KEY: admin.value } : {}),
+      ...(Option.isSome(send) ? { PIDGEON_TEST_SEND_KEY: send.value } : {})
+    })
   );
 
 /** The side's checkout at `commit`, installed: cloned, reused or moved per `clonePlan`. */

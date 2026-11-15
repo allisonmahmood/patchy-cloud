@@ -466,10 +466,10 @@ it.live(
         id: "thr_1",
         subject: "Where is my order?",
         status: "open",
-        from: { email: "sam@customer.example", name: "Sam" },
-        preview: "Hi, my order 1043…",
+        folder: "inbox",
+        labels: [],
         messageCount: 1,
-        hasAttachments: false,
+        unreadCount: 1,
         lastMessageAt: "2026-10-26T09:00:00.000Z",
         createdAt: "2026-10-25T08:00:00.000Z"
       };
@@ -521,16 +521,14 @@ it.live(
               support: {
                 declaration,
                 snapshot: {
-                  version: 1,
+                  version: 2,
                   address: {
                     email: "support@acme.example",
-                    displayName: null,
-                    sendPolicy: "reply_only"
+                    displayName: null
                   },
                   access: "send",
                   test: false,
-                  labels: [],
-                  plan: "free"
+                  labels: []
                 }
               }
             }
@@ -575,10 +573,10 @@ export default createGuest({desk:{answer}}, [], {}, ["support"]);`)
         const value = answered.value as {
           viewer: string;
           threads: ReadonlyArray<string>;
-          sent: { status: string; messageId: string; test: boolean };
+          sent: { status: string; messageId: string; replayed: boolean };
         };
         assert.deepStrictEqual([value.viewer, value.threads], [current.user.id, ["thr_1"]]);
-        assert.deepInclude(value.sent, { status: "sent", test: true });
+        assert.deepInclude(value.sent, { status: "sent", replayed: false });
         assert.match(value.sent.messageId, /^dev_/);
       }
       // Each read went to the instance with the key; no reply did, and each shows in dev's output.

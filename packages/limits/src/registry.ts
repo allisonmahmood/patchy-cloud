@@ -205,10 +205,10 @@ export const registry = {
   "pidgeon.sends.daily": {
     kind: "contract",
     default: 200,
-    unit: "sends",
+    unit: "emails",
     scope: "company",
     measure:
-      "Sends and replies one Pidgeon connection attempts per UTC day, counted before Pidgeon sees each, retries and refusals included",
+      "Emails one Pidgeon connection writes per UTC day, each counted once when its draft key is first sent, before Pidgeon sees it; replays and asking again count nothing",
     refusal: "source_rate_limited",
     overridable: false
   },
@@ -218,7 +218,7 @@ export const registry = {
     unit: "calls",
     scope: "host",
     measure:
-      "Pidgeon calls per address at once in one server process, shared by dev and published calls; an excess call waits within its deadline",
+      "Pidgeon calls per inbox at once in one server process, shared by dev and published calls; an excess call waits within its deadline",
     refusal: "busy",
     overridable: false
   },
@@ -228,7 +228,7 @@ export const registry = {
     unit: "milliseconds",
     scope: "company",
     measure:
-      "Connecting a Pidgeon address, changing its access or replacing its key: every call from checking the admin key to reading the snapshot",
+      "Connecting a Pidgeon inbox, changing its access or replacing its key: every call from checking the key to reading the snapshot",
     refusal: "timeout",
     overridable: false
   },
@@ -244,9 +244,9 @@ export const registry = {
   "pidgeon.addresses.listed": {
     kind: "contract",
     default: 1000,
-    unit: "addresses",
+    unit: "inboxes",
     scope: "company",
-    measure: "Addresses the Pidgeon connect form lists from one admin key",
+    measure: "Inboxes the Pidgeon connect form lists from one key",
     refusal: null,
     overridable: false
   },

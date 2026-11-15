@@ -1,12 +1,10 @@
 /**
- * Pidgeon's dev binding (ADR-0013). `patchy dev` reads the real address through the instance's
- * dev door, as the machine token's person, and simulates every write. A reply, send or triage is
+ * Pidgeon's dev binding (ADR-0013). `patchy dev` reads the real inbox through the instance's dev
+ * door, as the machine token's person, and simulates every write. A reply, send or triage is
  * checked as the host checks it, its arguments and the connection's access, then answered here
- * with a result whose new ids start `dev_` and whose `test` is true, and shown in dev's output.
- * Nothing reaches the instance or Pidgeon: nobody receives mail, and the next read doesn't show
- * it. Dev doesn't check the send policy, since the snapshot can't tell who the address has
- * written with. Test-mode keys wouldn't do instead: their replies and triage land in the real
- * conversations the team reads.
+ * with a result whose new ids start `dev_`, and shown in dev's output. Nothing reaches the
+ * instance or Pidgeon: nobody receives mail, and the next read doesn't show it. Test-mode keys
+ * wouldn't do instead: their replies and triage land in the real conversations the team reads.
  */
 import {
   type DeclarationMetadata,
@@ -49,8 +47,7 @@ const answers: {
   "threads.get": Schema.decodeUnknownOption(pidgeonReads["threads.get"].output),
   "messages.get": Schema.decodeUnknownOption(pidgeonReads["messages.get"].output),
   "messages.search": Schema.decodeUnknownOption(pidgeonReads["messages.search"].output),
-  "labels.list": Schema.decodeUnknownOption(pidgeonReads["labels.list"].output),
-  "attachments.text": Schema.decodeUnknownOption(pidgeonReads["attachments.text"].output)
+  "labels.list": Schema.decodeUnknownOption(pidgeonReads["labels.list"].output)
 };
 
 /**
@@ -65,15 +62,13 @@ export const handlers = Effect.fn("PidgeonDev.handlers")(function* (
 ) {
   const http = yield* HttpClient.HttpClient;
   const cryptography = yield* Cryptography.Cryptography;
-  /** A send or reply as Pidgeon answers one it sent, to no one. */
+  /** A send or reply as Patchy answers one it sent, to no one. */
   const sent = Effect.gen(function* (): Effect.fn.Return<typeof PidgeonSent.Type> {
     return {
       status: "sent",
       messageId: yield* cryptography.internalId("dev"),
       threadId: yield* cryptography.internalId("dev"),
-      rejected: [],
-      replayed: false,
-      test: true
+      replayed: false
     };
   });
   const snapshots = new Map(
@@ -121,10 +116,10 @@ export const handlers = Effect.fn("PidgeonDev.handlers")(function* (
                   id: write.input.id,
                   subject: null,
                   status: write.input.status,
-                  from: null,
-                  preview: null,
+                  folder: "inbox",
+                  labels: [],
                   messageCount: 0,
-                  hasAttachments: false,
+                  unreadCount: 0,
                   lastMessageAt: null,
                   createdAt: DateTime.formatIso(yield* DateTime.now)
                 }

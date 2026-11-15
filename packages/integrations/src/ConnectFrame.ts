@@ -25,7 +25,7 @@ import * as Fields from "./Fields.js";
  *
  * In task order: 1 Get it, what to make in the other system first, never marked done; 2 Paste
  * it, the credential's fields at answer width, secrets masked, or GitHub's sign-in; then any
- * sections a check unlocks (Pidgeon's address and what patches may do, GitHub's repositories);
+ * sections a check unlocks (Pidgeon's inbox and what patches may do, GitHub's repositories);
  * Name it, the fused `kind/` prefix; Once connected, what it can and can't do and at most one
  * caveat; Test and connect and Cancel.
  */
@@ -55,11 +55,11 @@ export interface ConnectSpec {
     readonly title: string;
     /** In order; a nested list shares a row, such as a server and its port. */
     readonly fields: Fields.Layout;
-    /** Trusted HTML after the fields, such as Pidgeon's Find addresses. */
+    /** Trusted HTML after the fields, such as Pidgeon's Find inboxes. */
     readonly after?: (submitted: Fields.Submitted, refusal?: View.Notice) => string;
   };
   /**
-   * Sections a check of the credential unlocks, between pasting and naming: Pidgeon's address and
+   * Sections a check of the credential unlocks, between pasting and naming: Pidgeon's inbox and
    * what patches may do, GitHub's repositories. Drawn locked, for the integration's script to
    * unlock, unless a section says it's open, as one the server drew once the sign-in it needs is done.
    */
@@ -102,6 +102,8 @@ export interface ConnectSpec {
     readonly fields: (submitted: Fields.Submitted) => string;
     readonly src: string;
     readonly without: string;
+    /** What a refusal at a part the check unlocks adds: how to unlock it again. */
+    readonly relock: string;
   };
 }
 
@@ -200,7 +202,7 @@ export const render = (input: {
   readonly back: string;
 }): Template => {
   const { integration, spec, submitted, notice } = input;
-  // A refusal about a part a check unlocks, Pidgeon's address, access or name, keeps its place at
+  // A refusal about a part a check unlocks, Pidgeon's inbox, access or name, keeps its place at
   // its field, but that part is locked again until the key is checked, so a summary above the
   // actions takes focus and says how to get back; the page's script clears it once the key is in.
   const locked =
@@ -212,7 +214,7 @@ export const render = (input: {
       ? `<div tabindex="-1" autofocus data-relock>${View.feedback({
           ...notice,
           field: undefined,
-          message: `${notice.message} Paste the admin key again and find addresses: your other choices are kept.`
+          message: `${notice.message} ${spec.script?.relock ?? ""}`.trim()
         })}</div>`
       : "";
   const refusal =

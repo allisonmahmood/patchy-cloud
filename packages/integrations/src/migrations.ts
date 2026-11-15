@@ -133,5 +133,27 @@ export const migrations: Migrations = {
       CHECK ((purpose = 'connect') = (connection_id IS NULL))
     )`,
     `CREATE INDEX github_flows_expiry ON github_flows(expires_at)`
+  ),
+  // Each Pidgeon connection's emails by draft key (a hash of the connection, the patch and the
+  // patch's key): the Pidgeon draft that is the email, how far it got, and the claim of the
+  // worker sending it. Pidgeon doesn't dedupe sends, so this row is what makes a draft key one
+  // email. Rows go with their connection.
+  "0044_pidgeon_drafts": ddl(
+    `CREATE TABLE pidgeon_drafts (
+      connection_id TEXT NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+      draft TEXT NOT NULL,
+      digest TEXT NOT NULL,
+      state TEXT NOT NULL
+        CHECK (state IN ('writing', 'drafted', 'sending', 'sent', 'held', 'refused')),
+      draft_id TEXT,
+      message_id TEXT,
+      thread_id TEXT,
+      owner TEXT,
+      claimed_until TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL,
+      resolved_at TIMESTAMPTZ,
+      PRIMARY KEY (connection_id, draft),
+      CHECK ((owner IS NULL) = (claimed_until IS NULL))
+    )`
   )
 };

@@ -1,6 +1,6 @@
 # Purpose
 
-The shared support inbox for Lumen Bikes: triage conversations by status and label, read text attachments, reply, and start new emails from the support address.
+The shared support inbox for Lumen Bikes: triage conversations by status and label, see their attachments, reply, and start new emails from the support inbox.
 
 The purpose above is independent of the published description in `patchy.json`.
 

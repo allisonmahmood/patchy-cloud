@@ -1,10 +1,9 @@
 /**
  * An environment's Pidgeon: the developer's test admin key, checked to be a test key before
- * anything is made with it, the mail `up` delivers to a new address, and the test addresses `up`
- * made, recorded in the environment folder.
- * `down` and `reset` revoke the keys that reach only those addresses and delete the addresses
- * before the folder that names them goes. The Pidgeon account is shared, with ten active keys
- * between everyone, so a key left behind takes a slot until someone revokes it.
+ * anything is made with it, the test inboxes `up` made with it, recorded in the environment
+ * folder, and the mail `up` delivers to them. `down` and `reset` delete those inboxes before the
+ * folder that names them goes. The Pidgeon account is shared, and holds an inbox that isn't the
+ * environment's: only an inbox whose name the environment recorded is ever changed or deleted.
  */
 import { PidgeonSource } from "@patchy/integrations";
 import * as Clock from "effect/Clock";
@@ -24,63 +23,42 @@ export class PidgeonLeft extends Schema.TaggedError<PidgeonLeft>()("PidgeonLeft"
 }) {
   override get message() {
     const named = this.addresses.length > 0 ? ` (${this.addresses.join(", ")})` : "";
-    return `Nothing was removed: this environment's Pidgeon test addresses${named} and their keys aren't all taken down, because ${this.why}. Fix that and run this again; the environment keeps its record of them until then.`;
+    return `Nothing was removed: this environment's Pidgeon test inboxes${named} aren't all taken down, because ${this.why}. Fix that and run this again; the environment keeps its record of them until then.`;
   }
 }
 
-const Me = Schema.Struct({
-  data: Schema.Struct({ key: Schema.NullOr(Schema.Struct({ test: Schema.Boolean })) })
-});
-const decodeMe = Schema.decodeUnknownOption(Me);
+/** Pidgeon's shared domain, where every environment's inbox is made. */
+export const DOMAIN = "pidgeon.email";
 const Page = Schema.Struct({
   data: Schema.Array(Schema.Unknown),
   next_cursor: Schema.optionalKey(Schema.NullOr(Schema.String))
 });
 const decodePage = Schema.decodeUnknownOption(Page);
-const Identity = Schema.Struct({
-  id: Schema.String,
-  local_part: Schema.String,
-  test: Schema.Boolean
-});
-const decodeIdentity = Schema.decodeUnknownOption(Identity);
-const Key = Schema.Struct({
-  id: Schema.String,
-  name: Schema.String,
-  access: Schema.String,
-  test: Schema.Boolean,
-  revoked_at: Schema.NullOr(Schema.String),
-  identity_ids: Schema.optionalKey(Schema.NullOr(Schema.Array(Schema.String)))
-});
-const decodeKey = Schema.decodeUnknownOption(Key);
+const Inbox = Schema.Struct({ id: Schema.String, address: Schema.String });
+const decodeInbox = Schema.decodeUnknownOption(Inbox);
 const Recorded = Schema.fromJsonString(Schema.Array(Schema.String));
 const decodeRecorded = Schema.decodeUnknownOption(Recorded);
 const encodeRecorded = Schema.encodeSync(Recorded);
 
 const soon = Effect.map(Clock.currentTimeMillis, (now) => now + 15_000);
 
-/** Whether `adminKey` is a test key, by its own `/me`. Never says the key. */
-export const isTestKey = Effect.fn("isTestKey")(function* (adminKey: Redacted.Redacted<string>) {
-  const source = yield* PidgeonSource.Source;
-  const answer = yield* source.call(adminKey, { method: "GET", path: "/me" }, yield* soon);
-  return Option.match(decodeMe(answer.body), {
-    onNone: () => false,
-    onSome: (me) => me.data.key?.test === true
-  });
-});
+/** Whether `key` is a Pidgeon test key, by its prefix. Never says the key. */
+export const isTestKey = (key: Redacted.Redacted<string>) =>
+  PidgeonSource.isTestToken(Redacted.value(key));
 
 /** Every item of one of Pidgeon's lists that `decode` reads; one it can't read is left out. */
 const listed = Effect.fn("listed")(function* <A>(
-  adminKey: Redacted.Redacted<string>,
+  key: Redacted.Redacted<string>,
   path: string,
   decode: (item: unknown) => Option.Option<A>,
-  query: Readonly<Record<string, string>> = {}
+  query: Readonly<Record<string, string | number>> = {}
 ) {
   const source = yield* PidgeonSource.Source;
   const items: A[] = [];
   let cursor: string | null = null;
   do {
     const answer = yield* source.call(
-      adminKey,
+      key,
       { method: "GET", path, query: { ...query, ...(cursor === null ? {} : { cursor }) } },
       yield* soon
     );
@@ -97,89 +75,101 @@ const listed = Effect.fn("listed")(function* <A>(
   return items;
 });
 
+/** The environment's inbox named `localPart`, when Pidgeon still has it. */
+const inboxNamed = Effect.fn("inboxNamed")(function* (
+  key: Redacted.Redacted<string>,
+  localPart: string
+) {
+  const address = `${localPart}@${DOMAIN}`;
+  return Option.fromNullishOr(
+    (yield* listed(key, "/email/inboxes", decodeInbox, { limit: 100 })).find(
+      (inbox) => inbox.address === address
+    )
+  );
+});
+
 /**
- * Takes down what an environment made in Pidgeon, with the test admin key: the test addresses
- * whose local parts are exactly `localParts`, and first each key that reaches nothing else. It
- * only ever revokes a test key Patchy named below admin, and only deletes a test address; it
- * refuses an admin key that isn't a test key before anything else. A key or address already gone
- * counts as done; a recorded address Pidgeon no longer has comes back as `missing`. Fails, naming
- * the addresses, when any of it doesn't happen.
+ * Makes the environment's test inbox `localPart` on pidgeon.email with the test admin key, or
+ * finds the one an earlier start made under that name. The name is recorded before this runs, so
+ * `down` finds the inbox even when this answer is lost.
  */
-export const takeDown = Effect.fn("takeDownPidgeonAddresses")(function* (
+export const makeInbox = Effect.fn("makePidgeonInbox")(function* (
+  adminKey: Redacted.Redacted<string>,
+  localPart: string,
+  displayName: string
+) {
+  const found = yield* inboxNamed(adminKey, localPart);
+  if (Option.isSome(found)) return found.value;
+  const source = yield* PidgeonSource.Source;
+  const made = yield* source.call(
+    adminKey,
+    {
+      method: "POST",
+      path: "/email/inboxes",
+      body: { name: localPart, kind: "agent", display_name: displayName }
+    },
+    yield* soon
+  );
+  return yield* Option.match(decodeInbox(made.body), {
+    onNone: () => Effect.fail(new PidgeonSource.Unavailable({ stage: "response" })),
+    onSome: Effect.succeed
+  });
+});
+
+/**
+ * Takes down what an environment made in Pidgeon, with the test admin key: the inboxes on
+ * pidgeon.email named exactly `localParts`. It refuses a key that isn't a test key before anything
+ * else, and deletes nothing else. An inbox already gone counts as done; a recorded name Pidgeon
+ * has no inbox by comes back as `missing`. Fails, naming the inboxes, when any of it doesn't happen.
+ */
+export const takeDown = Effect.fn("takeDownPidgeonInboxes")(function* (
   adminKey: Redacted.Redacted<string>,
   localParts: ReadonlyArray<string>
 ) {
   const left = (why: string) => new PidgeonLeft({ addresses: localParts, why });
-  const answered = <A, E extends { readonly message: string }, R>(effect: Effect.Effect<A, E, R>) =>
-    Effect.mapError(effect, (error) => left(`Pidgeon didn't answer (${error.message})`));
+  if (!isTestKey(adminKey)) return yield* left("PIDGEON_TEST_ADMIN_KEY isn't a Pidgeon test key");
   const source = yield* PidgeonSource.Source;
-  if (!(yield* answered(isTestKey(adminKey))))
-    return yield* left("PIDGEON_TEST_ADMIN_KEY isn't a Pidgeon test key");
-  const wanted = new Set(localParts);
-  const addresses = (yield* answered(listed(adminKey, "/identities", decodeIdentity))).filter(
-    (identity) => identity.test && wanted.has(identity.local_part)
-  );
-  const ids = new Set(addresses.map((identity) => identity.id));
-  const keys = (yield* answered(listed(adminKey, "/api-keys", decodeKey))).filter(
-    (key) =>
-      key.revoked_at === null &&
-      key.name.startsWith("Patchy ") &&
-      key.test &&
-      (key.access === "read" || key.access === "draft" || key.access === "send") &&
-      (key.identity_ids ?? []).length > 0 &&
-      (key.identity_ids ?? []).every((id) => ids.has(id))
-  );
-  const gone = (path: string) =>
-    Effect.flatMap(soon, (deadline) =>
-      source.call(adminKey, { method: "DELETE", path }, deadline)
-    ).pipe(
-      Effect.asVoid,
-      // Gone already: done all the same.
-      Effect.catchTag("PidgeonNotFound", () => Effect.void)
-    );
-  // Keys first: once its address is gone, a key reaches nothing and this can't tell it's ours.
-  for (const key of keys)
-    yield* gone(`/api-keys/${encodeURIComponent(key.id)}`).pipe(
-      Effect.mapError((error) => left(`Pidgeon didn't revoke key ${key.id} (${error.message})`))
-    );
-  for (const identity of addresses)
-    yield* gone(`/identities/${encodeURIComponent(identity.id)}`).pipe(
-      Effect.mapError((error) =>
-        left(`Pidgeon didn't delete ${identity.local_part} (${error.message})`)
+  const wanted = new Set(localParts.map((localPart) => `${localPart}@${DOMAIN}`));
+  const inboxes = (yield* listed(adminKey, "/email/inboxes", decodeInbox, { limit: 100 }).pipe(
+    Effect.mapError((error) => left(`Pidgeon didn't answer (${error.message})`))
+  )).filter((inbox) => wanted.has(inbox.address));
+  for (const inbox of inboxes)
+    yield* Effect.flatMap(soon, (deadline) =>
+      source.call(
+        adminKey,
+        { method: "DELETE", path: `/email/inboxes/${encodeURIComponent(inbox.id)}` },
+        deadline
       )
+    ).pipe(
+      // Gone already: done all the same.
+      Effect.catchTags({ PidgeonNotFound: () => Effect.void }),
+      Effect.mapError((error) => left(`Pidgeon didn't delete ${inbox.address} (${error.message})`))
     );
-  const found = new Set(addresses.map((identity) => identity.local_part));
+  const found = new Set(inboxes.map((inbox) => inbox.address));
   return {
-    revoked: keys.length,
-    deleted: addresses.length,
-    missing: localParts.filter((localPart) => !found.has(localPart))
+    deleted: inboxes.length,
+    missing: localParts.filter((localPart) => !found.has(`${localPart}@${DOMAIN}`))
   };
 });
 
-/**
- * What `down` says it did in Pidgeon. A recorded address Pidgeon no longer has, deleted a day
- * after it was made or never made, can't say which key was its: one it had reaches nothing, and
- * the guarded stale sweep revokes that.
- */
+/** What `down` says it did in Pidgeon. */
 export const told = (done: {
-  readonly revoked: number;
   readonly deleted: number;
   readonly missing: ReadonlyArray<string>;
 }) => [
   ...done.missing.map(
-    (localPart) =>
-      `  Pidgeon: ${localPart} isn't in Pidgeon any more, or never was. Any key it had reaches nothing, and the stale sweep, \`pnpm test:pidgeon:sweep\`, revokes it.`
+    (localPart) => `  Pidgeon: ${localPart}@${DOMAIN} isn't in Pidgeon any more, or never was.`
   ),
-  `  Pidgeon: revoked ${done.revoked} key${done.revoked === 1 ? "" : "s"} and deleted ${done.deleted} test address${done.deleted === 1 ? "" : "es"} this environment made.`
+  `  Pidgeon: deleted ${done.deleted} test inbox${done.deleted === 1 ? "" : "es"} this environment made.`
 ];
 
 const colours = ["slate", "red", "amber", "green", "teal", "blue", "violet", "pink"] as const;
 /**
- * Mail a scenario delivers to its new test address: its labels, then conversations, each
- * delivered as mail from outside, through Pidgeon's `POST /test/inbound`, with the desk's replies
- * (`from: "me"`) sent from the address, then labelled and moved to its `status`. `hidden` is text
- * a person can't see, which Pidgeon Firewall flags. There are no attachments: test inbound mail
- * carries none.
+ * Mail a scenario delivers to its test inbox: its labels, then conversations, each delivered as
+ * mail from outside, through Pidgeon's `POST /email/test/inbound`, with the desk's replies
+ * (`from: "me"`) sent from the inbox and a customer's follow-ups threaded after them, then
+ * labelled and moved to its `status`. `hidden` is text a person can't see, which Pidgeon Firewall
+ * holds for a person. There are no attachments: test inbound mail carries none.
  */
 export const Mail = Schema.Struct({
   labels: Schema.Array(
@@ -203,37 +193,34 @@ export const Mail = Schema.Struct({
 export type Mail = typeof Mail.Type;
 export const decodeMail = Schema.decodeUnknownEffect(Schema.fromJsonString(Mail));
 
-const Address = Schema.Struct({
-  id: Schema.String,
-  email: Schema.String,
-  local_part: Schema.String,
-  test: Schema.Boolean
-});
-const decodeAddress = Schema.decodeUnknownOption(Address);
-const Made = Schema.Struct({ data: Schema.Struct({ id: Schema.String }) });
+const Made = Schema.Struct({ id: Schema.String });
 const decodeMade = Schema.decodeUnknownOption(Made);
 const Delivered = Schema.Struct({
-  data: Schema.Struct({
-    status: Schema.String,
-    message_id: Schema.NullOr(Schema.String),
-    thread_id: Schema.NullOr(Schema.String)
-  })
+  message_id: Schema.NullOr(Schema.String),
+  outcome: Schema.String
 });
 const decodeDelivered = Schema.decodeUnknownOption(Delivered);
-const Replied = Schema.Struct({
-  data: Schema.Struct({ id: Schema.String, status: Schema.String })
-});
-const decodeReplied = Schema.decodeUnknownOption(Replied);
+const Message = Schema.Struct({ id: Schema.String, thread_id: Schema.String });
+const decodeMessage = Schema.decodeUnknownOption(Message);
 const LabelItem = Schema.Struct({ id: Schema.String, name: Schema.String });
-const decodeLabel = Schema.decodeUnknownOption(LabelItem);
+const decodeLabels = Schema.decodeUnknownOption(Schema.Struct({ data: Schema.Array(LabelItem) }));
+const Subject = Schema.Struct({ subject: Schema.NullOr(Schema.String) });
+const decodeSubject = Schema.decodeUnknownOption(Subject);
+const Received = Schema.Struct({
+  data: Schema.Struct({
+    message_id: Schema.optionalKey(Schema.String),
+    rfc_message_id: Schema.optionalKey(Schema.String)
+  })
+});
+const decodeReceived = Schema.decodeUnknownOption(Received);
 
-/** Mail couldn't be delivered to the environment's address; `down` still takes the address down. */
+/** Mail couldn't be delivered to the environment's inbox; `down` still takes the inbox down. */
 export class MailFailed extends Schema.TaggedError<MailFailed>()("PidgeonMailFailed", {
   step: Schema.String,
   cause: Schema.optionalKey(Schema.Defect())
 }) {
   override get message() {
-    return `Pidgeon didn't take the scenario's mail at ${this.step}. The address stays recorded, so \`pnpm dev down\` still takes it down.`;
+    return `Pidgeon didn't take the scenario's mail at ${this.step}. The inbox stays recorded, so \`pnpm dev down\` still takes it down.`;
   }
 }
 
@@ -248,12 +235,12 @@ const sender = (from: string) => {
 };
 
 /**
- * Delivers `mail` to the environment's test address `localPart` with the test admin key: the
- * address is shared by nobody else and lasts a day. Every write carries an Idempotency-Key made
- * from `localPart` and its place in the mail, so an `up` that runs again within the day sends
- * nothing twice, and one that resumes an earlier start's address finishes its mail. A 429 is
- * waited out, a few times. Answers none when Pidgeon has no such address any more, as a day after
- * it was made.
+ * Delivers `mail` to the environment's test inbox `localPart` with the test admin key. Pidgeon
+ * doesn't dedupe, and an answer can be lost, so before each conversation it looks in the inbox for
+ * the conversation's subject, unique per scenario, and skips one already there: an `up` that runs
+ * again sends nothing twice. A customer's follow-up names their first message's RFC Message-ID,
+ * from the event log, which is what threads it. A 429 is waited out, a few times. Answers none
+ * when Pidgeon has no such inbox any more.
  */
 export const deliverMail = Effect.fn("deliverPidgeonMail")(function* (
   adminKey: Redacted.Redacted<string>,
@@ -262,7 +249,7 @@ export const deliverMail = Effect.fn("deliverPidgeonMail")(function* (
 ) {
   const source = yield* PidgeonSource.Source;
   const failed = (step: string) => (cause: unknown) => new MailFailed({ step, cause });
-  const write = (step: string, request: PidgeonSource.Request) =>
+  const call = (step: string, request: PidgeonSource.Request) =>
     Effect.flatMap(soon, (deadline) => source.call(adminKey, request, deadline)).pipe(
       Effect.catchTags({
         PidgeonRateLimited: (limited) =>
@@ -270,64 +257,108 @@ export const deliverMail = Effect.fn("deliverPidgeonMail")(function* (
             Effect.andThen(Effect.fail(limited))
           )
       }),
-      Effect.retry({
-        times: 3,
-        while: (error) => error._tag === "PidgeonRateLimited"
-      }),
+      Effect.retry({ times: 3, while: (error) => error._tag === "PidgeonRateLimited" }),
       Effect.mapError(failed(step))
     );
-  const found = (yield* listed(adminKey, "/identities", decodeAddress).pipe(
-    Effect.mapError(failed("finding the address"))
-  )).find((address) => address.test && address.local_part === localPart);
-  if (found === undefined)
+  const found = yield* inboxNamed(adminKey, localPart).pipe(
+    Effect.mapError(failed("finding the inbox"))
+  );
+  if (Option.isNone(found))
     return Option.none<{ readonly conversations: number; readonly messages: number }>();
+  const inbox = found.value;
+  const path = `/email/inboxes/${encodeURIComponent(inbox.id)}`;
   const labels = new Map(
-    (yield* listed(adminKey, "/labels", decodeLabel, { identity_id: found.id }).pipe(
-      Effect.mapError(failed("reading its labels"))
-    )).map((label) => [label.name, label.id])
+    Option.match(
+      decodeLabels(
+        (yield* call("reading its labels", { method: "GET", path: `${path}/labels` })).body
+      ),
+      {
+        onNone: () => [],
+        onSome: (listedLabels) => listedLabels.data.map((label) => [label.name, label.id] as const)
+      }
+    )
   );
   for (const label of mail.labels) {
     if (labels.has(label.name)) continue;
     const made = decodeMade(
-      (yield* write(`label ${label.name}`, {
+      (yield* call(`label ${label.name}`, {
         method: "POST",
-        path: "/labels",
-        body: { identity_id: found.id, name: label.name, colour: label.colour },
-        idempotencyKey: `${localPart}-label-${label.name}`
+        path: `${path}/labels`,
+        body: { name: label.name, colour: label.colour }
       })).body
     );
     if (Option.isNone(made)) return yield* new MailFailed({ step: `label ${label.name}` });
-    labels.set(label.name, made.value.data.id);
+    labels.set(label.name, made.value.id);
   }
+  const there = new Set(
+    (yield* listed(adminKey, "/email/threads", decodeSubject, {
+      inbox_id: inbox.id,
+      limit: 100
+    }).pipe(Effect.mapError(failed("listing its conversations")))).flatMap((thread) =>
+      thread.subject === null ? [] : [thread.subject]
+    )
+  );
+  /** The RFC Message-ID Pidgeon gave a received message, as its event log keeps it. */
+  const rfcOf = Effect.fnUntraced(function* (messageId: string, step: string) {
+    for (let tries = 0; tries < 10; tries++) {
+      const events = yield* call(step, {
+        method: "GET",
+        path: "/events",
+        query: { type: "message.received", limit: 100 }
+      });
+      const page = decodePage(events.body);
+      for (const event of Option.isSome(page) ? page.value.data : []) {
+        const received = decodeReceived(event);
+        if (Option.isSome(received) && received.value.data.message_id === messageId)
+          return received.value.data.rfc_message_id;
+      }
+      yield* Effect.sleep(Duration.seconds(1));
+    }
+    return undefined;
+  });
+  let delivered = 0;
   let messages = 0;
-  for (const [index, thread] of mail.threads.entries()) {
-    const at = (step: number) => `${localPart}-${index}-${step}`;
-    let thread_id: string | undefined;
+  for (const thread of mail.threads) {
+    // Delivered by an earlier start: its subject is the scenario's own.
+    if (there.has(thread.subject)) continue;
+    let threadId: string | undefined;
     let last: string | undefined;
+    let customer: string | undefined;
+    let first: string | undefined;
     for (const [step, message] of thread.messages.entries()) {
       const where = `"${thread.subject}", message ${step + 1}`;
       if (message.from === "me") {
-        if (last === undefined)
+        if (last === undefined || customer === undefined)
           return yield* new MailFailed({ step: `${where}: a reply to nothing` });
-        const replied = decodeReplied(
-          (yield* write(where, {
+        const sent = decodeMessage(
+          (yield* call(where, {
             method: "POST",
-            path: `/messages/${encodeURIComponent(last)}/reply`,
-            body: { text: message.text },
-            idempotencyKey: at(step)
+            path: `${path}/messages`,
+            body: {
+              to: [customer],
+              subject: `Re: ${thread.subject}`,
+              text: message.text,
+              reply_to: last
+            }
           })).body
         );
-        if (Option.isNone(replied) || replied.value.data.status !== "sent")
-          return yield* new MailFailed({ step: where });
-        last = replied.value.data.id;
+        if (Option.isNone(sent)) return yield* new MailFailed({ step: where });
+        last = sent.value.id;
+        threadId ??= sent.value.thread_id;
       } else {
-        const delivered = decodeDelivered(
-          (yield* write(where, {
+        const from = sender(message.from);
+        customer ??= from.from;
+        const inReplyTo =
+          first === undefined ? undefined : yield* rfcOf(first, `${where}: threading it`);
+        if (first !== undefined && inReplyTo === undefined)
+          return yield* new MailFailed({ step: `${where}: threading it` });
+        const answer = decodeDelivered(
+          (yield* call(where, {
             method: "POST",
-            path: "/test/inbound",
+            path: "/email/test/inbound",
             body: {
-              to: found.email,
-              ...sender(message.from),
+              inbox_id: inbox.id,
+              ...from,
               subject: step === 0 ? thread.subject : `Re: ${thread.subject}`,
               text: message.text,
               ...(message.hidden === undefined
@@ -335,44 +366,56 @@ export const deliverMail = Effect.fn("deliverPidgeonMail")(function* (
                 : {
                     html: `<p>${escape(message.text)}</p><div style="display:none">${escape(message.hidden)}</div>`
                   }),
-              ...(last === undefined ? {} : { in_reply_to: last })
-            },
-            idempotencyKey: at(step)
+              ...(inReplyTo === undefined ? {} : { in_reply_to: inReplyTo })
+            }
           })).body
         );
         if (
-          Option.isNone(delivered) ||
-          delivered.value.data.status !== "delivered" ||
-          delivered.value.data.message_id === null ||
-          delivered.value.data.thread_id === null
+          Option.isNone(answer) ||
+          (answer.value.outcome !== "delivered" && answer.value.outcome !== "held") ||
+          answer.value.message_id === null
         )
           return yield* new MailFailed({ step: where });
-        last = delivered.value.data.message_id;
-        thread_id ??= delivered.value.data.thread_id;
+        last = answer.value.message_id;
+        first ??= answer.value.message_id;
+        // A held message can't be read, so its conversation can't be named by it.
+        if (answer.value.outcome === "delivered" && threadId === undefined) {
+          const read = decodeMessage(
+            (yield* call(where, {
+              method: "GET",
+              path: `/email/messages/${encodeURIComponent(answer.value.message_id)}`
+            })).body
+          );
+          if (Option.isNone(read)) return yield* new MailFailed({ step: where });
+          threadId = read.value.thread_id;
+        }
       }
       messages++;
     }
-    const conversation = `/threads/${encodeURIComponent(thread_id!)}`;
+    if ((thread.labels !== undefined || thread.status !== undefined) && threadId === undefined)
+      return yield* new MailFailed({
+        step: `"${thread.subject}": a held conversation can't be triaged`
+      });
+    const conversation = `/email/threads/${encodeURIComponent(threadId ?? "")}`;
     for (const name of thread.labels ?? []) {
       const id = labels.get(name);
       if (id === undefined)
         return yield* new MailFailed({ step: `"${thread.subject}": label ${name}` });
-      yield* write(`"${thread.subject}": label ${name}`, {
+      yield* call(`"${thread.subject}": label ${name}`, {
         method: "POST",
         path: `${conversation}/labels`,
-        body: { label_id: id },
-        idempotencyKey: `${at(thread.messages.length)}-label-${name}`
+        body: { label_id: id }
       });
     }
     if (thread.status !== undefined)
-      yield* write(`"${thread.subject}": ${thread.status}`, {
+      yield* call(`"${thread.subject}": ${thread.status}`, {
         method: "PATCH",
         path: conversation,
-        body: { status: thread.status },
-        idempotencyKey: `${at(thread.messages.length)}-status`
+        body: { status: thread.status }
       });
+    delivered++;
   }
-  return Option.some({ conversations: mail.threads.length, messages });
+  return Option.some({ conversations: delivered, messages });
 });
 
 /** The local parts recorded in `file`: none when there is no file. */
@@ -385,7 +428,7 @@ const recorded = Effect.fn("recordedPidgeon")(function* (file: string) {
   return read;
 });
 
-/** Whether `up` recorded `localPart` in `file`: an address it made, never one connected by hand. */
+/** Whether `up` recorded `localPart` in `file`: an inbox it made, never one connected by hand. */
 export const isRecorded = Effect.fn("isRecordedPidgeon")(function* (
   file: string,
   localPart: string
@@ -397,8 +440,8 @@ export const isRecorded = Effect.fn("isRecordedPidgeon")(function* (
 });
 
 /**
- * Records a test address's local part in `file` before `up` asks Pidgeon to make it, so `down`
- * finds it even when the connect failed after Pidgeon made it. The new record is written beside
+ * Records a test inbox's name in `file` before `up` asks Pidgeon to make it, so `down` finds it
+ * even when the answer to making it was lost. The new record is written beside
  * the old and renamed over it, so a write cut short never loses what was recorded before.
  */
 export const recordAddress = Effect.fn("recordPidgeonAddress")(function* (
@@ -413,9 +456,8 @@ export const recordAddress = Effect.fn("recordPidgeonAddress")(function* (
 });
 
 /**
- * For `down` and `reset`: takes down the test addresses recorded in `file`, and their keys, with
- * the developer's test admin key, then drops the record. Nothing recorded, nothing to do, and no
- * call to Pidgeon.
+ * For `down` and `reset`: takes down the test inboxes recorded in `file` with the developer's test
+ * admin key, then drops the record. Nothing recorded, nothing to do, and no call to Pidgeon.
  */
 export const takeDownRecorded = Effect.fn("takeDownRecordedPidgeon")(function* (
   file: string,

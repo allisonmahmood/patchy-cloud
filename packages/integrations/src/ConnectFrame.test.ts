@@ -53,11 +53,11 @@ describe("the connect frame", () => {
       expect(draw(page)).toContain("Builders' agents read it while they build");
   });
 
-  it("locks Pidgeon's address, access and name until its script checks the key", () => {
-    const html = draw(PidgeonPage, { submitted: { attempt: "pageattempt1" } });
+  it("locks Pidgeon's inbox, access and name until its script checks the key", () => {
+    const html = draw(PidgeonPage, { submitted: {} });
     expect(html.match(/<fieldset class="flow-section" disabled>/g)).toHaveLength(3);
     expect(html).toContain('<script defer src="/assets/pidgeon-connect.js"></script>');
-    expect(html).toContain('value="pageattempt1"');
+    expect(html).not.toContain('name="attempt"');
     for (const page of [PostgresPage, PostHogPage, AttioPage, ImapPage])
       expect(draw(page)).not.toContain("disabled>");
   });
@@ -115,10 +115,10 @@ describe("the connect frame", () => {
 
   it("keeps a refusal about Pidgeon's locked parts at its field, with a summary in focus", () => {
     const html = draw(PidgeonPage, {
-      submitted: { attempt: "pageattempt1", address: "new", local_part: "-x" },
+      submitted: { address: "inb_1" },
       notice: {
-        message: "Name the new address with letters.",
-        code: "invalid_credentials",
+        message: "This key reaches no such inbox.",
+        code: "pidgeon_inbox_not_found",
         status: 422,
         field: "address"
       }
@@ -126,15 +126,15 @@ describe("the connect frame", () => {
     inOrder(html, [
       "Once connected",
       '<div tabindex="-1" autofocus data-relock>',
-      "Name the new address with letters. Paste the admin key again",
+      `This key reaches no such inbox. ${PidgeonPage.copy.relock}`,
       "Test and connect"
     ]);
-    expect(html).toContain('data-kept-local-part="-x"');
+    expect(html).toContain('data-kept-address="inb_1"');
     expect(html).toContain('<p class="field-error" id="pidgeon-address-error">');
     expect(html.match(/autofocus/g)).toHaveLength(1);
     // A taken name keeps its error and association under the handle, without focus while locked.
     const taken = draw(PidgeonPage, {
-      submitted: { attempt: "pageattempt1", handle: "desk" },
+      submitted: { handle: "desk" },
       notice: {
         message: "That name is taken.",
         code: "connection_handle_taken",

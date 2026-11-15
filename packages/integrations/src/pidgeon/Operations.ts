@@ -1,23 +1,34 @@
 /**
- * The operations patch code calls on one Pidgeon address. Each is a request Patchy builds, with
- * the connection's address filled in, and a result decoded from Pidgeon's answer into the wire's
- * fields and nothing else. Reads travel as `pidgeon.read`; replies, sends and triage as
- * `pidgeon.write`, which needs a connection whose key can send, whatever Pidgeon would allow.
- * Message and attachment text comes cleaned by Pidgeon's firewall, with its verdict beside it.
+ * The operations patch code calls on one Pidgeon inbox. Each is a request Patchy builds, with the
+ * connection's inbox filled in, and a result decoded from Pidgeon's answer into the wire's fields
+ * and nothing else. Reads travel as `pidgeon.read`; replies, sends and triage as `pidgeon.write`,
+ * which needs a connection that may send, whatever the key could. Message text comes cleaned by
+ * Pidgeon's firewall, with its verdict beside it.
  *
- * The connection's key reaches its one address and nothing else, which connect checked, so
- * Pidgeon itself answers 404 for anything on another address. Reads check what comes back
- * against the address too, and drop or refuse anything that isn't on it.
+ * The boundary. The stored key reaches every inbox of the Pidgeon account, so nothing is returned
+ * or changed unless Patchy has established that it is the connection's inbox's, and anything it
+ * can't establish answers `not_found`, as an id that doesn't exist does. Lists and search name the
+ * inbox and refuse an answer carrying a row of another; a thread or message read by id is shown
+ * only when it says it's the inbox's; a held message read by id says nothing about its inbox, so
+ * it answers `not_found`; triage reads the thread first, and checks a label against the inbox's own
+ * list; replies and sends are drafts in the inbox, sent only by Patchy and only once.
+ *
+ * Sending once. Pidgeon doesn't dedupe sends, so Patchy's ledger (`Ledger.ts`) remembers which
+ * draft is which draft key's email and how far it got, and Patchy sends a draft at most once. When
+ * Pidgeon hasn't said whether an email left, the answer says so, rather than send it again.
  */
 import {
   PidgeonDevRead,
   PidgeonRead,
   PidgeonWrite,
+  pidgeonFolders,
   pidgeonReads,
+  pidgeonThreadStatuses,
   pidgeonWrites,
   type PidgeonLabel,
   type PidgeonMessage,
   type PidgeonReadOperation,
+  type PidgeonSent,
   type PidgeonThread,
   type PidgeonWriteOperation
 } from "@patchy/api";
@@ -41,6 +52,7 @@ import {
   type DevRead
 } from "../definition.js";
 import * as Calls from "./Calls.js";
+import type * as Ledger from "./Ledger.js";
 import * as Source from "./Source.js";
 
 export class ConnectionNotDeclared extends Schema.TaggedError<ConnectionNotDeclared>()(
@@ -64,7 +76,7 @@ export class ConnectionRefused extends Schema.TaggedError<ConnectionRefused>()(
     return "Pidgeon didn't accept this connection's key: it was revoked. Ask a company administrator to replace it at /settings/integrations.";
   }
 }
-/** A reply, send or triage through a connection whose key only reads; nothing reached Pidgeon. */
+/** A reply, send or triage through a connection that only reads; nothing reached Pidgeon. */
 export class ReadOnly extends Schema.TaggedError<ReadOnly>()("PidgeonReadOnly", {}) {
   readonly code = "access_denied" as const;
   readonly status = 403;
@@ -73,9 +85,8 @@ export class ReadOnly extends Schema.TaggedError<ReadOnly>()("PidgeonReadOnly", 
   }
 }
 /**
- * Pidgeon's own limits said no: the account's request rate, its plan, or the address's cooldown
- * on a new message to someone it just wrote to. Nothing was done, and Patchy never retries.
- * `details.message` is Pidgeon's explanation, which names the recipient a cooldown holds.
+ * Pidgeon's own limits said no: the key's request rate or the account's sending limit, or its
+ * plan. Nothing was done, and Patchy never retries. `details.message` is Pidgeon's explanation.
  */
 export class RateLimited extends Schema.TaggedError<RateLimited>()("PidgeonOperationRateLimited", {
   limit: Source.RateLimited.fields.limit,
@@ -93,14 +104,12 @@ export class RateLimited extends Schema.TaggedError<RateLimited>()("PidgeonOpera
     switch (this.limit) {
       case "plan":
         return "Pidgeon's plan for this account doesn't allow that right now, so nothing was done.";
-      case "recipient_cooldown":
-        return `This address wrote to a recipient of this message recently, and Pidgeon holds a new message to them for a while, so nothing was sent. Reply in that conversation, or send it again${again}.`;
       case "requests":
         return `Pidgeon is limiting this account for now, so nothing was done.${again === "" ? "" : ` Try again${again}.`}`;
     }
   }
 }
-/** The connection made its sends and replies for the UTC day; nothing reached Pidgeon. */
+/** The connection wrote its emails for the UTC day; nothing reached Pidgeon. */
 export class BudgetSpent extends Schema.TaggedError<BudgetSpent>()("PidgeonBudgetSpent", {
   budget: Schema.Int,
   /** Until the UTC day ends, when the budget starts again. */
@@ -115,7 +124,44 @@ export class BudgetSpent extends Schema.TaggedError<BudgetSpent>()("PidgeonBudge
     return this.budget;
   }
   override get message() {
-    return `This connection has made its ${this.budget} sends and replies for today, so nothing was sent. The budget starts again at 00:00 UTC.`;
+    return `This connection has written its ${this.budget} emails for today, so nothing was sent. The budget starts again at 00:00 UTC.`;
+  }
+}
+/** The draft key already went with a different email; this attempt did nothing. */
+export class DraftMismatch extends Schema.TaggedError<DraftMismatch>()("PidgeonDraftMismatch", {}) {
+  readonly code = "idempotency_conflict" as const;
+  readonly status = 409;
+  readonly details = { reason: "mismatch" } as const;
+  override get message() {
+    return "This draft key already went with a different email, so this attempt did nothing. Send the draft as it was, or start a new email with a new key.";
+  }
+}
+/**
+ * Another call is still working on this draft key's email; this attempt did nothing. The same
+ * draft sent again after `retryAfterSeconds` answers what became of it.
+ */
+export class DraftInProgress extends Schema.TaggedError<DraftInProgress>()(
+  "PidgeonDraftInProgress",
+  { retryAfterSeconds: Schema.Int }
+) {
+  readonly code = "idempotency_conflict" as const;
+  readonly status = 409;
+  readonly details = { reason: "in_progress" } as const;
+  override get message() {
+    return `Another call is still sending this draft, so this attempt did nothing. Send the same draft again in ${this.retryAfterSeconds} ${this.retryAfterSeconds === 1 ? "second" : "seconds"} for its answer.`;
+  }
+}
+/**
+ * Pidgeon hasn't said whether this email left: Patchy issued its one send and never heard back,
+ * or found it neither sent nor held. Patchy never sends it again. The same draft key asks again;
+ * a new one writes a new email, which may mean two.
+ */
+export class Unconfirmed extends Schema.TaggedError<Unconfirmed>()("PidgeonUnconfirmed", {}) {
+  readonly code = "idempotency_conflict" as const;
+  readonly status = 409;
+  readonly details = { reason: "unconfirmed" } as const;
+  override get message() {
+    return "Pidgeon hasn't said whether this email left, and Patchy never sends it twice. Send the same draft again later to ask again; a new draft key writes a new email, which may mean two.";
   }
 }
 
@@ -125,13 +171,14 @@ export const Errors = Schema.Union([
   ReadOnly,
   RateLimited,
   BudgetSpent,
+  DraftMismatch,
+  DraftInProgress,
+  Unconfirmed,
   Source.Forbidden,
-  Source.Refused,
-  Source.Held,
+  Source.ExfiltrationBlocked,
   Source.NotFound,
   Source.Invalid,
-  Source.IdempotencyMismatch,
-  Source.IdempotencyInProgress,
+  Source.MailRefused,
   Source.Unavailable,
   Source.Timeout,
   Source.Busy,
@@ -147,106 +194,81 @@ const isAbsent = Schema.is(
 
 const DEADLINE_MS = registry["integration.deadline"].default;
 const MAX_LABELS = registry["pidgeon.snapshot.labels"].default;
+/** How long a send's claim outlives its call's deadline, after which no call of it can send. */
+const CLAIM_MARGIN_MS = 30_000;
 type Json = typeof Schema.Json.Type;
 
 // ---------- Pidgeon's answers, as far as Patchy reads them ----------
 
-const Party = Schema.Struct({
-  email: Schema.String,
-  name: Schema.optionalKey(Schema.NullOr(Schema.String))
-});
-const Firewall = Schema.optionalKey(
-  Schema.NullOr(
-    Schema.Struct({
-      verdict: Schema.Literals(["clean", "suspicious"]),
-      signals: Schema.Array(Schema.Struct({ kind: Schema.String }))
-    })
-  )
-);
+const LabelRef = Schema.Struct({ id: Schema.String, name: Schema.String, colour: Schema.String });
+const LabelRow = Schema.Struct({ ...LabelRef.fields, inbox_id: Schema.String });
 const ThreadRow = Schema.Struct({
   id: Schema.String,
-  /** The address the thread is on, as text. */
-  identity: Schema.String,
+  inbox_id: Schema.String,
   subject: Schema.NullOr(Schema.String),
-  status: Schema.Literals(["open", "waiting", "resolved", "human_review"]),
+  folder: Schema.Literals(pidgeonFolders),
+  status: Schema.Literals(pidgeonThreadStatuses),
+  labels: Schema.Array(LabelRef),
   message_count: Schema.Int,
-  from: Schema.NullOr(Schema.String),
-  from_name: Schema.NullOr(Schema.String),
-  preview: Schema.NullOr(Schema.String),
-  has_attachments: Schema.Boolean,
+  unread_count: Schema.Int,
   last_message_at: Schema.NullOr(Schema.String),
   created_at: Schema.String
 });
 const MessageRow = Schema.Struct({
   id: Schema.String,
   thread_id: Schema.String,
-  identity_id: Schema.NullOr(Schema.String),
-  from: Party,
-  to: Schema.Array(Party),
-  cc: Schema.Array(Party),
+  inbox_id: Schema.String,
+  direction: Schema.Literals(["in", "out"]),
+  status: Schema.String,
+  from: Schema.Struct({
+    address: Schema.String,
+    name: Schema.optionalKey(Schema.NullOr(Schema.String))
+  }),
+  to: Schema.Array(Schema.String),
+  cc: Schema.optionalKey(Schema.Array(Schema.String)),
   subject: Schema.NullOr(Schema.String),
-  text: Schema.NullOr(Schema.String),
+  text: Schema.optionalKey(Schema.NullOr(Schema.String)),
   test: Schema.Boolean,
-  is_held: Schema.optionalKey(Schema.Boolean),
-  firewall: Firewall,
-  attachments: Schema.Array(
-    Schema.Struct({
-      id: Schema.String,
-      filename: Schema.String,
-      content_type: Schema.String,
-      size: Schema.Int
-    })
-  ),
-  delivery: Schema.optionalKey(
-    Schema.NullOr(
-      Schema.Struct({ state: Schema.String, delivered_at: Schema.NullOr(Schema.String) })
+  is_held: Schema.Boolean,
+  created_at: Schema.String,
+  attachments: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        id: Schema.String,
+        filename: Schema.String,
+        content_type: Schema.String,
+        size: Schema.Int
+      })
     )
   ),
-  created_at: Schema.String
-});
-const HitRow = Schema.Struct({
-  id: Schema.String,
-  identity_id: Schema.NullOr(Schema.String),
-  thread_id: Schema.String,
-  from: Schema.String,
-  from_name: Schema.NullOr(Schema.String),
-  to: Schema.Array(Schema.String),
-  subject: Schema.NullOr(Schema.String),
-  preview: Schema.NullOr(Schema.String),
-  has_attachments: Schema.Boolean,
-  is_held: Schema.optionalKey(Schema.Boolean),
-  timestamp: Schema.String
-});
-const LabelRow = Schema.Struct({ id: Schema.String, name: Schema.String, colour: Schema.String });
-const TextRow = Schema.Struct({
-  id: Schema.String,
-  filename: Schema.String,
-  content_type: Schema.String,
-  size: Schema.Int,
-  text: Schema.String,
-  truncated: Schema.Boolean,
-  firewall: Firewall
-});
-const SentRow = Schema.Struct({
-  status: Schema.Literals(["sent", "pending_approval"]),
-  id: Schema.String,
-  draft_id: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  thread_id: Schema.String,
-  rejected: Schema.Array(Schema.Struct({ address: Schema.String, reason: Schema.String })),
-  test: Schema.Boolean,
-  approval: Schema.optionalKey(
+  firewall: Schema.optionalKey(
     Schema.NullOr(
       Schema.Struct({
-        reason: Schema.Literals(["first_contact", "risky_thread"]),
-        expires_at: Schema.String
+        verdict: Schema.optionalKey(Schema.Literals(["clean", "suspicious"])),
+        signals: Schema.Array(Schema.Struct({ kind: Schema.String }))
       })
     )
   )
 });
+type MessageRow = typeof MessageRow.Type;
 const page = <Row extends Schema.Top>(row: Row) =>
-  Schema.Struct({ data: Schema.Array(row), next_cursor: Schema.NullOr(Schema.String) });
-const one = <Row extends Schema.Top>(row: Row) => Schema.Struct({ data: row });
-const LabelPage = page(LabelRow);
+  Schema.Struct({
+    data: Schema.Array(row),
+    has_more: Schema.Boolean,
+    next_cursor: Schema.NullOr(Schema.String)
+  });
+const ThreadWithMessages = Schema.Struct({ ...ThreadRow.fields, messages: page(MessageRow) });
+const DraftRow = Schema.Struct({
+  id: Schema.String,
+  inbox_id: Schema.String,
+  thread_id: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  status: Schema.String
+});
+const SentRow = Schema.Struct({
+  id: Schema.String,
+  thread_id: Schema.String,
+  status: Schema.String
+});
 
 /** Pidgeon's answer read through `schema`, its other fields dropped; unreadable is unavailable. */
 const reader = <A>(schema: Schema.Decoder<A>) => {
@@ -255,320 +277,570 @@ const reader = <A>(schema: Schema.Decoder<A>) => {
     decode(answer.body).pipe(Effect.mapError(() => new Source.Unavailable({ stage: "response" })));
 };
 const read = {
-  thread: reader(one(ThreadRow)),
+  thread: reader(ThreadRow),
   threads: reader(page(ThreadRow)),
-  message: reader(one(MessageRow)),
+  conversation: reader(ThreadWithMessages),
+  message: reader(MessageRow),
   messages: reader(page(MessageRow)),
-  hits: reader(page(HitRow)),
-  labels: reader(LabelPage),
-  text: reader(one(TextRow)),
-  sent: reader(one(SentRow))
+  labels: reader(Schema.Struct({ data: Schema.Array(LabelRow) })),
+  draft: reader(DraftRow),
+  sent: reader(SentRow)
 };
 
 // ---------- what a patch sees ----------
 
-const firewall = (value: (typeof TextRow.Type)["firewall"]) =>
-  value === undefined || value === null
-    ? null
-    : {
-        verdict: value.verdict,
-        // The kinds it found, once each; never a signal's detail, which quotes the hidden text.
-        kinds: [...new Set(value.signals.map((signal) => signal.kind))]
-      };
-const thread = (row: typeof ThreadRow.Type): typeof PidgeonThread.Type => ({
-  id: row.id,
-  subject: row.subject,
-  status: row.status,
-  from: row.from === null ? null : { email: row.from, name: row.from_name },
-  preview: row.preview,
-  messageCount: row.message_count,
-  hasAttachments: row.has_attachments,
-  lastMessageAt: row.last_message_at,
-  createdAt: row.created_at
-});
-const party = (value: typeof Party.Type) => ({ email: value.email, name: value.name ?? null });
-const message = (row: typeof MessageRow.Type): typeof PidgeonMessage.Type => ({
-  id: row.id,
-  threadId: row.thread_id,
-  from: party(row.from),
-  to: row.to.map(party),
-  cc: row.cc.map(party),
-  subject: row.subject,
-  createdAt: row.created_at,
-  test: row.test,
-  held: row.is_held === true,
-  text: row.text ?? "",
-  firewall: firewall(row.firewall),
-  attachments: row.attachments.map((file) => ({
-    id: file.id,
-    filename: file.filename,
-    contentType: file.content_type,
-    size: file.size
-  })),
-  delivery:
-    row.delivery === undefined || row.delivery === null
-      ? null
-      : { state: row.delivery.state, deliveredAt: row.delivery.delivered_at }
-});
-const label = (row: typeof LabelRow.Type): typeof PidgeonLabel.Type => ({
+const label = (row: typeof LabelRef.Type): typeof PidgeonLabel.Type => ({
   id: row.id,
   name: row.name,
   colour: row.colour
 });
+const thread = (row: typeof ThreadRow.Type): typeof PidgeonThread.Type => ({
+  id: row.id,
+  subject: row.subject,
+  status: row.status,
+  folder: row.folder,
+  labels: row.labels.map(label),
+  messageCount: row.message_count,
+  unreadCount: row.unread_count,
+  lastMessageAt: row.last_message_at,
+  createdAt: row.created_at
+});
+const firewall = (value: MessageRow["firewall"]) =>
+  value === undefined || value === null
+    ? null
+    : {
+        verdict: value.verdict ?? (value.signals.length === 0 ? "clean" : "suspicious"),
+        // The kinds it found, once each; never a signal's detail, which quotes the hidden text.
+        kinds: [...new Set(value.signals.map((signal) => signal.kind))]
+      };
+const party = (email: string, name: string | null = null) => ({ email, name });
+/** A message as a patch sees it; a held one keeps only who sent it, when, and the verdict. */
+const message = (row: MessageRow): typeof PidgeonMessage.Type => ({
+  id: row.id,
+  threadId: row.thread_id,
+  from: party(row.from.address, row.from.name ?? null),
+  to: row.to.map((email) => party(email)),
+  cc: (row.cc ?? []).map((email) => party(email)),
+  subject: row.is_held ? null : row.subject,
+  createdAt: row.created_at,
+  test: row.test,
+  held: row.is_held,
+  text: row.is_held ? "" : (row.text ?? ""),
+  firewall: firewall(row.firewall),
+  attachments: row.is_held
+    ? []
+    : (row.attachments ?? []).map((file) => ({
+        id: file.id,
+        filename: file.filename,
+        contentType: file.content_type,
+        size: file.size
+      }))
+});
 
-// ---------- the operations ----------
+// ---------- the boundary ----------
 
-/** What one operation knows beyond its input: the address as the call found it. */
+/** What one operation knows beyond its input: the connection's inbox as the call found it. */
 interface Context {
-  readonly address: Calls.Address;
+  readonly inbox: Calls.Inbox;
 }
-/** A write knows the patch too, whose draft keys are its own. */
+/** A write knows the patch too, whose draft keys are its own, and its call's deadline. */
 interface Drafting extends Context {
   readonly patchId: string;
+  readonly deadline: number;
 }
-const email = ({ address }: Context) => address.connection.display.email;
-const identityId = ({ address }: Context) => address.credentials.identityId;
-/** Whether a row Pidgeon answered is on the connection's address. */
-const onThread = (context: Context, row: typeof ThreadRow.Type) =>
-  row.identity.toLowerCase() === email(context).toLowerCase() ||
-  row.identity === identityId(context);
-const onAddress = (context: Context, row: { readonly identity_id: string | null }) =>
-  row.identity_id === null || row.identity_id === identityId(context);
+const inboxId = ({ inbox }: Context) => inbox.credentials.inboxId;
 const segment = (value: string) => encodeURIComponent(value);
+
+/**
+ * Refuses a whole answer that carries anything of another inbox: Pidgeon answered more than it
+ * was asked, so none of it is shown.
+ */
+const ours = (context: Context, rows: ReadonlyArray<{ readonly inbox_id: string }>) =>
+  rows.every((row) => row.inbox_id === inboxId(context))
+    ? Effect.void
+    : Effect.fail(new Source.Unavailable({ stage: "response" }));
+
+/** The inbox's own labels, up to what a snapshot keeps; one of another inbox fails the call. */
+const labelsOf = Effect.fn("PidgeonOperations.labelsOf")(function* (context: Context) {
+  const listed = yield* context.inbox
+    .call({ method: "GET", path: `/email/inboxes/${segment(inboxId(context))}/labels` })
+    .pipe(Effect.flatMap(read.labels));
+  yield* ours(context, listed.data);
+  return listed.data.slice(0, MAX_LABELS).map(label);
+});
+/** A label id the inbox has; any other answers `not_found`, as an unknown one does. */
+const ownLabel = Effect.fn("PidgeonOperations.ownLabel")(function* (
+  context: Context,
+  labelId: string
+) {
+  if (!(yield* labelsOf(context)).some((item) => item.id === labelId))
+    return yield* new Source.NotFound({});
+});
+/** The conversation, when it says it's the inbox's; any other answers `not_found`. */
+const ownThread = Effect.fn("PidgeonOperations.ownThread")(function* (
+  context: Context,
+  id: string,
+  query: Source.Request["query"] = { limit: 1 }
+) {
+  const found = yield* context.inbox
+    .call({ method: "GET", path: `/email/threads/${segment(id)}`, query })
+    .pipe(Effect.flatMap(read.conversation));
+  if (found.inbox_id !== inboxId(context) || found.id !== id) return yield* new Source.NotFound({});
+  return found;
+});
+/**
+ * A message read by id, when it says it's the inbox's. A held one's 403 says nothing about where
+ * it is, so it answers `not_found` like any message Patchy can't show is the inbox's.
+ */
+const ownMessage = Effect.fn("PidgeonOperations.ownMessage")(function* (
+  context: Context,
+  id: string
+) {
+  const found = yield* context.inbox
+    .call({ method: "GET", path: `/email/messages/${segment(id)}`, query: { body: "clean" } })
+    .pipe(
+      Effect.catchTags({ PidgeonHeld: () => Effect.fail(new Source.NotFound({})) }),
+      Effect.flatMap(read.message)
+    );
+  if (found.inbox_id !== inboxId(context) || found.id !== id) return yield* new Source.NotFound({});
+  return found;
+});
 
 /** What an operation can fail with before its refusal is put as the wire says. */
 type Failure =
-  Source.CallError | BudgetSpent | ConnectionStore.ConnectionStorageFailed | Schema.SchemaError;
+  | Source.CallError
+  | BudgetSpent
+  | DraftMismatch
+  | DraftInProgress
+  | Unconfirmed
+  | ConnectionStore.ConnectionStorageFailed
+  | ConnectionStore.ConnectionMutationUnavailable
+  | ConnectionStore.ConnectionNotFound
+  | Schema.SchemaError;
+type Needs = ConnectionStore.ConnectionStore | Cryptography.Cryptography;
 type Step<In, C extends Context = Context> = (
   context: C,
   input: In
-) => Effect.Effect<Json, Failure, ConnectionStore.ConnectionStore | Cryptography.Cryptography>;
+) => Effect.Effect<Json, Failure, Needs>;
 /** One operation and its result, encoded through its own wire schema: nothing else leaves. */
 const step = <In, A, I extends Json, C extends Context = Context>(
   output: Schema.Codec<A, I>,
-  run: (
-    context: C,
-    input: In
-  ) => Effect.Effect<A, Failure, ConnectionStore.ConnectionStore | Cryptography.Cryptography>
+  run: (context: C, input: In) => Effect.Effect<A, Failure, Needs>
 ): Step<In, C> => {
   const encode = Schema.encodeEffect(output);
   return (context, input) => run(context, input).pipe(Effect.flatMap(encode));
 };
-
-/** Every label at `path`, page by page, up to what a snapshot keeps. */
-const labelsAt = Effect.fn("PidgeonOperations.labelsAt")(function* (
-  context: Context,
-  path: string,
-  query: Source.Request["query"] = {}
-) {
-  const found: Array<typeof PidgeonLabel.Type> = [];
-  let cursor: string | null = null;
-  do {
-    const listed: typeof LabelPage.Type = yield* context.address
-      .call({ method: "GET", path, query: { ...query, ...(cursor === null ? {} : { cursor }) } })
-      .pipe(Effect.flatMap(read.labels));
-    found.push(...listed.data.map(label));
-    // A cursor that repeats would never end the list.
-    cursor = listed.next_cursor === cursor ? null : listed.next_cursor;
-  } while (cursor !== null && found.length < MAX_LABELS);
-  return found.slice(0, MAX_LABELS);
-});
 
 type Reads = typeof pidgeonReads;
 type ReadInputs = { readonly [K in PidgeonReadOperation]: Reads[K]["input"]["Type"] };
 const reads: { readonly [K in PidgeonReadOperation]: Step<ReadInputs[K]> } = {
   "threads.list": step(
     pidgeonReads["threads.list"].output,
-    (context, input: ReadInputs["threads.list"]) =>
-      context.address
+    Effect.fnUntraced(function* (context: Context, input: ReadInputs["threads.list"]) {
+      if (input.labelId !== undefined) yield* ownLabel(context, input.labelId);
+      const listed = yield* context.inbox
         .call({
           method: "GET",
-          path: "/threads",
+          path: "/email/threads",
           query: {
-            identity_id: identityId(context),
+            inbox_id: inboxId(context),
             status: input.status,
+            folder: input.folder,
+            label_id: input.labelId,
             limit: input.limit,
             cursor: input.cursor
           }
         })
-        .pipe(
-          Effect.flatMap(read.threads),
-          Effect.map((listed) => ({
-            threads: listed.data.filter((row) => onThread(context, row)).map(thread),
-            nextCursor: listed.next_cursor
-          }))
-        )
+        .pipe(Effect.flatMap(read.threads));
+      yield* ours(context, listed.data);
+      return { threads: listed.data.map(thread), nextCursor: listed.next_cursor };
+    })
   ),
   "threads.get": step(
     pidgeonReads["threads.get"].output,
     Effect.fnUntraced(function* (context: Context, input: ReadInputs["threads.get"]) {
-      const path = `/threads/${segment(input.id)}`;
-      const found = (yield* context.address
-        .call({ method: "GET", path })
-        .pipe(Effect.flatMap(read.thread))).data;
-      if (!onThread(context, found)) return yield* new Source.NotFound({});
       const limit = yield* ContractLimits.get("pidgeon.thread.messages");
-      const [messages, labels] = yield* Effect.all(
-        [
-          context.address
-            .call({
-              method: "GET",
-              path: "/messages",
-              query: { thread_id: input.id, body: "clean", limit, cursor: input.cursor }
-            })
-            .pipe(Effect.flatMap(read.messages)),
-          labelsAt(context, `${path}/labels`)
-        ],
-        { concurrency: 2 }
-      );
+      const found = yield* ownThread(context, input.id, {
+        body: "clean",
+        limit,
+        cursor: input.cursor
+      });
+      // Every message must be this conversation's, on the inbox: anything else fails it whole.
+      yield* ours(context, found.messages.data);
+      if (found.messages.data.some((row) => row.thread_id !== found.id))
+        return yield* new Source.Unavailable({ stage: "response" });
+      const shown = thread(found);
       return {
-        thread: thread(found),
-        labels,
-        // Only this thread's messages on the address; anything else Pidgeon answered is dropped.
-        messages: messages.data
-          .filter((row) => row.thread_id === found.id && onAddress(context, row))
-          .map(message),
-        nextCursor: messages.next_cursor
+        thread: shown,
+        labels: shown.labels,
+        messages: found.messages.data.map(message),
+        nextCursor: found.messages.next_cursor
       };
     })
   ),
   "messages.get": step(
     pidgeonReads["messages.get"].output,
     Effect.fnUntraced(function* (context: Context, input: ReadInputs["messages.get"]) {
-      const found = (yield* context.address
-        .call({ method: "GET", path: `/messages/${segment(input.id)}`, query: { body: "clean" } })
-        .pipe(Effect.flatMap(read.message))).data;
-      if (!onAddress(context, found)) return yield* new Source.NotFound({});
-      return message(found);
+      return message(yield* ownMessage(context, input.id));
     })
   ),
   "messages.search": step(
     pidgeonReads["messages.search"].output,
-    (context, input: ReadInputs["messages.search"]) =>
-      context.address
+    Effect.fnUntraced(function* (context: Context, input: ReadInputs["messages.search"]) {
+      const listed = yield* context.inbox
         .call({
           method: "GET",
-          path: "/messages/search",
+          path: "/email/search",
           query: {
-            identity_id: identityId(context),
             q: input.text,
-            from: input.from,
-            to: input.to,
-            label_id: input.labelId,
-            has_attachment: input.hasAttachment,
-            in: input.folder,
+            inbox_id: inboxId(context),
+            body: "clean",
             limit: input.limit,
             cursor: input.cursor
           }
         })
-        .pipe(
-          Effect.flatMap(read.hits),
-          Effect.map((listed) => ({
-            hits: listed.data
-              .filter((row) => onAddress(context, row))
-              .map((row) => ({
-                messageId: row.id,
-                threadId: row.thread_id,
-                from: { email: row.from, name: row.from_name },
-                to: row.to,
-                subject: row.subject,
-                preview: row.preview,
-                hasAttachments: row.has_attachments,
-                held: row.is_held === true,
-                createdAt: row.timestamp
-              })),
-            nextCursor: listed.next_cursor
-          }))
-        )
+        .pipe(Effect.flatMap(read.messages));
+      yield* ours(context, listed.data);
+      return {
+        hits: listed.data.map((row) => ({
+          messageId: row.id,
+          threadId: row.thread_id,
+          from: party(row.from.address, row.from.name ?? null),
+          to: row.to,
+          subject: row.is_held ? null : row.subject,
+          preview:
+            row.is_held || row.text === undefined || row.text === null
+              ? null
+              : row.text.slice(0, 200),
+          hasAttachments: !row.is_held && (row.attachments ?? []).length > 0,
+          held: row.is_held,
+          createdAt: row.created_at
+        })),
+        nextCursor: listed.next_cursor
+      };
+    })
   ),
   "labels.list": step(pidgeonReads["labels.list"].output, (context) =>
-    labelsAt(context, "/labels", { identity_id: identityId(context) }).pipe(
-      Effect.map((labels) => ({ labels }))
-    )
-  ),
-  // An attachment's answer doesn't say its address: the key, which reaches no other, is the guard.
-  "attachments.text": step(
-    pidgeonReads["attachments.text"].output,
-    (context, input: ReadInputs["attachments.text"]) =>
-      context.address
-        .call({
-          method: "GET",
-          path: `/attachments/${segment(input.id)}/text`,
-          query: { body: "clean" }
-        })
-        .pipe(
-          Effect.flatMap(read.text),
-          Effect.map(({ data }) => ({
-            id: data.id,
-            filename: data.filename,
-            contentType: data.content_type,
-            size: data.size,
-            text: data.text,
-            truncated: data.truncated,
-            firewall: firewall(data.firewall)
-          }))
-        )
+    labelsOf(context).pipe(Effect.map((labels) => ({ labels })))
   )
 };
 
+// ---------- sending once ----------
+
 /**
- * Pidgeon's Idempotency-Key for a draft: the connection, the patch and the draft key, hashed, so
- * two patches' drafts never collide and the draft key itself never leaves Patchy. Pidgeon also
- * counts the calling key, so after Replace key the same draft is a mismatch, never a second email.
+ * The ledger's name for a draft: the connection, the patch and the draft key, hashed, so two
+ * patches' drafts never collide and the draft key itself never leaves Patchy. Not the key's
+ * revision, so Replace key between attempts changes nothing.
  */
-export const idempotencyKey = (connectionId: string, patchId: string, draft: string) =>
+export const draftKey = (connectionId: string, patchId: string, draft: string) =>
   Cryptography.Cryptography.use((cryptography) =>
     cryptography.sha256(JSON.stringify(["pidgeon.send", connectionId, patchId, draft]))
   );
 
 const DAY_MS = 86_400_000;
+/** Pidgeon's refusals of a send that say nothing left, so the draft key is free again. */
+const nothingLeft = (error: Source.CallError) =>
+  error._tag === "PidgeonInvalid" ||
+  error._tag === "PidgeonRateLimited" ||
+  error._tag === "PidgeonForbidden" ||
+  error._tag === "PidgeonExfiltrationBlocked" ||
+  error._tag === "PidgeonMailRefused";
+
+/** One email as a patch asked for it: the operation and its validated input, never its key. */
+type Email =
+  | { readonly operation: "messages.reply"; readonly input: WriteInputs["messages.reply"] }
+  | { readonly operation: "messages.send"; readonly input: WriteInputs["messages.send"] };
+
+/** The email's digest: what was asked, never anything read back from Pidgeon. */
+const digestOf = (email: Email) =>
+  Cryptography.Cryptography.use((cryptography) =>
+    cryptography.sha256(
+      JSON.stringify(
+        email.operation === "messages.reply"
+          ? [email.operation, email.input.id, email.input.text, email.input.cc ?? []]
+          : [
+              email.operation,
+              email.input.to,
+              email.input.cc ?? [],
+              email.input.subject,
+              email.input.text
+            ]
+      )
+    )
+  );
+
+/** `Re: <subject>`, once. */
+const reply = (subject: string | null) =>
+  subject === null || subject.trim() === ""
+    ? undefined
+    : /^re:/i.test(subject.trim())
+      ? subject
+      : `Re: ${subject}`;
 
 /**
- * Counts this send against the connection's budget before Pidgeon sees it, then sends it under
- * the draft's Idempotency-Key. Every attempt counts, a replay and one Pidgeon refuses included,
- * and one Pidgeon holds for a person's approval too.
+ * The draft Pidgeon is to write for this email, in the connection's inbox. A reply reads its
+ * target first: the new API needs `to`, so it comes from the target, a received message's sender
+ * or the recipients of one the inbox sent, with its subject and `reply_to` naming it. A held
+ * target or another inbox's answers `not_found`, as Pidgeon itself does for a foreign one.
  */
-const sendDraft = Effect.fn("PidgeonOperations.sendDraft")(function* (
-  context: Drafting,
-  draft: string,
-  request: Pick<Source.Request, "method" | "path" | "body">
+const draftBody = Effect.fn("PidgeonOperations.draftBody")(function* (
+  context: Context,
+  email: Email
 ) {
-  const { connection } = context.address;
-  const connections = yield* ConnectionStore.ConnectionStore;
-  const now = yield* Clock.currentTimeMillis;
-  const budget = yield* ContractLimits.get("pidgeon.sends.daily");
-  const day = DateTime.formatIsoDateUtc(DateTime.makeUnsafe(now));
-  if (!(yield* connections.countSend(connection.companyId, connection.id, day, budget)))
-    return yield* new BudgetSpent({
-      budget,
-      retryAfterSeconds: Math.ceil((DAY_MS - (now % DAY_MS)) / 1_000)
-    });
-  const answer = yield* context.address.call({
-    ...request,
-    idempotencyKey: yield* idempotencyKey(connection.id, context.patchId, draft),
-    // The first send is still running: say so, and let the patch send the same draft again.
-    inProgress: "fail"
-  });
-  const { data } = yield* read.sent(answer);
-  if (data.status === "sent")
+  if (email.operation === "messages.send")
     return {
-      status: "sent" as const,
-      messageId: data.id,
-      threadId: data.thread_id,
-      rejected: data.rejected,
-      replayed: answer.replayed,
-      test: data.test
+      to: email.input.to,
+      ...(email.input.cc === undefined ? {} : { cc: email.input.cc }),
+      subject: email.input.subject,
+      text: email.input.text
     };
-  if (typeof data.draft_id !== "string" || data.approval === undefined || data.approval === null)
-    return yield* new Source.Unavailable({ stage: "response" });
+  const target = yield* ownMessage(context, email.input.id);
+  const subject = reply(target.subject);
   return {
-    status: "pending_approval" as const,
-    draftId: data.draft_id,
-    threadId: data.thread_id,
-    approval: { reason: data.approval.reason, expiresAt: data.approval.expires_at },
-    replayed: answer.replayed,
-    test: data.test
+    to: target.direction === "in" ? [target.from.address] : target.to,
+    ...(email.input.cc === undefined ? {} : { cc: email.input.cc }),
+    ...(subject === undefined ? {} : { subject }),
+    text: email.input.text,
+    reply_to: target.id
   };
+});
+
+/**
+ * One attempt at one email, by the state its draft key's row is in. A worker claims the row
+ * before it talks to Pidgeon and changes it only while the claim is its own; it issues a draft's
+ * one send only after recording `sending`, and never sends a draft found `sending` or `held`. It
+ * looks instead: a held email Pidgeon still keeps, or the sent message, both in the inbox.
+ * Anything else is `Unconfirmed`, and the row is left as it is.
+ */
+const sendOnce = Effect.fn("PidgeonOperations.sendOnce")(function* (
+  context: Drafting,
+  email: Email
+) {
+  const { connection } = context.inbox;
+  const store = yield* ConnectionStore.ConnectionStore;
+  const cryptography = yield* Cryptography.Cryptography;
+  const now = yield* Clock.currentTimeMillis;
+  const key: Ledger.Key = {
+    companyId: connection.companyId,
+    connectionId: connection.id,
+    draft: yield* draftKey(connection.id, context.patchId, email.input.idempotencyKey),
+    now
+  };
+  const owner = yield* cryptography.randomUUID;
+  const budget = yield* ContractLimits.get("pidgeon.sends.daily");
+  const claim = yield* store.claimDraft({
+    ...key,
+    digest: yield* digestOf(email),
+    owner,
+    until: context.deadline + CLAIM_MARGIN_MS,
+    day: DateTime.formatIsoDateUtc(DateTime.makeUnsafe(now)),
+    budget
+  });
+  switch (claim._tag) {
+    case "Gone":
+      return yield* new ConnectionStore.ConnectionNotFound({
+        companyId: connection.companyId,
+        lookup: { id: connection.id }
+      });
+    case "Spent":
+      return yield* new BudgetSpent({
+        budget,
+        retryAfterSeconds: Math.ceil((DAY_MS - (now % DAY_MS)) / 1_000)
+      });
+    case "Busy":
+      return yield* new DraftInProgress({ retryAfterSeconds: claim.retryAfterSeconds });
+    case "Mismatch":
+      return yield* new DraftMismatch({});
+    case "Sent":
+      return {
+        status: "sent",
+        messageId: claim.messageId,
+        threadId: claim.threadId,
+        replayed: true
+      } satisfies typeof PidgeonSent.Type;
+    case "Claimed":
+      break;
+  }
+
+  /**
+   * Records `change` while the claim is this worker's: whether it still was. A change whose answer
+   * was lost is read back: done if the row shows it with this worker's claim (or, released, with
+   * its state), lost if another worker holds it, and otherwise the storage's failure.
+   */
+  const commit = Effect.fnUntraced(function* (
+    change: Omit<Ledger.Change, keyof Ledger.Key | "owner">
+  ): Effect.fn.Return<
+    boolean,
+    ConnectionStore.ConnectionStorageFailed | ConnectionStore.ConnectionMutationUnavailable
+  > {
+    const at = yield* Clock.currentTimeMillis;
+    const done = yield* store
+      .recordDraft({ ...key, now: at, owner, ...change })
+      .pipe(Effect.result);
+    if (done._tag === "Success") return done.success;
+    const failed = done.failure;
+    if (failed._tag !== "ConnectionStorageFailed") return yield* failed;
+    const found = yield* store.readDraft(key).pipe(Effect.catch(() => Effect.fail(failed)));
+    if (
+      found !== undefined &&
+      found.state === change.state &&
+      (found.owner === owner || (change.release === true && found.owner === null))
+    )
+      return true;
+    if (found !== undefined && found.owner !== null && found.owner !== owner) return false;
+    return yield* failed;
+  });
+  /** A claim this worker lost: it stops, sending nothing more. */
+  const lost = new DraftInProgress({ retryAfterSeconds: 1 });
+  /** Throws away a draft Patchy won't send; one already gone is fine, and so is a failure. */
+  const discard = (id: string) =>
+    context.inbox
+      .call({ method: "DELETE", path: `/email/drafts/${segment(id)}` })
+      .pipe(Effect.ignore);
+  const sent = (
+    status: "sent" | "held",
+    answer: { readonly id: string; readonly thread_id: string },
+    replayed: boolean
+  ): typeof PidgeonSent.Type => ({
+    status,
+    messageId: answer.id,
+    threadId: answer.thread_id,
+    replayed
+  });
+
+  /** `sending` or `held`: never send; look at what Pidgeon kept of the draft. */
+  const look = Effect.fnUntraced(function* (draftId: string) {
+    const draft = yield* context.inbox
+      .call({ method: "GET", path: `/email/drafts/${segment(draftId)}` })
+      .pipe(Effect.flatMap(read.draft), Effect.option);
+    if (Option.isSome(draft)) {
+      const threadId = draft.value.thread_id ?? null;
+      if (
+        draft.value.id !== draftId ||
+        draft.value.inbox_id !== inboxId(context) ||
+        draft.value.status !== "held" ||
+        threadId === null
+      )
+        return yield* new Unconfirmed({});
+      yield* commit({ state: "held", messageId: draftId, threadId, release: true });
+      return sent("held", { id: draftId, thread_id: threadId }, true);
+    }
+    const message = yield* context.inbox
+      .call({ method: "GET", path: `/email/messages/${segment(draftId)}` })
+      .pipe(Effect.flatMap(read.message), Effect.option);
+    if (
+      Option.isNone(message) ||
+      message.value.id !== draftId ||
+      message.value.inbox_id !== inboxId(context) ||
+      message.value.direction !== "out" ||
+      message.value.status !== "sent"
+    )
+      return yield* new Unconfirmed({});
+    yield* commit({
+      state: "sent",
+      messageId: draftId,
+      threadId: message.value.thread_id,
+      release: true
+    });
+    return sent("sent", { id: draftId, thread_id: message.value.thread_id }, true);
+  });
+
+  /** `drafted`: record `sending`, then issue the draft's one send. */
+  const issue = Effect.fnUntraced(function* (draftId: string) {
+    if (!(yield* commit({ state: "sending" }))) return yield* lost;
+    const answer = yield* context.inbox
+      .call({ method: "POST", path: `/email/drafts/${segment(draftId)}/send` })
+      .pipe(
+        Effect.catch((error) =>
+          Effect.gen(function* () {
+            // Pidgeon said no in its own words, and nothing left: the key is free again.
+            if (nothingLeft(error)) {
+              yield* commit({ state: "refused", release: true });
+              yield* discard(draftId);
+              return yield* error;
+            }
+            // A 401 is refused before anything runs: the draft waits for a key that works.
+            if (error._tag === "PidgeonKeyRejected") {
+              yield* commit({ state: "drafted" });
+              return yield* error;
+            }
+            return yield* new Unconfirmed({});
+          })
+        )
+      );
+    const row = yield* read.sent(answer).pipe(Effect.option);
+    if (
+      Option.isNone(row) ||
+      row.value.id !== draftId ||
+      (answer.status !== 201 && answer.status !== 202)
+    )
+      return yield* new Unconfirmed({});
+    const status =
+      answer.status === 201 && row.value.status === "sent"
+        ? "sent"
+        : answer.status === 202 && row.value.status === "held"
+          ? "held"
+          : undefined;
+    if (status === undefined) return yield* new Unconfirmed({});
+    // Pidgeon has answered: what it said is the answer, recorded or not.
+    yield* commit({
+      state: status,
+      messageId: draftId,
+      threadId: row.value.thread_id,
+      release: true
+    }).pipe(Effect.ignore);
+    return sent(status, row.value, false);
+  });
+
+  /** `writing`: write the draft in the inbox and record it, then issue its send. */
+  const write = Effect.fnUntraced(function* () {
+    // Refused in Pidgeon's own words, or a reply target Patchy can't show is the inbox's:
+    // nothing was written, and the key is free again. A 401 waits for a key that works.
+    const refused = (error: Source.CallError) =>
+      Source.isDecided(error) && error._tag !== "PidgeonKeyRejected"
+        ? commit({ state: "refused", release: true }).pipe(Effect.ignore)
+        : Effect.void;
+    const body = yield* draftBody(context, email).pipe(Effect.tapError(refused));
+    const answer = yield* context.inbox
+      .call({
+        method: "POST",
+        path: `/email/inboxes/${segment(inboxId(context))}/drafts`,
+        body
+      })
+      .pipe(Effect.tapError(refused));
+    const draft = yield* read.draft(answer);
+    if (draft.inbox_id !== inboxId(context)) {
+      yield* discard(draft.id);
+      return yield* new Source.Unavailable({ stage: "response" });
+    }
+    if (!(yield* commit({ state: "drafted", draftId: draft.id }))) {
+      yield* discard(draft.id);
+      return yield* lost;
+    }
+    return yield* issue(draft.id);
+  });
+
+  const row = claim.row;
+  if (claim.discard !== null) yield* discard(claim.discard);
+  return yield* Effect.gen(function* () {
+    switch (row.state) {
+      case "writing":
+      case "refused":
+        return yield* write();
+      case "drafted":
+        return row.draftId === null ? yield* write() : yield* issue(row.draftId);
+      case "sending":
+      case "held":
+        return row.draftId === null ? yield* new Unconfirmed({}) : yield* look(row.draftId);
+      case "sent":
+        return row.messageId === null || row.threadId === null
+          ? yield* new Unconfirmed({})
+          : sent("sent", { id: row.messageId, thread_id: row.threadId }, true);
+    }
+  }).pipe(
+    // However the attempt ends, a claim it still holds ends with it; the row stays as it is.
+    Effect.ensuring(store.releaseDraft({ ...key, owner }).pipe(Effect.ignore))
+  );
 });
 
 type Writes = typeof pidgeonWrites;
@@ -577,62 +849,57 @@ const writes: { readonly [K in PidgeonWriteOperation]: Step<WriteInputs[K], Draf
   "messages.reply": step(
     pidgeonWrites["messages.reply"].output,
     (context: Drafting, input: WriteInputs["messages.reply"]) =>
-      sendDraft(context, input.idempotencyKey, {
-        method: "POST",
-        path: `/messages/${segment(input.id)}/reply`,
-        body: { text: input.text, ...(input.cc === undefined ? {} : { cc: input.cc }) }
-      })
+      sendOnce(context, { operation: "messages.reply", input })
   ),
   "messages.send": step(
     pidgeonWrites["messages.send"].output,
     (context: Drafting, input: WriteInputs["messages.send"]) =>
-      sendDraft(context, input.idempotencyKey, {
-        method: "POST",
-        path: "/messages",
-        body: {
-          from: email(context),
-          to: input.to,
-          ...(input.cc === undefined ? {} : { cc: input.cc }),
-          subject: input.subject,
-          text: input.text
-        }
-      })
+      sendOnce(context, { operation: "messages.send", input })
   ),
   "threads.update": step(
     pidgeonWrites["threads.update"].output,
-    (context, input: WriteInputs["threads.update"]) =>
-      context.address
+    Effect.fnUntraced(function* (context: Drafting, input: WriteInputs["threads.update"]) {
+      yield* ownThread(context, input.id);
+      const changed = yield* context.inbox
         .call({
           method: "PATCH",
-          path: `/threads/${segment(input.id)}`,
+          path: `/email/threads/${segment(input.id)}`,
           body: { status: input.status }
         })
-        .pipe(
-          Effect.flatMap(read.thread),
-          Effect.map(({ data }) => thread(data))
-        )
+        .pipe(Effect.flatMap(read.thread));
+      yield* ours(context, [changed]);
+      return thread(changed);
+    })
   ),
   "threads.label": step(
     pidgeonWrites["threads.label"].output,
-    (context, input: WriteInputs["threads.label"]) =>
-      context.address
+    Effect.fnUntraced(function* (context: Drafting, input: WriteInputs["threads.label"]) {
+      yield* ownThread(context, input.id);
+      yield* ownLabel(context, input.labelId);
+      const changed = yield* context.inbox
         .call({
           method: "POST",
-          path: `/threads/${segment(input.id)}/labels`,
+          path: `/email/threads/${segment(input.id)}/labels`,
           body: { label_id: input.labelId }
         })
-        .pipe(
-          Effect.flatMap(read.labels),
-          Effect.map((applied) => ({ labels: applied.data.map(label) }))
-        )
+        .pipe(Effect.flatMap(read.thread));
+      yield* ours(context, [changed]);
+      return { labels: changed.labels.map(label) };
+    })
   ),
-  // Removing answers only `{ removed }`, so the thread's labels are read after it.
   "threads.unlabel": step(
     pidgeonWrites["threads.unlabel"].output,
-    Effect.fnUntraced(function* (context: Context, input: WriteInputs["threads.unlabel"]) {
-      const path = `/threads/${segment(input.id)}/labels`;
-      yield* context.address.call({ method: "DELETE", path, query: { label_id: input.labelId } });
-      return { labels: yield* labelsAt(context, path) };
+    Effect.fnUntraced(function* (context: Drafting, input: WriteInputs["threads.unlabel"]) {
+      yield* ownThread(context, input.id);
+      yield* ownLabel(context, input.labelId);
+      const changed = yield* context.inbox
+        .call({
+          method: "DELETE",
+          path: `/email/threads/${segment(input.id)}/labels/${segment(input.labelId)}`
+        })
+        .pipe(Effect.flatMap(read.thread));
+      yield* ours(context, [changed]);
+      return { labels: changed.labels.map(label) };
     })
   )
 };
@@ -645,7 +912,7 @@ const writeOne = <K extends PidgeonWriteOperation>(
   input: WriteInputs[K]
 ) => writes[name](context, input);
 
-/** The door refused its caller once the call held a slot; `atAddress` hands on what it said. */
+/** The door refused its caller once the call held a slot; `atInbox` hands on what it said. */
 class CallerRefused extends Schema.TaggedError<CallerRefused>()("PidgeonCallerRefused", {}) {
   override get message() {
     return "The caller was refused once the call held a slot; nothing was sent.";
@@ -653,24 +920,21 @@ class CallerRefused extends Schema.TaggedError<CallerRefused>()("PidgeonCallerRe
 }
 
 /**
- * A call on the address its door admitted, once it holds one of the address's slots, with the
- * caller, the connection and its key as they stand then; a write through a connection whose key
- * only reads sends nothing. Pidgeon's refusals come back as the wire says them, and the door's
- * refusal of its caller and the connection's absence as they are, for the door to say. Anything
- * else, such as a stored key that can't be read or an address that moved, is Patchy's side being
- * unavailable.
+ * A call on the inbox its door admitted, once it holds one of the inbox's slots, with the caller,
+ * the connection and its key as they stand then; a write through a connection that only reads
+ * sends nothing. Pidgeon's refusals come back as the wire says them, and the door's refusal of
+ * its caller and the connection's absence as they are, for the door to say. Anything else, such
+ * as a stored key that can't be read, is Patchy's side being unavailable.
  */
-const atAddress = Effect.fnUntraced(function* <E>(
+const atInbox = Effect.fnUntraced(function* <E>(
   target: Calls.Target<E>,
   kind: "read" | "write",
-  run: (
-    address: Calls.Address
-  ) => Effect.Effect<Json, Failure, ConnectionStore.ConnectionStore | Cryptography.Cryptography>
+  run: (inbox: Calls.Inbox) => Effect.Effect<Json, Failure, Needs>
 ) {
   // The caller's refusal after the wait is its door's to say, so it waits here, apart from
   // everything the call itself can fail with.
   const caller = yield* Ref.make(Option.none<E>());
-  return yield* Calls.withAddress(
+  return yield* Calls.withInbox(
     {
       ...target,
       recheck: target.recheck.pipe(
@@ -678,10 +942,10 @@ const atAddress = Effect.fnUntraced(function* <E>(
         Effect.mapError(() => new CallerRefused({}))
       )
     },
-    Effect.fnUntraced(function* (address: Calls.Address) {
-      if (kind === "write" && address.connection.display.access !== "send")
+    Effect.fnUntraced(function* (inbox: Calls.Inbox) {
+      if (kind === "write" && inbox.connection.display.access !== "send")
         return yield* new ReadOnly({});
-      return yield* run(address);
+      return yield* run(inbox);
     })
   ).pipe(
     Effect.catchTags({
@@ -696,7 +960,9 @@ const atAddress = Effect.fnUntraced(function* <E>(
             cause
           })
         ),
-      // A conflict with what's there, such as a label the thread can't take, is the request's.
+      // Held mail is never shown by id: it can't be shown to be the inbox's.
+      PidgeonHeld: () => Effect.fail(new Source.NotFound({})),
+      // A conflict with what's there, such as a draft no longer a draft, is the request's.
       PidgeonConflict: (cause) => Effect.fail(new Source.Invalid({ details: cause.details })),
       PidgeonTooLarge: (cause) =>
         Effect.fail(
@@ -719,14 +985,12 @@ const atAddress = Effect.fnUntraced(function* <E>(
 
 /**
  * One operation as a loaded version's door admitted it: the declared connection and its viewer,
- * then the call on the address. A viewer or connection that stopped working is refused.
+ * then the call on the inbox. A viewer or connection that stopped working is refused.
  */
 const perform = Effect.fn("PidgeonOperations.perform")(function* (
   connection: string,
   kind: "read" | "write",
-  run: (
-    context: Drafting
-  ) => Effect.Effect<Json, Failure, ConnectionStore.ConnectionStore | Cryptography.Cryptography>
+  run: (context: Drafting) => Effect.Effect<Json, Failure, Needs>
 ) {
   const binding = yield* Binding.Binding;
   const declaration = binding.manifest.uses[connection];
@@ -749,10 +1013,8 @@ const perform = Effect.fn("PidgeonOperations.perform")(function* (
   const recheck = connectionRecheck(binding, declaration.id).pipe(
     Effect.provideService(ConnectionStore.ConnectionStore, yield* ConnectionStore.ConnectionStore)
   );
-  return yield* atAddress(
-    { companyId, connection: declaration, deadline, recheck },
-    kind,
-    (address) => run({ address, patchId: binding.patchId })
+  return yield* atInbox({ companyId, connection: declaration, deadline, recheck }, kind, (inbox) =>
+    run({ inbox, patchId: binding.patchId, deadline })
   ).pipe(
     Effect.catchTags({
       ConnectionNotFound: (cause) => Effect.fail(new Runtime.AccessDenied({ cause })),
@@ -841,11 +1103,10 @@ export const recorded = {
       case "threads.label":
       case "threads.unlabel":
         return `${name} ${id} ${text(input.labelId)}`;
-      case "messages.search":
+      case "threads.list":
         return Predicate.isString(input.labelId) ? `${name} label ${text(input.labelId)}` : name;
       case "threads.get":
       case "messages.get":
-      case "attachments.text":
         return `${name} ${id}`;
       default:
         return name;
@@ -866,8 +1127,8 @@ const decodeDevRead = Schema.decodeUnknownEffect(PidgeonDevRead, { onExcessPrope
 /**
  * The read the definition's `live` names, for `patchy dev` through the instance's dev door
  * (ADR-0013): the caller is the door's, never a loaded version's, and the alias stays in the
- * repo. It reads as a published read does, with the address's checks and slots, and held mail
- * stays empty. Writes never come here: dev simulates them without reaching the instance.
+ * repo. It reads as a published read does, with the inbox's checks and slots, and held mail stays
+ * empty. Writes never come here: dev simulates them without reaching the instance.
  */
 export const devReads: {
   readonly "pidgeon.read": DevRead<Source.Source | Cryptography.Cryptography>;
@@ -877,16 +1138,16 @@ export const devReads: {
     run: (target, args) =>
       decodeDevRead(args).pipe(
         Effect.mapError((cause) => new Runtime.InvalidRequest({ cause })),
-        Effect.flatMap((read) =>
-          atAddress(target, "read", (address) => readOne({ address }, read.operation, read.input))
+        Effect.flatMap((devRead) =>
+          atInbox(target, "read", (inbox) => readOne({ inbox }, devRead.operation, devRead.input))
         )
       )
   }
 };
 
 /**
- * Published patches, the dev door and connection administration share one Source, so an
- * address's slots span them all.
+ * Published patches, the dev door and connection administration share one Source, so an inbox's
+ * slots span them all.
  */
 export const makeHandlers = Effect.gen(function* () {
   const source = yield* Source.Source;
