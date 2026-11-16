@@ -38,6 +38,8 @@ export type Spec =
       readonly pattern?: string;
       readonly inputmode?: "text" | "numeric";
       readonly mono?: boolean;
+      /** Typed exactly, such as an address: a phone neither capitalises nor corrects it. */
+      readonly exact?: boolean;
       /** Answer width, for an answer of known length; full width otherwise. */
       readonly width?: "xs" | "sm" | "md";
     })
@@ -101,6 +103,7 @@ export const render = (spec: Spec, submitted: Submitted, refusal?: View.Notice, 
             ...(spec.pattern === undefined ? {} : { pattern: spec.pattern }),
             ...(spec.inputmode === undefined ? {} : { inputmode: spec.inputmode }),
             ...(spec.mono === undefined ? {} : { mono: spec.mono }),
+            ...(spec.exact === undefined ? {} : { exact: spec.exact }),
             ...(spec.width === undefined ? {} : { width: spec.width })
           });
         case "select":

@@ -11,12 +11,7 @@
  */
 import { Users } from "@patchy/companies";
 import { NodeCryptography } from "@patchy/core";
-import {
-  CredentialKeys,
-  type GithubSource,
-  PidgeonPage,
-  PidgeonSource
-} from "@patchy/integrations";
+import { CredentialKeys, type GithubSource, PidgeonSource } from "@patchy/integrations";
 import { InvocationLog, RuntimeLog } from "@patchy/runtime";
 import { layerFromUrl } from "@patchy/sql";
 import * as Config from "effect/Config";
@@ -651,9 +646,9 @@ export const writeWorkers = Effect.fn("writeWorkers")(function* (
 });
 
 /**
- * Connects a scenario's connection as `email` through its connect page in a browser, as an admin
- * would, the page's script included: the developer's test key, then the environment's own inbox
- * at `address` among those it finds. One already connected under its name is left be.
+ * Connects a scenario's Pidgeon connection as `email` through its connect page in a browser, as an
+ * admin would: the developer's test key, the environment's own inbox's `address`, what patches may
+ * do, the name and the description, in one submit. One already connected under its name is left be.
  */
 const connectSource = Effect.fn("connectSource")(function* (
   apiUrl: string,
@@ -676,29 +671,14 @@ const connectSource = Effect.fn("connectSource")(function* (
           `${apiUrl}/dev/sign-in?as=${encodeURIComponent(email)}&return=${encodeURIComponent("/settings/integrations")}`
         );
         if ((await page.getByRole("link", { name, exact: true }).count()) > 0) return;
-        step = "pasting the key";
+        step = "filling in the connect form";
         await page.goto(`${apiUrl}/settings/integrations/connect/${connection.integration}`);
-        await page.locator("#pidgeon-key").fill(Redacted.value(key));
-        step = "finding inboxes";
-        await page.getByRole("button", { name: PidgeonPage.copy.key.find }).click();
-        step = "choosing the inbox";
-        await page.locator("label.tile-option", { hasText: address }).click();
-        step = "choosing what patches may do";
-        await page
-          .locator("label.choice-card")
-          .filter({
-            has: page.getByText(
-              connection.access === "send"
-                ? PidgeonPage.copy.access.send.title
-                : PidgeonPage.copy.access.read.title,
-              { exact: true }
-            )
-          })
-          .click();
-        step = "naming it";
+        await page.locator("#connection-key").fill(Redacted.value(key));
+        await page.locator("#connection-address").fill(address);
+        await page.locator("#connection-access").selectOption(connection.access);
         await page.locator("#connection-handle").fill(connection.handle);
         await page.locator("#connection-description").fill(connection.description);
-        step = "connecting";
+        step = "checking the key and the inbox";
         await Promise.all([
           page.waitForURL(/\/settings\/integrations\/conn_/),
           page.getByRole("button", { name: "Test and connect", exact: true }).click()

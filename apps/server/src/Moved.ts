@@ -69,11 +69,6 @@ export const moves: ReadonlyArray<Move> = [
     "GET",
     "POST"
   ),
-  move(
-    "/company/connections/connect/pidgeon/addresses",
-    "/settings/integrations/connect/pidgeon/addresses",
-    "POST"
-  ),
   move("/company/connections/:id", "/settings/integrations/:id", "GET"),
   ...connectionActs.map((act) =>
     move(`/company/connections/:id/${act}`, `/settings/integrations/:id/${act}`, "POST")

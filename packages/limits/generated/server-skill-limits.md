@@ -32,7 +32,7 @@ PGlite dev has one connection. It does not reproduce production connection conte
 | `pidgeon.calls.concurrent` | contract | 4 | calls | host | Pidgeon calls per inbox at once in one server process, shared by dev and published calls; an excess call waits within its deadline | `busy` | No | release |
 | `pidgeon.connect.deadline` | contract | 45000 | milliseconds | company | Connecting a Pidgeon inbox, changing its access or replacing its key: every call from checking the key to reading the snapshot | `timeout` | No | release |
 | `pidgeon.snapshot.labels` | contract | 500 | labels | company | Labels one Pidgeon snapshot keeps | None | No | release |
-| `pidgeon.addresses.listed` | contract | 1000 | inboxes | company | Inboxes the Pidgeon connect form lists from one key | None | No | release |
+| `pidgeon.addresses.listed` | contract | 1000 | inboxes | company | Inboxes Patchy looks through, from one key, for the address the Pidgeon connect form names; an inbox past them isn't found | None | No | release |
 | `runtime.attio.bytes` | contract | 262144 | bytes | viewer | Attio operation arguments: filters, order and up to 500 ids | `too_large` | No | release |
 | `attio.call.bytes` | contract | 16777216 | bytes | viewer | Raw Attio answers one call collects across its query and its schema and option reads together, before decoding | `too_large` | No | release |
 | `attio.call.concurrent` | contract | 4 | requests | viewer | Requests one Attio call has in flight at once: its query and its schema and option reads | None | No | release |

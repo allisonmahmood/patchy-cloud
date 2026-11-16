@@ -15,8 +15,6 @@ import type { RuntimeLog } from "@patchy/runtime";
 import type { SqlError } from "effect/sql/SqlError";
 import * as ConnectionPage from "./ConnectionPage.js";
 import * as ConnectionsView from "./ConnectionsView.js";
-import * as PidgeonPage from "./pidgeon/Page.js";
-import type * as PidgeonSource from "./pidgeon/Source.js";
 import type * as GithubFlows from "./github/Flows.js";
 import * as GithubPage from "./github/Page.js";
 import type * as GithubSource from "./github/Source.js";
@@ -149,18 +147,6 @@ const confirmations = [
   "delete"
 ] as const;
 
-/** A fragment for the page's own script: never cached, never run as a document. */
-const fragment = (content: ConnectionPage.Fragment) =>
-  HttpServerResponse.text(content.body, {
-    contentType: "text/html",
-    status: content.status,
-    headers: {
-      "cache-control": "private, no-store",
-      "x-content-type-options": "nosniff",
-      "content-security-policy": "default-src 'none'; frame-ancestors 'none'"
-    }
-  });
-
 /** Integrations mounts its own pages; Auth remains independent of integrations. */
 export const layer: Layer.Layer<
   never,
@@ -177,7 +163,6 @@ export const layer: Layer.Layer<
       | PatchVisibility.PatchVisibility
       | RuntimeLog.RuntimeLog
       | Analytics.Analytics
-      | PidgeonSource.Source
       | GithubSource.Source
       | GithubFlows.Flows
       | Cryptography.Cryptography
@@ -211,28 +196,6 @@ export const layer: Layer.Layer<
       kind: "connect" as const,
       integration: params.integration ?? ""
     });
-    yield* router.add(
-      "GET",
-      PidgeonPage.connectScriptPath,
-      HttpServerResponse.text(PidgeonPage.connectScript, {
-        contentType: "text/javascript",
-        headers: { "cache-control": "no-cache", "x-content-type-options": "nosniff" }
-      })
-    );
-    // Find inboxes: the key arrives in this POST's body and is never written back.
-    yield* router.add(
-      "POST",
-      PidgeonPage.addressesPath,
-      errors(
-        RequireSession.sameOrigin(
-          RequireSession.withViewer(
-            Effect.flatMap(RequireSession.Viewer, ConnectionPage.pidgeonAddresses).pipe(
-              Effect.map(fragment)
-            )
-          )
-        )
-      )
-    );
     // GitHub's sign-in: Continue with GitHub posts here, and GitHub sends the browser back to the
     // callback, or after installing the App or changing its repositories, to the setup URL.
     yield* router.add(

@@ -1335,32 +1335,29 @@ credentialed server makes every call, only to `https://pidgeon.ai/v1`, never
 following a redirect, with answers, refusals included, read under the 8 MiB cap
 before they're decoded.
 
-**Connect.** The connect page is the shared frame, in one form. An admin makes a
-key in Pidgeon's dashboard, Send if patches will reply and send or Read if they
-only read, pastes it and presses Find inboxes: the page's script posts the key in
-the body of that one request, and Patchy answers with its mode, test or live by
-its prefix, what it may do, and the inboxes it reaches. An Admin key works too,
-and the page says a Send key is enough. The admin picks an inbox, chooses what
-patches may do, **Read** or **Read and send**, and names it. The page needs its
-script, because the server never writes the key back into a page; a refused
-submit keeps everything typed except the key. The inbox, what patches may do and
-the name stay locked until Find inboxes has checked the key, and a key changed
-after that locks them again. The page says the key reaches the whole Pidgeon
-account and that patches reach only the inbox chosen, who reads the mail, that
+**Connect.** The connect page is the shared frame, as for Attio and a mailbox, in
+one submit. An admin makes a key in Pidgeon's dashboard, Send if patches will
+reply and send or Read if they only read, pastes it, types the inbox's address,
+chooses what patches may do, **Read** or **Read and send**, and names it. The page
+says every member reads the inbox's mail through patches that use it, that with
+Read and send they reply and send from it as the person using the patch, that
 builders' agents read it while they build and what they send there goes nowhere,
-and that revoking the key in Pidgeon stops the connection until a new key
-replaces it.
+that patches can't reach the account's other inboxes, and that the key reaches
+the whole Pidgeon account, so cutting Patchy off means revoking it in Pidgeon.
 
-Patchy then checks, changing nothing in Pidgeon: the key reaches the inbox
-picked, which keeps mail (an `events` inbox doesn't), and, for Read and send,
-can send, which it asks by sending a draft that doesn't exist (403 below `send`,
-404 from it up); an Admin key shows by deleting an inbox that doesn't exist (403
-below `admin`, 404 for it; any other answer leaves the key not shown to be one,
-which only words the page). It reads the snapshot with the key and saves the key
-with the inbox's id, encrypted under the keyring; the key is never logged or
-shown. **Access** is Patchy's own setting, enforced before Pidgeon sees anything:
-Change access lowers it locally, and raises it to send only once the stored key
-is shown to send.
+Test and connect then checks, in this order, changing nothing in Pidgeon, and
+shows each refusal under the field it's about: the key is shaped like a Pidgeon
+key and Pidgeon accepts it (under Key); one inbox the key reaches has the address
+typed, compared trimmed and ignoring case, and keeps mail, which an `events` inbox
+doesn't (under Inbox, naming none of the account's other inboxes); and for Read
+and send, the key can send, which Patchy asks by sending a draft that doesn't
+exist (403 below `send`, 404 from it up; under Patches may). Nothing is saved
+unless every check passes. Patchy reads the snapshot with the key and saves the
+key with the inbox's id, encrypted under the keyring; the key is never logged,
+shown or written back into the page, so a refused submit keeps everything typed
+except the key. **Access** is Patchy's own setting, enforced before Pidgeon sees
+anything: Change access lowers it locally, and raises it to send only once the
+stored key is shown to send.
 
 **Test mode.** A test key's mail never leaves Pidgeon: sends are stored as sent
 and reach only the account's own inboxes. The connection shows "Test key, mail
@@ -1374,8 +1371,8 @@ immutable, with the same revisions, `stale_generated` and deletion protection as
 Postgres; the connection is bound to Pidgeon's inbox id. Refresh labels takes a
 new one with the stored key.
 
-**Replace key** takes a new key, checked to reach the same inbox and do what
-patches may, saved with a fresh snapshot; there's no retarget, since another
+**Replace key** asks for the new key only, checked to reach the same inbox and do
+what patches may, saved with a fresh snapshot; there's no retarget, since another
 inbox is another connection. The old key isn't revoked: Patchy can't, so the
 admin revokes it in Pidgeon. A stored key Pidgeon refuses, or whose inbox is gone,
 is named on Test connection and Resume. **Pause and Resume** keep the key, so

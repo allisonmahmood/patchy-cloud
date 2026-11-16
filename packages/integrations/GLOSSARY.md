@@ -21,7 +21,7 @@ The integrations Patchy offers a company, each with its mark, a line on what it 
 _Avoid_: marketplace, app directory
 
 **Connect frame**:
-The one page every integration connects through, drawn from what the integration says, its connect spec: what to make in the other system first, the credential's fields, any sections a check of the credential unlocks (Pidgeon's inbox and access), its example name, and what it reads, never does and one caveat. The frame owns the order, the Name section, the access list's platform facts, the actions and where refusals read, so a new integration adds data, never a layout.
+The one page every integration connects through, drawn from what the integration says, its connect spec: what to make in the other system first, the credential's fields, any sections a sign-in unlocks (GitHub's repositories), its example name, and what it reads, never does and one caveat. The frame owns the order, the Name section, the access list's platform facts, the actions and where refusals read, so a new integration adds data, never a layout.
 _Avoid_: walkthrough, wizard, connector setup
 
 **Pause / Resume**:

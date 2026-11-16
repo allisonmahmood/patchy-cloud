@@ -232,7 +232,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon in patchy dev, live in te
               description: "Live dev test inbox, deleted when the run ends",
               credentials: Keys.connectSecret({
                 key: Live.sender(),
-                inboxId: inbox.id,
+                email: inbox.address,
                 access: "send"
               })
             });

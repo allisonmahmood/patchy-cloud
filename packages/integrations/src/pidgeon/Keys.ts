@@ -8,17 +8,15 @@ import * as Source from "./Source.js";
 
 /**
  * Connecting a Pidgeon inbox with a key an admin made in Pidgeon's dashboard. Such a key reaches
- * the whole Pidgeon account, and Pidgeon makes no narrower one, so Patchy checks what the key may
- * do, lists the inboxes it reaches for the admin to pick one, and keeps the key with that inbox's
- * id. What keeps every later call to that one inbox is Patchy's own checks in the operations.
- * Nothing here makes, changes or sends anything in Pidgeon.
+ * the whole Pidgeon account, and Pidgeon makes no narrower one, so Patchy finds the inbox at the
+ * address the admin typed among those the key reaches, checks the key may do what patches may, and
+ * keeps the key with that inbox's id. What keeps every later call to that one inbox is Patchy's
+ * own checks in the operations. Nothing here makes, changes or sends anything in Pidgeon.
  */
 
 /** What patches may do with a connection: Patchy's own setting, enforced before Pidgeon sees it. */
 export type Access = "read" | "send";
 const Access = Schema.Literals(["read", "send"]);
-/** What a key may do in Pidgeon, as far as Patchy asks: `draft` keys read here. */
-export type Level = "read" | "send" | "admin";
 
 // ---------- refusals ----------
 
@@ -29,19 +27,34 @@ export class InvalidKey extends Schema.TaggedError<InvalidKey>()("PidgeonInvalid
     return "Paste a Pidgeon API key: it starts with pgn_.";
   }
 }
-/** Read and send needs a key that can send; this one only reads. */
+/** Connect: Read and send needs a key that can send; this one only reads. */
 export class CantSend extends Schema.TaggedError<CantSend>()("PidgeonCantSend", {}) {
   readonly code = "pidgeon_key_cant_send" as const;
   readonly status = 422;
   override get message() {
-    return "This key can only read. For Read and send, make a Send key in Pidgeon and paste it, or choose Read.";
+    return "This key can only read. Make a Send key in Pidgeon and paste it, or choose Read.";
   }
 }
+/** Replace key: patches may send through the connection, and the new key only reads. */
+export class NewKeyCantSend extends Schema.TaggedError<NewKeyCantSend>()(
+  "PidgeonNewKeyCantSend",
+  {}
+) {
+  readonly code = "pidgeon_new_key_cant_send" as const;
+  readonly status = 422;
+  override get message() {
+    return "This key can only read, and patches may send through this connection. Paste a Send key, or change access to Read first.";
+  }
+}
+/**
+ * No inbox the key reaches has the address typed. The others it reaches are never named: the
+ * admin made the key for one inbox, and the refusal says only that this one isn't there.
+ */
 export class InboxNotFound extends Schema.TaggedError<InboxNotFound>()("PidgeonInboxNotFound", {}) {
   readonly code = "pidgeon_inbox_not_found" as const;
   readonly status = 422;
   override get message() {
-    return "This key reaches no such inbox. List the inboxes again.";
+    return "No inbox this key reaches has that address. Check it in Pidgeon, or make the inbox there first.";
   }
 }
 /** An `events` inbox keeps no mail and never sends. */
@@ -51,7 +64,7 @@ export class NoInbox extends Schema.TaggedError<NoInbox>()("PidgeonNoInbox", {
   readonly code = "pidgeon_no_inbox" as const;
   readonly status = 422;
   override get message() {
-    return `${this.email} only receives events and keeps no mail, so there's nothing for patches to read. Pick another inbox.`;
+    return `${this.email} only receives events and keeps no mail, so patches would have nothing to read. Use an inbox that keeps mail.`;
   }
 }
 /** Replace key: the new key doesn't reach the connection's inbox. */
@@ -98,7 +111,8 @@ export class StoredCantSend extends Schema.TaggedError<StoredCantSend>()(
 }
 
 /** What checking a pasted key and its inbox can refuse. */
-export type ConnectError = InvalidKey | CantSend | InboxNotFound | NoInbox | OtherAccount;
+export type ConnectError =
+  InvalidKey | CantSend | NewKeyCantSend | InboxNotFound | NoInbox | OtherAccount;
 /** What the stored key's checks can refuse. */
 export type StoredKeyError = StoredKeyRejected | InboxGone | StoredCantSend;
 export type KeysError = ConnectError | StoredKeyError | Source.InvalidCredentials;
@@ -140,7 +154,7 @@ export const deadline = Effect.map(
 );
 
 /**
- * An id Pidgeon never issues, so the level checks below name nothing that exists and change
+ * An id Pidgeon never issues, so the level check below names nothing that exists and changes
  * nothing: the probes asked Pidgeon with this one.
  */
 export const NOTHING = "00000000-0000-4000-8000-000000000000";
@@ -164,56 +178,26 @@ const canSend = Effect.fn("PidgeonKeys.canSend")(function* (
       })
     );
 });
-/**
- * Whether a key is shown to be an admin key, asked without changing anything: deleting an inbox
- * that doesn't exist answers 403 below `admin`, and 404 for `admin`. Any other answer leaves the
- * level unknown, so the key isn't shown to be one. It only words the page's status line, so
- * nothing ever fails over it.
- */
-const isAdmin = Effect.fn("PidgeonKeys.isAdmin")(function* (
-  token: Redacted.Redacted<string>,
-  until: number
-) {
-  const source = yield* Source.Source;
-  return yield* source
-    .call(token, { method: "DELETE", path: `/email/inboxes/${NOTHING}` }, until)
-    .pipe(
-      Effect.as(false),
-      Effect.catchTags({ PidgeonNotFound: () => Effect.succeed(true) }),
-      Effect.catch(() => Effect.succeed(false))
-    );
-});
-
-/** An inbox as the connect form lists it. */
-export interface Listed {
-  readonly id: string;
-  readonly email: string;
-  readonly displayName: string | null;
-  /** An `events` inbox, which keeps no mail and can't be connected. */
-  readonly eventsOnly: boolean;
-}
-const listed = (inbox: Inbox): Listed => ({
-  id: inbox.id,
-  email: inbox.address,
-  displayName: inbox.display_name ?? null,
-  eventsOnly: inbox.kind === "events"
-});
 
 const pasted = (key: Redacted.Redacted<string>) =>
   Source.isToken(Redacted.value(key)) ? Effect.succeed(key) : Effect.fail(new InvalidKey({}));
 
+/** An address as Patchy compares it: trimmed, ignoring case. */
+const sameAddress = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
 /**
- * What the connect form offers once a key is pasted: its mode, what it may do, and the inboxes it
- * reaches, up to the registry's count.
+ * The inbox at `email` among those `token` reaches, read page by page up to the registry's count;
+ * none there is `InboxNotFound`. A key Pidgeon refuses fails at the first page.
  */
-export const inboxes = Effect.fn("PidgeonKeys.inboxes")(function* (key: Redacted.Redacted<string>) {
-  const token = yield* pasted(key);
-  const until = yield* deadline;
+const inboxAt = Effect.fn("PidgeonKeys.inboxAt")(function* (
+  token: Redacted.Redacted<string>,
+  email: string,
+  until: number
+) {
   const source = yield* Source.Source;
   const max = registry["pidgeon.addresses.listed"].default;
-  const found: Inbox[] = [];
+  let seen = 0;
   let cursor: string | null = null;
-  let more = false;
   do {
     const answer: Source.Answer = yield* source.call(
       token,
@@ -227,22 +211,13 @@ export const inboxes = Effect.fn("PidgeonKeys.inboxes")(function* (key: Redacted
     const page: typeof InboxPage.Type = yield* decodeInboxPage(answer.body).pipe(
       Effect.mapError(unreadable)
     );
-    found.push(...page.data);
+    const found = page.data.slice(0, max - seen).find((inbox) => sameAddress(inbox.address, email));
+    if (found !== undefined) return found;
+    seen += page.data.length;
     // A cursor that repeats would never end the list.
     cursor = page.next_cursor === cursor ? null : page.next_cursor;
-    if (found.length > max) {
-      more = true;
-      break;
-    }
-  } while (cursor !== null);
-  const sends = yield* canSend(token, until);
-  const level: Level = !sends ? "read" : (yield* isAdmin(token, until)) ? "admin" : "send";
-  return {
-    test: Source.isTestToken(Redacted.value(token)),
-    level,
-    inboxes: found.slice(0, max).map(listed),
-    more
-  };
+  } while (cursor !== null && seen < max);
+  return yield* new InboxNotFound({});
 });
 
 /** The inbox by id as `token` reaches it; a 404 is `missing`'s refusal. */
@@ -319,10 +294,10 @@ const checked = (
 
 // ---------- what an admin submits ----------
 
-/** Connect's secret: the pasted key, the inbox picked and what patches may do. */
+/** Connect's secret: the pasted key, the inbox's address as typed and what patches may do. */
 export const ConnectRequest = Schema.Struct({
   key: Schema.String,
-  inboxId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(128)),
+  email: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(320)),
   access: Access
 });
 export type ConnectRequest = typeof ConnectRequest.Type;
@@ -357,13 +332,14 @@ export const parseChange = Effect.fn("PidgeonKeys.parseChange")(function* (
 });
 
 /**
- * Connect's checks, in order: the key reaches the inbox picked, which keeps mail, and can send
- * when patches may; then the snapshot, read with it.
+ * Connect's checks, in the order the page shows them: the key is a Pidgeon key Pidgeon accepts,
+ * one inbox it reaches has the address typed and keeps mail, and the key can send when patches
+ * may; then the snapshot, read with it.
  */
 export const connect = Effect.fn("PidgeonKeys.connect")(function* (request: ConnectRequest) {
   const token = yield* pasted(Redacted.make(request.key));
   const until = yield* deadline;
-  const inbox = yield* inboxOf(token, request.inboxId, until, () => new InboxNotFound({}));
+  const inbox = yield* inboxAt(token, request.email, until);
   if (inbox.kind === "events") return yield* new NoInbox({ email: inbox.address });
   if (request.access === "send" && !(yield* canSend(token, until))) return yield* new CantSend({});
   return checked(token, inbox, yield* snapshotOf(token, inbox, request.access, until));
@@ -385,7 +361,8 @@ export const replace = Effect.fn("PidgeonKeys.replace")(function* (
     until,
     () => new OtherAccount({ email: current.email })
   );
-  if (current.access === "send" && !(yield* canSend(token, until))) return yield* new CantSend({});
+  if (current.access === "send" && !(yield* canSend(token, until)))
+    return yield* new NewKeyCantSend({});
   return checked(token, inbox, yield* snapshotOf(token, inbox, current.access, until));
 });
 

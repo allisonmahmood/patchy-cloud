@@ -19,7 +19,6 @@ export * as Pidgeon from "./pidgeon/index.js";
 export * as PidgeonSource from "./pidgeon/Source.js";
 export * as PidgeonCalls from "./pidgeon/Calls.js";
 export * as PidgeonOperations from "./pidgeon/Operations.js";
-export * as PidgeonPage from "./pidgeon/Page.js";
 export * as Attio from "./attio/index.js";
 export * as AttioSource from "./attio/Source.js";
 export * as AttioOperations from "./attio/Operations.js";

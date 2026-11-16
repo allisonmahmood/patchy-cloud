@@ -24,9 +24,10 @@ import {
 
 /**
  * Pidgeon connections against Pidgeon itself, in test mode: a key pasted as an admin pastes one
- * from Pidgeon's dashboard, what Patchy asks of Pidgeon to check it, which changes nothing there,
- * and the inbox Patchy keeps it with. Every inbox it connects is one the run made, named with its
- * tag; it asserts only on what it made, and never on a list Pidgeon returned.
+ * from Pidgeon's dashboard with an inbox's address, what Patchy asks of Pidgeon to check them,
+ * which changes nothing there, and the inbox Patchy keeps the key with. Every inbox it connects is
+ * one the run made, named with its tag; it asserts only on what it made, and never on a list
+ * Pidgeon returned.
  *
  *   node --env-file=$HOME/.config/patchy-cloud/pidgeon-test.env node_modules/vitest/vitest.mjs \
  *     run --config vitest.pidgeon-live.config.ts
@@ -50,15 +51,14 @@ const pidgeon = (connection: ConnectionStore.Connection): Pidgeon => {
   return connection;
 };
 /**
- * Requests that could change something in Pidgeon: every POST, PATCH and DELETE, but the two
- * level checks, which name an id that doesn't exist.
+ * Requests that could change something in Pidgeon: every POST, PATCH and DELETE, but the level
+ * check, which names an id that doesn't exist.
  */
 const changes = () =>
   Live.sent.filter(
     (sent) =>
       sent.method !== "GET" &&
-      !(sent.method === "POST" && sent.path === `/email/drafts/${Keys.NOTHING}/send`) &&
-      !(sent.method === "DELETE" && sent.path === `/email/inboxes/${Keys.NOTHING}`)
+      !(sent.method === "POST" && sent.path === `/email/drafts/${Keys.NOTHING}/send`)
   ).length;
 
 /** What one run carries from a test to the next. */
@@ -69,33 +69,72 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon, live in test mode", () =
   it.layer(services, { timeout: "300 seconds", excludeTestServices: true })(
     "connections and their pages",
     (it) => {
-      it.effect("lists what a pasted key reaches and may do, changing nothing in Pidgeon", () =>
-        Effect.gen(function* () {
-          made.desk = yield* Live.inbox("connect-desk", "Lumen Bikes Support");
-          yield* Live.inbox("connect-hooks").pipe(Effect.asVoid);
-          const before = changes();
-          const listed = (key: string) => Keys.inboxes(Redacted.make(key));
-          const asAdmin = yield* listed(Redacted.value(Live.admin()));
-          assert.include(asAdmin, { test: true, level: "admin" });
-          assert.isTrue(
-            asAdmin.inboxes.some((inbox) => inbox.id === made.desk?.id),
-            "The run's inbox is listed."
-          );
-          if (Live.SEND_KEY !== undefined)
-            assert.include(yield* listed(Live.SEND_KEY), { test: true, level: "send" });
-          if (Live.READ_KEY !== undefined)
-            assert.include(yield* listed(Live.READ_KEY), { test: true, level: "read" });
-          // The checks named things that don't exist: nothing was made, sent or changed.
-          assert.strictEqual(changes(), before);
-          // A key Pidgeon doesn't know is refused as such.
-          assert.strictEqual(
-            (yield* listed(`pgn_test_${"0".repeat(32)}`).pipe(Effect.flip))._tag,
-            "PidgeonKeyRejected"
-          );
-        })
+      it.effect(
+        "refuses an unknown key, an address the key doesn't reach, an events inbox and send with a Read key, changing nothing",
+        () =>
+          Effect.gen(function* () {
+            const store = yield* SqlConnectionStore.make.pipe(
+              Effect.provide([Live.layer, Teams.layer])
+            );
+            made.desk = yield* Live.inbox("connect-desk", "Lumen Bikes Support");
+            const events = yield* Live.call(Live.admin(), {
+              method: "POST",
+              path: "/email/inboxes",
+              body: { name: `patchy-${Live.RUN}-connect-events`, kind: "events" }
+            });
+            const eventsInbox = events.body as { readonly id: string; readonly address: string };
+            Live.created.add(eventsInbox.id);
+            const before = changes();
+            const refused = (name: string, request: Keys.ConnectRequest) =>
+              store
+                .connect({
+                  integration: "pidgeon",
+                  ...who,
+                  handle: handle(name),
+                  description: "Refused",
+                  credentials: Keys.connectSecret(request)
+                })
+                .pipe(
+                  Effect.flip,
+                  Effect.map((error) => error._tag)
+                );
+            const desk = made.desk.address;
+            assert.strictEqual(
+              yield* refused("unknown", {
+                key: `pgn_test_${"0".repeat(32)}`,
+                email: desk,
+                access: "read"
+              }),
+              "PidgeonKeyRejected"
+            );
+            // An address no inbox of the account has: one the run never made.
+            assert.strictEqual(
+              yield* refused("missing", {
+                key: Live.sender(),
+                email: `patchy-${Live.RUN}-connect-nowhere@pidgeon.email`,
+                access: "read"
+              }),
+              "PidgeonInboxNotFound"
+            );
+            assert.strictEqual(
+              yield* refused("events", {
+                key: Live.sender(),
+                email: eventsInbox.address,
+                access: "read"
+              }),
+              "PidgeonNoInbox"
+            );
+            if (Live.READ_KEY !== undefined)
+              assert.strictEqual(
+                yield* refused("reader", { key: Live.READ_KEY, email: desk, access: "send" }),
+                "PidgeonCantSend"
+              );
+            // The checks named things that don't exist: nothing was made, sent or changed.
+            assert.strictEqual(changes(), before);
+          })
       );
 
-      it.effect("connects one inbox at send with a pasted key, and keeps that key for it", () =>
+      it.effect("connects one inbox at send by its address, and keeps the key with it", () =>
         Effect.gen(function* () {
           const store = yield* SqlConnectionStore.make.pipe(
             Effect.provide([Live.layer, Teams.layer])
@@ -108,9 +147,10 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon, live in test mode", () =
               ...who,
               handle: handle("desk"),
               description: "Live test inbox, deleted when the run ends",
+              // As an admin might type it.
               credentials: Keys.connectSecret({
                 key: Live.sender(),
-                inboxId: desk.id,
+                email: ` ${desk.address.toUpperCase()} `,
                 access: "send"
               })
             })
@@ -133,51 +173,6 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon, live in test mode", () =
           assert.deepStrictEqual(credentials, { inboxId: desk.id, key: Live.sender() });
           yield* store.test({ ...who, id: connection.id });
           assert.strictEqual(changes(), before);
-        })
-      );
-
-      it.effect("refuses send with a Read key, and an inbox that only receives events", () =>
-        Effect.gen(function* () {
-          const store = yield* SqlConnectionStore.make.pipe(
-            Effect.provide([Live.layer, Teams.layer])
-          );
-          const desk = need(made.desk, "The run's inbox");
-          const connect = (name: string, request: Keys.ConnectRequest) =>
-            store
-              .connect({
-                integration: "pidgeon",
-                ...who,
-                handle: handle(name),
-                description: "Refused",
-                credentials: Keys.connectSecret(request)
-              })
-              .pipe(Effect.flip);
-          if (Live.READ_KEY !== undefined)
-            assert.strictEqual(
-              (yield* connect("reader", { key: Live.READ_KEY, inboxId: desk.id, access: "send" }))
-                ._tag,
-              "PidgeonCantSend"
-            );
-          const events = yield* Live.call(Live.admin(), {
-            method: "POST",
-            path: "/email/inboxes",
-            body: { name: `patchy-${Live.RUN}-connect-events`, kind: "events" }
-          });
-          const eventsId = (events.body as { readonly id: string }).id;
-          Live.created.add(eventsId);
-          assert.strictEqual(
-            (yield* connect("events", { key: Live.sender(), inboxId: eventsId, access: "read" }))
-              ._tag,
-            "PidgeonNoInbox"
-          );
-          assert.strictEqual(
-            (yield* connect("missing", {
-              key: Live.sender(),
-              inboxId: Keys.NOTHING,
-              access: "read"
-            }))._tag,
-            "PidgeonInboxNotFound"
-          );
         })
       );
 
@@ -253,18 +248,28 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon, live in test mode", () =
           const owner = yield* createCompany(`pidgeon-${Live.RUN}`);
           const inbox = yield* Live.inbox("connect-page", "Patchy live page");
           const key = Live.sender();
-          const found = yield* send(Page.addressesPath, post(owner.user, { key }));
-          assert.strictEqual(found.status, 200);
-          const fragment = yield* Effect.promise(() => found.text());
-          assert.isTrue(fragment.includes("data-pidgeon-key-status>Test key"));
-          assert.isTrue(fragment.includes(inbox.address), "Find inboxes lists the run's inbox.");
-          assert.isFalse(fragment.includes(key), "Find inboxes answered with the key.");
+          // A wrong address comes back under Inbox, without the key and naming no other inbox.
+          const refused = yield* send(
+            connectPath,
+            post(owner.user, {
+              key,
+              address: `patchy-${Live.RUN}-connect-nowhere@pidgeon.email`,
+              access: "send",
+              handle: handle("page"),
+              description: "Live page test"
+            })
+          );
+          assert.strictEqual(refused.status, 422);
+          const html = yield* Effect.promise(() => refused.text());
+          assert.include(html, '<p class="field-error" id="connection-address-error">');
+          assert.isFalse(html.includes(key), "The refused page showed the key.");
+          assert.isFalse(html.includes(inbox.address), "The refusal named another inbox.");
           const connected = yield* follow(
             yield* send(
               connectPath,
               post(owner.user, {
                 key,
-                address: inbox.id,
+                address: inbox.address,
                 access: "send",
                 handle: handle("page"),
                 description: "Live page test"

@@ -18,7 +18,6 @@ import * as View from "./ConnectionsView.js";
 import * as PatchVisibility from "./PatchVisibility.js";
 import * as PostgresPage from "./postgres/Page.js";
 import * as PostHogPage from "./posthog/Page.js";
-import * as PidgeonKeys from "./pidgeon/Keys.js";
 import * as PidgeonPage from "./pidgeon/Page.js";
 import * as AttioPage from "./attio/Page.js";
 import * as ImapPage from "./imap/Page.js";
@@ -1222,39 +1221,6 @@ export const submit = Effect.fn("ConnectionPage.submit")(function* (
       lookup: { integration: change.integration, handle: "" }
     });
   return yield* connect(viewer, change.integration);
-});
-
-/** A fragment the connect page's script swaps in, never a page of its own. */
-export interface Fragment {
-  readonly status: number;
-  readonly body: string;
-}
-
-/**
- * Pidgeon's Find inboxes: the key, posted in the body, checked and used once to list the inboxes
- * it reaches. The answer never holds the key; a refusal is shown under it.
- */
-export const pidgeonAddresses = Effect.fn("ConnectionPage.pidgeonAddresses")(function* (
-  viewer: RequireSession.Viewer["Service"]
-) {
-  const refused = (notice: View.Notice): Fragment => ({
-    status: notice.status ?? 422,
-    body: PidgeonPage.keyRefusalFragment(atField(pages.pidgeon, notice, []))
-  });
-  // Refused before the body is read: a member's key never reaches Pidgeon.
-  if (viewer.role !== "admin") return refused(forbidden);
-  const form = yield* formBody;
-  const key = typeof form?.key === "string" ? form.key.trim() : "";
-  if (key === "")
-    return refused({
-      message: PidgeonPage.copy.key.missing,
-      code: "invalid_credentials",
-      status: 422
-    });
-  return yield* PidgeonKeys.inboxes(Redacted.make(key)).pipe(
-    Effect.map((found): Fragment => ({ status: 200, body: PidgeonPage.inboxesFragment(found) })),
-    Effect.catch((error) => Effect.succeed(refused(refusal(error))))
-  );
 });
 
 // ---------- GitHub's sign-in ----------

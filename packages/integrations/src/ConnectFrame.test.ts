@@ -53,13 +53,17 @@ describe("the connect frame", () => {
       expect(draw(page)).toContain("Builders' agents read it while they build");
   });
 
-  it("locks Pidgeon's inbox, access and name until its script checks the key", () => {
-    const html = draw(PidgeonPage, { submitted: {} });
-    expect(html.match(/<fieldset class="flow-section" disabled>/g)).toHaveLength(3);
-    expect(html).toContain('<script defer src="/assets/pidgeon-connect.js"></script>');
-    expect(html).not.toContain('name="attempt"');
-    for (const page of [PostgresPage, PostHogPage, AttioPage, ImapPage])
-      expect(draw(page)).not.toContain("disabled>");
+  it("locks nothing and carries no script of its own, Pidgeon's three fields included", () => {
+    for (const page of pages) {
+      const html = draw(page);
+      expect(html).not.toContain("disabled>");
+      expect(html).not.toContain("<script");
+    }
+    inOrder(draw(PidgeonPage), [
+      'id="connection-key"',
+      'id="connection-address"',
+      'id="connection-access"'
+    ]);
   });
 
   it("puts a field's refusal under it in focus, keeping what was typed but never the secret", () => {
@@ -111,41 +115,5 @@ describe("the connect frame", () => {
     );
     // Scope tables are compact.
     expect(draw(AttioPage)).toContain('<table class="table table-compact"');
-  });
-
-  it("keeps a refusal about Pidgeon's locked parts at its field, with a summary in focus", () => {
-    const html = draw(PidgeonPage, {
-      submitted: { address: "inb_1" },
-      notice: {
-        message: "This key reaches no such inbox.",
-        code: "pidgeon_inbox_not_found",
-        status: 422,
-        field: "address"
-      }
-    });
-    inOrder(html, [
-      "Once connected",
-      '<div tabindex="-1" autofocus data-relock>',
-      `This key reaches no such inbox. ${PidgeonPage.copy.relock}`,
-      "Test and connect"
-    ]);
-    expect(html).toContain('data-kept-address="inb_1"');
-    expect(html).toContain('<p class="field-error" id="pidgeon-address-error">');
-    expect(html.match(/autofocus/g)).toHaveLength(1);
-    // A taken name keeps its error and association under the handle, without focus while locked.
-    const taken = draw(PidgeonPage, {
-      submitted: { handle: "desk" },
-      notice: {
-        message: "That name is taken.",
-        code: "connection_handle_taken",
-        status: 409,
-        field: "handle"
-      }
-    });
-    expect(taken).toMatch(
-      /id="connection-handle" aria-describedby="connection-handle-hint connection-handle-error" aria-invalid="true"/
-    );
-    expect(taken.match(/autofocus/g)).toHaveLength(1);
-    expect(taken).toContain("data-relock");
   });
 });

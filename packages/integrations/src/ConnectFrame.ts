@@ -7,7 +7,6 @@ import {
   flowPage,
   input,
   linkButton,
-  notice as noticeBox,
   prefixInput,
   productMark,
   section,
@@ -25,9 +24,8 @@ import * as Fields from "./Fields.js";
  *
  * In task order: 1 Get it, what to make in the other system first, never marked done; 2 Paste
  * it, the credential's fields at answer width, secrets masked, or GitHub's sign-in; then any
- * sections a check unlocks (Pidgeon's inbox and what patches may do, GitHub's repositories);
- * Name it, the fused `kind/` prefix; Once connected, what it can and can't do and at most one
- * caveat; Test and connect and Cancel.
+ * sections a sign-in unlocks (GitHub's repositories); Name it, the fused `kind/` prefix; Once
+ * connected, what it can and can't do and at most one caveat; Test and connect and Cancel.
  */
 
 /** What an integration says to be connected; the frame draws all of it. */
@@ -55,22 +53,20 @@ export interface ConnectSpec {
     readonly title: string;
     /** In order; a nested list shares a row, such as a server and its port. */
     readonly fields: Fields.Layout;
-    /** Trusted HTML after the fields, such as Pidgeon's Find inboxes. */
+    /** Trusted HTML after the fields, such as GitHub's sign-in. */
     readonly after?: (submitted: Fields.Submitted, refusal?: View.Notice) => string;
   };
   /**
-   * Sections a check of the credential unlocks, between pasting and naming: Pidgeon's inbox and
-   * what patches may do, GitHub's repositories. Drawn locked, for the integration's script to
-   * unlock, unless a section says it's open, as one the server drew once the sign-in it needs is done.
+   * Sections between pasting and naming that wait on a sign-in, as GitHub's repositories do:
+   * locked until the server draws them once the sign-in they need is done.
    */
   readonly choose?: (
     submitted: Fields.Submitted,
     refusal?: View.Notice
-  ) => ReadonlyArray<{ readonly title: string; readonly body: string; readonly locked?: boolean }>;
+  ) => ReadonlyArray<{ readonly title: string; readonly body: string; readonly locked: boolean }>;
   /**
-   * For a page whose choosing the server decides rather than a script, as GitHub's sign-in does:
-   * whether there is now something to submit. Until there is, Name it and Test and connect wait
-   * locked. Absent, they follow `choose` and the script.
+   * Whether there is now something to submit, where a sign-in decides it, as GitHub's does. While
+   * it's false, Name it and Test and connect wait locked. Absent, they're open.
    */
   readonly ready?: boolean;
   /**
@@ -94,17 +90,6 @@ export interface ConnectSpec {
     readonly cannot: ReadonlyArray<string>;
     readonly caveat?: string;
   };
-  /**
-   * For an integration whose connecting runs in the page, as Pidgeon's discovery does: hidden
-   * fields and its script's settings inside the form, the script, and what the page says without it.
-   */
-  readonly script?: {
-    readonly fields: (submitted: Fields.Submitted) => string;
-    readonly src: string;
-    readonly without: string;
-    /** What a refusal at a part the check unlocks adds: how to unlock it again. */
-    readonly relock: string;
-  };
 }
 
 /** The frame's one submit, which says "Testing…" while Patchy tests the credential. */
@@ -113,9 +98,6 @@ const testAndConnect = button("Test and connect", { kind: "primary", pendingLabe
 /** The form fields a refusal can sit at on a connect page, by its spec. */
 export const shows = (spec: ConnectSpec): ReadonlyArray<View.Field> => [
   ...Fields.flat(spec.paste.fields).map((item) => item.field),
-  ...(spec.choose === undefined || spec.script === undefined
-    ? []
-    : (["address", "access"] as const)),
   "handle",
   "description"
 ];
@@ -202,27 +184,8 @@ export const render = (input: {
   readonly back: string;
 }): Template => {
   const { integration, spec, submitted, notice } = input;
-  // A refusal about a part a check unlocks, Pidgeon's inbox, access or name, keeps its place at
-  // its field, but that part is locked again until the key is checked, so a summary above the
-  // actions takes focus and says how to get back; the page's script clears it once the key is in.
-  const locked =
-    spec.choose === undefined || spec.script === undefined
-      ? []
-      : (["address", "access", "handle", "description"] as const);
-  const relock =
-    notice?.field !== undefined && locked.some((field) => field === notice.field)
-      ? `<div tabindex="-1" autofocus data-relock>${View.feedback({
-          ...notice,
-          field: undefined,
-          message: `${notice.message} ${spec.script?.relock ?? ""}`.trim()
-        })}</div>`
-      : "";
   const refusal =
-    notice === undefined
-      ? ""
-      : notice.field === undefined
-        ? Fields.focused(View.feedback(notice))
-        : relock;
+    notice === undefined || notice.field !== undefined ? "" : Fields.focused(View.feedback(notice));
   const once = section({
     title: "Once connected",
     body: `${canList([
@@ -236,8 +199,8 @@ export const render = (input: {
     ])}${spec.once.caveat === undefined ? "" : `<p class="meta">${escapeHtml(spec.once.caveat)}</p>`}`
   });
   const choose = spec.choose?.(submitted, notice) ?? [];
-  // Name it waits with what a script unlocks, or until the server says there's something to submit.
-  const waiting = spec.ready === undefined ? choose.length > 0 : !spec.ready;
+  // Name it waits until the server says there's something to submit.
+  const waiting = spec.ready === false;
   return flowPage({
     parent: {
       label: input.back === View.indexPath ? "Integrations" : "Connect an integration",
@@ -247,7 +210,6 @@ export const render = (input: {
     title: `Connect ${integration.label}`,
     form: {
       action: View.connectPath(integration.key),
-      ...(spec.script === undefined ? {} : { fields: spec.script.fields(submitted) }),
       ...(spec.outside === undefined ? {} : { outside: spec.outside })
     },
     sections: [
@@ -256,33 +218,17 @@ export const render = (input: {
         title: spec.paste.title,
         body: `${Fields.renderAll(spec.paste.fields, submitted, notice)}${spec.paste.after?.(submitted, notice) ?? ""}`
       },
-      ...choose.map((part) => ({
-        title: part.title,
-        body: part.body,
-        locked: part.locked ?? true
-      })),
+      ...choose,
       {
         title: "Name it",
         body: nameIt(integration, spec.name, submitted, notice, !waiting),
         locked: waiting
       }
     ],
-    outcome: `${once}${refusal}${
-      spec.script === undefined
-        ? ""
-        : `<noscript>${noticeBox({ tone: "warning", title: "This page needs JavaScript", body: `<p>${escapeHtml(spec.script.without)}</p>` })}</noscript><script defer src="${spec.script.src}"></script>`
-    }`,
-    // Where a check unlocks parts of the form, Test and connect waits with them: the page's
-    // script opens it once the form is ready, and without script it stays shut. Where the server
-    // decides, it opens once there's something to submit.
+    outcome: `${once}${refusal}`,
+    // Test and connect opens once there's something to submit.
     submit: `${
-      spec.ready !== undefined
-        ? spec.ready
-          ? testAndConnect
-          : `<fieldset class="fieldset" disabled>${testAndConnect}</fieldset>`
-        : choose.length === 0
-          ? testAndConnect
-          : `<fieldset class="fieldset" disabled data-ready-gate>${testAndConnect}</fieldset>`
+      waiting ? `<fieldset class="fieldset" disabled>${testAndConnect}</fieldset>` : testAndConnect
     }${linkButton("Cancel", input.back, { kind: "quiet" })}`
   });
 };

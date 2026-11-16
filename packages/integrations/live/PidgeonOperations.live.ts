@@ -82,7 +82,7 @@ type Pidgeon = Extract<ConnectionStore.Connection, { readonly integration: "pidg
 /** The run's desk inbox connected at send, with the key that reaches every inbox. */
 const connectDesk = Effect.fn("live.connectDesk")(function* (
   store: ConnectionStore.ConnectionStore["Service"],
-  inboxId: string,
+  email: string,
   tag: string
 ) {
   const connection = yield* store.connect({
@@ -90,7 +90,7 @@ const connectDesk = Effect.fn("live.connectDesk")(function* (
     ...who,
     handle: `${Live.RUN}-${tag}`,
     description: "Live operations test inbox, deleted when the run ends",
-    credentials: Keys.connectSecret({ key: Live.sender(), inboxId, access: "send" })
+    credentials: Keys.connectSecret({ key: Live.sender(), email, access: "send" })
   });
   if (connection.integration !== "pidgeon") return assert.fail("A Pidgeon connection");
   return connection;
@@ -223,7 +223,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
         made.store = store;
         made.ours = yield* Live.inbox("ops-desk", "Lumen Bikes Support");
         made.theirs = yield* Live.inbox("ops-other");
-        made.connection = yield* connectDesk(store, made.ours.id, "desk");
+        made.connection = yield* connectDesk(store, made.ours.address, "desk");
         made.order = yield* delivered(made.ours.id, {
           from: "marcus@post.example",
           subject: subjects.order,
@@ -450,7 +450,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
           Effect.gen(function* () {
             const store = yield* SqlConnectionStore.make.pipe(Effect.provide(Teams.layer));
             const inbox = yield* Live.inbox("ops-action", "Lumen Bikes Support");
-            const connection = yield* connectDesk(store, inbox.id, "action");
+            const connection = yield* connectDesk(store, inbox.address, "action");
             yield* delivered(inbox.id, {
               from: "buyer@post.example",
               subject: subjects.warranty,

@@ -246,7 +246,8 @@ export const registry = {
     default: 1000,
     unit: "inboxes",
     scope: "company",
-    measure: "Inboxes the Pidgeon connect form lists from one key",
+    measure:
+      "Inboxes Patchy looks through, from one key, for the address the Pidgeon connect form names; an inbox past them isn't found",
     refusal: null,
     overridable: false
   },

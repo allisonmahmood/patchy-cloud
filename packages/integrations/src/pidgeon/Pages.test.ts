@@ -1,6 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import { DEV_SEED } from "@patchy/auth/seed";
-import { switcherRelay } from "@patchy/core";
+import { escapeAttribute, switcherRelay } from "@patchy/core";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -8,6 +8,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as PidgeonTest from "../test/pidgeon.js";
 import {
   addMember,
+  connectedId,
   connectPath,
   cookie,
   createCompany,
@@ -21,143 +22,215 @@ import {
 import * as Page from "./Page.js";
 
 /**
- * The Pidgeon pages offline, over the scripted double: what renders, what Find inboxes answers,
- * a connect through them, and what they refuse. Connecting against Pidgeon's test mode is in the
+ * The Pidgeon pages offline, over the scripted double: the connect page in the shared frame, one
+ * submit with each refusal under its field, Replace key and Change access as the other
+ * integrations draw them, and what they refuse. Connecting against Pidgeon's test mode is in the
  * live tier (`packages/integrations/live`).
  */
 
 const pidgeon = PidgeonTest.double();
-const desk = pidgeon.inbox("desk@acme.example", { displayName: "Acme Desk" });
+pidgeon.inbox("desk@acme.example", { displayName: "Acme Desk" });
 pidgeon.inbox("hooks@acme.example", { kind: "events" });
 
+const fields = (handle: string, over: Record<string, string> = {}) => ({
+  key: pidgeon.key("send"),
+  address: "desk@acme.example",
+  access: "send",
+  handle,
+  description: "Help desk mail",
+  ...over
+});
+/** Requests that could change something in Pidgeon, leaving out the level check. */
+const changes = (from: number) =>
+  pidgeon.requests
+    .slice(from)
+    .filter((sent) => sent.method !== "GET" && !sent.path.includes("00000000"));
+
 it.layer(services(pidgeon.layer))("Pidgeon connection pages", (it) => {
+  it.effect("asks for the key, the inbox and what patches may do, in the shared frame", () =>
+    Effect.gen(function* () {
+      const owner = yield* createCompany("pidgeon-page");
+      const page = yield* read(connectPath, owner.user);
+      assert.strictEqual(page.status, 200);
+      const at = (part: string) => {
+        const index = page.html.indexOf(part);
+        assert.isAbove(index, -1, part);
+        return index;
+      };
+      const order = [
+        '<h1 class="title">Connect Pidgeon email</h1>',
+        `<span class="flow-number">1</span>${Page.copy.getIt.title}`,
+        Page.copy.getIt.step,
+        Page.copy.getIt.note,
+        `<span class="flow-number">2</span>${Page.copy.paste}`,
+        // Each field's label, then its hint, then the control.
+        Page.copy.key.hint,
+        'type="password" id="connection-key"',
+        Page.copy.inbox.hint,
+        'id="connection-address"',
+        `placeholder="${Page.copy.inbox.placeholder}"`,
+        Page.copy.access.hint,
+        '<select class="field field-w-sm" id="connection-access"',
+        '<option value="read" selected>Read</option><option value="send">Read and send</option>',
+        '<span class="flow-number">3</span>Name it',
+        `data-fallback="${Page.copy.name.example}"`,
+        `placeholder="${escapeAttribute(Page.copy.name.describe)}"`,
+        "Once connected",
+        `Every member reads ${Page.copy.once.reads} through patches that use it`,
+        "Builders' agents read it while they build",
+        "Guests of those patches too, unless you block guests",
+        Page.copy.once.also,
+        ...Page.copy.once.cannot,
+        Page.copy.once.caveat,
+        '<button class="btn btn-primary" type="submit" data-pending="Testing…"><span>Test and connect</span></button>'
+      ].map(at);
+      assert.deepStrictEqual(
+        order,
+        [...order].sort((a, b) => a - b)
+      );
+      // The address is typed exactly: a phone neither capitalises nor corrects it.
+      assert.match(page.html, /id="connection-address"[^>]*autocapitalize="none"/);
+      const body = page.html.slice(page.html.indexOf("<body>"));
+      // One frame, one submit: nothing locked, no script of its own, nothing marked done.
+      for (const gone of [
+        "disabled>",
+        "<noscript>",
+        "pidgeon-connect",
+        'name="attempt"',
+        "step-done"
+      ])
+        assert.notInclude(body, gone);
+      assert.notMatch(page.html.replace(switcherRelay, ""), /<script(?![^>]*\bsrc=)/);
+    })
+  );
+
   it.effect(
-    "connects in the shared frame: the key first, the rest locked until it's checked, with its script outside",
+    "connects in one submit, finding the inbox by its address however it's typed, never writing the key back",
     () =>
       Effect.gen(function* () {
-        const owner = yield* createCompany("pidgeon-page");
-        const page = yield* read(connectPath, owner.user);
-        assert.strictEqual(page.status, 200);
-        const { html } = page;
-        for (const part of [
-          '<h1 class="title">Connect Pidgeon email</h1>',
-          'data-pidgeon-connect data-addresses="/settings/integrations/connect/pidgeon/addresses"',
-          `<span class="flow-number">1</span>${Page.copy.getIt.title}`,
-          Page.copy.getIt.step,
-          `<span class="flow-number">2</span>${Page.copy.key.title}`,
-          'type="password" id="pidgeon-key"',
-          Page.copy.key.hint,
-          `data-pidgeon-find-wrap hidden><button class="btn" type="button" data-pidgeon-find="">${Page.copy.key.find}</button>`,
-          `<span class="flow-number">3</span>${Page.copy.inboxes.title}`,
-          Page.copy.inboxes.intro,
-          `<span class="flow-number">4</span>${Page.copy.access.title}`,
-          '<span class="flow-number">5</span>Name it',
-          "Once connected",
-          Page.copy.once.cannot,
-          Page.copy.once.caveat,
-          '<button class="btn btn-primary" type="submit" data-pending="Testing…"><span>Test and connect</span></button>',
-          '<script defer src="/assets/pidgeon-connect.js"></script>',
-          "<noscript>"
-        ])
-          assert.include(html, part);
-        // Patchy makes nothing in Pidgeon now: no new-address form, domains or send policy.
-        for (const gone of ["local_part", "send_policy", "pidgeon-domain", 'name="attempt"'])
-          assert.notInclude(html, gone);
-        // One frame: no side panel of its own, and nothing marked done.
-        for (const gone of ['class="side-panel"', "card-split", "step-done"])
-          assert.notInclude(html.slice(html.indexOf("<body>")), gone);
-        // The inbox, Patches may and Name it wait for the key; the key's own part doesn't.
-        assert.strictEqual(html.match(/<fieldset class="flow-section" disabled>/g)?.length, 3);
-        assert.include(
-          html,
-          '<fieldset class="fieldset" disabled data-ready-gate><button class="btn btn-primary" type="submit" data-pending="Testing…"><span>Test and connect</span></button></fieldset>'
+        const owner = yield* createCompany("pidgeon-connect");
+        const requests = pidgeon.requests.length;
+        const typed = fields("desk", { address: "  Desk@ACME.example " });
+        const connected = yield* follow(
+          yield* send(connectPath, post(owner.user, typed)),
+          owner.user
         );
-        assert.notMatch(html.replace(switcherRelay, ""), /<script(?![^>]*\bsrc=)/);
-        assert.include(page.response.headers.get("content-security-policy")!, "script-src 'self'");
-        const script = yield* send(Page.connectScriptPath, {
-          headers: { cookie: cookie(owner.user) }
-        });
-        assert.strictEqual(script.status, 200);
-        assert.include(script.headers.get("content-type")!, "text/javascript");
-        assert.strictEqual(script.headers.get("x-content-type-options"), "nosniff");
+        assert.include(connected.html, Page.copy.results.connect("desk@acme.example"));
+        assert.include(connected.html, "<dt>Inbox</dt><dd>desk@acme.example</dd>");
+        assert.include(connected.html, "<dt>Patches may</dt><dd>Read and send</dd>");
+        assert.notInclude(connected.html, typed.key);
+        // Pidgeon was only read, and asked whether the key may send.
+        assert.deepStrictEqual(changes(requests), []);
       })
   );
 
-  it.effect("finds the inboxes a key reaches without writing the key back, then connects one", () =>
-    Effect.gen(function* () {
-      const owner = yield* createCompany("pidgeon-find");
-      const token = pidgeon.key("admin");
-      const found = yield* send(Page.addressesPath, post(owner.user, { key: token }));
-      assert.strictEqual(found.status, 200);
-      const fragment = yield* Effect.promise(() => found.text());
-      for (const part of [
-        "data-pidgeon-key-status",
-        Page.copy.status({ test: true, level: "admin", count: 2 }),
-        "desk@acme.example",
-        "Acme Desk",
-        "hooks@acme.example",
-        Page.copy.inboxes.eventsOnly
-      ])
-        assert.include(fragment, part);
-      assert.notInclude(fragment, token);
-      const connected = yield* follow(
-        yield* send(
-          connectPath,
-          post(owner.user, {
-            key: token,
-            address: desk,
-            access: "send",
-            handle: "desk",
-            description: "Help desk mail"
-          })
-        ),
-        owner.user
-      );
-      assert.include(connected.html, Page.copy.results.connect("desk@acme.example"));
-      assert.include(connected.html, "<dt>Inbox</dt><dd>desk@acme.example</dd>");
-      assert.notInclude(connected.html, token);
-    })
+  it.effect(
+    "refuses each part under its own field, in order, keeping all but the key and saving nothing",
+    () =>
+      Effect.gen(function* () {
+        const owner = yield* createCompany("pidgeon-refused");
+        const refusal = (over: Record<string, string>) =>
+          Effect.gen(function* () {
+            const submitted = fields("desk", over);
+            const response = yield* send(connectPath, post(owner.user, submitted));
+            assert.strictEqual(response.status, 422);
+            const html = yield* Effect.promise(() => response.text());
+            assert.include(html, 'value="desk"');
+            assert.include(html, 'value="Help desk mail"');
+            assert.notInclude(html, submitted.key);
+            return html;
+          });
+        const under = (html: string, field: string, words: string) => {
+          assert.match(
+            html,
+            new RegExp(`<p class="field-error" id="connection-${field}-error">[^<]*${words}`)
+          );
+          assert.strictEqual(html.match(/<p class="field-error"/g)?.length, 1);
+          // Nothing above Test and connect: the field is where the fix is, and it alone takes focus.
+          assert.notMatch(html, /autofocus><div class="notice/);
+          assert.strictEqual(html.match(/autofocus/g)?.length, 1);
+        };
+        const requests = pidgeon.requests.length;
+        under(yield* refusal({ key: "not a key" }), "key", "Paste a Pidgeon API key");
+        // A key of the wrong shape never reaches Pidgeon.
+        assert.strictEqual(pidgeon.requests.length, requests);
+        under(
+          yield* refusal({ key: `pgn_test_${"r".repeat(32)}` }),
+          "key",
+          "Pidgeon didn't accept this key"
+        );
+        // An address no inbox has, and one that only receives events, sit under Inbox; the
+        // refusal names none of the account's other inboxes.
+        const missing = yield* refusal({ address: "sales@acme.example" });
+        under(missing, "address", "No inbox this key reaches has that address");
+        assert.include(missing, 'value="sales@acme.example"');
+        for (const other of ["desk@acme.example", "hooks@acme.example", "Acme Desk"])
+          assert.notInclude(missing, other);
+        under(
+          yield* refusal({ address: "hooks@acme.example" }),
+          "address",
+          "hooks@acme.example only receives events"
+        );
+        // Read and send with a Read key: under Patches may, saying how to fix it.
+        const reader = yield* refusal({ key: pidgeon.key("read") });
+        under(reader, "access", Page.copy.refusalTitles.pidgeon_key_cant_send);
+        assert.include(reader, "Make a Send key in Pidgeon and paste it, or choose Read.");
+        assert.include(reader, '<option value="send" selected>Read and send</option>');
+        // A native select takes no focus of its own, so the refused one sits in what does.
+        assert.include(
+          reader,
+          '<div tabindex="-1" autofocus><div class="fieldset"><label class="field-label" for="connection-access">'
+        );
+        assert.deepStrictEqual(changes(requests), []);
+        assert.isUndefined(yield* connectedId(owner.company.id, "desk"));
+      })
   );
 
-  it.effect("refuses what can't be a key, and keeps everything else a refusal typed", () =>
-    Effect.gen(function* () {
-      const owner = yield* createCompany("pidgeon-refused");
-      for (const [key, words] of [
-        ["", Page.copy.key.missing],
-        ["not a key", "Paste a Pidgeon API key: it starts with pgn_."]
-      ] as const) {
-        const refused = yield* send(Page.addressesPath, post(owner.user, { key }));
-        assert.strictEqual(refused.status, 422);
-        const fragment = yield* Effect.promise(() => refused.text());
-        assert.include(fragment, "data-pidgeon-key-error");
-        assert.include(fragment, words);
-      }
-      const requests = pidgeon.requests.length;
-      const typed = pidgeon.key("read");
-      const response = yield* send(
-        connectPath,
-        post(owner.user, {
-          key: typed,
-          access: "send",
-          handle: "desk",
-          description: "Help desk mail",
-          address: desk
-        })
-      );
-      assert.strictEqual(response.status, 422);
-      const html = yield* Effect.promise(() => response.text());
-      assert.include(html, Page.copy.refusalTitles.pidgeon_key_cant_send);
-      assert.include(html, 'value="desk"');
-      assert.include(html, 'value="Help desk mail"');
-      assert.include(html, `data-kept-address="${desk}"`);
-      assert.notInclude(html, typed);
-      // Pidgeon was only asked what the key may do.
-      assert.isTrue(
-        pidgeon.requests
-          .slice(requests)
-          .every((sent) => sent.method === "GET" || sent.path.includes("00000000"))
-      );
-    })
+  it.effect(
+    "replaces the key and changes access as the other integrations do, each refusal under its field",
+    () =>
+      Effect.gen(function* () {
+        const owner = yield* createCompany("pidgeon-change");
+        yield* send(connectPath, post(owner.user, fields("desk")));
+        const { id } = yield* connectedId(owner.company.id, "desk");
+        const rotate = yield* read(`/settings/integrations/${id}/rotate`, owner.user);
+        for (const part of [
+          "Replace the key for pidgeon/desk",
+          Page.copy.rotate.consequence("desk@acme.example"),
+          'type="password" id="connection-key"',
+          Page.copy.key.hint
+        ])
+          assert.include(rotate.html, part);
+        assert.notInclude(rotate.html, 'id="connection-address"');
+        const replaced = yield* send(
+          `/settings/integrations/${id}/rotate`,
+          post(owner.user, { key: pidgeon.key("read") })
+        );
+        assert.strictEqual(replaced.status, 422);
+        const refusedKey = yield* Effect.promise(() => replaced.text());
+        assert.match(
+          refusedKey,
+          /<p class="field-error" id="connection-key-error">[^<]*change access to Read first/
+        );
+        const access = yield* read(`/settings/integrations/${id}/access`, owner.user);
+        assert.include(access.html, '<select class="field field-w-sm" id="connection-access"');
+        assert.include(access.html, '<option value="send" selected>Read and send</option>');
+        // Lowered, then raised with a stored key that only reads: under Patches may.
+        yield* send(`/settings/integrations/${id}/access`, post(owner.user, { access: "read" }));
+        yield* send(
+          `/settings/integrations/${id}/rotate`,
+          post(owner.user, { key: pidgeon.key("read") })
+        );
+        const raised = yield* send(
+          `/settings/integrations/${id}/access`,
+          post(owner.user, { access: "send" })
+        );
+        assert.strictEqual(raised.status, 409);
+        assert.match(
+          yield* Effect.promise(() => raised.text()),
+          /<p class="field-error" id="connection-access-error">[^<]*Read and send needs a Send key/
+        );
+      })
   );
 
   it.effect("labels a test connection wherever it's shown, and counts today's emails", () =>
@@ -298,16 +371,10 @@ it.layer(services(pidgeon.layer))("Pidgeon connection pages", (it) => {
       const path = "/settings/integrations/conn_page_guarded";
       const key = pidgeon.key("send");
       const requests = pidgeon.requests.length;
-      const found = yield* send(Page.addressesPath, post(member, { key }));
-      assert.strictEqual(found.status, 403);
-      assert.include(
-        yield* Effect.promise(() => found.text()),
-        "Only an admin can manage company connections."
-      );
       for (const response of [
         yield* send(
           connectPath,
-          post(member, { key, address: desk, access: "read", handle: "member" })
+          post(member, { key, address: "desk@acme.example", access: "read", handle: "member" })
         ),
         yield* send(`${path}/access`, post(member, { access: "read" })),
         yield* send(`${path}/rotate`, post(member, { key })),
@@ -321,10 +388,10 @@ it.layer(services(pidgeon.layer))("Pidgeon connection pages", (it) => {
       assert.strictEqual((yield* read(path, foreign.user)).status, 404);
       assert.strictEqual((yield* send(`${path}/delete`, post(foreign.user))).status, 404);
       // A form posted from elsewhere never reaches Pidgeon either.
-      const forged = yield* send(Page.addressesPath, {
+      const forged = yield* send(connectPath, {
         method: "POST",
         headers: { cookie: cookie(owner.user), origin: "https://elsewhere.example" },
-        body: new URLSearchParams({ key })
+        body: new URLSearchParams(fields("forged", { key }))
       });
       assert.strictEqual(forged.status, 403);
       assert.strictEqual(pidgeon.requests.length, requests);
