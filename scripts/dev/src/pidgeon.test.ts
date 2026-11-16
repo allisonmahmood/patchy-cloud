@@ -333,11 +333,9 @@ it.layer(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer))("readyInbox", (it
         const first = account("inb-first", "unavailable");
         const stopped = yield* ready(file).pipe(first.provide, Effect.flip);
         assert.strictEqual(stopped._tag, "PidgeonMailFailed");
-        const made = (
-          first.requests.find((request) => request.method === "POST")?.body as {
-            readonly name: string;
-          }
-        ).name;
+        const making = first.requests.find((request) => request.method === "POST");
+        if (making === undefined) return assert.fail("The first start made no inbox.");
+        const made = (making.body as { readonly name: string }).name;
         assert.deepStrictEqual(
           yield* recordedInbox(file, made),
           Option.some({ connection: "support", localPart: made, seeded: false })
