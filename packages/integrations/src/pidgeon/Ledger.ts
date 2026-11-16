@@ -108,7 +108,9 @@ const at = (now: number) => now / 1_000;
 /**
  * Claims a draft key's row before a worker talks to Pidgeon, in one transaction. A new key is
  * inserted as `writing` and charged one email against the day's budget; a `refused` one is taken
- * over the same way, with the new digest. A row whose claim expired is claimed as it stands. Rows
+ * over the same way, with the new digest, and charged again only when that digest differs: the
+ * same email retried, as after Replace key, is still the one it was charged as. A row whose claim
+ * expired is claimed as it stands. Rows
  * that can no longer matter are forgotten first: `sent` a day after it resolved, and `refused` or
  * an unheld `writing` or `drafted` a day after it was made. `sending` and `held` stay until they
  * resolve or their connection goes.
@@ -173,7 +175,7 @@ export const claim = Effect.fn("PidgeonLedger.claim")(function* (input: ClaimInp
       if (found.owner !== null && found.live)
         return { _tag: "Busy", retryAfterSeconds: found.waitSeconds };
       if (found.state === "refused") {
-        yield* charge;
+        if (found.digest !== input.digest) yield* charge;
         yield* sql`UPDATE pidgeon_drafts SET digest = ${input.digest}, state = 'writing',
             draft_id = NULL, message_id = NULL, thread_id = NULL, owner = ${input.owner},
             claimed_until = to_timestamp(${at(input.until)}), created_at = to_timestamp(${now}),

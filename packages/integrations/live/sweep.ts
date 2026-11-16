@@ -1,8 +1,8 @@
 /**
  * `pnpm test:pidgeon:sweep`: what a live Pidgeon run left behind, gone. CI runs it after the
  * suite, even when the job was cancelled, with the same `PIDGEON_TEST_RUN_ID`, so that run's
- * inboxes go, and anyone's stale ones with them. It fails, saying how many, when any of the run's
- * own is left. Without a test key there's nothing to do.
+ * inboxes go, and anyone's stale ones with them. It fails, saying how many, when a deletion it meant
+ * didn't happen. Without a test key there's nothing to do.
  */
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as Effect from "effect/Effect";

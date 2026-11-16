@@ -351,18 +351,18 @@ export const sweep = (stale: boolean) =>
   );
 
 /**
- * Fails, saying how many, when any of the run's own inboxes is still in Pidgeon after its sweep,
- * or the sweep couldn't list them to tell.
+ * Fails, saying how many, when a sweep couldn't delete an inbox it meant to, the run's own or an
+ * earlier run's stale one, or couldn't list them to tell: nothing in Pidgeon expires them.
  */
 export const requireSwept = (swept: Swept) =>
   swept.problem !== undefined
     ? Effect.die(
         new Error(`Pidgeon run ${RUN}'s sweep couldn't list its inboxes (${swept.problem}).`)
       )
-    : swept.left > 0
+    : swept.failed > 0
       ? Effect.die(
           new Error(
-            `Pidgeon run ${RUN} left ${swept.left} of its own ${swept.left === 1 ? "inbox" : "inboxes"}: ${swept.left === 1 ? "its deletion" : "their deletions"} failed.`
+            `Pidgeon run ${RUN}'s sweep couldn't delete ${swept.failed} ${swept.failed === 1 ? "inbox" : "inboxes"}${swept.left === 0 ? "" : `, ${swept.left} of them its own`}.`
           )
         )
       : Effect.void;

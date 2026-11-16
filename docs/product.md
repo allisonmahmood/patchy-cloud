@@ -1226,7 +1226,7 @@ A connection is open to build with for the company, as every existing connection
 Every integration connects through one page, the same frame drawn from what the
 integration says: 1 what to make in the other system first, which nothing marks
 done; 2 the credential's fields, secrets masked with Show; any sections a check
-unlocks (Pidgeon's inbox and what patches may do); Name it, behind the fixed
+unlocks (GitHub's repositories, once signed in); Name it, behind the fixed
 `kind/` prefix; Once connected, what it can and can't do, which the frame writes
 the same way for every integration, with at most one caveat; then Test and
 connect and Cancel. A refusal about a field reads under it, any other right above

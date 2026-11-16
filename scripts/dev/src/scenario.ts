@@ -131,7 +131,7 @@ export const RepoPatch = Schema.Struct({
 /**
  * A company connection the publisher makes through its connect page, as an admin would, before
  * any patch publishes. Pidgeon's makes a new test inbox on pidgeon.email with the developer's test
- * admin key, which `down` deletes, then pastes their Send test key and picks that inbox. Attio's pastes the developer's
+ * admin key, which `down` deletes, then pastes their Send test key and types that inbox's address. Attio's pastes the developer's
  * read-only key to Patchy's probe workspace; it only reads, so there's nothing to take down.
  * IMAP's starts a dev mailbox in Docker on this machine and types its login; `down` removes it.
  * GitHub's isn't made through its page, which signs in on GitHub: it's seeded from the developer's

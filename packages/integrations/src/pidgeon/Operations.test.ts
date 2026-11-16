@@ -1122,8 +1122,13 @@ it.layer(fixture)("Pidgeon operations, offline", (it) => {
     "a key Pidgeon refuses frees the draft key, so after Replace key a new draft goes once",
     () =>
       Effect.gen(function* () {
-        const { reply, refused, pidgeon, ours, token, store, send, sends, written, row } =
+        const { refused, pidgeon, ours, token, store, send, sends, written, row, ...made } =
           yield* setup();
+        // The day's last budgeted email: retried as it was, it is charged once.
+        const reply = (id: string, draft: string) =>
+          made
+            .reply(id, draft)
+            .pipe(Effect.provideService(ContractLimits.overrides, { "pidgeon.sends.daily": 1 }));
         const mail = pidgeon.deliver(ours, { from: "a@x.example", subject: "Hi", text: "Hi" });
         // The key is revoked once the draft is written: its send is refused before anything runs.
         pidgeon.fault(PidgeonTest.route("POST", /\/send$/), {
@@ -1173,6 +1178,7 @@ it.layer(fixture)("Pidgeon operations, offline", (it) => {
         );
         assert.deepStrictEqual(pidgeon.drafts(), []);
         assert.strictEqual(pidgeon.requests.at(-1)?.authorization, `Bearer ${replacement}`);
+        assert.strictEqual(yield* store.sends(who.companyId, send.id, "1970-01-01"), 1);
       })
   );
 

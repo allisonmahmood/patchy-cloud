@@ -338,7 +338,7 @@ const readCloneState = Effect.fn("Evidence.readCloneState")(function* (
 
 /**
  * Takes a side's instance down with its own runner, which deletes its data, with the Pidgeon test
- * admin key so the test addresses its environment recorded, and their keys, go first.
+ * admin key so the test inboxes its environment recorded go first.
  */
 const takeDown = (dir: string, side: SideName, env: Record<string, string>) =>
   Effect.flatMap(withPidgeonKey(env), (withKey) =>
