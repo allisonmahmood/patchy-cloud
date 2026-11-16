@@ -2,7 +2,16 @@ export {};
 
 type Variant = "sort" | "filters" | "groups";
 type Screen =
-  "list" | "home" | "patch" | "create" | "add" | "manage" | "map" | "agents" | "settings";
+  | "list"
+  | "home"
+  | "patch"
+  | "choose-group"
+  | "create"
+  | "add"
+  | "manage"
+  | "map"
+  | "agents"
+  | "settings";
 type SortKey = "title" | "owner" | "updated" | "visits" | "access" | "failures";
 interface Patch {
   id: number;
@@ -62,6 +71,7 @@ const state = {
   screen: "list" as Screen,
   patchId: 1,
   groupId: 0,
+  assignPatchId: 0,
   groups: [
     {
       id: 1,
@@ -151,7 +161,7 @@ function sorted(items: Patch[]) {
   });
 }
 function table(items: Patch[], removable = false) {
-  return `<div class="table-wrap"><table class="table"><thead><tr>${columns.map(({ key, label }) => `<th class="${key === "title" ? "" : "hide-sm nowrap"}"${state.sort === key ? ` aria-sort="${state.descending ? "descending" : "ascending"}"` : ""}><button class="sort${state.sort === key ? " active" : ""}" data-action="sort" data-key="${key}">${label} ${state.sort === key ? (state.descending ? "↓" : "↑") : "↕"}</button></th>`).join("")}<th><span class="sr-only">Actions</span></th></tr></thead><tbody>${items.map((p) => `<tr data-patch="${p.id}"><td class="cell-grow"><div class="cell-name">${mark(p)}<div class="row-main">${link(esc(p.title) + (p.unopened ? '<span class="unopened" aria-label="Not opened"></span>' : ""), "patch", { id: p.id, group: state.groupId }, "table-title")}<span class="row-desc">${esc(p.description)}</span></div></div></td><td class="hide-sm nowrap"><div class="cell-name"><span class="avatar">${p.owner[0]}</span>${esc(p.owner.split(" ")[0]!)}</div></td><td class="hide-sm nowrap muted">${p.updated}</td><td class="hide-sm nowrap r">${p.visits}</td><td class="hide-sm nowrap">${esc(p.access)}</td><td class="hide-sm nowrap">${p.failures ?? "—"}</td><td class="nowrap">${removable ? button("Remove", "remove", `data-id="${p.id}"`, true) : button(state.pins.has(p.id) ? "Unpin" : "Pin", "pin", `data-id="${p.id}"`, true)}</td></tr>`).join("")}</tbody></table></div>`;
+  return `<div class="table-wrap"><table class="table"><thead><tr>${columns.map(({ key, label }) => `<th class="${key === "title" ? "" : "hide-sm nowrap"}"${state.sort === key ? ` aria-sort="${state.descending ? "descending" : "ascending"}"` : ""}><button class="sort${state.sort === key ? " active" : ""}" data-action="sort" data-key="${key}">${label} ${state.sort === key ? (state.descending ? "↓" : "↑") : "↕"}</button></th>`).join("")}<th><span class="sr-only">Actions</span></th></tr></thead><tbody>${items.map((p) => `<tr data-patch="${p.id}"><td class="cell-grow"><div class="cell-name">${mark(p)}<div class="row-main">${link(esc(p.title) + (p.unopened ? '<span class="unopened" aria-label="Not opened"></span>' : ""), "patch", { id: p.id, group: state.groupId }, "table-title")}<span class="row-desc">${esc(p.description)}</span></div></div></td><td class="hide-sm nowrap"><div class="cell-name"><span class="avatar">${p.owner[0]}</span>${esc(p.owner.split(" ")[0]!)}</div></td><td class="hide-sm nowrap muted">${p.updated}</td><td class="hide-sm nowrap r">${p.visits}</td><td class="hide-sm nowrap">${esc(p.access)}</td><td class="hide-sm nowrap">${p.failures ?? "—"}</td><td class="nowrap">${state.variant === "groups" ? link("Add to group", "choose-group", { patch: p.id, group: state.groupId }, "btn btn-quiet btn-sm") : ""}${removable ? button("Remove", "remove", `data-id="${p.id}"`, true) : button(state.pins.has(p.id) ? "Unpin" : "Pin", "pin", `data-id="${p.id}"`, true)}</td></tr>`).join("")}</tbody></table></div>`;
 }
 function filters() {
   return `<div class="filters"><label><span class="sr-only">Owner</span><select class="field-control" data-filter="owner" aria-label="Owner"><option value="">All owners</option>${[
@@ -175,10 +185,14 @@ function list() {
       : `<div class="toolbar"><div class="seg">${["", "Tool", "Page", "Yours"].map((type, i) => `<a href="#" data-action="type" data-type="${type}"${state.type === type ? ' aria-current="page"' : ""}>${["All", "Tools", "Pages", "Yours"][i]}</a>`).join("")}</div></div>`;
   return `${toolbar}${state.variant === "filters" ? filters() : ""}<div class="mobile-sort"><label>Sort by <select data-filter="sort" class="field-control">${columns.map((c) => `<option value="${c.key}"${state.sort === c.key ? " selected" : ""}>${c.label}</option>`).join("")}</select></label>${button(state.descending ? "Descending ↓" : "Ascending ↑", "reverse")}</div>${shown.length ? table(shown, Boolean(group)) : `<div class="box empty"><h2>${group && !group.patches.size ? "No patches in this group" : "No matching patches"}</h2>${group ? link("Add patches", "add", { group: group.id }, "btn btn-sm") : button("Clear filters", "clear")}</div>`}<nav class="pagination"><span>${found.length ? (state.page - 1) * 50 + 1 : 0}–${Math.min(state.page * 50, found.length)} of ${found.length}</span><span class="cluster">${state.page > 1 ? button("Previous", "page", 'data-step="-1"') : ""}${state.page < pages ? button("Next", "page", 'data-step="1"') : ""}</span></nav>`;
 }
+function chooseGroup() {
+  const patch = patches.find((p) => p.id === state.assignPatchId)!;
+  return `<p>${mark(patch)} <strong>${esc(patch.title)}</strong></p><div class="form-stack"><div class="box">${state.groups.map((group) => `<div class="picker-row"><span class="row-main"><strong>${esc(group.name)}</strong><span class="meta">${group.patches.size} patches</span></span><span class="cluster">${group.patches.has(patch.id) ? '<span class="meta">Already in group</span>' : button("Add", "assign", `data-group="${group.id}"`)}${link("View group", "list", { group: group.id }, "btn btn-quiet btn-sm")}</span></div>`).join("") || '<p class="box-pad">No groups yet.</p>'}</div><div class="cluster">${link("＋ Create a group", "create", { patch: patch.id, group: state.groupId }, "btn btn-sm")}${link("Back to patches", "list", { group: state.groupId }, "btn btn-quiet btn-sm")}</div></div>`;
+}
 function groupForm() {
   const group = currentGroup();
   if (state.screen === "create" || state.screen === "manage")
-    return `<form class="form-stack" id="group-form"><label>Name<input class="field-control" name="name" required maxlength="60" value="${state.screen === "manage" ? esc(group?.name ?? "") : ""}" autofocus></label><div class="cluster"><button class="btn btn-sm" type="submit">${state.screen === "create" ? "Create group" : "Save name"}</button>${link("Cancel", "list", { group: state.groupId }, "btn btn-quiet btn-sm")}</div></form>${state.screen === "manage" ? `<div class="section box box-pad"><h2>Delete group</h2><p>Its patches stay in All patches.</p>${state.deletePending ? `<p>Delete ${esc(group?.name ?? "")}?</p>${button("Delete group now", "delete")}${button("Cancel", "cancel-delete", "", true)}` : button("Delete group", "confirm-delete")}</div>` : ""}`;
+    return `<form class="form-stack" id="group-form"><label>Name<input class="field-control" name="name" required maxlength="60" value="${state.screen === "manage" ? esc(group?.name ?? "") : ""}" autofocus></label><div class="cluster"><button class="btn btn-sm" type="submit">${state.screen === "create" ? (state.assignPatchId ? "Create group and add patch" : "Create group") : "Save name"}</button>${link("Cancel", "list", { group: state.groupId }, "btn btn-quiet btn-sm")}</div></form>${state.screen === "manage" ? `<div class="section box box-pad"><h2>Delete group</h2><p>Its patches stay in All patches.</p>${state.deletePending ? `<p>Delete ${esc(group?.name ?? "")}?</p>${button("Delete group now", "delete")}${button("Cancel", "cancel-delete", "", true)}` : button("Delete group", "confirm-delete")}</div>` : ""}`;
   return `<form id="add-form" class="form-stack"><label>Search patches<input class="field-control" id="picker-search" type="search" value="${esc(state.pickerSearch)}" autocomplete="off"></label><div class="box checklist-picker">${patches
     .filter((p) => `${p.title} ${p.owner}`.toLowerCase().includes(state.pickerSearch.toLowerCase()))
     .map(
@@ -191,7 +205,7 @@ function groupForm() {
 }
 function detail() {
   const p = patches.find((p) => p.id === state.patchId)!;
-  return `<div class="patch-detail">${link("← All patches", "list", { group: state.groupId }, "ph-parent")}<p class="meta">${esc(p.owner)} · ${p.kind} · ${esc(p.access)} · Updated ${p.updated}</p><p>${esc(p.description)}</p><div class="cluster">${button(state.pins.has(p.id) ? "Unpin patch" : "Pin patch", "pin", `data-id="${p.id}"`)}${state.variant === "groups" ? link("Your groups", "list", {}, "btn btn-sm") : ""}</div><section class="section"><h2>Example ${p.kind === "Page" ? "document" : "records"}</h2><div class="box box-pad"><p>Northstar · ${esc(p.area)}</p><p>${p.kind === "Page" ? "Notes for the next team review. This is fictional content so you can judge the path into and out of a patch." : "Three sample items for the next review. This screen stands in for an opened patch."}</p><ul><li>Review the current plan · Maya Chen</li><li>Confirm next steps · Priya Shah</li><li>Share the outcome · Nina Park</li></ul></div></section></div>`;
+  return `<div class="patch-detail">${link("← All patches", "list", { group: state.groupId }, "ph-parent")}<p class="meta">${esc(p.owner)} · ${p.kind} · ${esc(p.access)} · Updated ${p.updated}</p><p>${esc(p.description)}</p><div class="cluster">${button(state.pins.has(p.id) ? "Unpin patch" : "Pin patch", "pin", `data-id="${p.id}"`)}${state.variant === "groups" ? link("Add to group", "choose-group", { patch: p.id, group: state.groupId }, "btn btn-sm") : ""}</div><section class="section"><h2>Example ${p.kind === "Page" ? "document" : "records"}</h2><div class="box box-pad"><p>Northstar · ${esc(p.area)}</p><p>${p.kind === "Page" ? "Notes for the next team review. This is fictional content so you can judge the path into and out of a patch." : "Three sample items for the next review. This screen stands in for an opened patch."}</p><ul><li>Review the current plan · Maya Chen</li><li>Confirm next steps · Priya Shah</li><li>Share the outcome · Nina Park</li></ul></div></section></div>`;
 }
 function map() {
   return `<p>Click a screen to visit it. Back returns through browser history.</p>${[
@@ -226,11 +240,10 @@ function map() {
     [
       "Custom groups",
       [
-        link("New group", "create", {}, "flow-node"),
+        link("Choose a patch", "list", {}, "flow-node"),
         "→",
-        '<span class="flow-node">Empty group</span>',
-        "→",
-        link("Choose patches", "add", { group: state.groups[0]?.id ?? 0 }, "flow-node"),
+        link("Add to group", "choose-group", { patch: 1 }, "flow-node"),
+        "→ choose or create →",
         "→",
         link("Group list", "list", { group: state.groups[0]?.id ?? 0 }, "flow-node")
       ]
@@ -252,6 +265,7 @@ function render() {
       : {
           list: "All patches",
           home: "Home",
+          "choose-group": "Add to group",
           create: "New group",
           add: "Add patches",
           manage: "Group options",
@@ -262,6 +276,7 @@ function render() {
   let content = "";
   if (state.screen === "list") content = list();
   else if (["create", "add", "manage"].includes(state.screen)) content = groupForm();
+  else if (state.screen === "choose-group") content = chooseGroup();
   else if (state.screen === "patch") content = detail();
   else if (state.screen === "map") content = map();
   else if (state.screen === "home")
@@ -296,7 +311,7 @@ function render() {
 function route() {
   const params = new URLSearchParams(location.hash.slice(1));
   const nextVariant =
-    ["create", "add", "manage"].includes(params.get("screen") ?? "") ||
+    ["create", "add", "manage", "choose-group"].includes(params.get("screen") ?? "") ||
     Number(params.get("group")) > 0
       ? "groups"
       : params.get("variant");
@@ -312,13 +327,25 @@ function route() {
   }
   const screen = params.get("screen");
   state.screen = (
-    ["list", "home", "patch", "create", "add", "manage", "map", "agents", "settings"].includes(
-      screen ?? ""
-    )
+    [
+      "list",
+      "home",
+      "patch",
+      "choose-group",
+      "create",
+      "add",
+      "manage",
+      "map",
+      "agents",
+      "settings"
+    ].includes(screen ?? "")
       ? screen
       : "list"
   ) as Screen;
   state.groupId = Number(params.get("group") ?? 0);
+  state.assignPatchId = Number(params.get("patch") ?? 0);
+  if (state.screen === "choose-group" && !patches.some((p) => p.id === state.assignPatchId))
+    state.screen = "list";
   state.page = 1;
   state.notice = "";
   state.deletePending = false;
@@ -366,6 +393,10 @@ root.addEventListener("click", (event) => {
   } else if (action === "pin") {
     const id = Number(target.dataset.id);
     state.pins.has(id) ? state.pins.delete(id) : state.pins.add(id);
+  } else if (action === "assign") {
+    const group = state.groups.find((g) => g.id === Number(target.dataset.group))!;
+    group.patches.add(state.assignPatchId);
+    state.notice = `Added to ${group.name}.`;
   } else if (action === "remove") {
     currentGroup()!.patches.delete(Number(target.dataset.id));
     state.notice = "Removed from this group. The patch stays in All patches.";
@@ -429,7 +460,11 @@ root.addEventListener("submit", (event) => {
       return;
     }
     if (state.screen === "create") {
-      const group = { id: state.nextGroup++, name, patches: new Set<number>() };
+      const group = {
+        id: state.nextGroup++,
+        name,
+        patches: new Set<number>(state.assignPatchId ? [state.assignPatchId] : [])
+      };
       state.groups.push(group);
       location.hash = href("list", { group: group.id });
     } else {

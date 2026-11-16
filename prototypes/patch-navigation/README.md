@@ -20,7 +20,7 @@ Use the top switcher to compare the three directions already discussed in the is
 
 - **Sort headings.** Click Patch, Owner, Updated, Visits, Access or Failures. Click again to reverse. Sorting applies before pagination. Missing failure counts remain last.
 - **Quick filters.** Combine any owner, Not opened and an updated-date range. Clear filters restores the list. The fictional clock is 15 November 2026.
-- **Custom groups.** Open Quarter-end, create your own group, select patches, remove a patch, rename the group or delete it. Patches remain in All patches and can belong to multiple groups. Personal groups are a proposal, not an approved requirement.
+- **Custom groups.** Start from an individual patch and choose Add to group. Pick an existing group or create a group with that patch already in it. You can also open a group to manage its patches, rename it or delete it. Patches remain in All patches and can belong to multiple groups. Personal groups are a proposal, not an approved requirement.
 
 Open a patch title to inspect fictional content and return to the list. Home, pins, Your agents and Settings have local destinations. These destinations do not connect or configure anything. **Screen map** shows the paths between screens. Browser Back and Forward work between destinations. Search submits on Enter. On phones the sort selector exposes columns hidden from the narrow table.
 
