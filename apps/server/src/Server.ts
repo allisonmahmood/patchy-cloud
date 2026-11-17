@@ -74,6 +74,7 @@ import {
   PostgresExecution,
   PostgresOperations,
   PostHogSource,
+  NotionPrototype,
   PostHogOperations,
   PidgeonSource,
   AttioSource,
@@ -565,7 +566,9 @@ const app = Layer.mergeAll(
     Layer.unwrap(
       // The persona picker and the `/~ui` gallery exist only where personas sign people in.
       Effect.map(DevPersonas.enabled, (personas) =>
-        personas ? Layer.mergeAll(DevPersonas.routes, Gallery.layer) : Layer.empty
+        personas
+          ? Layer.mergeAll(DevPersonas.routes, Gallery.layer, NotionPrototype.layer)
+          : Layer.empty
       )
     ),
     ConnectionPages.layer

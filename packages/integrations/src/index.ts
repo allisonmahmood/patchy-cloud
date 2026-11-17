@@ -1,4 +1,5 @@
 export { defineIntegration, operation } from "./definition.js";
+export * as NotionPrototype from "./notion/Prototype.js";
 export * as ConnectionStore from "./ConnectionStore.js";
 export * as SqlConnectionStore from "./SqlConnectionStore.js";
 export * as CredentialKeys from "./CredentialKeys.js";
