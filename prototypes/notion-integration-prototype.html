@@ -1,0 +1,639 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Notion integration prototype</title>
+    <style>
+      :root {
+        --paper: #fffdf4;
+        --ink: #12110f;
+        --muted: #69645a;
+        --surface: #fffefa;
+        --blue: #1263e6;
+        --red: #b4220f;
+        --green: #1d7a3a;
+        --line: #d9d5ca;
+        font:
+          450 16px/1.45 system-ui,
+          sans-serif;
+        color: var(--ink);
+        background: var(--paper);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background-image:
+          linear-gradient(#12110f09 1px, transparent 1px),
+          linear-gradient(90deg, #12110f09 1px, transparent 1px);
+        background-size: 32px 32px;
+      }
+      button {
+        font: inherit;
+        font-weight: 750;
+        border: 2px solid var(--ink);
+        border-radius: 8px;
+        background: var(--surface);
+        color: var(--ink);
+        padding: 8px 12px;
+        cursor: pointer;
+      }
+      button:hover {
+        box-shadow: 2px 2px 0 var(--ink);
+      }
+      button.primary,
+      .tab[aria-selected="true"] {
+        background: var(--blue);
+        color: white;
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+        box-shadow: none;
+      }
+      h1,
+      h2,
+      h3,
+      p {
+        margin-top: 0;
+      }
+      h1 {
+        font-size: 2.4rem;
+        line-height: 1;
+        margin-bottom: 10px;
+      }
+      h2 {
+        font-size: 1.25rem;
+        margin-bottom: 14px;
+      }
+      h3 {
+        font-size: 1rem;
+        margin-bottom: 8px;
+      }
+      code,
+      pre {
+        font-family: ui-monospace, monospace;
+      }
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        overflow: auto;
+        font-size: 0.78rem;
+      }
+      main {
+        width: min(1180px, calc(100% - 32px));
+        margin: 36px auto 70px;
+      }
+      .intro {
+        max-width: 800px;
+        color: var(--muted);
+      }
+      .badge {
+        display: inline-block;
+        border: 2px solid var(--ink);
+        border-radius: 999px;
+        padding: 2px 9px;
+        font-size: 0.72rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        background: var(--surface);
+      }
+      .panel {
+        background: var(--surface);
+        border: 2px solid var(--ink);
+        border-radius: 8px;
+        box-shadow: 4px 4px 0 var(--ink);
+        padding: 20px;
+      }
+      .guide {
+        margin: 24px 0;
+      }
+      .tabs,
+      .buttons,
+      .steps {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .steps {
+        margin: 16px 0;
+      }
+      .step {
+        font-size: 0.82rem;
+      }
+      .step.done {
+        border-color: var(--green);
+        color: var(--green);
+      }
+      .step.current {
+        background: var(--blue);
+        color: white;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: minmax(320px, 0.8fr) minmax(0, 1.2fr);
+        gap: 20px;
+        align-items: start;
+      }
+      .state {
+        position: sticky;
+        top: 16px;
+      }
+      .state-row {
+        border-top: 1px solid var(--line);
+        padding: 12px 0;
+      }
+      .label {
+        display: block;
+        color: var(--muted);
+        font-size: 0.7rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 5px;
+      }
+      .status-success {
+        color: var(--green);
+      }
+      .status-refusal {
+        color: var(--red);
+      }
+      .surface {
+        padding: 18px 0;
+        border-top: 2px dashed var(--line);
+      }
+      .surface:first-of-type {
+        border-top: 0;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 12px;
+        align-items: center;
+        padding: 10px 0;
+        border-top: 1px solid var(--line);
+      }
+      .row small {
+        display: block;
+        color: var(--muted);
+      }
+      .row.trashed,
+      .row.unshared {
+        opacity: 0.55;
+      }
+      .markdown {
+        background: #f7f4eb;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 10px;
+        max-height: 180px;
+      }
+      .url {
+        word-break: break-all;
+        color: #093b92;
+      }
+      .notice {
+        border-left: 6px solid var(--blue);
+        padding: 10px 12px;
+        background: #eef5ff;
+        margin: 14px 0;
+      }
+      .notice.refusal {
+        border-left-color: var(--red);
+        background: #fff0ed;
+      }
+      @media (max-width: 800px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+        .state {
+          position: static;
+        }
+        .row {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <span class="badge">Throwaway prototype · #1465</span>
+      <h1>Notion integration</h1>
+      <p class="intro">
+        <strong>Question:</strong> should database rows and ordinary pages feel like one coherent
+        Notion integration? This fixed probe lets us drive the proposed client shape before building
+        #937–#939.
+      </p>
+
+      <section class="panel guide">
+        <h2>Guided walkthrough</h2>
+        <div class="tabs" id="tabs"></div>
+        <div class="steps" id="steps"></div>
+        <button class="primary" id="next">Run next step</button>
+      </section>
+
+      <div class="grid">
+        <section class="panel state">
+          <h2>Current state</h2>
+          <div class="state-row">
+            <span class="label">Last action</span><strong id="action">Nothing yet</strong>
+            <span id="status"></span>
+          </div>
+          <div class="state-row">
+            <span class="label">Request</span>
+            <pre id="request">—</pre>
+          </div>
+          <div class="state-row">
+            <span class="label">Result or refusal</span>
+            <pre id="result">Choose a walkthrough or free-play action.</pre>
+          </div>
+          <div class="state-row">
+            <span class="label">Notion URL</span>
+            <div class="url" id="url">—</div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>Free play</h2>
+          <div class="surface">
+            <h3>Tasks data source</h3>
+            <div class="buttons">
+              <button data-action="listTasks">List tasks</button>
+              <button data-action="openTask">Open first</button>
+              <button data-action="createTask">Create task</button>
+              <button data-action="updateTask">Change fields</button>
+              <button data-action="toggleTrash">Trash or restore</button>
+            </div>
+            <div id="tasks"></div>
+          </div>
+          <div class="surface">
+            <h3>Pages and wiki</h3>
+            <div class="buttons">
+              <button data-action="readPage">Read page</button>
+              <button data-action="readWiki">Read wiki</button>
+              <button data-action="createPage">Create child page</button>
+              <button data-action="editWiki">Replace wiki markdown</button>
+              <button data-action="toggleShare">Unshare or reshare page</button>
+              <button data-action="retryRead">Retry page read</button>
+              <button data-action="retryEdit">Retry page edit</button>
+            </div>
+            <div id="pages"></div>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <script>
+      const Model = (() => {
+        const seed = () => ({
+          sequence: 2,
+          tasks: [
+            {
+              id: "task_1",
+              title: "Draft launch notes",
+              status: "In progress",
+              assignee: "Srikar",
+              inTrash: false,
+              url: "https://notion.so/task-1"
+            },
+            {
+              id: "task_2",
+              title: "Review integration shape",
+              status: "Backlog",
+              assignee: "Allison",
+              inTrash: false,
+              url: "https://notion.so/task-2"
+            }
+          ],
+          pages: [
+            {
+              id: "page_1",
+              kind: "page",
+              title: "Integration field notes",
+              shared: true,
+              url: "https://notion.so/page-1",
+              markdown:
+                "# Integration field notes\n\nA plain page with **bold text**.\n\n- [x] Keep the token server-side"
+            },
+            {
+              id: "wiki_1",
+              kind: "wiki",
+              title: "Patchy handbook",
+              shared: true,
+              url: "https://notion.so/wiki-1",
+              markdown:
+                '# Patchy handbook\n\n> Build complex things simply.\n\n| Surface | Status |\n| --- | --- |\n| Tasks | Ready |\n\n<unknown id="embed-1" />'
+            }
+          ],
+          selectedTask: "task_1",
+          selectedPage: "page_1",
+          activity: {
+            label: "Reset probe",
+            status: "success",
+            request: { operation: "reset" },
+            result: { tasks: 2, pages: 2 },
+            url: ""
+          }
+        });
+
+        const record = (state, label, operation, args, result, url = "", status = "success") => ({
+          ...state,
+          activity: { label, status, request: { operation, args }, result, url }
+        });
+        const refuse = (state, label, operation, args) =>
+          record(
+            state,
+            label,
+            operation,
+            args,
+            {
+              code: "not_found",
+              message: "Notion does not say whether this page was deleted or is no longer shared."
+            },
+            "",
+            "refusal"
+          );
+
+        function transition(state, action) {
+          if (action.type === "reset") return seed();
+          let next = structuredClone(state);
+          const task = next.tasks.find((row) => row.id === next.selectedTask) || next.tasks[0];
+          const page = next.pages.find((row) => row.id === next.selectedPage) || next.pages[0];
+          const wiki = next.pages.find((row) => row.kind === "wiki");
+          switch (action.type) {
+            case "listTasks":
+              return record(
+                next,
+                "List tasks",
+                "tasks.list",
+                { limit: 100 },
+                { rows: next.tasks, cursor: null },
+                "https://notion.so/tasks"
+              );
+            case "openTask":
+              next.selectedTask = next.tasks[0].id;
+              return record(
+                next,
+                "Open task",
+                "tasks.get",
+                { id: next.selectedTask },
+                next.tasks[0],
+                next.tasks[0].url
+              );
+            case "createTask": {
+              const created = {
+                id: `task_${++next.sequence}`,
+                title: "Prototype follow-up",
+                status: "Backlog",
+                assignee: "Srikar",
+                inTrash: false,
+                url: `https://notion.so/task-${next.sequence}`
+              };
+              next.tasks.push(created);
+              next.selectedTask = created.id;
+              return record(
+                next,
+                "Create task",
+                "tasks.create",
+                { title: created.title, status: created.status, assignee: created.assignee },
+                { id: created.id, url: created.url },
+                created.url
+              );
+            }
+            case "updateTask":
+              task.title = "Prototype follow-up — reviewed";
+              task.status = "Ready";
+              task.assignee = "Srikar";
+              return record(
+                next,
+                "Change task fields",
+                "tasks.update",
+                {
+                  id: task.id,
+                  properties: { title: task.title, status: task.status, assignee: task.assignee }
+                },
+                { id: task.id },
+                task.url
+              );
+            case "toggleTrash":
+              task.inTrash = !task.inTrash;
+              return record(
+                next,
+                task.inTrash ? "Trash task" : "Restore task",
+                task.inTrash ? "tasks.trash" : "tasks.restore",
+                { id: task.id },
+                { id: task.id, inTrash: task.inTrash },
+                task.url
+              );
+            case "readPage":
+              next.selectedPage = "page_1";
+              return next.pages[0].shared
+                ? record(
+                    next,
+                    "Read ordinary page",
+                    "pages.markdown",
+                    { id: "page_1" },
+                    next.pages[0],
+                    next.pages[0].url
+                  )
+                : refuse(next, "Read ordinary page", "pages.markdown", { id: "page_1" });
+            case "readWiki":
+              next.selectedPage = wiki.id;
+              return record(next, "Read wiki", "pages.markdown", { id: wiki.id }, wiki, wiki.url);
+            case "createPage": {
+              const created = {
+                id: `page_${++next.sequence}`,
+                kind: "page",
+                title: "Prototype child page",
+                shared: true,
+                url: `https://notion.so/page-${next.sequence}`,
+                markdown: "# Prototype child page\n\nCreated outside a database."
+              };
+              next.pages.push(created);
+              next.selectedPage = created.id;
+              return record(
+                next,
+                "Create child page",
+                "pages.create",
+                { parentId: "probe_root", title: created.title, markdown: created.markdown },
+                { id: created.id, url: created.url },
+                created.url
+              );
+            }
+            case "editWiki":
+              wiki.markdown +=
+                "\n\n## Prototype edit\n\n- **Bold** survived\n- [Link](https://patchyhq.com) survived";
+              next.selectedPage = wiki.id;
+              return record(
+                next,
+                "Replace wiki markdown",
+                "pages.updateMarkdown",
+                { id: wiki.id, markdown: wiki.markdown },
+                {
+                  id: wiki.id,
+                  formatting: {
+                    preserved: ["heading", "quote", "table", "bold", "link"],
+                    unknown: ["embed-1"]
+                  }
+                },
+                wiki.url
+              );
+            case "toggleShare":
+              next.pages[0].shared = !next.pages[0].shared;
+              next.selectedPage = "page_1";
+              return record(
+                next,
+                next.pages[0].shared ? "Human reshared page" : "Human unshared page",
+                "human.notionShare",
+                { id: "page_1", shared: next.pages[0].shared },
+                { shared: next.pages[0].shared },
+                next.pages[0].shared ? next.pages[0].url : ""
+              );
+            case "retryRead":
+              next.selectedPage = "page_1";
+              return next.pages[0].shared
+                ? record(
+                    next,
+                    "Retry page read",
+                    "pages.markdown",
+                    { id: "page_1" },
+                    next.pages[0],
+                    next.pages[0].url
+                  )
+                : refuse(next, "Retry page read", "pages.markdown", { id: "page_1" });
+            case "retryEdit":
+              next.selectedPage = "page_1";
+              if (!next.pages[0].shared)
+                return refuse(next, "Retry page edit", "pages.updateMarkdown", {
+                  id: "page_1",
+                  markdown: "# Should be refused"
+                });
+              next.pages[0].markdown += "\n\nEdited after reshare.";
+              return record(
+                next,
+                "Retry page edit",
+                "pages.updateMarkdown",
+                { id: "page_1", markdown: next.pages[0].markdown },
+                { id: "page_1" },
+                next.pages[0].url
+              );
+            default:
+              return state;
+          }
+        }
+        return { seed, transition };
+      })();
+
+      const guides = {
+        tasks: {
+          label: "Task queue",
+          steps: [
+            ["Reset", { type: "reset" }],
+            ["List tasks", { type: "listTasks" }],
+            ["Open one", { type: "openTask" }],
+            ["Create one", { type: "createTask" }],
+            ["Change fields", { type: "updateTask" }],
+            ["Trash", { type: "toggleTrash" }],
+            ["Restore", { type: "toggleTrash" }]
+          ]
+        },
+        wiki: {
+          label: "Wiki edit",
+          steps: [
+            ["Reset", { type: "reset" }],
+            ["Read wiki", { type: "readWiki" }],
+            ["Replace markdown", { type: "editWiki" }],
+            ["Read again", { type: "readWiki" }]
+          ]
+        },
+        access: {
+          label: "Access removed",
+          steps: [
+            ["Reset", { type: "reset" }],
+            ["Read page", { type: "readPage" }],
+            ["Human unshares", { type: "toggleShare" }],
+            ["Retry read", { type: "retryRead" }],
+            ["Retry edit", { type: "retryEdit" }]
+          ]
+        }
+      };
+
+      let state = Model.seed(),
+        guide = "tasks",
+        step = 0;
+      const $ = (id) => document.getElementById(id);
+      const esc = (value) =>
+        String(value).replace(
+          /[&<>]/g,
+          (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[char]
+        );
+      const pretty = (value) => JSON.stringify(value, null, 2);
+
+      function render() {
+        $("tabs").innerHTML = Object.entries(guides)
+          .map(
+            ([key, item]) =>
+              `<button class="tab" data-guide="${key}" aria-selected="${key === guide}">${item.label}</button>`
+          )
+          .join("");
+        $("steps").innerHTML = guides[guide].steps
+          .map(
+            ([label], index) =>
+              `<button class="step ${index < step ? "done" : index === step ? "current" : ""}" disabled>${index + 1}. ${label}</button>`
+          )
+          .join("");
+        $("next").textContent =
+          step >= guides[guide].steps.length
+            ? "Walkthrough complete"
+            : `Run: ${guides[guide].steps[step][0]}`;
+        $("next").disabled = step >= guides[guide].steps.length;
+        $("action").textContent = state.activity.label;
+        $("status").className = `badge status-${state.activity.status}`;
+        $("status").textContent = state.activity.status;
+        $("request").textContent = pretty(state.activity.request);
+        $("result").textContent = pretty(state.activity.result);
+        $("url").textContent = state.activity.url || "—";
+        $("tasks").innerHTML = state.tasks
+          .map(
+            (task) =>
+              `<div class="row ${task.inTrash ? "trashed" : ""}"><div><strong>${esc(task.title)}</strong><small>${esc(task.status)} · ${esc(task.assignee)}${task.inTrash ? " · in trash" : ""}</small></div><code>${task.id}</code></div>`
+          )
+          .join("");
+        $("pages").innerHTML = state.pages
+          .map(
+            (page) =>
+              `<div class="row ${page.shared ? "" : "unshared"}"><div><strong>${esc(page.title)}</strong><small>${page.kind} · ${page.shared ? "shared" : "not shared"}</small>${page.id === state.selectedPage ? `<pre class="markdown">${esc(page.markdown)}</pre>` : ""}</div><code>${page.id}</code></div>`
+          )
+          .join("");
+        document.querySelectorAll("[data-guide]").forEach(
+          (button) =>
+            (button.onclick = () => {
+              guide = button.dataset.guide;
+              state = Model.seed();
+              step = 0;
+              render();
+            })
+        );
+      }
+
+      function act(action) {
+        state = Model.transition(state, action);
+        render();
+      }
+      $("next").onclick = () => {
+        const item = guides[guide].steps[step];
+        if (item) {
+          act(item[1]);
+          step++;
+          render();
+        }
+      };
+      document
+        .querySelectorAll("[data-action]")
+        .forEach((button) => (button.onclick = () => act({ type: button.dataset.action })));
+      render();
+    </script>
+  </body>
+</html>
