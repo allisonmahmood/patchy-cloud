@@ -134,6 +134,9 @@ const allowed = (kind: HandlerKind, op: string) =>
       Object.hasOwn(actionFile, op) ||
       Object.hasOwn(connections, op)));
 const createdRow = Schema.is(Schema.Struct({ id: NotionId }));
+const unknownWriteRow = Schema.is(Schema.Struct({ rowId: NotionId }));
+// Covers a normal Notion page URL and its ID, or the compact uncertain-outcome reply.
+const notionWriteReplyBytes = 4 * 1024;
 /** What a read-only action may not do; everything else an action may stays open to it. */
 const writes = (op: string) =>
   Object.hasOwn(writeTable, op) ||
@@ -570,33 +573,72 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
                   )
                 )
           : run;
-    const result = yield* Effect.exit(capabilities.execute(capability, operationRun));
-    let reply: GuestProtocol.CallbackReply;
-    let status = 200;
-    if (Exit.isSuccess(result)) reply = result.value;
-    else {
-      const error = Cause.findErrorOption(result.cause);
-      if (Option.isSome(error)) {
-        status = isCapabilityRefused(error.value) ? 403 : error.value.status;
-        reply = isCapabilityRefused(error.value)
-          ? error.value.failure
-          : Runtime.toFailure(error.value);
-      } else {
-        const live = yield* Effect.result(capabilities.resolve(token, attempt));
-        status = live._tag === "Failure" ? 403 : 503;
-        reply =
-          live._tag === "Failure"
-            ? live.failure.failure
-            : refused("source_unavailable", "The callback could not complete.");
+    const reserved = isNotionWrite(request.op) ? notionWriteReplyBytes : 0;
+    let used = 0;
+    const complete = Effect.gen(function* () {
+      const result = yield* Effect.exit(capabilities.execute(capability, operationRun));
+      let reply: GuestProtocol.CallbackReply;
+      let status = 200;
+      if (Exit.isSuccess(result)) reply = result.value;
+      else {
+        const error = Cause.findErrorOption(result.cause);
+        if (Option.isSome(error)) {
+          status = isCapabilityRefused(error.value) ? 403 : error.value.status;
+          reply = isCapabilityRefused(error.value)
+            ? error.value.failure
+            : Runtime.toFailure(error.value);
+        } else {
+          const live = yield* Effect.result(capabilities.resolve(token, attempt));
+          status = live._tag === "Failure" ? 403 : 503;
+          reply =
+            live._tag === "Failure"
+              ? live.failure.failure
+              : refused("source_unavailable", "The callback could not complete.");
+        }
       }
-    }
-    const responseBytes =
-      reply.ok && "body" in reply
-        ? reply.body.bytes.byteLength
-        : Buffer.byteLength(encodeJson(reply));
-    const responseRefusal = capabilities.chargeBytes(capability, responseBytes);
-    if (responseRefusal !== undefined) return responseRefusal;
-    return remember(reply, status);
+      let responseBytes =
+        reply.ok && "body" in reply
+          ? reply.body.bytes.byteLength
+          : Buffer.byteLength(encodeJson(reply));
+      if (
+        reserved > 0 &&
+        responseBytes > reserved &&
+        (reply.ok || (reply.source === "patchy" && reply.code === "unknown_outcome"))
+      ) {
+        // Never replace a completed or uncertain write with a misleading budget refusal.
+        const rowId = reply.ok
+          ? "value" in reply && createdRow(reply.value)
+            ? reply.value.id
+            : undefined
+          : unknownWriteRow(reply.details)
+            ? reply.details.rowId
+            : undefined;
+        reply = {
+          ...GuestProtocol.lostWriteCallbackReply,
+          ...(rowId === undefined ? {} : { details: { rowId } })
+        };
+        status = 503;
+        responseBytes = Buffer.byteLength(encodeJson(reply));
+      }
+      const covered = Math.min(responseBytes, reserved);
+      const responseRefusal = capabilities.chargeBytes(capability, responseBytes - covered);
+      if (responseRefusal !== undefined) return responseRefusal;
+      used = covered;
+      return remember(reply, status);
+    });
+    if (reserved === 0) return yield* complete;
+
+    // The reservation stays in the shared call-tree budget until the result is accounted for.
+    return yield* Effect.acquireUseRelease(
+      Effect.sync(() => capabilities.chargeBytes(capability, reserved)),
+      (refusal) => (refusal === undefined ? complete : Effect.succeed(refusal)),
+      (refusal) =>
+        refusal === undefined
+          ? Effect.sync(() => {
+              capability.tree.bytes -= reserved - used;
+            })
+          : Effect.void
+    );
   });
   return CallbackGateway.of({ callback });
 });

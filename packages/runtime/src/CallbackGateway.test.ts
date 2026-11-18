@@ -678,6 +678,56 @@ it.layer(
       )
   );
 
+  it.effect("reserves the Notion write reply before dispatch and charges actual reply bytes", () =>
+    Effect.gen(function* () {
+      const rowId = "00000000-0000-4000-8000-000000000002";
+      const input = { op: "notion.create", args: { connection: "probe" } };
+      let writes = 0;
+      const check = (limit: number, url: string) =>
+        Effect.gen(function* () {
+          const capabilities = yield* InvocationCapabilities.make;
+          const gateway = yield* CallbackGateway.make({
+            "notion.create": {
+              kind: "integration",
+              run: () =>
+                Effect.sync(() => {
+                  writes++;
+                  return { id: rowId, url };
+                })
+            }
+          }).pipe(
+            Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities)
+          );
+          const action = yield* Fixtures.issue(capabilities, { kind: "action" });
+          const reply = yield* gateway.callback(action.token, action.attempt, input);
+          return { reply, bytes: action.tree.bytes };
+        }).pipe(
+          Effect.scoped,
+          Effect.provideService(ContractLimits.overrides, { "tier2.callbacks.bytes": limit })
+        );
+
+      const url = "https://notion.so/task";
+      assert.include((yield* check(100, url)).reply, { ok: false, code: "limit_exceeded" });
+      assert.equal(writes, 0);
+
+      const success = yield* check(8_192, url);
+      assert.deepStrictEqual(success.reply, { ok: true, value: { id: rowId, url } });
+      assert.equal(
+        success.bytes,
+        JSON.stringify(input).length + JSON.stringify(success.reply).length
+      );
+      assert.equal(writes, 1);
+
+      const oversized = yield* check(8_192, url + "x".repeat(10_000));
+      assert.deepInclude(oversized.reply, {
+        ok: false,
+        code: "unknown_outcome",
+        details: { rowId }
+      });
+      assert.equal(writes, 2);
+    })
+  );
+
   it.effect("a fenced integration records an unknown outcome rather than a confirmed failure", () =>
     Effect.gen(function* () {
       const capabilities = yield* InvocationCapabilities.make;
