@@ -640,6 +640,20 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
                       status: trusted.status,
                       ...(operation === undefined ? {} : { integrationOperation: operation })
                     });
+                  // A lost callback reply cannot be in the host's refusal ledger.
+                  if (
+                    descriptor.kind === "action" &&
+                    !descriptor.readOnly &&
+                    observed.lostWriteReply &&
+                    relayed === canonicalArgs(GuestProtocol.lostWriteCallbackReply)
+                  )
+                    return yield* new CallbackRefusal({
+                      failure: {
+                        ...GuestProtocol.lostWriteCallbackReply,
+                        correlationId: binding.correlationId
+                      },
+                      status: 503
+                    });
                   return yield* new HandlerFailed({ correlationId: binding.correlationId });
                 }
               }

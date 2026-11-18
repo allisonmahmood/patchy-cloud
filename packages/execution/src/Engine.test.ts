@@ -538,8 +538,14 @@ it.live(
   () =>
     Effect.gen(function* () {
       // Exercise workerd's real AbortSignal deadline, not a guessed completion delay.
+      let writes = 0;
       const host = yield* listener(async (request, response) => {
         const { op } = JSON.parse((await bodyOf(request)).toString()) as { op: string };
+        if (op === "notion.create") {
+          writes++;
+          request.socket.destroy();
+          return;
+        }
         if (op === "reset") {
           request.socket.destroy();
           return;
@@ -567,7 +573,7 @@ it.live(
             }};
           `)
       );
-      for (const op of ["reset", "html", "malformed", "slow"]) {
+      for (const op of ["reset", "html", "malformed", "slow", "notion.create"]) {
         expect(
           yield* engine.invoke(
             invocation(binding, host.url, "demo.run", {
@@ -577,13 +583,20 @@ it.live(
           )
         ).toMatchObject({
           outcome: "returned",
+          ...(op === "notion.create" ? { lostWriteReply: true } : {}),
           reply: {
             ok: false,
             source: "patchy",
-            code: op === "slow" ? "timeout" : "source_unavailable"
+            code:
+              op === "notion.create"
+                ? "unknown_outcome"
+                : op === "slow"
+                  ? "timeout"
+                  : "source_unavailable"
           }
         });
       }
+      expect(writes).toBe(1);
     }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
   30_000
 );
