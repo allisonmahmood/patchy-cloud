@@ -135,15 +135,20 @@ it.layer(fixture)("ConnectionStore", (it) => {
       );
       assert.equal(failedReplacement.code, "notion_not_workspace_key");
       assert.equal((yield* store.refresh(target)).metadataRevision, 2);
+      const replaced = yield* change({ key: NotionDouble.internalToken });
+      assert.equal(replaced.metadataRevision, 3);
+      assert.equal(replaced.credentialRevision, connection.credentialRevision + 1);
       const writable = yield* change({ access: "write" });
-      assert.equal(writable.metadataRevision, 3);
-      const latest = yield* store.snapshot(who.companyId, connection.id, 3);
+      assert.equal(writable.metadataRevision, 4);
+      const latest = yield* store.snapshot(who.companyId, connection.id, 4);
       assert.equal(latest.integration === "notion" && latest.snapshot.access, "write");
-      assert.equal((yield* change({ access: "read" })).metadataRevision, 4);
+      assert.equal((yield* change({ access: "read" })).metadataRevision, 5);
       assert.deepStrictEqual(yield* store.snapshot(who.companyId, connection.id, 1), first);
       assert.equal((yield* store.disconnect(target)).status, "disconnected");
       assert.equal((yield* store.refresh(target).pipe(Effect.flip))._tag, "ConnectionNotConnected");
-      assert.equal((yield* store.reconnect(target)).id, connection.id);
+      const resumed = yield* store.reconnect(target);
+      assert.equal(resumed.id, connection.id);
+      assert.equal(resumed.status, "connected");
 
       const before = yield* SqlConnectionStore.knowing([
         "postgres",

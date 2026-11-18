@@ -235,7 +235,6 @@ const DatabaseBody = Schema.Struct({
   url: Schema.String.check(Schema.isPattern(/^https:\/\//))
 });
 const ErrorBody = Schema.Struct({
-  message: Schema.optionalKey(Schema.String),
   retry_after: Schema.optionalKey(Schema.Number),
   additional_data: Schema.optionalKey(
     Schema.Struct({
@@ -393,10 +392,7 @@ export const make = Effect.gen(function* () {
     const error = Option.getOrUndefined(Option.flatMap(json, decodeError));
     if (status === 403) {
       // The workspace's block limit is Notion's, not a capability the connection lacks.
-      if (
-        error?.additional_data?.limit_kind !== undefined ||
-        /block limit/i.test(error?.message ?? "")
-      )
+      if (error?.additional_data?.limit_kind !== undefined)
         return yield* new Refusal({ code: "source_unavailable", upstreamStatus: status });
       return yield* new Refusal({ code: "access_denied" });
     }
