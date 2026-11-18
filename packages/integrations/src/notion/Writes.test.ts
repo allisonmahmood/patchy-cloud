@@ -1,5 +1,8 @@
 import { assert, it } from "@effect/vitest";
-import { type NotionSnapshot } from "@patchy/api";
+import { CURRENT_RELEASE, WIRE_VERSION, type NotionSnapshot } from "@patchy/api";
+import { NodeCryptography } from "@patchy/core";
+import { ContractLimits } from "@patchy/limits";
+import { Binding } from "@patchy/runtime/core";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -8,6 +11,9 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as ConnectionStore from "../ConnectionStore.js";
+import * as ConnectionStoreDev from "../ConnectionStoreDev.js";
+import * as Operations from "./Operations.js";
 import * as Source from "./Source.js";
 import { planCreate, planRestore, planTrash, planUpdate } from "./Writes.js";
 
@@ -222,3 +228,103 @@ it.effect("never repeats an uncertain write and only reports a validated committ
     }
   })
 );
+
+it.effect("distinguishes a write that was never sent from a lost write result", () => {
+  const declaration = { kind: "notion", id: "conn_notion", handle: "probe", revision: 1 } as const;
+  const viewer = {
+    user: { id: "user", name: "Builder", email: "builder@example.test" },
+    company: { id: "company", name: "Probe", handle: "probe" },
+    admin: false
+  };
+  const metadata = ConnectionStoreDev.layer([
+    {
+      connection: {
+        ...declaration,
+        companyId: viewer.company.id,
+        integration: "notion",
+        mode: "company",
+        status: "connected",
+        display: {
+          workspace: snapshot.workspace,
+          botId: snapshot.botId,
+          access: "write",
+          keyHint: "test"
+        },
+        description: "",
+        blockGuests: false,
+        credentialRevision: 1,
+        metadataRevision: 1,
+        createdBy: viewer.user.id,
+        lastTestedAt: null,
+        lastDiscoveredAt: null
+      },
+      snapshots: [{ revision: 1, metadata: { integration: "notion", snapshot } }]
+    }
+  ]);
+
+  return Effect.gen(function* () {
+    const store = yield* ConnectionStore.ConnectionStore;
+    const credentials = Source.credentials({ key: "test", workspaceId: snapshot.workspace.id });
+    for (const preflight of [true, false]) {
+      const methods: string[] = [];
+      const client = HttpClient.make((request) =>
+        Effect.sync(() => {
+          methods.push(request.method);
+          const response =
+            request.method === "GET" && !preflight
+              ? Response.json(live)
+              : new Response("{}", { headers: { "content-length": "1025" } });
+          return HttpClientResponse.fromWeb(request, response);
+        })
+      );
+      const handlers = yield* Operations.makeHandlers.pipe(
+        Effect.provide(
+          Layer.effect(Source.Source, Source.make).pipe(
+            Layer.provide(Layer.succeed(HttpClient.HttpClient, client))
+          )
+        ),
+        Effect.provideService(ConnectionStore.ConnectionStore, {
+          ...store,
+          poolCredentials: () => Effect.succeed(credentials)
+        })
+      );
+      const failure = yield* handlers["notion.create"]
+        .run({ connection: "probe", source: "Tasks", properties: { Name: "Task" } })
+        .pipe(
+          Effect.provideService(Binding.Binding, {
+            companyId: viewer.company.id,
+            patchId: "patch",
+            versionId: "version",
+            wireVersion: WIRE_VERSION,
+            scope: "company",
+            correlationId: "notion-test",
+            principal: { userId: viewer.user.id },
+            identity: viewer,
+            reauthorize: Effect.succeed(viewer),
+            manifest: {
+              manifestVersion: 1,
+              release: CURRENT_RELEASE,
+              tier: 2,
+              tables: {},
+              files: {},
+              uses: { probe: declaration }
+            }
+          }),
+          Effect.flip
+        );
+      if (preflight) {
+        assert.deepEqual(methods, ["GET"]);
+        assert.equal(failure.code, "too_large");
+        assert.match(failure.message, /write was not sent/i);
+      } else {
+        assert.deepEqual(methods, ["GET", "POST"]);
+        assert.equal(failure.code, "unknown_outcome");
+        assert.match(failure.message, /may have been saved/i);
+      }
+    }
+  }).pipe(
+    Effect.provide(metadata),
+    Effect.provide(NodeCryptography.layer),
+    Effect.provideService(ContractLimits.overrides, { "notion.read.bytes": 1024 })
+  );
+});
