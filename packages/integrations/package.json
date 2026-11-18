@@ -25,6 +25,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@effect/ai-openai": "catalog:",
     "@electric-sql/pglite": "0.5.10",
     "@patchy/analytics": "workspace:*",
     "@patchy/api": "workspace:*",

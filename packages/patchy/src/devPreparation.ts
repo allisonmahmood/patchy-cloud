@@ -97,6 +97,11 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
         const refused = lowerTierUses(unresolved);
         if (refused !== undefined) return yield* refused;
         for (const [alias, declaration] of Object.entries(unresolved.uses)) {
+          // PROTOTYPE: model roles have no dev binding yet; publish to try them.
+          if (declaration.kind === "models")
+            return yield* new LocalError({
+              message: `patchy dev doesn't run model roles yet, so "${alias}" can't be called locally. Publish the patch to try it.`
+            });
           // PostHog, Pidgeon, Attio, IMAP and GitHub have no fixture: dev reads the real connection.
           if (
             declaration.kind === "members" ||

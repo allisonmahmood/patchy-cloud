@@ -38,6 +38,7 @@ import { PG_FLAGS, PG_PASSWORD, PG_USER } from "./postgres.js";
 import { bun, realNode } from "./runtimes.js";
 import { loadScenario, seedScenario } from "./scenario.js";
 import { FAILED, layout, writeEnv, writePlan } from "./state.js";
+import * as FakeModels from "./fakeModels.js";
 
 export class PostgresError extends Schema.TaggedError<PostgresError>()("PostgresError", {
   stage: Schema.Literals(["start", "create-database"]),
@@ -255,6 +256,9 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
   // personas secret, or Clerk's from the developer's `dev.env`), so
   // nothing exported in the agent's shell (another DATABASE_URL, a storage
   // driver, an API token) leaks in.
+  // PROTOTYPE: model calls go to a loopback fake provider; the server honours it only in development.
+  const fakeModels = yield* FakeModels.start(enqueue("models"));
+  yield* say(`models: fake provider at ${fakeModels.url} (requests logged as [models], GET /_log)`);
   yield* say(
     personas
       ? "sign-in: dev personas (no Clerk)"
@@ -278,7 +282,8 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
           PATCHY_COMPANY_DB_URL: plan.databaseUrl,
           PATCHY_STORAGE_DIR: files.storageDir,
           PATCHY_PUBLIC_BASE_URL: plan.apiUrl,
-          PATCHY_DEV_MAILBOXES: files.mailboxes
+          PATCHY_DEV_MAILBOXES: files.mailboxes,
+          PATCHY_DEV_MODELS_URL: fakeModels.url
         },
         extendEnv: false,
         stdin: "ignore",

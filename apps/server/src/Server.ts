@@ -85,6 +85,8 @@ import {
   ImapSessions,
   ImapSource,
   type ImapNetwork,
+  ModelsOperations,
+  ModelsSource,
   PatchVisibility,
   PidgeonOperations
 } from "@patchy/integrations";
@@ -367,6 +369,7 @@ const services = Layer.mergeAll(
         Effect.provideService(FileStaging.FileStaging, staging)
       );
       const github = yield* GithubOperations.makeHandlers;
+      const models = yield* ModelsOperations.makeHandlers;
       const handlers = {
         me,
         ...tables,
@@ -377,7 +380,8 @@ const services = Layer.mergeAll(
         ...pidgeon,
         ...attio,
         ...imap,
-        ...github
+        ...github,
+        ...models
       };
       // Runtime tells the streams of each admitted call, which keeps its viewer's documents active.
       const runtime = RuntimeProduction.layer(handlers).pipe(
@@ -437,6 +441,8 @@ const services = Layer.mergeAll(
           Layer.provideMerge(PostHogSource.layer),
           Layer.provideMerge(PidgeonSource.layer),
           Layer.provideMerge(AttioSource.layer),
+          // PROTOTYPE: model calls; a dev instance may point the provider at a loopback fake.
+          Layer.provideMerge(ModelsSource.layer),
           Layer.provideMerge(ImapSessions.layer.pipe(Layer.provideMerge(ImapSource.layer))),
           Layer.provideMerge(Github.layer.pipe(Layer.provide(CredentialKeys.layer)))
         )

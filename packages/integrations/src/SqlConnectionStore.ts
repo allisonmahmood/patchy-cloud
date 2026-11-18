@@ -6,6 +6,8 @@ import {
   type GithubRepository,
   GithubSnapshot,
   ImapSnapshot,
+  ModelsSnapshot,
+  OpenAiSnapshot,
   integrations,
   type Integration,
   PidgeonSnapshot,
@@ -40,6 +42,7 @@ import {
   ConnectionHandleTaken,
   ConnectInProgress,
   ConnectionInUse,
+  ConnectionMutationUnavailable,
   ConnectionNotConnected,
   ConnectionNotFound,
   ConnectionRetargetRequired,
@@ -51,6 +54,8 @@ import {
   InvalidConnectionDescription,
   InvalidConnectionHandle,
   Metadata,
+  ModelsConnection,
+  OpenAiConnection,
   PidgeonConnection,
   PostgresConnection,
   PostHogConnection,
@@ -72,6 +77,7 @@ import * as GithubAccess from "./github/Access.js";
 import * as GithubClaims from "./github/Claims.js";
 import * as GithubConnection from "./github/Connection.js";
 import * as GithubFlows from "./github/Flows.js";
+import * as ModelsSource from "./models/Source.js";
 
 const isDescription = Schema.is(Description);
 const decodeMetadata = Schema.decodeUnknownEffect(Metadata);
@@ -81,6 +87,10 @@ const encodePidgeonSnapshot = Schema.encodeSync(Schema.fromJsonString(PidgeonSna
 const encodeAttioSnapshot = Schema.encodeSync(Schema.fromJsonString(AttioSnapshot));
 const encodeImapSnapshot = Schema.encodeSync(Schema.fromJsonString(ImapSnapshot));
 const encodeGithubSnapshot = Schema.encodeSync(Schema.fromJsonString(GithubSnapshot));
+const encodeOpenAiSnapshot = Schema.encodeSync(Schema.fromJsonString(OpenAiSnapshot));
+const encodeModelsSnapshot = Schema.encodeSync(Schema.fromJsonString(ModelsSnapshot));
+const encodeOpenAiDisplay = Schema.encodeSync(Schema.fromJsonString(ModelsSource.OpenAiDisplay));
+const encodeRoleDisplay = Schema.encodeSync(Schema.fromJsonString(ModelsSource.RoleDisplay));
 const encodePostgresDisplay = Schema.encodeSync(Schema.fromJsonString(PostgresSource.Display));
 const encodePostHogDisplay = Schema.encodeSync(Schema.fromJsonString(PostHogSource.Display));
 const encodePidgeonDisplay = Schema.encodeSync(Schema.fromJsonString(PidgeonSource.Display));
@@ -101,6 +111,10 @@ const encodeSnapshot = (metadata: Metadata) => {
       return encodeImapSnapshot(metadata.snapshot);
     case "github":
       return encodeGithubSnapshot(metadata.snapshot);
+    case "openai":
+      return encodeOpenAiSnapshot(metadata.snapshot);
+    case "models":
+      return encodeModelsSnapshot(metadata.snapshot);
   }
 };
 const encodeDisplay = (target: Target) => {
@@ -117,6 +131,10 @@ const encodeDisplay = (target: Target) => {
       return encodeImapDisplay(target.display);
     case "github":
       return encodeGithubDisplay(target.display);
+    case "openai":
+      return encodeOpenAiDisplay(target.display);
+    case "models":
+      return encodeRoleDisplay(target.display);
   }
 };
 /** One mailbox login: the same host, port, security and username. */
@@ -166,8 +184,12 @@ const sameTarget = (current: Target, next: Target) =>
           : current.integration === "github"
             ? next.integration === "github" &&
               next.display.account.id === current.display.account.id
-            : next.integration === "attio" &&
-              next.display.workspace.id === current.display.workspace.id;
+            : current.integration === "openai"
+              ? next.integration === "openai"
+              : current.integration === "models"
+                ? next.integration === "models"
+                : next.integration === "attio" &&
+                  next.display.workspace.id === current.display.workspace.id;
 const secret = { credentials: Schema.String, keyId: Schema.String };
 const StoredConnection = Schema.Union([
   Schema.Struct({ ...PostgresConnection.fields, ...secret }),
@@ -175,7 +197,9 @@ const StoredConnection = Schema.Union([
   Schema.Struct({ ...PidgeonConnection.fields, ...secret }),
   Schema.Struct({ ...AttioConnection.fields, ...secret }),
   Schema.Struct({ ...ImapConnection.fields, ...secret }),
-  Schema.Struct({ ...GithubConnectionRow.fields, ...secret })
+  Schema.Struct({ ...GithubConnectionRow.fields, ...secret }),
+  Schema.Struct({ ...OpenAiConnection.fields, ...secret }),
+  Schema.Struct({ ...ModelsConnection.fields, ...secret })
 ]);
 type StoredConnection = typeof StoredConnection.Type;
 type StoredPidgeon = Extract<StoredConnection, { readonly integration: "pidgeon" }>;
@@ -1768,6 +1792,9 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         if (input.integration === "attio") return yield* attioConnect(input, report);
         if (input.integration === "imap") return yield* imapConnect(input, report);
         if (input.integration === "github") return yield* githubConnect(input, report);
+        // PROTOTYPE: model providers and roles are seeded; nothing connects them yet.
+        if (input.integration === "openai" || input.integration === "models")
+          return yield* new ConnectionMutationUnavailable({});
         const identity = {
           ...input,
           integration: input.integration,
@@ -1791,6 +1818,9 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         if (current.integration === "attio") return yield* attioReplace(input, current);
         if (current.integration === "imap") return yield* imapReplace(input, current);
         if (current.integration === "github") return yield* githubChange(input, current);
+        // PROTOTYPE: model providers and roles are seeded; nothing changes them from a page yet.
+        if (current.integration === "openai" || current.integration === "models")
+          return yield* new ConnectionMutationUnavailable({});
         const target = yield* testTarget(current.integration, input.credentials);
         if (!sameTarget(current, target)) return yield* new ConnectionRetargetRequired({});
         const encrypted = yield* keys.encrypt(current, input.credentials);
@@ -1815,6 +1845,9 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         if (current.integration === "attio") return yield* attioTest(input, current);
         if (current.integration === "imap") return yield* imapTest(input, current);
         if (current.integration === "github") return yield* githubTest(input);
+        // PROTOTYPE: model providers and roles are seeded; nothing changes them from a page yet.
+        if (current.integration === "openai" || current.integration === "models")
+          return yield* new ConnectionMutationUnavailable({});
         yield* testTarget(current.integration, yield* keys.decrypt(current, current));
         const now = yield* Clock.currentTimeMillis;
         return yield* sql.withTransaction(
@@ -1851,6 +1884,8 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         if (current.status !== "connected") return yield* new ConnectionNotConnected({});
         return yield* githubRefresh(input);
       }
+      if (current.integration === "openai" || current.integration === "models")
+        return yield* new ConnectionMutationUnavailable({});
       if (credentials === undefined && current.status !== "connected")
         return yield* new ConnectionNotConnected({});
       const secret = credentials ?? (yield* keys.decrypt(current, current));
@@ -1903,7 +1938,10 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         else if (current.integration === "attio") return yield* attioReconnect(input, current);
         else if (current.integration === "imap") return yield* imapReconnect(input, current);
         else if (current.integration === "github") return yield* githubResume(input);
-        else yield* testTarget(current.integration, yield* keys.decrypt(current, current));
+        // PROTOTYPE: a seeded provider or role resumes without a check.
+        else if (current.integration === "openai" || current.integration === "models") {
+          // nothing to test
+        } else yield* testTarget(current.integration, yield* keys.decrypt(current, current));
         const now = yield* Clock.currentTimeMillis;
         return yield* sql.withTransaction(
           Effect.gen(function* () {

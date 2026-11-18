@@ -16,6 +16,7 @@ import { PidgeonSnapshot } from "./pidgeonSnapshot.js";
 import { AttioSnapshot } from "./attioSnapshot.js";
 import { ImapSnapshot } from "./imapSnapshot.js";
 import { GithubSnapshot } from "./githubSnapshot.js";
+import { ModelsSnapshot, OpenAiSnapshot } from "./modelsSnapshot.js";
 import { RepoKind, RepoSnapshot, RepoSummary } from "./repo.js";
 import {
   HandlerDescriptors,
@@ -612,6 +613,19 @@ export const GithubDeclaration = Schema.Struct({
   ...PostgresDeclaration.fields,
   kind: Schema.Literal("github")
 });
+/** A company model role: a decision role or a text role, mapped by an admin to a model. */
+export const ModelsDeclaration = Schema.Struct({
+  ...PostgresDeclaration.fields,
+  kind: Schema.Literal("models")
+});
+/**
+ * A model provider connection. Patches never declare one: they declare a role, and the host loads
+ * the role's provider connection, so this shape names it only inside the host.
+ */
+export const OpenAiDeclaration = Schema.Struct({
+  ...PostgresDeclaration.fields,
+  kind: Schema.Literal("openai")
+});
 /** A company connection a version declares, bound to its identity and metadata revision. */
 export const ConnectionDeclaration = Schema.Union([
   PostgresDeclaration,
@@ -619,7 +633,9 @@ export const ConnectionDeclaration = Schema.Union([
   PidgeonDeclaration,
   AttioDeclaration,
   ImapDeclaration,
-  GithubDeclaration
+  GithubDeclaration,
+  ModelsDeclaration,
+  OpenAiDeclaration
 ]);
 export type ConnectionDeclaration = typeof ConnectionDeclaration.Type;
 /** Stable shared-table identity; a patch name never participates in resolution. */
@@ -712,6 +728,7 @@ export const Manifest = Schema.Struct({
       AttioDeclaration,
       ImapDeclaration,
       GithubDeclaration,
+      ModelsDeclaration,
       SharedTableDeclaration,
       SharedStoreDeclaration,
       MembersDeclaration
@@ -780,6 +797,11 @@ export const GenerationManifest = Schema.Struct({
         revision: Schema.optionalKey(Revision)
       }),
       Schema.Struct({
+        ...ModelsDeclaration.fields,
+        id: Schema.optionalKey(NonEmptyText),
+        revision: Schema.optionalKey(Revision)
+      }),
+      Schema.Struct({
         ...SharedTableDeclaration.fields,
         id: Schema.optionalKey(NonEmptyText),
         revision: Schema.optionalKey(Revision)
@@ -794,7 +816,16 @@ export const GenerationManifest = Schema.Struct({
 }).check(distinctPrimitiveNames, memberColumnsValid, Schema.makeFilter(handlerTablesValid));
 
 /** Every integration Patchy ships; a connection's handle is unique within its integration. */
-export const integrations = ["postgres", "posthog", "pidgeon", "attio", "imap", "github"] as const;
+export const integrations = [
+  "postgres",
+  "posthog",
+  "pidgeon",
+  "attio",
+  "imap",
+  "github",
+  "openai",
+  "models"
+] as const;
 export const Integration = Schema.Literals(integrations);
 export type Integration = typeof Integration.Type;
 
@@ -851,6 +882,8 @@ export const ImapConnectionDetail = Schema.Struct({
   paused: Schema.optionalKey(Schema.Struct({ at: Schema.String }))
 });
 export const GithubConnectionDetail = detail("github", GithubSnapshot.fields);
+export const OpenAiConnectionDetail = detail("openai", OpenAiSnapshot.fields);
+export const ModelsConnectionDetail = detail("models", ModelsSnapshot.fields);
 /** One connection and its current metadata, in its integration's shape. */
 export const ConnectionDetail = Schema.Union([
   PostgresConnectionDetail,
@@ -858,7 +891,9 @@ export const ConnectionDetail = Schema.Union([
   PidgeonConnectionDetail,
   AttioConnectionDetail,
   ImapConnectionDetail,
-  GithubConnectionDetail
+  GithubConnectionDetail,
+  OpenAiConnectionDetail,
+  ModelsConnectionDetail
 ]);
 export type ConnectionDetail = typeof ConnectionDetail.Type;
 
@@ -918,6 +953,11 @@ export const DeclarationMetadata = Schema.Struct({
   github: Schema.Record(
     Schema.String,
     Schema.Struct({ declaration: GithubDeclaration, snapshot: GithubSnapshot })
+  ).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
+  // As for Pidgeon: a release before model roles generates none.
+  models: Schema.Record(
+    Schema.String,
+    Schema.Struct({ declaration: ModelsDeclaration, snapshot: ModelsSnapshot })
   ).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
   // `companyWide`: whether everyone in the company can open the source, so `patchy dev`'s
   // colleague, on none of the developer's teams, can read it. A release before teams sends none,

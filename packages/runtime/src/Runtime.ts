@@ -151,7 +151,11 @@ export class TooLarge extends Schema.TaggedError<TooLarge>()("TooLarge", {
 export class Timeout extends Schema.TaggedError<Timeout>()("Timeout", {
   ...diagnostics,
   deadlineMs: Schema.Int,
-  limitId: Schema.Literals(["runtime.mutation.deadline", "integration.deadline"])
+  limitId: Schema.Literals([
+    "runtime.mutation.deadline",
+    "integration.deadline",
+    "tier2.action.deadline"
+  ])
 }) {
   readonly code = "timeout" as const;
   readonly status = 504;
@@ -308,6 +312,11 @@ export const toFailure = (error: RuntimeError): RuntimeFailure => {
 
 interface HandlerMetadata {
   readonly kind: "read" | "mutation" | "integration";
+  /**
+   * PROTOTYPE (model calls): an integration call that may use its action's remaining time rather
+   * than `integration.deadline`, cancelling at the action's own cut-off.
+   */
+  readonly deadline?: "attempt";
   readonly resource?: (args: unknown) => string | null;
   readonly rowCount?: (value: unknown) => number | null;
   /** The bytes a successful call moved, for recent calls; most calls record none. */

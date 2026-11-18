@@ -31,6 +31,19 @@ export const LimitPeak = Schema.Struct({
 });
 export type LimitPeak = typeof LimitPeak.Type;
 
+/** One model call: never its prompt, input or answer. */
+export const ModelCall = Schema.Struct({
+  op: Schema.Literals(["decide", "generate"]),
+  role: Schema.String,
+  model: Schema.String,
+  durationMs: Schema.Number,
+  inputTokens: Schema.NullOr(Schema.Number),
+  outputTokens: Schema.NullOr(Schema.Number),
+  /** `ok`, or the code it refused with. */
+  outcome: Schema.String
+});
+export type ModelCall = typeof ModelCall.Type;
+
 const attribution = {
   companyId: Schema.optionalKey(Schema.String),
   patchId: Schema.optionalKey(Schema.String),
@@ -104,7 +117,12 @@ const invocationMetrics = {
    * it, a wait refused at `execution.pool.wait` included.
    */
   companyBind: Schema.optionalKey(Schema.Literals(["bound", "spare", "launch"])),
-  bindWaitMs: Schema.optionalKey(Schema.Number)
+  bindWaitMs: Schema.optionalKey(Schema.Number),
+  /**
+   * PROTOTYPE: each model call the request made, in order: the role and the model it mapped to,
+   * how long it took, what the provider counted and how it ended. Never the prompt or the answer.
+   */
+  modelCalls: Schema.optionalKey(Schema.Array(ModelCall))
 };
 /**
  * How a content URL's document reached its reader: from the host's memory, a read it started,
@@ -539,6 +557,14 @@ export const add = (
     if (!event || event.closed) return;
     for (const [key, value] of Object.entries(fields))
       event.fields[key] = Number(event.fields[key] ?? 0) + value;
+  });
+
+/** Appends one model call to the request's event. */
+export const modelCall = (call: ModelCall): Effect.Effect<void> =>
+  Effect.map(current, (event) => {
+    if (!event || event.closed) return;
+    const calls = Array.isArray(event.fields.modelCalls) ? event.fields.modelCalls : [];
+    event.fields.modelCalls = [...calls, call];
   });
 
 export const operation = (name: string): Effect.Effect<void> =>

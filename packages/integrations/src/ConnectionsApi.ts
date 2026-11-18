@@ -109,7 +109,16 @@ export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =
                         ? {
                             hint: `The account suspended Patchy Cloud on GitHub, so every call fails source_unavailable until it's unsuspended there. patchy add ${row.integration}/${row.handle} still declares it.`
                           }
-                        : { hint: `patchy add ${row.integration}/${row.handle}` })
+                        : row.integration === "models"
+                          ? {
+                              // PROTOTYPE: a role says what it does, so an agent picks the right one.
+                              hint: `patchy add models/${row.handle} · a ${row.display.kind} role: ${row.display.kind === "decision" ? "decide" : "generate"} in actions`
+                            }
+                          : row.integration === "openai"
+                            ? {
+                                hint: "A model provider: patches declare one of its roles, models/<role>, never the provider."
+                              }
+                            : { hint: `patchy add ${row.integration}/${row.handle}` })
                 };
               }),
               ...(query.all

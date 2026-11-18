@@ -25,6 +25,7 @@ export * from "./pidgeon.js";
 export * from "./attio.js";
 export * from "./imap.js";
 export * from "./github.js";
+export * from "./models.js";
 export type { Call, Me, Operation, Route, Transport } from "./clientTransport.js";
 export { createServerClient, type ServerOnlyClient } from "./serverClient.js";
 export { isHandlerError } from "./handlerError.js";

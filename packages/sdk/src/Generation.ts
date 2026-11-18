@@ -23,6 +23,7 @@ import {
   ConnectionStore,
   Github,
   Imap,
+  Models,
   Pidgeon,
   Postgres,
   PostHog
@@ -65,12 +66,21 @@ const labels = {
   pidgeon: "Pidgeon",
   attio: "Attio",
   imap: "Email (IMAP)",
-  github: "GitHub"
+  github: "GitHub",
+  models: "Model role"
 } as const;
 export class ConnectionNotConnected extends Schema.TaggedError<ConnectionNotConnected>()(
   "SdkConnectionNotConnected",
   {
-    integration: Schema.Literals(["postgres", "posthog", "pidgeon", "attio", "imap", "github"]),
+    integration: Schema.Literals([
+      "postgres",
+      "posthog",
+      "pidgeon",
+      "attio",
+      "imap",
+      "github",
+      "models"
+    ]),
     handle: Schema.String
   }
 ) {
@@ -135,7 +145,9 @@ export class GenerationUnavailable extends Schema.TaggedError<GenerationUnavaila
 const sharedSourceErrors = (
   declaration: Exclude<
     (typeof GenerateRequest.Type)["manifest"]["uses"][string],
-    { kind: "postgres" | "posthog" | "pidgeon" | "attio" | "imap" | "github" | "members" }
+    {
+      kind: "postgres" | "posthog" | "pidgeon" | "attio" | "imap" | "github" | "models" | "members";
+    }
   >
 ) => {
   const source =
@@ -172,6 +184,7 @@ const knownSkills = [
   "patchy-attio",
   "patchy-imap",
   "patchy-github",
+  "patchy-models",
   "patchy-shared-tables",
   "patchy-shared-stores",
   "patchy-members"
@@ -317,6 +330,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
     attio: Record<string, (typeof DeclarationMetadata.Type)["attio"][string]>;
     imap: Record<string, (typeof DeclarationMetadata.Type)["imap"][string]>;
     github: Record<string, (typeof DeclarationMetadata.Type)["github"][string]>;
+    models: Record<string, (typeof DeclarationMetadata.Type)["models"][string]>;
     shared: Record<string, (typeof DeclarationMetadata.Type)["shared"][string]>;
   } = {
     postgres: Object.create(null),
@@ -325,6 +339,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
     attio: Object.create(null),
     imap: Object.create(null),
     github: Object.create(null),
+    models: Object.create(null),
     shared: Object.create(null)
   };
   const factories: Record<string, string> = Object.create(null);
@@ -335,7 +350,8 @@ export const generate = Effect.fn("Generation.generate")(function* (
       entry.kind === "pidgeon" ||
       entry.kind === "attio" ||
       entry.kind === "imap" ||
-      entry.kind === "github"
+      entry.kind === "github" ||
+      entry.kind === "models"
   )
     ? yield* connections.list(companyId, viewerId).pipe(
         Effect.mapError(
@@ -358,7 +374,8 @@ export const generate = Effect.fn("Generation.generate")(function* (
       declaration.kind === "pidgeon" ||
       declaration.kind === "attio" ||
       declaration.kind === "imap" ||
-      declaration.kind === "github"
+      declaration.kind === "github" ||
+      declaration.kind === "models"
     ) {
       const connection = available.find(
         (entry) =>
@@ -482,7 +499,24 @@ export const generate = Effect.fn("Generation.generate")(function* (
           client
         });
         skills.add("patchy-github");
-      } else {
+      } else if (stored.integration === "models") {
+        // PROTOTYPE: a role has no fixture and no dev binding yet.
+        const declared = { kind: "models" as const, ...resolved };
+        metadata.models[alias] = { declaration: declared, snapshot: stored.snapshot };
+        const output = Models.models.generate({ ...described, kind: "models" }, stored.snapshot);
+        files.set(client, output.client);
+        files.set(context, output.context);
+        uses.push({
+          alias,
+          id: resolved.id,
+          revision: resolved.revision,
+          declaration: declared,
+          skill: ".agents/skills/patchy-models/SKILL.md",
+          context,
+          client
+        });
+        skills.add("patchy-models");
+      } else if (stored.integration === "posthog") {
         // PostHog has no fixture: dev reads the real connection.
         const declared = { kind: "posthog" as const, ...resolved };
         metadata.posthog[alias] = { declaration: declared, snapshot: stored.snapshot };

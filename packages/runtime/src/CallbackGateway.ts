@@ -109,7 +109,9 @@ const connections: Readonly<Record<string, true>> = {
   "github.listPulls": true,
   "github.getPull": true,
   "github.listPullFiles": true,
-  "github.listPullReviews": true
+  "github.listPullReviews": true,
+  "models.decide": true,
+  "models.generate": true
 };
 const allowed = (kind: HandlerKind, op: string) =>
   op === "log" ||
@@ -329,11 +331,12 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
           ? effect
           : capabilities.performEffect(capability, effect);
       const now = yield* Clock.currentTimeMillis;
+      // A model call takes what's left of its action; every other integration call 15 seconds.
       const deadlineMs = Math.max(
         0,
         Math.min(
           capability.attempt.deadline - now,
-          handler.kind === "integration"
+          handler.kind === "integration" && handler.deadline !== "attempt"
             ? limits.integrationDeadline
             : handler.kind === "mutation"
               ? limits.mutationDeadline
@@ -420,9 +423,11 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
                     new Runtime.Timeout({
                       deadlineMs,
                       limitId:
-                        handler.kind === "integration"
-                          ? "integration.deadline"
-                          : "runtime.mutation.deadline"
+                        handler.deadline === "attempt"
+                          ? "tier2.action.deadline"
+                          : handler.kind === "integration"
+                            ? "integration.deadline"
+                            : "runtime.mutation.deadline"
                     })
                   )
               })

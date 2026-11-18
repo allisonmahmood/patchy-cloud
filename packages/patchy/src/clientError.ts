@@ -36,7 +36,9 @@ export const errorCodes = {
   source_rate_limited: true,
   idempotency_conflict: true,
   auth_failed: true,
-  mailbox_reset: true
+  mailbox_reset: true,
+  output_truncated: true,
+  model_refused: true
 } as const;
 export type ErrorCode = keyof typeof errorCodes;
 export type RelationIdentifier = { readonly schema: string; readonly name: string };
@@ -262,7 +264,7 @@ export type Errors<C extends ErrorCode, O extends string = string> = {
   [K in C]: PatchyError<K, O>;
 }[C];
 /** The integrations whose refusals carry their own details. */
-type Integration = "postgres" | "posthog" | "pidgeon" | "attio" | "imap" | "github";
+type Integration = "postgres" | "posthog" | "pidgeon" | "attio" | "imap" | "github" | "models";
 /**
  * An integration or one of its operations. Each names exactly one integration, so the details
  * it narrows to are never a guess.

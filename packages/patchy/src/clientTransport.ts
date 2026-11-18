@@ -32,7 +32,8 @@ export type Operation =
   | `pidgeon.${"read" | "write"}`
   | `attio.${"listRecords" | "getRecord" | "getManyRecords" | "listEntries" | "getEntry" | "listMembers"}`
   | `imap.${"listFolders" | "folderStatus" | "scanMessages" | "listMessages" | "searchMessages" | "getMessages" | "stageAttachment"}`
-  | `github.${"listRepos" | "getRepo" | "listWorkflows" | "listRuns" | "getRun" | "listJobs" | "getJobLog" | "listChecks" | "listPulls" | "getPull" | "listPullFiles" | "listPullReviews"}`;
+  | `github.${"listRepos" | "getRepo" | "listWorkflows" | "listRuns" | "getRun" | "listJobs" | "getJobLog" | "listChecks" | "listPulls" | "getPull" | "listPullFiles" | "listPullReviews"}`
+  | `models.${"decide" | "generate"}`;
 export type Call = (op: Operation, args: unknown, bytes?: Uint8Array) => Promise<unknown>;
 export interface Route {
   get(): Promise<string>;

@@ -186,6 +186,14 @@ const connectionDetailLines = (connection: typeof ConnectionDetail.Type) => {
       )
     ];
   }
+  // PROTOTYPE: a model role names its kind; a provider holds nothing patches read.
+  if (connection.integration === "models")
+    return [
+      ...lines,
+      `Kind: ${connection.snapshot.kind} (${connection.snapshot.kind === "decision" ? "decide" : "generate"} in actions)`
+    ];
+  if (connection.integration === "openai")
+    return [...lines, "A model provider: patches declare its roles, models/<role>."];
   if (connection.integration === "posthog") {
     const snapshot = connection.snapshot;
     const described = (description: string | undefined) =>

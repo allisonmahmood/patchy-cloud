@@ -9,6 +9,7 @@ catalog:
   # line: it ships Effect-patched builds of exact TypeScript versions, so it
   # moves with `typescript` instead.
   effect: 4.0.5
+  "@effect/ai-openai": 4.0.5
   "@effect/platform-node": 4.0.5
   "@effect/sql-pg": 4.0.5
   "@effect/sql-pglite": 4.0.5
@@ -30,6 +31,7 @@ pmOnFail: ignore
 # being listed here -- a stale entry here would be worse than none.
 overrides:
   effect: "catalog:"
+  "@effect/ai-openai": "catalog:"
   "@effect/platform-node": "catalog:"
   "@effect/sql-pg": "catalog:"
   "@effect/sql-pglite": "catalog:"
