@@ -686,7 +686,16 @@ export const generateProjectResponse = (
   return {
     ok: true,
     files,
-    metadata: { postgres, posthog, pidgeon, attio, imap, github: {}, shared: sharedMetadata },
+    metadata: {
+      postgres,
+      posthog,
+      pidgeon,
+      attio,
+      imap,
+      github: {},
+      notion: {},
+      shared: sharedMetadata
+    },
     uses
   };
 };

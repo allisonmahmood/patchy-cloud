@@ -401,6 +401,62 @@ export const registry = {
     refusal: null,
     overridable: false
   },
+  "notion.calls.concurrent": {
+    kind: "contract",
+    default: 3,
+    unit: "calls",
+    scope: "host",
+    measure:
+      "Notion calls per connection in a server process; excess calls wait within their deadline",
+    refusal: "busy",
+    overridable: false
+  },
+  "notion.discovery.deadline": {
+    kind: "contract",
+    default: 60000,
+    unit: "milliseconds",
+    scope: "company",
+    measure:
+      "Notion token check and all discovery requests when connecting, refreshing or replacing a token",
+    refusal: "timeout",
+    overridable: false
+  },
+  "notion.discovery.bytes": {
+    kind: "contract",
+    default: 8388608,
+    unit: "bytes",
+    scope: "company",
+    measure: "One raw Notion discovery answer and the encoded snapshot",
+    refusal: "too_large",
+    overridable: false
+  },
+  "notion.discovery.sources": {
+    kind: "contract",
+    default: 500,
+    unit: "data sources",
+    scope: "company",
+    measure: "Data sources one Notion snapshot keeps",
+    refusal: "too_large",
+    overridable: false
+  },
+  "notion.discovery.properties": {
+    kind: "contract",
+    default: 200,
+    unit: "properties",
+    scope: "company",
+    measure: "Properties discovered per Notion data source",
+    refusal: "too_large",
+    overridable: false
+  },
+  "notion.discovery.options": {
+    kind: "contract",
+    default: 1000,
+    unit: "options",
+    scope: "company",
+    measure: "Options discovered per Notion property",
+    refusal: "too_large",
+    overridable: false
+  },
   "github.connection.repositories": {
     kind: "contract",
     default: 100,

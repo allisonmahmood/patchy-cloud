@@ -22,6 +22,7 @@ import {
   GithubConnection,
   GithubSource,
   ImapSource,
+  NotionSource,
   PidgeonSource,
   PostgresSource,
   PostHogSource
@@ -46,6 +47,7 @@ const Target = Schema.Union([
   Schema.Struct({ integration: Schema.Literal("pidgeon"), display: PidgeonSource.Display }),
   Schema.Struct({ integration: Schema.Literal("attio"), display: AttioSource.Display }),
   Schema.Struct({ integration: Schema.Literal("imap"), display: ImapSource.Display }),
+  Schema.Struct({ integration: Schema.Literal("notion"), display: NotionSource.Display }),
   Schema.Struct({ integration: Schema.Literal("github"), display: GithubConnection.Display })
 ]);
 // Encoding checks a value against its schema's filters, so an invented one that breaks them fails

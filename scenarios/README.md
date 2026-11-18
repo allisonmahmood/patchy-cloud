@@ -2,6 +2,10 @@
 
 What `pnpm dev up <scenario>` builds an environment from. See `docs/DEVELOPMENT.md`, **Environments**.
 
+Run `pnpm dev up notion` for an empty Brightline instance with a fake Notion workspace.
+Sign in as Allison, connect Notion using `notion-test-internal`, and choose the handle `probe`.
+`notion-test-pat` exercises the personal-token refusal. Jordan is the builder.
+
 Each folder holds a `scenario.json`:
 
 - `company`: name and handle, and `agentAccess: true` to start the company's agent access on, turned on by the publisher, so worker agents can use its agent areas from the start. Every start seeds again, but only a company whose switch nobody has touched is turned on, so turning it off in Settings › Agent access lasts until `pnpm dev down`.

@@ -726,7 +726,7 @@ describe("patchy list", () => {
       // Connections are never filtered by the patch flags; the list names every integration
       // this release decodes.
       expect(url.searchParams.get("integrations")).toBe(
-        "postgres,posthog,pidgeon,attio,imap,github"
+        "postgres,posthog,pidgeon,attio,imap,github,notion"
       );
       respond(200, projectConnections);
     });

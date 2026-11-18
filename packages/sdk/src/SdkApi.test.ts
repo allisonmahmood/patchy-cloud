@@ -811,6 +811,7 @@ it.layer(layer)("SDK company generation", (it) => {
         attio: {},
         imap: {},
         github: {},
+        notion: {},
         shared: {}
       });
       assert.isFalse(output.files.some(({ path }) => path.startsWith("fixtures/")));
@@ -911,6 +912,7 @@ it.layer(layer)("SDK company generation", (it) => {
           attio: {},
           imap: {},
           github: {},
+          notion: {},
           shared: {}
         });
         for (const path of [

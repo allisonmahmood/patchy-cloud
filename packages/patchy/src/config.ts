@@ -299,6 +299,11 @@ export const github = <const Handle extends string>(handle: Handle) => ({
   kind: "github" as const,
   handle
 });
+/** One company's Notion connection, by handle. */
+export const notion = <const Handle extends string>(handle: Handle) => ({
+  kind: "notion" as const,
+  handle
+});
 export const sharedTable = <const Patch extends string, const Table extends string>(
   patchId: Patch,
   table: Table
@@ -323,6 +328,7 @@ export type Declaration =
   | { readonly kind: "attio"; readonly handle: string }
   | { readonly kind: "imap"; readonly handle: string }
   | { readonly kind: "github"; readonly handle: string }
+  | { readonly kind: "notion"; readonly handle: string }
   | { readonly kind: "sharedTable"; readonly patchId: string; readonly table: string }
   | { readonly kind: "sharedStore"; readonly patchId: string; readonly store: string }
   | { readonly kind: "members" };

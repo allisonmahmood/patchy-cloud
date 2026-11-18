@@ -18,8 +18,7 @@ import * as Fields from "./Fields.js";
 
 /**
  * Every integration's connect page: one Flow frame drawn from what the integration says, so
- * connecting Postgres, PostHog, Attio, Pidgeon, IMAP or GitHub differs in words and fields, never
- * layout.
+ * integrations differ in words and fields, never layout.
  * The frame owns the order, the Name section, the access list, the actions and where refusals
  * read; an integration supplies only the slots of its `ConnectSpec`.
  *
@@ -78,14 +77,20 @@ export interface ConnectSpec {
    * `form` attribute, as GitHub's sign-in buttons do, so Enter in its fields never presses them.
    */
   readonly outside?: string;
-  /** Name it: an example handle and what a description might say. */
-  readonly name: { readonly example: string; readonly describe: string };
+  /** Name it: an example handle, description prompt and any choice saved with the name. */
+  readonly name: {
+    readonly example: string;
+    readonly describe: string;
+    readonly fields?: Fields.Layout;
+  };
   /**
    * Once connected: what patches read through it, whether builders' agents read it live while
    * they build, anything more it can do, what it never does, and at most one caveat. The frame
    * writes the platform's own facts around these, the same for every integration.
    */
   readonly once: {
+    /** A title that fits what this integration makes available. */
+    readonly title?: string;
     /** "this database, as the role you gave". */
     readonly reads: string;
     /** Its dev binding reads the real connection, rather than fixtures. */
@@ -115,7 +120,8 @@ export const shows = (spec: ConnectSpec): ReadonlyArray<View.Field> => [
     ? []
     : (["address", "access"] as const)),
   "handle",
-  "description"
+  "description",
+  ...Fields.flat(spec.name.fields ?? []).map((item) => item.field)
 ];
 
 /** 1 Get it: the steps in the other system, then what to set or have. */
@@ -183,7 +189,7 @@ const nameIt = (
         placeholder: spec.describe,
         autofocus: focus && descriptionError !== undefined
       })
-  })}`;
+  })}${Fields.renderAll(spec.fields ?? [], submitted, refusal)}`;
 };
 
 /**
@@ -222,7 +228,7 @@ export const render = (input: {
         ? Fields.focused(View.feedback(notice))
         : relock;
   const once = section({
-    title: "Once connected",
+    title: spec.once.title ?? "Once connected",
     body: `${canList([
       { can: true, text: `Every member reads ${spec.once.reads} through patches that use it` },
       ...(spec.once.devReads

@@ -8,6 +8,8 @@ import {
   ImapSnapshot,
   integrations,
   type Integration,
+  type NotionAccess,
+  NotionSnapshot,
   PidgeonSnapshot,
   PostHogSnapshot
 } from "@patchy/api";
@@ -40,6 +42,7 @@ import {
   ConnectionHandleTaken,
   ConnectInProgress,
   ConnectionInUse,
+  ConnectionMutationUnavailable,
   ConnectionNotConnected,
   ConnectionNotFound,
   ConnectionRetargetRequired,
@@ -51,6 +54,7 @@ import {
   InvalidConnectionDescription,
   InvalidConnectionHandle,
   Metadata,
+  NotionConnection,
   PidgeonConnection,
   PostgresConnection,
   PostHogConnection,
@@ -66,6 +70,7 @@ import * as PostHogSource from "./posthog/Source.js";
 import * as PidgeonKeys from "./pidgeon/Keys.js";
 import * as PidgeonSource from "./pidgeon/Source.js";
 import * as AttioSource from "./attio/Source.js";
+import * as NotionSource from "./notion/Source.js";
 import * as ImapSource from "./imap/Source.js";
 import * as GithubAccess from "./github/Access.js";
 import * as GithubClaims from "./github/Claims.js";
@@ -78,12 +83,14 @@ const encodePostgresSnapshot = Schema.encodeSync(Schema.fromJsonString(Snapshot)
 const encodePostHogSnapshot = Schema.encodeSync(Schema.fromJsonString(PostHogSnapshot));
 const encodePidgeonSnapshot = Schema.encodeSync(Schema.fromJsonString(PidgeonSnapshot));
 const encodeAttioSnapshot = Schema.encodeSync(Schema.fromJsonString(AttioSnapshot));
+const encodeNotionSnapshot = Schema.encodeSync(Schema.fromJsonString(NotionSnapshot));
 const encodeImapSnapshot = Schema.encodeSync(Schema.fromJsonString(ImapSnapshot));
 const encodeGithubSnapshot = Schema.encodeSync(Schema.fromJsonString(GithubSnapshot));
 const encodePostgresDisplay = Schema.encodeSync(Schema.fromJsonString(PostgresSource.Display));
 const encodePostHogDisplay = Schema.encodeSync(Schema.fromJsonString(PostHogSource.Display));
 const encodePidgeonDisplay = Schema.encodeSync(Schema.fromJsonString(PidgeonSource.Display));
 const encodeAttioDisplay = Schema.encodeSync(Schema.fromJsonString(AttioSource.Display));
+const encodeNotionDisplay = Schema.encodeSync(Schema.fromJsonString(NotionSource.Display));
 const encodeImapDisplay = Schema.encodeSync(Schema.fromJsonString(ImapSource.Display));
 const encodeGithubDisplay = Schema.encodeSync(Schema.fromJsonString(GithubConnection.Display));
 const encodeSnapshot = (metadata: Metadata) => {
@@ -96,6 +103,8 @@ const encodeSnapshot = (metadata: Metadata) => {
       return encodePidgeonSnapshot(metadata.snapshot);
     case "attio":
       return encodeAttioSnapshot(metadata.snapshot);
+    case "notion":
+      return encodeNotionSnapshot(metadata.snapshot);
     case "imap":
       return encodeImapSnapshot(metadata.snapshot);
     case "github":
@@ -112,6 +121,8 @@ const encodeDisplay = (target: Target) => {
       return encodePidgeonDisplay(target.display);
     case "attio":
       return encodeAttioDisplay(target.display);
+    case "notion":
+      return encodeNotionDisplay(target.display);
     case "imap":
       return encodeImapDisplay(target.display);
     case "github":
@@ -165,7 +176,7 @@ const sameTarget = (current: Target, next: Target) =>
           : current.integration === "github"
             ? next.integration === "github" &&
               next.display.account.id === current.display.account.id
-            : next.integration === "attio" &&
+            : next.integration === current.integration &&
               next.display.workspace.id === current.display.workspace.id;
 const secret = { credentials: Schema.String, keyId: Schema.String };
 const StoredConnection = Schema.Union([
@@ -173,12 +184,14 @@ const StoredConnection = Schema.Union([
   Schema.Struct({ ...PostHogConnection.fields, ...secret }),
   Schema.Struct({ ...PidgeonConnection.fields, ...secret }),
   Schema.Struct({ ...AttioConnection.fields, ...secret }),
+  Schema.Struct({ ...NotionConnection.fields, ...secret }),
   Schema.Struct({ ...ImapConnection.fields, ...secret }),
   Schema.Struct({ ...GithubConnectionRow.fields, ...secret })
 ]);
 type StoredConnection = typeof StoredConnection.Type;
 type StoredPidgeon = Extract<StoredConnection, { readonly integration: "pidgeon" }>;
 type StoredAttio = Extract<StoredConnection, { readonly integration: "attio" }>;
+type StoredNotion = Extract<StoredConnection, { readonly integration: "notion" }>;
 type StoredImap = Extract<StoredConnection, { readonly integration: "imap" }>;
 type StoredGithub = Extract<StoredConnection, { readonly integration: "github" }>;
 const detailFields = {
@@ -211,6 +224,11 @@ const SnapshotDetail = Schema.Union([
   }),
   Schema.Struct({
     ...detailFields,
+    integration: Schema.Literal("notion"),
+    snapshot: Schema.NullOr(NotionSnapshot)
+  }),
+  Schema.Struct({
+    ...detailFields,
     integration: Schema.Literal("imap"),
     snapshot: Schema.NullOr(ImapSnapshot),
     // What a member is told about a pause: only when it began.
@@ -235,14 +253,11 @@ const Lookup = Schema.Struct({
 const detached = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.flatMap(Effect.forkDetach(effect), Fiber.join);
 
-/** Every integration this release ships; `knowing` makes a store of an earlier release's. */
-export const make = Effect.suspend(() => knowing(integrations));
-
 /**
  * A store that reads only `known` integrations' rows, as the release that shipped them did. Rows of
  * integrations a later release added stay hidden, so a rollback lists and shows the rest.
  */
-export const knowing = (known: ReadonlyArray<Integration>) =>
+const storeKnowing = (known: ReadonlyArray<Integration>) =>
   Effect.gen(function* () {
     const teamService = yield* Teams.Teams;
     const cryptography = yield* Cryptography.Cryptography;
@@ -252,6 +267,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
     const posthog = yield* PostHogSource.Source;
     const pidgeonSource = yield* PidgeonSource.Source;
     const attio = yield* AttioSource.Source;
+    const notion = yield* NotionSource.Source;
     const imap = yield* ImapSource.Source;
     const githubAccess = yield* GithubAccess.Access;
     const githubFlows = yield* GithubFlows.Flows;
@@ -435,6 +451,11 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
             ...row,
             snapshot: row.snapshot === null || stamp === null ? null : { ...row.snapshot, ...stamp }
           } satisfies ConnectionDetail;
+        if (row.integration === "notion")
+          return {
+            ...row,
+            snapshot: row.snapshot === null || stamp === null ? null : { ...row.snapshot, ...stamp }
+          } satisfies ConnectionDetail;
         if (row.integration === "github")
           return {
             ...row,
@@ -545,9 +566,11 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
               ? registry["pidgeon.connect.deadline"].default
               : input.integration === "attio"
                 ? registry["attio.discovery.deadline"].default
-                : input.integration === "imap"
-                  ? registry["imap.test.deadline"].default
-                  : registry["integration.deadline"].default
+                : input.integration === "notion"
+                  ? registry["notion.discovery.deadline"].default
+                  : input.integration === "imap"
+                    ? registry["imap.test.deadline"].default
+                    : registry["integration.deadline"].default
         });
         return yield* effect.pipe(
           Effect.onExit((exit) =>
@@ -1045,6 +1068,161 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       );
     });
 
+    const notionConnect = Effect.fn("ConnectionStore.notionConnect")(function* (
+      input: ConnectInput,
+      report?: (connection: Connection) => Effect.Effect<void>
+    ) {
+      return yield* claimed(
+        input,
+        Effect.gen(function* () {
+          const identity = {
+            ...input,
+            integration: "notion" as const,
+            id: yield* cryptography.internalId("conn")
+          };
+          const snapshot = yield* audited(
+            identity,
+            "notion.discover",
+            notion.inspect(input.credentials, input.notionAccess ?? "read")
+          );
+          const { workspace, botId, access } = snapshot;
+          const encrypted = yield* keys.encrypt(
+            identity,
+            NotionSource.credentials({
+              key: Redacted.value(input.credentials),
+              workspaceId: workspace.id
+            })
+          );
+          const now = yield* Clock.currentTimeMillis;
+          return yield* reportedTransaction(
+            insert(
+              identity,
+              input,
+              {
+                integration: "notion",
+                display: {
+                  workspace,
+                  botId,
+                  access,
+                  keyHint: NotionSource.keyHint(input.credentials)
+                }
+              },
+              encrypted,
+              { integration: "notion", snapshot },
+              now
+            ),
+            report
+          );
+        })
+      );
+    });
+
+    const notionSecret = (current: StoredNotion) =>
+      keys.decrypt(current, current).pipe(Effect.flatMap(NotionSource.parseCredentials));
+
+    /** A queued call must still have an active admin and the connection it started with. */
+    const notionCall = <A, E>(
+      input: Identity,
+      current: StoredNotion,
+      op: "notion.discover" | "notion.check",
+      call: Effect.Effect<A, E>
+    ) =>
+      audited(
+        { ...input, integration: "notion" },
+        op,
+        notion.withSlot(input.id, (waited) =>
+          waited
+            ? sql
+                .withTransaction(
+                  Effect.gen(function* () {
+                    yield* lockAdministrator(input);
+                    yield* lock(input, current);
+                  })
+                )
+                .pipe(Effect.provideService(SqlClient.SqlClient, sql), Effect.andThen(call))
+            : call
+        )
+      );
+
+    /** Refresh and replace use the same discovery and commit. A failed probe keeps the old token. */
+    const notionDiscover = Effect.fn("ConnectionStore.notionDiscover")(function* (
+      input: Identity,
+      current: StoredNotion,
+      replacement?: Redacted.Redacted<string>
+    ) {
+      if (replacement === undefined && current.status !== "connected")
+        return yield* new ConnectionNotConnected({});
+      const key = replacement ?? Redacted.make((yield* notionSecret(current)).key);
+      const snapshot = yield* notionCall(
+        input,
+        current,
+        "notion.discover",
+        notion.inspect(key, current.display.access, current.display.workspace.id)
+      );
+      const { workspace, botId, access } = snapshot;
+      const display = { workspace, botId, access, keyHint: NotionSource.keyHint(key) };
+      const encrypted =
+        replacement === undefined
+          ? undefined
+          : yield* keys.encrypt(
+              current,
+              NotionSource.credentials({ key: Redacted.value(key), workspaceId: workspace.id })
+            );
+      const now = yield* Clock.currentTimeMillis;
+      return yield* sql.withTransaction(
+        Effect.gen(function* () {
+          yield* lock(input, current);
+          const revision = current.metadataRevision + 1;
+          yield* writeSnapshot(input, revision, { integration: "notion", snapshot }, now);
+          yield* sql`UPDATE connections SET metadata_revision = ${revision},
+          display = ${encodeDisplay({ integration: "notion", display })},
+          last_tested_at = to_timestamp(${now / 1_000}), last_discovered_at = to_timestamp(${now / 1_000})
+          ${encrypted === undefined ? sql`` : sql`, credentials = ${encrypted.credentials}, key_id = ${encrypted.keyId}, credential_revision = credential_revision + 1`}
+          WHERE id = ${input.id} AND company_id = ${input.companyId}`;
+          return yield* get(input.companyId, input.id);
+        })
+      );
+    });
+
+    const notionCheck = Effect.fn("ConnectionStore.notionCheck")(function* (
+      input: Identity,
+      current: StoredNotion
+    ) {
+      const { key, workspaceId } = yield* notionSecret(current);
+      yield* notionCall(
+        input,
+        current,
+        "notion.check",
+        notion.check(Redacted.make(key), workspaceId)
+      );
+    });
+
+    const changeNotionAccess = Effect.fn("ConnectionStore.changeNotionAccess")(
+      (input: Identity & { readonly access: NotionAccess }) =>
+        sql.withTransaction(
+          Effect.gen(function* () {
+            const current = yield* lock(input);
+            if (current.integration !== "notion")
+              return yield* new ConnectionMutationUnavailable({});
+            if (current.display.access === input.access) return current;
+            const kept = yield* snapshot(input.companyId, input.id, current.metadataRevision);
+            if (kept.integration !== "notion") return yield* new ConnectionChanged({});
+            const revision = current.metadataRevision + 1;
+            yield* writeSnapshot(
+              input,
+              revision,
+              { ...kept, snapshot: { ...kept.snapshot, access: input.access } },
+              yield* Clock.currentTimeMillis
+            );
+            yield* sql`UPDATE connections SET metadata_revision = ${revision},
+            display = ${encodeDisplay({ integration: "notion", display: { ...current.display, access: input.access } })}
+            WHERE id = ${input.id} AND company_id = ${input.companyId}`;
+            return yield* get(input.companyId, input.id);
+          })
+        ),
+      Effect.catchTags(safe("changeNotionAccess"))
+    );
+
     // ---------- IMAP: a mailbox login, paused when its server refuses it ----------
 
     const imapSecret = (current: StoredImap) =>
@@ -1313,8 +1491,8 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
           return yield* new GithubConnection.SignInRequired({});
         return { flow: flow.value, who: flow.value.signedIn.value };
       });
-    /** The admin check, which locks the company first, as every change that consumes a flow does. */
-    const githubAdmin = (input: { readonly companyId: string; readonly userId: string }) =>
+    /** Locks the company before checking the active admin and locking the affected row. */
+    const lockAdministrator = (input: { readonly companyId: string; readonly userId: string }) =>
       Users.lockAdministrator({ companyId: input.companyId, actorId: input.userId }).pipe(
         Effect.catchTags({
           RoleForbidden: (cause) =>
@@ -1400,7 +1578,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
           return yield* githubSaved(
             input,
             Effect.gen(function* () {
-              yield* githubAdmin(input);
+              yield* lockAdministrator(input);
               const held = yield* GithubClaims.consumeFlow({
                 id: flow.id,
                 companyId: input.companyId,
@@ -1614,7 +1792,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       return yield* githubSaved(
         input,
         Effect.gen(function* () {
-          yield* githubAdmin(input);
+          yield* lockAdministrator(input);
           const held = yield* GithubClaims.consumeFlow({
             id: flow.id,
             companyId: input.companyId,
@@ -1666,7 +1844,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       const saved = yield* githubSaved(
         input,
         Effect.gen(function* () {
-          yield* githubAdmin(input);
+          yield* lockAdministrator(input);
           const held = yield* GithubClaims.consumeFlow({
             id: flow.id,
             companyId: input.companyId,
@@ -1738,6 +1916,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         if (!isDescription(input.description)) return yield* new InvalidConnectionDescription({});
         if (input.integration === "pidgeon") return yield* pidgeonConnect(input, report);
         if (input.integration === "attio") return yield* attioConnect(input, report);
+        if (input.integration === "notion") return yield* notionConnect(input, report);
         if (input.integration === "imap") return yield* imapConnect(input, report);
         if (input.integration === "github") return yield* githubConnect(input, report);
         const identity = {
@@ -1904,6 +2083,8 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         const current = yield* stored(input);
         if (current.integration === "pidgeon") return yield* pidgeonReplace(input);
         if (current.integration === "attio") return yield* attioReplace(input, current);
+        if (current.integration === "notion")
+          return yield* notionDiscover(input, current, input.credentials);
         if (current.integration === "imap") return yield* imapReplace(input, current);
         if (current.integration === "github") return yield* githubChange(input, current);
         const target = yield* testTarget(current.integration, input.credentials);
@@ -1949,7 +2130,8 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         if (current.integration === "attio") return yield* attioTest(input, current);
         if (current.integration === "imap") return yield* imapTest(input, current);
         if (current.integration === "github") return yield* githubTest(input);
-        yield* testTarget(current.integration, yield* keys.decrypt(current, current));
+        if (current.integration === "notion") yield* notionCheck(input, current);
+        else yield* testTarget(current.integration, yield* keys.decrypt(current, current));
         const now = yield* Clock.currentTimeMillis;
         return yield* sql.withTransaction(
           Effect.gen(function* () {
@@ -2010,6 +2192,10 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       if (current.integration === "attio") {
         if (credentials !== undefined) return yield* new ConnectionRetargetUnavailable({});
         return yield* attioRefresh(input, current);
+      }
+      if (current.integration === "notion") {
+        if (credentials !== undefined) return yield* new ConnectionRetargetUnavailable({});
+        return yield* notionDiscover(input, current);
       }
       // Another mailbox is another connection.
       if (current.integration === "imap") {
@@ -2075,6 +2261,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
             Effect.provideService(Cryptography.Cryptography, cryptography)
           );
         else if (current.integration === "attio") return yield* attioReconnect(input, current);
+        else if (current.integration === "notion") yield* notionCheck(input, current);
         else if (current.integration === "imap") return yield* imapReconnect(input, current);
         else if (current.integration === "github") return yield* githubResume(input);
         else yield* testTarget(current.integration, yield* keys.decrypt(current, current));
@@ -2471,6 +2658,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       rotate,
       retarget,
       refresh,
+      changeNotionAccess,
       disconnect,
       reconnect,
       describe,
@@ -2484,6 +2672,16 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       pauseLogin
     });
   });
+
+export const knowing = (known: ReadonlyArray<Integration>) =>
+  storeKnowing(known).pipe(Effect.provide(NotionSource.layer));
+
+export const make = Effect.suspend(() => knowing(integrations));
+
+export const layerWithoutNotion = Layer.effect(
+  ConnectionStore.ConnectionStore,
+  Effect.suspend(() => storeKnowing(integrations))
+);
 
 export const layer = Layer.effect(ConnectionStore.ConnectionStore, make);
 

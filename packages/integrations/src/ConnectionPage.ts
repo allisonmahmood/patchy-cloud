@@ -25,6 +25,7 @@ import * as ImapPage from "./imap/Page.js";
 import * as GithubFlows from "./github/Flows.js";
 import * as GithubPage from "./github/Page.js";
 import * as GithubSource from "./github/Source.js";
+import * as NotionPage from "./notion/Page.js";
 
 /** A page to read. */
 export type Target =
@@ -113,7 +114,8 @@ const pages: { readonly [K in Integration]: IntegrationPage } = {
   pidgeon: PidgeonPage,
   attio: AttioPage,
   imap: ImapPage,
-  github: GithubPage
+  github: GithubPage,
+  notion: NotionPage
 };
 /**
  * The integrations this instance offers, in order: GitHub only while its App is configured, so
@@ -200,6 +202,13 @@ const about = (
         access: GithubPage.allowed(connection),
         attention: GithubPage.attention(connection, people, now)
       };
+    case "notion":
+      return {
+        source: NotionPage.source(connection),
+        facts: NotionPage.facts(connection),
+        credential: NotionPage.credential(connection),
+        access: NotionPage.allowed(connection)
+      };
   }
 };
 /** What a snapshot lets patches read, in its integration's words. */
@@ -214,7 +223,9 @@ const readsOf = (metadata: ConnectionStore.Metadata) =>
           ? ImapPage.reads(metadata.snapshot)
           : metadata.integration === "github"
             ? GithubPage.reads(metadata.snapshot)
-            : PidgeonPage.reads(metadata.snapshot);
+            : metadata.integration === "notion"
+              ? NotionPage.reads(metadata.snapshot)
+              : PidgeonPage.reads(metadata.snapshot);
 
 /** The field each refusal is about, when it is about one. */
 const refusedField = (page: IntegrationPage, code: string | undefined): View.Field | undefined =>
@@ -1032,6 +1043,10 @@ const connect = Effect.fn("ConnectionPage.connect")(function* (
   if (form === null) return yield* refused(unreadable);
   return yield* Effect.gen(function* () {
     const fields = yield* decodeConnect(form);
+    const notionAccess =
+      integration === "notion" && NotionPage.isAccess(form.access) ? form.access : undefined;
+    if (integration === "notion" && notionAccess === undefined)
+      return yield* refused(NotionPage.invalidAccess);
     const credentials = page.credentials(
       integration === "github" ? withTicks(submitted, form) : submitted
     );
@@ -1043,7 +1058,8 @@ const connect = Effect.fn("ConnectionPage.connect")(function* (
         userId: viewer.user.id,
         handle: fields.handle,
         description: fields.description,
-        credentials
+        credentials,
+        ...(notionAccess === undefined ? {} : { notionAccess })
       },
       yield* reporter(viewer, "connection.connected")
     );
@@ -1053,7 +1069,17 @@ const connect = Effect.fn("ConnectionPage.connect")(function* (
       redirect: `${View.connectionPath(connection.id)}?result=connect`
     } satisfies Page;
   }).pipe(
-    Effect.catch((error) => refused(error._tag === "SchemaError" ? incomplete : refusal(error)))
+    Effect.catch((error) =>
+      refused(
+        error._tag === "SchemaError"
+          ? incomplete
+          : error._tag === "NotionRefusal" &&
+              error.code === "source_unavailable" &&
+              error.upstreamStatus === 401
+            ? { ...refusal(error), field: "key" }
+            : refusal(error)
+      )
+    )
   );
 });
 
@@ -1120,14 +1146,19 @@ const act = Effect.fn("ConnectionPage.act")(function* (
     let integration: Integration | undefined;
     if (kind === "rotate" || kind === "retarget" || kind === "access") {
       const current = yield* store.get(viewer.company.id, id);
-      // Replacing credentials keeps where they point; pointing elsewhere names it anew.
-      const credentials = pages[current.integration].credentials(
-        current.integration === "github" ? withTicks(submitted, form) : submitted,
-        kind === "retarget" ? undefined : current
-      );
-      if (!Redacted.isRedacted(credentials)) return yield* refused(credentials);
-      if (kind === "retarget") yield* store.retarget({ ...input, credentials });
-      else yield* store.rotate({ ...input, credentials });
+      if (kind === "access" && current.integration === "notion") {
+        if (!NotionPage.isAccess(form.access)) return yield* refused(NotionPage.invalidAccess);
+        yield* store.changeNotionAccess({ ...input, access: form.access });
+      } else {
+        // Replacing credentials keeps where they point; pointing elsewhere names it anew.
+        const credentials = pages[current.integration].credentials(
+          current.integration === "github" ? withTicks(submitted, form) : submitted,
+          kind === "retarget" ? undefined : current
+        );
+        if (!Redacted.isRedacted(credentials)) return yield* refused(credentials);
+        if (kind === "retarget") yield* store.retarget({ ...input, credentials });
+        else yield* store.rotate({ ...input, credentials });
+      }
     } else if (kind === "audience") {
       const audience: ConnectionStore.Audience | undefined =
         chosen.kind === "company"
@@ -1189,7 +1220,16 @@ const act = Effect.fn("ConnectionPage.act")(function* (
               }
             : error._tag === "SqlError"
               ? { message: "Company service unavailable.", code: "source_unavailable", status: 503 }
-              : refusal(error)
+              : error._tag === "NotionRefusal" &&
+                  error.code === "source_unavailable" &&
+                  error.upstreamStatus === 401
+                ? kind === "rotate"
+                  ? { ...refusal(error), field: "key" }
+                  : {
+                      ...refusal(error),
+                      next: { href: View.connectionPath(id, "rotate"), label: "Replace token…" }
+                    }
+                : refusal(error)
       )
     )
   );

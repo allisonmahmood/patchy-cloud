@@ -85,6 +85,7 @@ import {
   ImapSessions,
   ImapSource,
   type ImapNetwork,
+  NotionSource,
   PatchVisibility,
   PidgeonOperations
 } from "@patchy/integrations";
@@ -432,7 +433,7 @@ const services = Layer.mergeAll(
       // App comes from the host's settings: empty, GitHub isn't offered; partly filled, the
       // server refuses to start.
       Layer.provideMerge(
-        SqlConnectionStore.layer.pipe(
+        SqlConnectionStore.layerWithoutNotion.pipe(
           Layer.provide([CredentialKeys.layer, PostgresSource.layer, Teams.layer]),
           Layer.provideMerge(PostHogSource.layer),
           Layer.provideMerge(PidgeonSource.layer),
@@ -577,7 +578,7 @@ const app = Layer.mergeAll(
  * The server: serving the app, sweeping, and closing both with the scope. Its runtime and guest
  * grants are the ones a test drives besides the socket.
  */
-export const layer = Layer.mergeAll(
+const withoutNotion = Layer.mergeAll(
   HttpRouter.serve(app, { disableLogger: true, disableListenLog: true }).pipe(
     Layer.provide([ownedPatches, companyGuests, teamReach, PortalPages.navigation])
   ),
@@ -586,3 +587,8 @@ export const layer = Layer.mergeAll(
     Effect.context<Runtime.Runtime | RuntimeStream.RuntimeStream | GuestGrants.GuestGrants>()
   )
 ).pipe(Layer.provide(services));
+
+export const withNotion = <E>(notion: Layer.Layer<NotionSource.Source, E>) =>
+  withoutNotion.pipe(Layer.provide(notion));
+
+export const layer = withNotion(NotionSource.layer);

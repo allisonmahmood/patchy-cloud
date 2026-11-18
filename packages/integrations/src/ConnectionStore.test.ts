@@ -15,6 +15,7 @@ import * as CredentialKeys from "./CredentialKeys.js";
 import { Snapshot } from "@patchy/api/postgres-snapshot";
 import * as Source from "./postgres/Source.js";
 import * as SourceClient from "./postgres/SourceClient.js";
+import * as NotionDouble from "./test/notion.js";
 import * as PostHogDouble from "./test/posthog.js";
 import * as PidgeonSource from "./pidgeon/Source.js";
 import * as AttioSource from "./attio/Source.js";
@@ -79,7 +80,7 @@ const product = {
 /** Another project, reached by its own key. */
 const other = { ...product, id: 999, key: "phx_otherProjectKey01" } satisfies PostHogDouble.Project;
 const posthog = PostHogDouble.make(PostHogDouble.project(product, other));
-const fixture = SqlConnectionStore.layer.pipe(
+const fixture = SqlConnectionStore.layerWithoutNotion.pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       CredentialKeys.layerFromKeys(Redacted.make(`old:${oldKey}`)),
@@ -88,6 +89,7 @@ const fixture = SqlConnectionStore.layer.pipe(
       posthog.layer,
       PidgeonSource.layer,
       AttioSource.layer,
+      NotionDouble.layer,
       ImapTest.offline,
       GithubTest.unconfigured
     )
@@ -98,6 +100,74 @@ const fixture = SqlConnectionStore.layer.pipe(
 );
 
 it.layer(fixture)("ConnectionStore", (it) => {
+  it.effect("keeps Notion discovery atomic and revisions immutable through its lifecycle", () =>
+    Effect.gen(function* () {
+      const store = yield* ConnectionStore.ConnectionStore;
+      const request = {
+        ...who,
+        integration: "notion" as const,
+        handle: "notion-probe",
+        description: "Probe workspace",
+        notionAccess: "read" as const
+      };
+      const connect = (token: string) =>
+        store.connect({
+          ...request,
+          credentials: Redacted.make(token)
+        });
+      const refused = yield* connect(NotionDouble.personalToken).pipe(Effect.flip);
+      assert.equal(refused.code, "notion_not_workspace_key");
+      assert.isFalse(
+        (yield* store.list(who.companyId)).some((row) => row.handle === request.handle)
+      );
+
+      const connection = yield* connect(NotionDouble.internalToken);
+      const target = identity(connection);
+      const first = yield* store.snapshot(who.companyId, connection.id, 1);
+      if (first.integration !== "notion") return assert.fail("Expected a Notion snapshot");
+      assert.equal(first.snapshot.dataSources.length, 2);
+
+      const failedReplacement = yield* store
+        .rotate({
+          ...target,
+          credentials: Redacted.make(NotionDouble.personalToken)
+        })
+        .pipe(Effect.flip);
+      assert.equal(failedReplacement.code, "notion_not_workspace_key");
+      assert.equal((yield* store.refresh(target)).metadataRevision, 2);
+      assert.equal(
+        (yield* store.changeNotionAccess({ ...target, access: "write" })).metadataRevision,
+        3
+      );
+      assert.equal(
+        (yield* store.changeNotionAccess({ ...target, access: "read" })).metadataRevision,
+        4
+      );
+      assert.deepStrictEqual(yield* store.snapshot(who.companyId, connection.id, 1), first);
+      assert.equal((yield* store.disconnect(target)).status, "disconnected");
+      assert.equal((yield* store.refresh(target).pipe(Effect.flip))._tag, "ConnectionNotConnected");
+      assert.equal((yield* store.reconnect(target)).id, connection.id);
+
+      const before = yield* SqlConnectionStore.knowing([
+        "postgres",
+        "posthog",
+        "pidgeon",
+        "attio",
+        "imap",
+        "github"
+      ]);
+      assert.notInclude(
+        (yield* before.list(who.companyId)).map((row) => row.id),
+        connection.id
+      );
+      assert.equal(
+        (yield* before.get(who.companyId, connection.id).pipe(Effect.flip))._tag,
+        "ConnectionNotFound"
+      );
+      yield* store.delete(target);
+      assert.isFalse((yield* store.list(who.companyId)).some((row) => row.id === connection.id));
+    })
+  );
   it.effect(
     "a connection's teams decide who builds with it, by recorded membership even once deactivated",
     () =>

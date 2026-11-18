@@ -724,7 +724,7 @@ Personal-connection credentials and the takedown of owner-only patches wait for 
 
 ### Integrations and connections
 
-Patchy ships the **integration** — today Postgres, PostHog, Pidgeon, Attio, Email (IMAP) and GitHub — as a company-scoped capability. A **connection** is the live, credentialed instance an admin connects for their company. Patches declare connections, not an integration in the abstract, and never receive their credentials. Personal connections are a future extension of this model; the implemented connect flow and its limits are spelled out under [Integrations](#integrations).
+Patchy ships the **integration** — today Postgres, PostHog, Pidgeon, Attio, Email (IMAP), GitHub and Notion — as a company-scoped capability. A **connection** is the live, credentialed instance an admin connects for their company. Patches declare connections, not an integration in the abstract, and never receive their credentials. Personal connections are a future extension of this model; the implemented connect flow and its limits are spelled out under [Integrations](#integrations).
 
 **Integrations**, at `/settings/integrations`, is one table of the company's connections across
 integrations: each row is titled with the name agents type (`postgres/warehouse`) beside its
@@ -1190,7 +1190,7 @@ connected by someone GitHub shows administering them, and patches read their CI
 runs, job logs, check runs and pull requests. Other integrations and personal
 connections remain planned.
 
-An **integration** is a capability Patchy builds and maintains, the same for every company. Postgres was the first, PostHog the second, Pidgeon the third, the first that can write, Attio the fourth, Email (IMAP) the fifth and GitHub the sixth; Salesforce and Gmail are examples of future integrations, not offered connections. A **connection** is the live, credentialed instance of an integration. That distinction was drawn with [Companies](#integrations-and-connections); this section is the layer itself — how a connection comes to exist, how a patch declares and uses one, and what patch code is actually handed.
+An **integration** is a capability Patchy builds and maintains, the same for every company. Postgres was the first, PostHog the second, Pidgeon the third, the first that can write, Attio the fourth, Email (IMAP) the fifth GitHub the sixth and Notion the seventh; Salesforce and Gmail are examples of future integrations, not offered connections. A **connection** is the live, credentialed instance of an integration. That distinction was drawn with [Companies](#integrations-and-connections); this section is the layer itself — how a connection comes to exist, how a patch declares and uses one, and what patch code is actually handed.
 
 Integrations sit inside the **primitive** model. **Patch-scoped** primitives — the patch's own tables and file stores — are defined in config and provisioned with the patch. **Company-scoped** primitives — connections and the database those tables live in — are shared infrastructure, never owned by a consuming patch. A table remains patch-owned wherever it physically lives. Connections and shared tables are declared dependencies; omitting a definition does not delete its provisioned resources.
 
@@ -1460,6 +1460,22 @@ retries, refusals and held sends included. Past it a send fails
 connection page shows today's count. Recent calls name each send's subject and
 recipients, each reply's message and CC, each triage's status or label and each
 read's ids, never a body or search text.
+
+### Connecting Notion
+
+A company admin connects a workspace-owned internal connection under Settings → Integrations.
+Patchy checks the token's workspace and bot identity before discovering data sources and
+saving the encrypted credential. Notion personal access tokens belong to individual users.
+
+Share each database directly in Notion. The Overview shows the data sources and properties the
+connection discovered, including status options and relation targets in its metadata. Search
+can take time to find newly shared databases. Refresh creates a new schema revision, and a
+replacement token must belong to the same workspace. The access setting is Read or Read and
+write. Changing it creates a new revision with the same token.
+
+A builder runs `patchy add notion/<handle>` in a tier 2 repo to add the declaration and
+schema context. This release provides discovery metadata. Operations on Notion content
+arrive in later releases.
 
 ### Connecting Attio
 

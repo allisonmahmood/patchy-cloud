@@ -85,6 +85,7 @@ it.live(
           attio: {},
           imap: {},
           github: {},
+          notion: {},
           shared: {}
         }
       };
