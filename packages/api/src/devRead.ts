@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 import { attioReads } from "./attio.js";
 import { githubReads } from "./github.js";
+import { notionReads } from "./notion.js";
 import { imapReads, imapStageAttachment } from "./imap.js";
 import { FileContentType } from "./schemas.js";
 import { PidgeonDevRead } from "./pidgeon.js";
@@ -72,6 +73,11 @@ export const DevRead = Schema.Union([
     op: Schema.Literal("pidgeon.read"),
     connection: DevReadConnection,
     args: PidgeonDevRead
+  }),
+  Schema.Struct({
+    op: Schema.Literal("notion.listRows"),
+    connection: DevReadConnection,
+    args: notionReads.listRows.input
   }),
   attio("listRecords"),
   attio("getRecord"),

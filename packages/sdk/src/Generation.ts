@@ -24,6 +24,7 @@ import {
   ConnectionStore,
   Github,
   Imap,
+  Notion,
   Pidgeon,
   Postgres,
   PostHog
@@ -174,6 +175,7 @@ const knownSkills = [
   "patchy-attio",
   "patchy-imap",
   "patchy-github",
+  "patchy-notion",
   "patchy-shared-tables",
   "patchy-shared-stores",
   "patchy-members"
@@ -455,20 +457,20 @@ export const generate = Effect.fn("Generation.generate")(function* (
         skills.add("patchy-imap");
       } else if (stored.integration === "notion") {
         const declared = { kind: "notion" as const, ...resolved };
-        const snapshot = stored.snapshot;
-        const { workspace, access, dataSources, exclusions } = snapshot;
-        metadata.notion[alias] = { declaration: declared, snapshot };
-        files.set(
-          context,
-          `# Notion connection ${connection.handle}\n\nSchema and access from snapshot revision ${resolved.revision}. This declaration provides discovery context only. To pick up changes, ask an admin to refresh the connection, then run patchy refresh.\n\n\`\`\`json\n${json({ workspace, access, dataSources, exclusions })}\`\`\`\n`
-        );
+        metadata.notion[alias] = { declaration: declared, snapshot: stored.snapshot };
+        const output = Notion.generate(declared, stored.snapshot);
+        files.set(client, output.client);
+        files.set(context, output.context);
         uses.push({
           alias,
           id: resolved.id,
           revision: resolved.revision,
           declaration: declared,
-          context
+          skill: ".agents/skills/patchy-notion/SKILL.md",
+          context,
+          client
         });
+        skills.add("patchy-notion");
       } else if (stored.integration === "github") {
         // GitHub has no fixture: invented CI runs and pull requests never resemble a company's,
         // so dev reads the real repositories.

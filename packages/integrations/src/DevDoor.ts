@@ -41,6 +41,7 @@ export class KeyRefused extends Schema.TaggedError<KeyRefused>()("DevDoorKeyRefu
 const integrations: Readonly<Record<DevRead["op"] | DevAttachment["op"], string>> = {
   "posthog.query": "PostHog",
   "pidgeon.read": "Pidgeon",
+  "notion.listRows": "Notion",
   "attio.listRecords": "Attio",
   "attio.getRecord": "Attio",
   "attio.getManyRecords": "Attio",
@@ -75,6 +76,7 @@ export class InstanceUnavailable extends Schema.TaggedError<InstanceUnavailable>
     op: Schema.Literals([
       "posthog.query",
       "pidgeon.read",
+      "notion.listRows",
       "attio.listRecords",
       "attio.getRecord",
       "attio.getManyRecords",

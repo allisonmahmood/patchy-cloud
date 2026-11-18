@@ -1473,9 +1473,18 @@ can take time to find newly shared databases. Refresh creates a new schema revis
 replacement token must belong to the same workspace. The access setting is Read or Read and
 write. Changing it creates a new revision with the same token.
 
-A builder runs `patchy add notion/<handle>` in a tier 2 repo to add the declaration and
-schema context. This release provides discovery metadata. Operations on Notion content
-arrive in later releases.
+A builder runs `patchy add notion/<handle>` in a tier 2 repo to add the typed client and
+schema context. Actions use the connection through `ctx.connections`.
+
+### Reading Notion
+
+A data source's `list` returns a page of rows and a cursor. Filter and projection names
+come from the generated client. Patchy resolves them by property id against the saved
+snapshot. Renames keep working. A missing or retyped property is refused by name.
+A cursor belongs to the connection, snapshot, data source, filters and order.
+
+The same reads run through the instance during `patchy dev`. The host keeps the
+Notion token and checks who can use the connection before calling Notion.
 
 ### Connecting Attio
 
@@ -2112,10 +2121,10 @@ Each integration chooses its **dev binding**
 fixtures or a fake, never live source rows or production credentials. An
 integration whose fixtures wouldn't resemble production reads the real connection
 in dev instead, and its connect page's Once connected says so; writes never run live in dev.
-Postgres keeps fixtures; PostHog, Pidgeon and Attio read live.
+Postgres keeps fixtures; PostHog, Pidgeon, Attio, and Notion read live.
 
-**Dev reads.** PostHog, Pidgeon and Attio have no fixture. `patchy dev` sends each
-PostHog query, each Pidgeon read and each Attio read to the instance as the machine token's
+**Dev reads.** PostHog, Pidgeon, Attio, and Notion have no fixture. `patchy dev` sends
+these reads to the instance as the machine token's
 person, for either local viewer; the instance runs it with the connection's own
 key, which never leaves it. The instance takes the company, person and machine
 from the token on every call, and again after any wait for one of the project's,
@@ -2124,7 +2133,7 @@ only routes the call: it must name a connected connection of the token's company
 Only reads the integration opts into run this way, under the runtime's argument
 and result bounds, its deadline, draining and a per-person rate limit across
 integrations. A Pidgeon dev read checks what comes back against the address and
-keeps held mail empty, as a published read does. An Attio dev read carries the
+keeps held mail empty, as a published read does. An Attio or Notion dev read carries the
 revision the repo was generated from, and the instance decodes by that snapshot of
 that connection, so a client generated before a Refresh reads as generated; a
 revision of another connection isn't found. Each read, refused or not, is a

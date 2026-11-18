@@ -411,6 +411,33 @@ export const registry = {
     refusal: "busy",
     overridable: false
   },
+  "notion.read.bytes": {
+    kind: "contract",
+    default: 8 * 1024 * 1024,
+    scope: "host",
+    unit: "bytes",
+    measure: "Decoded Notion responses collected for one read, including follow-up requests",
+    refusal: "too_large",
+    overridable: false
+  },
+  "notion.read.propertyItems": {
+    kind: "contract",
+    default: 1000,
+    scope: "host",
+    unit: "items",
+    measure: "Notion property items collected through follow-up requests for one read",
+    refusal: "too_large",
+    overridable: false
+  },
+  "runtime.notion.bytes": {
+    kind: "contract",
+    default: 64 * 1024,
+    scope: "patch",
+    unit: "bytes",
+    measure: "Arguments to one Notion read",
+    refusal: "too_large",
+    overridable: true
+  },
   "notion.discovery.deadline": {
     kind: "contract",
     default: 60000,

@@ -30,6 +30,7 @@ export type Operation =
   | `postgres.${"get" | "getMany" | "list" | "query"}`
   | "posthog.query"
   | `pidgeon.${"read" | "write"}`
+  | "notion.listRows"
   | `attio.${"listRecords" | "getRecord" | "getManyRecords" | "listEntries" | "getEntry" | "listMembers"}`
   | `imap.${"listFolders" | "folderStatus" | "scanMessages" | "listMessages" | "searchMessages" | "getMessages" | "stageAttachment"}`
   | `github.${"listRepos" | "getRepo" | "listWorkflows" | "listRuns" | "getRun" | "listJobs" | "getJobLog" | "listChecks" | "listPulls" | "getPull" | "listPullFiles" | "listPullReviews"}`;

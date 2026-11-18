@@ -41,6 +41,8 @@ import * as ConnectionStore from "./ConnectionStore.js";
 import { attio } from "./attio/index.js";
 import * as AttioOperations from "./attio/Operations.js";
 import * as AttioSource from "./attio/Source.js";
+import * as NotionOperations from "./notion/Operations.js";
+import * as NotionSource from "./notion/Source.js";
 import { imap } from "./imap/index.js";
 import * as ImapOperations from "./imap/Operations.js";
 import * as ImapSessions from "./imap/Sessions.js";
@@ -92,23 +94,26 @@ export class ConnectionNotConnected extends Schema.TaggedError<ConnectionNotConn
  * Only what a definition's `live` names reaches this door: every Postgres operation and every
  * Pidgeon write is refused.
  */
-const live = new Set(
-  [postgres, posthog, pidgeon, attio, imap, github].flatMap((integration) =>
+const live = new Set([
+  ...[postgres, posthog, pidgeon, attio, imap, github].flatMap((integration) =>
     (integration.live ?? []).map((operation) => `${integration.name}.${operation}`)
-  )
-);
+  ),
+  ...Object.keys(NotionOperations.devReads)
+]);
 const runners: {
   readonly [
     Op in
       | "posthog.query"
       | "pidgeon.read"
       | keyof typeof AttioOperations.devReads
+      | keyof typeof NotionOperations.devReads
       | keyof typeof ImapOperations.devReads
       | keyof typeof GithubOperations.devReads
   ]: DevRead<
     | PostHogSource.Source
     | PidgeonSource.Source
     | AttioSource.Source
+    | NotionSource.Source
     | ImapSessions.Sessions
     | GithubAccess.Access
     | Cryptography.Cryptography
@@ -117,6 +122,7 @@ const runners: {
   ...PostHogOperations.devReads,
   ...PidgeonOperations.devReads,
   ...AttioOperations.devReads,
+  ...NotionOperations.devReads,
   ...ImapOperations.devReads,
   ...GithubOperations.devReads
 };
@@ -148,6 +154,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
     const posthogSource = yield* PostHogSource.Source;
     const pidgeonSource = yield* PidgeonSource.Source;
     const attioSource = yield* AttioSource.Source;
+    const notionSource = yield* NotionSource.Source;
     const imapSessions = yield* ImapSessions.Sessions;
     const githubAccess = yield* GithubAccess.Access;
     const settings = yield* Effect.all({
@@ -186,6 +193,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
             | PostHogSource.Source
             | PidgeonSource.Source
             | AttioSource.Source
+            | NotionSource.Source
             | ImapSessions.Sessions
             | GithubAccess.Access
             | Cryptography.Cryptography
@@ -275,6 +283,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
             Effect.provideService(PostHogSource.Source, posthogSource),
             Effect.provideService(PidgeonSource.Source, pidgeonSource),
             Effect.provideService(AttioSource.Source, attioSource),
+            Effect.provideService(NotionSource.Source, notionSource),
             Effect.provideService(ImapSessions.Sessions, imapSessions),
             Effect.provideService(GithubAccess.Access, githubAccess),
             Effect.provideService(Cryptography.Cryptography, cryptography),

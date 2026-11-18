@@ -14,6 +14,7 @@ import {
   ConnectionStoreDev,
   DevDoor,
   AttioDev,
+  NotionDev,
   GithubDev,
   ImapDev,
   PidgeonDev,
@@ -308,6 +309,7 @@ const make = Effect.fn("DevResources.make")(function* (
     // through the instance, and Pidgeon's writes are simulated here, reaching neither.
     ...(yield* PostHogDev.handlers(options.instance)),
     ...(yield* AttioDev.handlers(options.instance)),
+    ...(yield* NotionDev.handlers(options.instance)),
     ...(yield* ImapDev.handlers(options.instance, yield* Files.makeStagingLocal)),
     ...(yield* GithubDev.handlers(options.instance)),
     ...(yield* PidgeonDev.handlers(

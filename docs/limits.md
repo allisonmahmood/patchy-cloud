@@ -60,6 +60,9 @@ Host-wide limits cannot have company overrides. Per-company admission counters r
 | `attio.discovery.optionRequests` | contract | 2000 | requests | company | Requests an Attio discovery may have sent and still read options; past it, the rest are skipped and marked | None | No | release |
 | `attio.discovery.optionDeadline` | contract | 45000 | milliseconds | company | Time into an Attio discovery after which it reads no more options; the rest are skipped and marked | None | No | release |
 | `notion.calls.concurrent` | contract | 3 | calls | host | Notion calls per connection in a server process; excess calls wait within their deadline | `busy` | No | release |
+| `notion.read.bytes` | contract | 8388608 | bytes | host | Decoded Notion responses collected for one read, including follow-up requests | `too_large` | No | release |
+| `notion.read.propertyItems` | contract | 1000 | items | host | Notion property items collected through follow-up requests for one read | `too_large` | No | release |
+| `runtime.notion.bytes` | contract | 65536 | bytes | patch | Arguments to one Notion read | `too_large` | Yes | release |
 | `notion.discovery.deadline` | contract | 60000 | milliseconds | company | Notion token check and all discovery requests when connecting, refreshing or replacing a token | `timeout` | No | release |
 | `notion.discovery.bytes` | contract | 8388608 | bytes | company | One raw Notion discovery answer and the encoded snapshot | `too_large` | No | release |
 | `notion.discovery.sources` | contract | 500 | data sources | company | Data sources one Notion snapshot keeps | `too_large` | No | release |

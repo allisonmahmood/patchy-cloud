@@ -15,7 +15,7 @@ export const actions: View.Actions = {
   rotate: "Replace token",
   access: "Change access"
 };
-export const logged = "Only connection checks and discovery are available in this release.";
+export const logged = "Recent reads show the operation, data source, and property names.";
 export const results = {
   connect: "Notion connected and its data sources discovered.",
   rotate: "Token replaced and the workspace discovered again.",
@@ -69,14 +69,10 @@ export const connect: ConnectFrame.ConnectSpec = {
   paste: { title: "Paste the token", fields: [token] },
   name: { example: "probe", describe: "Tasks and team pages", fields: [accessField] },
   once: {
-    title: "When patch access is available",
-    reads: "everything shared with this connection",
+    reads: "rows in data sources shared with this connection through Tier 2 actions",
     devReads: true,
-    also: [
-      "With write access, patches can add, change and trash rows. Changes can notify people or trigger Notion automations and webhooks. Trashing or restoring a row doesn't undo those effects."
-    ],
-    cannot: ["Writes in local dev reach Notion"],
-    caveat: "Individual Notion permissions don't carry over. This release discovers the schema."
+    cannot: ["Change Notion content"],
+    caveat: "Individual Notion permissions don't carry over."
   }
 };
 

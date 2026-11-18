@@ -673,27 +673,20 @@ export const generate = Effect.fn("Project.generate")(function* (
       : refused;
   if (
     removedKind &&
-    removedKind !== "notion" &&
     !Object.values(manifest.uses).some((declaration) => declaration.kind === removedKind)
   ) {
-    const skill =
-      removedKind === "postgres"
-        ? "patchy-postgres"
-        : removedKind === "posthog"
-          ? "patchy-posthog"
-          : removedKind === "pidgeon"
-            ? "patchy-pidgeon"
-            : removedKind === "attio"
-              ? "patchy-attio"
-              : removedKind === "imap"
-                ? "patchy-imap"
-                : removedKind === "github"
-                  ? "patchy-github"
-                  : removedKind === "members"
-                    ? "patchy-members"
-                    : removedKind === "sharedStore"
-                      ? "patchy-shared-stores"
-                      : "patchy-shared-tables";
+    const skill = {
+      postgres: "patchy-postgres",
+      posthog: "patchy-posthog",
+      pidgeon: "patchy-pidgeon",
+      attio: "patchy-attio",
+      imap: "patchy-imap",
+      github: "patchy-github",
+      notion: "patchy-notion",
+      members: "patchy-members",
+      sharedStore: "patchy-shared-stores",
+      sharedTable: "patchy-shared-tables"
+    }[removedKind];
     if (skills.includes(skill)) removedSkills.push(skill);
     skills = skills.filter((name) => name !== skill);
   }

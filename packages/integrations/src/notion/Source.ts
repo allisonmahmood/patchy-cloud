@@ -56,6 +56,8 @@ const refusals = {
   ],
   invalid_request: [400, "Notion refused a value in the request."],
   invalid_query: [400, "Notion refused a request that Patchy built."],
+  invalid_cursor: [400, "This cursor does not belong to the current Notion request."],
+  offset_exhausted: [422, "Notion stopped at 10,000 rows. Narrow the filter and start again."],
   write_conflict: [409, "Notion reported a conflict. Try again."],
   source_rate_limited: [429, "Notion is limiting requests. Try again shortly."],
   shape_mismatch: [422, "Notion returned an unexpected discovery shape. Nothing was saved."],
@@ -67,7 +69,7 @@ const refusals = {
   ]
 } as const;
 const Bound = Schema.Struct({
-  name: Schema.Literals(["bytes", "data sources", "properties", "options"]),
+  name: Schema.Literals(["bytes", "data sources", "properties", "options", "property items"]),
   limit: Schema.Int
 });
 
@@ -106,8 +108,15 @@ export class Source extends Context.Service<
   {
     readonly withSlot: <A, E, R>(
       connectionId: string,
-      run: (waited: boolean) => Effect.Effect<A, E, R>
+      run: (waited: boolean) => Effect.Effect<A, E, R>,
+      deadlineAt?: number
     ) => Effect.Effect<A, E | Refusal, R>;
+    readonly send: (
+      key: Redacted.Redacted<string>,
+      request: HttpClientRequest.HttpClientRequest,
+      maxBytes: number,
+      budget?: { remaining: number }
+    ) => Effect.Effect<unknown, Refusal>;
     readonly check: (
       key: Redacted.Redacted<string>,
       expectedWorkspace?: string
@@ -291,7 +300,8 @@ export const make = Effect.gen(function* () {
   const send = Effect.fn("Notion.send")(function* (
     key: Redacted.Redacted<string>,
     request: HttpClientRequest.HttpClientRequest,
-    maxBytes: number
+    maxBytes: number,
+    budget?: { remaining: number }
   ) {
     const response = yield* client
       .execute(
@@ -312,7 +322,9 @@ export const make = Effect.gen(function* () {
     const status = response.status;
     if ((status >= 300 && status < 400) || status === 401 || (status >= 500 && status !== 529))
       return yield* new Refusal({ code: "source_unavailable", upstreamStatus: status });
-    if (Number(response.headers["content-length"]) > maxBytes)
+    if (
+      Number(response.headers["content-length"]) > Math.min(maxBytes, budget?.remaining ?? maxBytes)
+    )
       return yield* tooLarge("bytes", maxBytes);
     const chunks = yield* response.stream.pipe(
       Stream.mapError(
@@ -322,7 +334,9 @@ export const make = Effect.gen(function* () {
         () => ({ length: 0, values: [] as Uint8Array[] }),
         (state, chunk) => {
           state.length += chunk.byteLength;
-          if (state.length > maxBytes) return Effect.fail(tooLarge("bytes", maxBytes));
+          if (state.length > maxBytes || chunk.byteLength > (budget?.remaining ?? maxBytes))
+            return Effect.fail(tooLarge("bytes", maxBytes));
+          if (budget) budget.remaining -= chunk.byteLength;
           state.values.push(chunk);
           return Effect.succeed(state);
         }
@@ -559,11 +573,14 @@ export const make = Effect.gen(function* () {
 
   const withSlot = <A, E, R>(
     connectionId: string,
-    run: (waited: boolean) => Effect.Effect<A, E, R>
+    run: (waited: boolean) => Effect.Effect<A, E, R>,
+    deadlineAt?: number
   ) =>
     Effect.gen(function* () {
-      const deadline = yield* ContractLimits.get("notion.discovery.deadline");
+      const ceiling = yield* ContractLimits.get("notion.discovery.deadline");
       const started = yield* Clock.currentTimeMillis;
+      const deadline = Math.min(ceiling, (deadlineAt ?? started + ceiling) - started);
+      if (deadline <= 0) return yield* new Refusal({ code: "timeout" });
       const slot = gates.get(connectionId) ?? {
         semaphore: Semaphore.makeUnsafe(concurrency),
         users: 0
@@ -599,7 +616,7 @@ export const make = Effect.gen(function* () {
       );
     });
 
-  return Source.of({ withSlot, check, inspect });
+  return Source.of({ withSlot, send, check, inspect });
 });
 
 export const layer = Layer.effect(Source, make).pipe(Layer.provide(FetchHttpClient.layer));

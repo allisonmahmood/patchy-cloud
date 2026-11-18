@@ -216,6 +216,15 @@ export const sdkCapabilities: readonly SdkCapability[] = [
     limits: `Declare a connected Attio workspace, read-only. objects.<slug>.list, get and getMany, lists.<slug>.list and get, and members.list, typed from the snapshot: eq, contains, range and orderBy by attribute slug, option titles exact, null for no value, limit 1–500 with a cursor. Each call checks the workspace's current attributes and fails shape_mismatch naming one that changed. At most 500 ids to getMany, ${runtimeByteLimits.attioBytes / 1024} KiB of arguments, ${runtimeByteLimits.resultBytes / 1024 ** 2} MiB results and a 15-second service deadline bounded by the action's remaining time. Attio's own limits fail source_rate_limited and are never retried. Queries and mutations cannot use ctx.connections; Attio reads are not live-query dependencies.`
   },
   {
+    id: "integrations.notion",
+    group: "Integrations",
+    name: "Company Notion reads",
+    entrypoints: ["patchy/_generated/server.ts: ctx.connections"],
+    runs: "Tier 2 actions. patchy dev reads Notion through the instance as the machine key's person",
+    limits:
+      "Declare a connected Notion workspace. List data source rows with typed filters and a cursor, up to 100 per page. Property names and option hints come from the generated snapshot. Patchy checks current access on each call."
+  },
+  {
     id: "integrations.imap",
     group: "Integrations",
     name: "Company mailbox reads over IMAP",
@@ -255,7 +264,7 @@ const groups = ["Core", "Primitives", "Integrations", "Helpers"] as const;
 const unavailable: Partial<Record<(typeof groups)[number], string>> = {
   Core: "window.print() works in the frame, including browser print-to-PDF.",
   Integrations:
-    "Postgres, PostHog, Pidgeon, Attio, IMAP and GitHub are the shipped company integrations, called from tier 2 actions. Pidgeon has no thread assignment, per-person read state, HTML, raw headers, attachment downloads or sent attachments. Attio is read-only, with no notes, tasks, comments, meetings, emails, files, search, saved views or OR across attributes. IMAP is read-only, with no sending, moving, flagging or deleting, attachments past 20 MiB, attachments' text, raw source, server sort or threads, push, or reading without a viewer. GitHub is read-only, with no re-runs, merges, comments or labels, commit history, comparisons, file contents, issues, deployments, releases, pull request comments, earlier attempts' jobs, commit statuses, member list, webhooks or reading without a viewer.",
+    "Postgres, PostHog, Pidgeon, Attio, IMAP, GitHub and Notion are the shipped company integrations, called from tier 2 actions. Pidgeon has no thread assignment, per-person read state, HTML, raw headers, attachment downloads or sent attachments. Attio is read-only, with no notes, tasks, comments, meetings, emails, files, search, saved views or OR across attributes. IMAP is read-only, with no sending, moving, flagging or deleting, attachments past 20 MiB, attachments' text, raw source, server sort or threads, push, or reading without a viewer. GitHub is read-only, with no re-runs, merges, comments or labels, commit history, comparisons, file contents, issues, deployments, releases, pull request comments, earlier attempts' jobs, commit statuses, member list, webhooks or reading without a viewer.",
   Helpers:
     "The SDK does not yet offer PDF generation, spreadsheets beyond CSV, time-zone arithmetic, phone parsing, component libraries, rich text, charts or HTML sanitisation."
 };

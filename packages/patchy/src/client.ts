@@ -24,6 +24,7 @@ export * from "./clientError.js";
 export * from "./pidgeon.js";
 export * from "./attio.js";
 export * from "./imap.js";
+export * from "./notion.js";
 export * from "./github.js";
 export type { Call, Me, Operation, Route, Transport } from "./clientTransport.js";
 export { createServerClient, type ServerOnlyClient } from "./serverClient.js";
