@@ -6,7 +6,7 @@
 //
 // From the checkout, with `pnpm dev up models` running (set PATCHY_DEV_SLOT_MODE and
 // PATCHY_DEV_MODEL_GATE on `up` to pick the mode and the gate):
-//   node scripts/dev/load-models.mjs <one|S1|S2|S2s|S3|S4|S5|park> [--label <name>] [--writes <n>]
+//   node scripts/dev/load-models.mjs <one|S1|S2|S2s|S3|S4|S5|S6|park> [--label <name>] [--writes <n>]
 //     [--count <n>] [--via page|http] [--out <dir>]
 // `--writes` is S4's inserts after each answer (40 by default); `--count` is how many calls
 // `park` parks (300 by default). Results go to `<out>/<label>-<scenario>-<time>/`.
@@ -99,6 +99,42 @@ const scenarios = {
       op: "model",
       args: { kind: "decide", delayMs: 400, at: 0, writes: 0 }
     })),
+  // Two model calls in flight in one action while the company's slots are full: the first answers
+  // while eight holds fill every slot, the second starts and answers before they end. Then probes,
+  // after everything has ended: eight holds from four others fill the company's slots exactly, two
+  // from the dual action's own person fill theirs, and one quick action reads the running count it
+  // joins. A leaked slot refuses one hold in a probe and reads one more running.
+  S6: () => [
+    {
+      person: 0,
+      at: 0,
+      group: "dual",
+      op: "dual",
+      args: { firstDelayMs: 300, secondAfterMs: 1_000, secondDelayMs: 300 }
+    },
+    ...Array.from({ length: 8 }, (_, i) => ({
+      person: 1 + Math.floor(i / 2),
+      at: 200 + i * 10,
+      group: "fill",
+      op: "hold",
+      args: { ms: 4_000 }
+    })),
+    ...Array.from({ length: 8 }, (_, i) => ({
+      person: 6 + Math.floor(i / 2),
+      at: 8_000 + i * 10,
+      group: "probe company",
+      op: "hold",
+      args: { ms: 1_000 }
+    })),
+    ...[0, 1].map((i) => ({
+      person: 0,
+      at: 10_000 + i * 10,
+      group: "probe person",
+      op: "hold",
+      args: { ms: 500 }
+    })),
+    { person: 5, at: 12_000, group: "probe count", op: "quick", args: {} }
+  ],
   // What parking costs the host: `count` calls parked together, then answered at one instant,
   // while one other person runs a quick action every half second.
   park: (start) => {
@@ -250,7 +286,14 @@ const results = await Promise.all(
               code: "driver",
               message: String(error)
             }));
-            resolve({ index, person: call.person, op: call.op, firedAt: firedAt - start, ...seen });
+            resolve({
+              index,
+              person: call.person,
+              op: call.op,
+              group: call.group ?? call.op,
+              firedAt: firedAt - start,
+              ...seen
+            });
           },
           Math.max(0, start + call.at - Date.now())
         );
@@ -331,7 +374,9 @@ const kindOf = (result) =>
     ? "ok"
     : result.code === "busy" && String(result.limitId).startsWith("tier2.actions")
       ? "busySlot"
-      : result.code === "busy" && String(result.limitId).startsWith("models.calls")
+      : result.code === "busy" && String(result.limitId).startsWith("tier2.models")
+        ? "poolRefused"
+        : result.code === "busy" && String(result.limitId).startsWith("models.calls")
         ? result.details?.waitedMs > 0
           ? "gateWaited"
           : "gateRefused"
@@ -342,18 +387,24 @@ const kindOf = (result) =>
             : `other:${result.code}`;
 const max = (values) => (values.length === 0 ? 0 : Math.max(...values));
 const rows = [];
-for (const op of [...new Set(results.map((result) => result.op))]) {
-  const mine = results.filter((result) => result.op === op);
+for (const group of [...new Set(results.map((result) => result.group))]) {
+  const mine = results.filter((result) => result.group === group);
+  const op = mine[0].op;
   const mineEvents = events.filter((event) => event.handler === `load.${op}`);
+  // After the last model call answered (and, in park-r2, was let go): the action's own work.
+  const after = mineEvents
+    .filter((event) => (event.slots?.resumedAt ?? 0) > 0 && event.outcome === "success")
+    .map((event) => ({ opened: event.slots.resumedAt, closed: event.startedAt + event.durationMs }));
   const kinds = {};
   for (const result of mine) kinds[kindOf(result)] = (kinds[kindOf(result)] ?? 0) + 1;
   const slots = mineEvents.map((event) => event.slots).filter(Boolean);
   const gate = mineEvents.flatMap((event) => event.modelCalls ?? []);
   rows.push({
-    op,
+    op: group,
     calls: mine.length,
     ok: kinds.ok ?? 0,
     busySlot: kinds.busySlot ?? 0,
+    poolRefused: kinds.poolRefused ?? 0,
     gateRefused: kinds.gateRefused ?? 0,
     gateWaited: kinds.gateWaited ?? 0,
     timeout: kinds.timeout ?? 0,
@@ -405,6 +456,16 @@ for (const op of [...new Set(results.map((result) => result.op))]) {
       ),
       95
     ),
+    afterPeak: sweep(after),
+    afterP50: percentile(
+      after.map((span) => span.closed - span.opened),
+      50
+    ),
+    afterP95: percentile(
+      after.map((span) => span.closed - span.opened),
+      95
+    ),
+    peakPooled: max(events.map((event) => event.slots?.pooled ?? 0)),
     gateWaitMax: Math.round(max(gate.map((call) => call.gateWaitMs ?? 0))),
     gateWaitingPeak: max(gate.map((call) => call.gateWaiting ?? 0)),
     events: mineEvents.length
@@ -416,6 +477,9 @@ const summary = {
   via,
   mode: events.find((event) => event.slots !== undefined)?.slots.mode ?? "?",
   rows,
+  // The running count the run's last action joined: 1 unless slots are held by something that ended.
+  lastRunningSeen:
+    [...events].sort((a, b) => a.startedAt - b.startedAt).at(-1)?.slots?.running ?? null,
   fakePeakInFlight: sweep(fake),
   fakeRequests: fake.length,
   fakeClosedEarly: fake.filter((entry) => entry.closedEarly).length,
@@ -437,6 +501,7 @@ const columns = [
   ["calls", "calls"],
   ["ok", "ok"],
   ["busy slot", "busySlot"],
+  ["pool refused", "poolRefused"],
   ["gate refused", "gateRefused"],
   ["gate waited out", "gateWaited"],
   ["timeout", "timeout"],
@@ -449,6 +514,8 @@ const columns = [
   ["peak running", "peakRunning"],
   ["peak parked", "peakParked"],
   ["peak held", "peakHeld"],
+  ["peak pooled", "peakPooled"],
+  ["after-answer peak / p50 / p95", (row) => `${row.afterPeak}/${row.afterP50}/${row.afterP95}`],
   ["resume wait p95/max", (row) => `${row.resumeWaitP95}/${row.resumeWaitMax}`],
   ["work p50/p95", (row) => `${row.workP50}/${row.workP95}`],
   ["gate wait max", "gateWaitMax"],
@@ -463,7 +530,7 @@ const table = [
   `fake: ${summary.fakeRequests} requests, peak ${summary.fakePeakInFlight} in flight, ${summary.fakeClosedEarly} closed early · ` +
     `memory MiB server ${before.server} → peak ${summary.memoryMiB.peak.server} → ${after.server}, ` +
     `children ${before.children} → peak ${summary.memoryMiB.peak.children} → ${after.children} · ` +
-    `${summary.problemCount} problem lines`
+    `${summary.problemCount} problem lines · last action joined ${summary.lastRunningSeen} running`
 ].join("\n");
 console.log(table);
 

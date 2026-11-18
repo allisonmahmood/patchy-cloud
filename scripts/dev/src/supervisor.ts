@@ -266,6 +266,7 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
         PATCHY_DEV_SLOT_MODE: Config.option(Config.String("PATCHY_DEV_SLOT_MODE")),
         PATCHY_DEV_MODEL_GATE: Config.option(Config.String("PATCHY_DEV_MODEL_GATE")),
         PATCHY_DEV_MODEL_DAILY: Config.option(Config.String("PATCHY_DEV_MODEL_DAILY")),
+        PATCHY_DEV_MODEL_POOL: Config.option(Config.String("PATCHY_DEV_MODEL_POOL")),
         BUN_CONFIG_MAX_HTTP_REQUESTS: Config.option(Config.String("BUN_CONFIG_MAX_HTTP_REQUESTS"))
       })
     ).flatMap(([name, value]) => (Option.isSome(value) ? [[name, value.value]] : []))

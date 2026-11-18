@@ -36,6 +36,10 @@ Object.assign(globalThis, {
   patchyLoad: {
     model: (args: Parameters<typeof patchy.server.load.model>[0]) =>
       timed(() => patchy.server.load.model(args)),
+    dual: (args: Parameters<typeof patchy.server.load.dual>[0]) =>
+      timed(() => patchy.server.load.dual(args)),
+    hold: (args: Parameters<typeof patchy.server.load.hold>[0]) =>
+      timed(() => patchy.server.load.hold(args)),
     quick: () => timed(() => patchy.server.load.quick({}))
   }
 });
