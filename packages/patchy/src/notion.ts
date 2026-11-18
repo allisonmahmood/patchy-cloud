@@ -1,13 +1,17 @@
+import type {
+  NotionMarkdownOutput,
+  NotionPeopleInput,
+  NotionPeopleOutput,
+  NotionRead,
+  NotionRow as WireRow,
+  NotionSearchInput,
+  NotionSearchOutput
+} from "@patchy/api";
 import { decodeError } from "./clientError.js";
 
-export interface NotionRow<Properties> {
-  readonly id: string;
-  readonly url: string;
-  readonly createdTime: string;
-  readonly lastEditedTime: string;
-  readonly inTrash: boolean;
+export type NotionRow<Properties> = Omit<WireRow, "properties"> & {
   readonly properties: Properties;
-}
+};
 
 export interface NotionPage<Item> {
   readonly rows: readonly Item[];
@@ -53,38 +57,13 @@ interface NotionSourceClient<Source extends SourceDescription> {
   get(id: string): Promise<NotionRow<Source["values"]> | null>;
 }
 
-export interface NotionMarkdown {
-  readonly id: string;
-  readonly title: string;
-  readonly url: string;
-  readonly markdown: string;
-  readonly truncated: boolean;
-}
-
-interface NotionPageOptions {
-  readonly limit?: number;
-  readonly cursor?: string;
-}
-
-export interface NotionSearchOptions extends NotionPageOptions {
-  readonly text?: string;
-  readonly kind?: "page" | "data_source";
-}
-
-export interface NotionSearchResult<DataSource extends string = string> {
-  readonly kind: "page" | "data_source";
-  readonly id: string;
-  readonly title: string;
-  readonly url: string;
-  readonly lastEditedTime: string;
-  readonly dataSource?: DataSource;
-}
-
-export interface NotionPerson {
-  readonly id: string;
-  readonly name: string | null;
-  readonly type: "person" | "bot";
-}
+export type NotionMarkdown = NonNullable<NotionMarkdownOutput>;
+export type NotionSearchOptions = NotionSearchInput;
+export type NotionSearchResult<DataSource extends string = string> = Omit<
+  NotionSearchOutput["results"][number],
+  "dataSource"
+> & { readonly dataSource?: DataSource };
+export type NotionPerson = NotionPeopleOutput["people"][number];
 
 export type NotionClient<Sources extends NotionSources> = {
   readonly [Name in keyof Sources]: NotionSourceClient<Sources[Name]>;
@@ -95,14 +74,11 @@ export type NotionClient<Sources extends NotionSources> = {
     readonly cursor: string | null;
   }>;
   readonly people: {
-    list(options?: NotionPageOptions): Promise<{
-      readonly people: readonly NotionPerson[];
-      readonly cursor: string | null;
-    }>;
+    list(options?: NotionPeopleInput): Promise<NotionPeopleOutput>;
   };
 };
 
-type Operation = `notion.${"listRows" | "getRow" | "markdown" | "search" | "listPeople"}`;
+type Operation = `notion.${NotionRead}`;
 type Call = (op: Operation, args: Readonly<Record<string, unknown>>) => Promise<unknown>;
 
 /** The host validates each request against the declaration and encodes its result. */

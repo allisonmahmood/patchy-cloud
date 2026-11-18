@@ -64,7 +64,7 @@ const github = <const Name extends keyof typeof githubReads>(name: Name) =>
 
 const notion = <const Name extends keyof typeof notionReads>(name: Name) =>
   Schema.Struct({
-    op: Schema.Literal(`notion.${name}`),
+    op: Schema.Literal(notionReads[name].op),
     connection: DevReadConnection,
     args: notionReads[name].input
   });

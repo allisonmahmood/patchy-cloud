@@ -1,14 +1,4 @@
-import {
-  NotionGetRow,
-  NotionId,
-  NotionListPeople,
-  NotionListRows,
-  NotionMarkdown,
-  NotionSearch,
-  notionReads,
-  type NotionRead,
-  type NotionSnapshot
-} from "@patchy/api";
+import { NotionId, notionReads, type NotionRead, type NotionSnapshot } from "@patchy/api";
 import { Cryptography } from "@patchy/core";
 import { ContractLimits } from "@patchy/limits";
 import { Binding, Runtime } from "@patchy/runtime/core";
@@ -158,7 +148,7 @@ const read = Effect.fn("Notion.read")(
   Effect.mapError((error) => (isNotionRefusal(error) ? refusal(error) : error))
 );
 
-const declarationOf = (alias: string, binding: Binding.Binding["Service"]) => {
+export const declarationOf = (alias: string, binding: Binding.Binding["Service"]) => {
   if (!Object.hasOwn(binding.manifest.uses, alias)) return undefined;
   const declaration = binding.manifest.uses[alias];
   return declaration?.kind === "notion" ? declaration : undefined;
@@ -273,8 +263,7 @@ export const makeHandlers = Effect.gen(function* () {
     O extends Schema.Top & Schema.Codec<unknown, unknown>
   >(
     name: NotionRead,
-    input: I,
-    output: O,
+    { guest: input, output }: { guest: I; output: O },
     run: (args: I["Type"]) => Effect.Effect<O["Type"], Runtime.RuntimeError, Binding.Binding>
   ) =>
     Runtime.handler(
@@ -292,34 +281,25 @@ export const makeHandlers = Effect.gen(function* () {
     );
 
   return {
-    "notion.listRows": handler(
+    [notionReads.listRows.op]: handler(
       "listRows",
-      NotionListRows,
-      notionReads.listRows.output,
+      notionReads.listRows,
       ({ connection, ...input }) => invoke(connection, input, Reads.planList)
     ),
-    "notion.getRow": handler(
-      "getRow",
-      NotionGetRow,
-      notionReads.getRow.output,
-      ({ connection, ...input }) => invoke(connection, input, Reads.planGet)
+    [notionReads.getRow.op]: handler("getRow", notionReads.getRow, ({ connection, ...input }) =>
+      invoke(connection, input, Reads.planGet)
     ),
-    "notion.markdown": handler(
+    [notionReads.markdown.op]: handler(
       "markdown",
-      NotionMarkdown,
-      notionReads.markdown.output,
+      notionReads.markdown,
       ({ connection, ...input }) => invoke(connection, input, Reads.planMarkdown)
     ),
-    "notion.search": handler(
-      "search",
-      NotionSearch,
-      notionReads.search.output,
-      ({ connection, ...input }) => invoke(connection, input, Reads.planSearch)
+    [notionReads.search.op]: handler("search", notionReads.search, ({ connection, ...input }) =>
+      invoke(connection, input, Reads.planSearch)
     ),
-    "notion.listPeople": handler(
+    [notionReads.listPeople.op]: handler(
       "listPeople",
-      NotionListPeople,
-      notionReads.listPeople.output,
+      notionReads.listPeople,
       ({ connection, ...input }) => invoke(connection, input, Reads.planPeople)
     )
   };

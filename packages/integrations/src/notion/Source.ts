@@ -1,4 +1,4 @@
-import { NotionAccess, type NotionSnapshot } from "@patchy/api";
+import { NotionAccess, notionPropertyType, type NotionSnapshot } from "@patchy/api";
 import { ContractLimits } from "@patchy/limits";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -240,27 +240,6 @@ const invalidRequest = (error: typeof ErrorBody.Type | undefined) => {
   return new Refusal({ code: "invalid_query" });
 };
 
-const supported = new Set([
-  "title",
-  "rich_text",
-  "number",
-  "select",
-  "status",
-  "multi_select",
-  "date",
-  "checkbox",
-  "url",
-  "email",
-  "phone_number",
-  "people",
-  "relation",
-  "files",
-  "created_time",
-  "created_by",
-  "last_edited_time",
-  "last_edited_by",
-  "unique_id"
-]);
 const reservedNames = ["search", "pages", "people"];
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
@@ -487,7 +466,7 @@ export const make = Effect.gen(function* () {
         const skipped: Exclusion[] = [];
         const title = titleOf(source.title) || "Untitled";
         for (const property of entries) {
-          if (!supported.has(property.type)) {
+          if (!notionPropertyType(property.type)) {
             skipped.push({ source: title, name: property.name, reason: "unsupported_type" });
             continue;
           }

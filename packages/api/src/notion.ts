@@ -12,6 +12,20 @@ export const NotionId = Schema.String.check(
   Schema.isPattern(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
 );
 
+export const NotionRow = Schema.Struct({
+  id: NotionId,
+  url: Schema.String,
+  createdTime: Schema.String,
+  lastEditedTime: Schema.String,
+  inTrash: Schema.Boolean,
+  properties: Schema.Record(Name, Schema.Json)
+});
+export type NotionRow = typeof NotionRow.Type;
+
+const pagination = {
+  limit: Schema.optionalKey(NotionLimit),
+  cursor: Schema.optionalKey(NotionCursor)
+};
 const listFields = {
   source: Name,
   eq: Schema.optionalKey(Schema.Record(Name, Value)),
@@ -32,37 +46,40 @@ const listFields = {
     })
   ),
   select: Schema.optionalKey(Schema.Array(Name).check(Schema.isBetweenLength(1, 200))),
-  limit: Schema.optionalKey(NotionLimit),
-  cursor: Schema.optionalKey(NotionCursor)
-};
-export const NotionRow = Schema.Struct({
-  id: NotionId,
-  url: Schema.String,
-  createdTime: Schema.String,
-  lastEditedTime: Schema.String,
-  inTrash: Schema.Boolean,
-  properties: Schema.Record(Name, Schema.Json)
-});
-export type NotionRow = typeof NotionRow.Type;
-
-const pagination = {
-  limit: Schema.optionalKey(NotionLimit),
-  cursor: Schema.optionalKey(NotionCursor)
+  ...pagination
 };
 const cursor = Schema.NullOr(NotionCursor);
 const SearchKind = Schema.Literals(["page", "data_source"]);
+const read = <const Name extends string, F extends Schema.Struct.Fields, O extends Schema.Top>(
+  name: Name,
+  input: Schema.Struct<F>,
+  output: O
+) => {
+  const op = `notion.${name}` as const;
+  const guest = Schema.Struct({ connection: DefinitionName, ...input.fields });
+  return {
+    op,
+    input,
+    guest,
+    output,
+    operation: {
+      request: Schema.Struct({ op: Schema.Literal(op), args: guest }),
+      response: output,
+      kind: "integration"
+    }
+  } as const;
+};
 export const notionReads = {
-  listRows: {
-    input: Schema.Struct(listFields),
-    output: Schema.Struct({ rows: Schema.Array(NotionRow), cursor })
-  },
-  getRow: {
-    input: Schema.Struct({ source: Name, id: NotionId }),
-    output: Schema.NullOr(NotionRow)
-  },
-  markdown: {
-    input: Schema.Struct({ id: NotionId }),
-    output: Schema.NullOr(
+  listRows: read(
+    "listRows",
+    Schema.Struct(listFields),
+    Schema.Struct({ rows: Schema.Array(NotionRow), cursor })
+  ),
+  getRow: read("getRow", Schema.Struct({ source: Name, id: NotionId }), Schema.NullOr(NotionRow)),
+  markdown: read(
+    "markdown",
+    Schema.Struct({ id: NotionId }),
+    Schema.NullOr(
       Schema.Struct({
         id: NotionId,
         title: Schema.String,
@@ -71,14 +88,15 @@ export const notionReads = {
         truncated: Schema.Boolean
       })
     )
-  },
-  search: {
-    input: Schema.Struct({
+  ),
+  search: read(
+    "search",
+    Schema.Struct({
       text: Schema.optionalKey(Text),
       kind: Schema.optionalKey(SearchKind),
       ...pagination
     }),
-    output: Schema.Struct({
+    Schema.Struct({
       results: Schema.Array(
         Schema.Struct({
           kind: SearchKind,
@@ -91,10 +109,11 @@ export const notionReads = {
       ),
       cursor
     })
-  },
-  listPeople: {
-    input: Schema.Struct(pagination),
-    output: Schema.Struct({
+  ),
+  listPeople: read(
+    "listPeople",
+    Schema.Struct(pagination),
+    Schema.Struct({
       people: Schema.Array(
         Schema.Struct({
           id: NotionId,
@@ -104,8 +123,8 @@ export const notionReads = {
       ),
       cursor
     })
-  }
-} as const;
+  )
+};
 export type NotionRead = keyof typeof notionReads;
 export type NotionListInput = typeof notionReads.listRows.input.Type;
 export type NotionListOutput = typeof notionReads.listRows.output.Type;
@@ -117,30 +136,12 @@ export type NotionSearchInput = typeof notionReads.search.input.Type;
 export type NotionSearchOutput = typeof notionReads.search.output.Type;
 export type NotionPeopleInput = typeof notionReads.listPeople.input.Type;
 export type NotionPeopleOutput = typeof notionReads.listPeople.output.Type;
-const withAlias = <F extends Schema.Struct.Fields>(input: Schema.Struct<F>) =>
-  Schema.Struct({ connection: DefinitionName, ...input.fields });
-export const NotionListRows = withAlias(notionReads.listRows.input);
-export const NotionGetRow = withAlias(notionReads.getRow.input);
-export const NotionMarkdown = withAlias(notionReads.markdown.input);
-export const NotionSearch = withAlias(notionReads.search.input);
-export const NotionListPeople = withAlias(notionReads.listPeople.input);
-
-const operation = <const N extends NotionRead, I extends Schema.Top, O extends Schema.Top>(
-  name: N,
-  input: I,
-  response: O
-) =>
-  ({
-    request: Schema.Struct({ op: Schema.Literal(`notion.${name}`), args: input }),
-    response,
-    kind: "integration"
-  }) as const;
 export const notionOperations = {
-  "notion.listRows": operation("listRows", NotionListRows, notionReads.listRows.output),
-  "notion.getRow": operation("getRow", NotionGetRow, notionReads.getRow.output),
-  "notion.markdown": operation("markdown", NotionMarkdown, notionReads.markdown.output),
-  "notion.search": operation("search", NotionSearch, notionReads.search.output),
-  "notion.listPeople": operation("listPeople", NotionListPeople, notionReads.listPeople.output)
+  [notionReads.listRows.op]: notionReads.listRows.operation,
+  [notionReads.getRow.op]: notionReads.getRow.operation,
+  [notionReads.markdown.op]: notionReads.markdown.operation,
+  [notionReads.search.op]: notionReads.search.operation,
+  [notionReads.listPeople.op]: notionReads.listPeople.operation
 } as const;
 
 interface PropertyType {

@@ -7,9 +7,9 @@ import * as Source from "../notion/Source.js";
 
 export const internalToken = "notion-test-internal";
 export const personalToken = "notion-test-pat";
-export const requestOwnerId = "30000000-0000-4000-8000-000000000001";
-export const handbookId = "40000000-0000-4000-8000-000000000001";
-export const firstRequestId = "20000000-0000-4000-8000-000000000001";
+const requestOwnerId = "30000000-0000-4000-8000-000000000001";
+const handbookId = "40000000-0000-4000-8000-000000000001";
+const firstRequestId = "20000000-0000-4000-8000-000000000001";
 
 const workspaceId = "58fe1df4-672b-418f-865e-b3ff941242ef";
 const tasksId = "3a261add-da2a-4d6e-a243-4970abf59591";
@@ -18,24 +18,16 @@ const tasksDatabaseId = "d52c7f07-76a5-4f6f-b33d-88d496058f41";
 const projectsDatabaseId = "8bc41a73-5c04-4d52-9dae-893eacb959cc";
 const cursor = "another-data-source";
 const stamp = "2026-11-01T12:00:00.000Z";
-const title = (name: string) => [
-  { type: "text", text: { content: name, link: null }, plain_text: name, href: null }
-];
+const title = (plain_text: string) => [{ plain_text }];
 const notionUrl = (id: string) => `https://app.notion.com/p/${id.replaceAll("-", "")}`;
-const owner = {
-  object: "user",
+const person = (id: string, name: string, email: string) => ({
+  id,
+  name,
   type: "person",
-  id: requestOwnerId,
-  name: "Sam Rivera",
-  person: { email: "sam@example.test" }
-};
-const teammate = {
-  object: "user",
-  type: "person",
-  id: "30000000-0000-4000-8000-000000000002",
-  name: "Avery Chen",
-  person: { email: "avery@example.test" }
-};
+  person: { email }
+});
+const owner = person(requestOwnerId, "Sam Rivera", "sam@example.test");
+const teammate = person("30000000-0000-4000-8000-000000000002", "Avery Chen", "avery@example.test");
 const page = (id: string, parent: object) => ({
   object: "page",
   id,
@@ -99,10 +91,12 @@ const tasks = source(tasksId, "Tasks", tasksDatabaseId, {
   }
 });
 const projects = source(projectsId, "Projects", projectsDatabaseId, {});
-const databases = new Map([
-  [tasksDatabaseId, "Project Tracker"],
-  [projectsDatabaseId, "Project Portfolio"]
-]);
+const database = (id: string, name: string) => ({
+  object: "database",
+  id,
+  title: title(name),
+  url: notionUrl(id)
+});
 const task = (id: string, name: string, status: "todo" | "done", assignee: typeof owner) => ({
   ...page(id, { type: "data_source_id", data_source_id: tasksId, database_id: tasksDatabaseId }),
   properties: {
@@ -126,8 +120,23 @@ const handbook = {
   ...page(handbookId, { type: "workspace", workspace: true }),
   properties: { title: { id: "title", type: "title", title: title("Requests handbook") } }
 };
-const handbookMarkdown =
-  '# Requests handbook\n\nFile requests with Sam Rivera.\n\n<unknown type="embed"/>';
+const documents = [handbook, ...tasksRows];
+const sources = [tasks, projects];
+const reads = new Map<string, unknown>([
+  ...documents.map((doc) => [`/v1/pages/${doc.id}`, doc] as const),
+  ...sources.map((source) => [`/v1/data_sources/${source.id}`, source] as const),
+  [`/v1/databases/${tasksDatabaseId}`, database(tasksDatabaseId, "Project Tracker")],
+  [`/v1/databases/${projectsDatabaseId}`, database(projectsDatabaseId, "Project Portfolio")],
+  [
+    `/v1/pages/${handbookId}/markdown`,
+    {
+      object: "page_markdown",
+      id: handbookId,
+      markdown: '# Requests handbook\n\nFile requests with Sam Rivera.\n\n<unknown type="embed"/>',
+      truncated: false
+    }
+  ]
+]);
 
 const offsetOf = (name: string, raw: string | null) =>
   raw === null ? 0 : Number(raw.startsWith(`${name}:`) ? raw.slice(name.length + 1) : NaN);
@@ -136,6 +145,16 @@ const paginate = <T>(name: string, rows: readonly T[], offset: number, size: num
   return list(rows.slice(offset, next), next < rows.length ? `${name}:${next}` : null);
 };
 
+const list = <T>(results: readonly T[], next: string | null = null) => ({
+  object: "list",
+  results,
+  has_more: next !== null,
+  next_cursor: next
+});
+const paging = {
+  page_size: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
+  start_cursor: Schema.optionalKey(Schema.String)
+};
 const taskFilter = Schema.Union([
   Schema.Struct({
     property: Schema.Literal("STs"),
@@ -149,23 +168,17 @@ const taskFilter = Schema.Union([
 const decodeQuery = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({
-      page_size: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
-      start_cursor: Schema.optionalKey(Schema.String),
+      ...paging,
       filter: Schema.optionalKey(
         Schema.Union([taskFilter, Schema.Struct({ and: Schema.Array(taskFilter) })])
       )
     })
   )
 );
-const list = <T>(results: readonly T[], next: string | null = null) => ({
-  object: "list",
-  results,
-  has_more: next !== null,
-  next_cursor: next
-});
 const decodeSearch = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({
+      ...paging,
       filter: Schema.optionalKey(
         Schema.Struct({
           property: Schema.Literal("object"),
@@ -178,9 +191,7 @@ const decodeSearch = Schema.decodeUnknownOption(
           timestamp: Schema.Literal("last_edited_time"),
           direction: Schema.Literal("descending")
         })
-      ),
-      page_size: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
-      start_cursor: Schema.optionalKey(Schema.String)
+      )
     })
   )
 );
@@ -230,15 +241,15 @@ const client = HttpClient.make((request, url) =>
         const text = query?.toLowerCase() ?? "";
         const includes = (parts: ReturnType<typeof title>) =>
           parts.some(({ plain_text }) => plain_text.toLowerCase().includes(text));
-        const documents =
+        const pages =
           filter?.value === "data_source"
             ? []
-            : [
-                ...(includes(handbook.properties.title.title) ? [handbook] : []),
-                ...tasksRows.filter(({ properties }) => includes(properties.Name.title))
-              ];
-        const sources = filter?.value === "page" ? [] : [tasks, projects];
-        const matches = [...documents, ...sources.filter((source) => includes(source.title))];
+            : documents.filter(({ properties }) =>
+                includes("Name" in properties ? properties.Name.title : properties.title.title)
+              );
+        const dataSources =
+          filter?.value === "page" ? [] : sources.filter(({ title }) => includes(title));
+        const matches = [...pages, ...dataSources];
         return respond(paginate("search", matches, offset, page_size));
       }
       if (filter?.value === "data_source" && start_cursor === undefined)
@@ -254,22 +265,8 @@ const client = HttpClient.make((request, url) =>
         return refuse(400, "validation_error");
       return respond(paginate("people", [owner, teammate], offset, size));
     }
-    if (request.method === "GET" && url.pathname === `/v1/pages/${handbookId}/markdown`)
-      return respond({
-        object: "page_markdown",
-        id: handbookId,
-        markdown: handbookMarkdown,
-        truncated: false
-      });
-    if (request.method === "GET" && url.pathname.startsWith("/v1/pages/")) {
-      const id = url.pathname.slice("/v1/pages/".length);
-      const found = id === handbookId ? handbook : tasksRows.find((row) => row.id === id);
-      return found ? respond(found) : refuse(404, "object_not_found");
-    }
-    if (request.method === "GET" && url.pathname === `/v1/data_sources/${tasksId}`)
-      return respond(tasks);
-    if (request.method === "GET" && url.pathname === `/v1/data_sources/${projectsId}`)
-      return respond(projects);
+    if (request.method === "GET" && reads.has(url.pathname))
+      return respond(reads.get(url.pathname));
     if (
       request.method === "POST" &&
       request.body._tag === "Uint8Array" &&
@@ -278,8 +275,7 @@ const client = HttpClient.make((request, url) =>
       const input = decodeQuery(decoder.decode(request.body.body));
       if (input._tag === "None") return refuse(400, "validation_error");
       const { filter, page_size, start_cursor } = input.value;
-      const offset =
-        start_cursor === undefined ? 0 : Number(/^tasks:(\d+)$/.exec(start_cursor)?.[1]);
+      const offset = offsetOf("tasks", start_cursor ?? null);
       if (!Number.isSafeInteger(offset)) return refuse(400, "validation_error");
       const filters = filter === undefined ? [] : "and" in filter ? filter.and : [filter];
       const matching = tasksRows.filter(({ properties }) =>
@@ -290,30 +286,16 @@ const client = HttpClient.make((request, url) =>
           return f.status.equals === name || f.status.equals === id;
         })
       );
-      const next = offset + page_size;
       const projection = url.searchParams.getAll("filter_properties");
-      const rows = matching.slice(offset, next).map((row) =>
-        projection.length === 0
-          ? row
-          : {
-              ...row,
-              properties: Object.fromEntries(
-                Object.entries(row.properties).filter(([, value]) => projection.includes(value.id))
-              )
-            }
-      );
-      return respond(list(rows, next < matching.length ? `tasks:${next}` : null));
-    }
-    if (request.method === "GET" && url.pathname.startsWith("/v1/databases/")) {
-      const id = url.pathname.split("/").at(-1);
-      const name = id && databases.get(id);
-      if (id && name)
-        return respond({
-          object: "database",
-          id,
-          title: title(name),
-          url: notionUrl(id)
-        });
+      const result = paginate("tasks", matching, offset, page_size);
+      if (projection.length === 0) return respond(result);
+      const results = result.results.map((row) => ({
+        ...row,
+        properties: Object.fromEntries(
+          Object.entries(row.properties).filter(([, value]) => projection.includes(value.id))
+        )
+      }));
+      return respond({ ...result, results });
     }
     return refuse(404, "object_not_found");
   })

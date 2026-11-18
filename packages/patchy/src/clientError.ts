@@ -193,56 +193,54 @@ type NotionDetails<C extends ErrorCode> = C extends "shape_mismatch"
     : C extends "offset_exhausted"
       ? { readonly maxOffset: 10000 }
       : Readonly<Record<string, unknown>>;
-export type ErrorDetails<C extends ErrorCode, O extends string = string> = O extends ImapOperation
+type ExistingDetails<C extends ErrorCode, O extends string> = O extends ImapOperation
   ? ImapDetails<C>
   : O extends GithubOperation
     ? GithubDetails<C>
-    : O extends NotionOperation
-      ? NotionDetails<C>
-      : C extends "source_rate_limited" | "access_denied" | "invalid_request"
-        ? O extends PidgeonOperation
-          ? PidgeonDetails<C>
-          : O extends AttioOperation
-            ? AttioDetails<C>
-            : Readonly<Record<string, unknown>>
-        : C extends "idempotency_conflict"
-          ? {
-              /**
-               * `mismatch`: the draft's key already went with different mail, or from another key.
-               * `in_progress`: the first send is still running; send the same draft after `retryAfter`.
-               */
-              readonly reason: "mismatch" | "in_progress";
-            }
-          : C extends "invalid_query"
-            ? O extends PostHogOperation
-              ? { readonly message: string }
-              : O extends AttioOperation
-                ? AttioWhere & {
-                    /** Attio's code for a request Patchy built wrong: Patchy's defect, to report. */
-                    readonly reason: string;
-                  }
-                : {
-                    readonly sqlstate: string;
-                    readonly message: string;
-                    readonly position?: string;
-                  }
-            : C extends "shape_mismatch"
-              ? ShapeMismatchDetails<O>
-              : C extends "not_found"
-                ? O extends AttioOperation
-                  ? AttioWhere
-                  : Readonly<Record<string, unknown>>
-                : C extends "relation_unknown"
-                  ? { readonly relation: RelationIdentifier }
-                  : C extends "offset_exhausted"
-                    ? { readonly maxOffset: 10000 }
-                    : C extends "too_large"
-                      ? {
-                          readonly maxRows?: 1000;
-                          readonly maxItems?: number;
-                          readonly maxBytes?: number;
-                        }
-                      : Readonly<Record<string, unknown>>;
+    : C extends "source_rate_limited" | "access_denied" | "invalid_request"
+      ? O extends PidgeonOperation
+        ? PidgeonDetails<C>
+        : O extends AttioOperation
+          ? AttioDetails<C>
+          : Readonly<Record<string, unknown>>
+      : C extends "idempotency_conflict"
+        ? {
+            /**
+             * `mismatch`: the draft's key already went with different mail, or from another key.
+             * `in_progress`: the first send is still running; send the same draft after `retryAfter`.
+             */
+            readonly reason: "mismatch" | "in_progress";
+          }
+        : C extends "invalid_query"
+          ? O extends PostHogOperation
+            ? { readonly message: string }
+            : O extends AttioOperation
+              ? AttioWhere & {
+                  /** Attio's code for a request Patchy built wrong: Patchy's defect, to report. */
+                  readonly reason: string;
+                }
+              : { readonly sqlstate: string; readonly message: string; readonly position?: string }
+          : C extends "shape_mismatch"
+            ? ShapeMismatchDetails<O>
+            : C extends "not_found"
+              ? O extends AttioOperation
+                ? AttioWhere
+                : Readonly<Record<string, unknown>>
+              : C extends "relation_unknown"
+                ? { readonly relation: RelationIdentifier }
+                : C extends "offset_exhausted"
+                  ? { readonly maxOffset: 10000 }
+                  : C extends "too_large"
+                    ? {
+                        readonly maxRows?: 1000;
+                        readonly maxItems?: number;
+                        readonly maxBytes?: number;
+                      }
+                    : Readonly<Record<string, unknown>>;
+
+export type ErrorDetails<C extends ErrorCode, O extends string = string> = O extends NotionOperation
+  ? NotionDetails<C>
+  : ExistingDetails<C, O>;
 
 export class PatchyError<C extends ErrorCode = ErrorCode, O extends string = string> extends Error {
   override readonly name = "PatchyError";
