@@ -61,10 +61,7 @@ it.effect("refuses a second search page that exceeds the discovery bound", () =>
       .inspect(Redacted.make(NotionDouble.internalToken), "read")
       .pipe(Effect.flip);
     assert.strictEqual(failure.code, "too_large");
-    assert.strictEqual(
-      failure.message,
-      "Notion discovery exceeded the Patchy limit for data sources (1). Nothing was saved."
-    );
+    assert.strictEqual(failure.message, "Notion exceeded the Patchy limit for data sources (1).");
   }).pipe(
     Effect.provide(NotionDouble.layer),
     Effect.provideService(ContractLimits.overrides, { "notion.discovery.sources": 1 })

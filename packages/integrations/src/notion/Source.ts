@@ -64,9 +64,9 @@ const refusals = {
     "The Notion write may have been saved. Read the current state before trying again."
   ],
   source_rate_limited: [429, "Notion is limiting requests. Try again shortly."],
-  shape_mismatch: [422, "Notion returned an unexpected discovery shape. Nothing was saved."],
-  too_large: [413, "Notion discovery exceeded a Patchy limit. Nothing was saved."],
-  timeout: [504, "Notion did not answer before the discovery deadline. Nothing was saved."],
+  shape_mismatch: [422, "Notion returned an unexpected response."],
+  too_large: [413, "Notion exceeded a Patchy limit."],
+  timeout: [504, "The Notion request timed out."],
   busy: [
     503,
     "Patchy is already making its maximum number of calls for this Notion connection. Try again."
@@ -109,7 +109,7 @@ export class Refusal extends Schema.TaggedError<Refusal>()("NotionRefusal", {
     if (this.code === "source_rate_limited" && this.retryAfterSeconds !== undefined)
       return `Notion is limiting requests. Try again in ${this.retryAfterSeconds} seconds.`;
     if (this.code === "too_large" && this.bound !== undefined)
-      return `Notion discovery exceeded the Patchy limit for ${this.bound.name} (${this.bound.limit}). Nothing was saved.`;
+      return `Notion exceeded the Patchy limit for ${this.bound.name} (${this.bound.limit}).`;
     if (this.code === "shape_mismatch" && this.missing !== undefined)
       return `Notion could not find ${this.missing.kind} “${this.missing.name}”. Refresh the connection and try again.`;
     if (this.code === "not_found" && this.dataSource !== undefined)

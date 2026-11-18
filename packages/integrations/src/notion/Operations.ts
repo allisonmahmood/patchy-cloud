@@ -33,7 +33,7 @@ export class ConnectionNotDeclared extends Schema.TaggedError<ConnectionNotDecla
   }
 }
 
-export const refusal = (error: Source.Refusal): Runtime.RuntimeError => {
+export const refusal = (error: Source.Refusal, writeNotSent = false): Runtime.RuntimeError => {
   if (
     error.code === "invalid_credentials" ||
     error.code === "notion_not_workspace_key" ||
@@ -45,14 +45,7 @@ export const refusal = (error: Source.Refusal): Runtime.RuntimeError => {
   return {
     code,
     status: error.status,
-    message:
-      code === "too_large"
-        ? `This Notion read exceeded the Patchy limit${bound ? ` for ${bound.name} (${bound.limit})` : ""}.`
-        : code === "shape_mismatch" && missing === undefined
-          ? "Notion returned an unexpected read response."
-          : code === "timeout"
-            ? "Notion did not answer before the read deadline."
-            : error.message,
+    message: writeNotSent ? `${error.message} The write was not sent to Notion.` : error.message,
     ...(code === "shape_mismatch" && missing?.kind === "property"
       ? { details: { property: missing.name } }
       : code === "not_found" && dataSource !== undefined
@@ -114,92 +107,90 @@ type Plan<I, A> = (
   Cryptography.Cryptography
 >;
 
-const run = Effect.fn("Notion.run")(
-  function* <E extends Runtime.RuntimeError, I, A>(
-    target: Target<E>,
-    input: I,
-    plan: Plan<I, A>,
-    write: boolean = false
-  ) {
-    const { companyId, connection, deadline, recheck } = target;
-    const { revision } = connection;
-    if (revision === undefined) return yield* new Runtime.InvalidRequest({});
-    const source = yield* Source.Source;
-    const store = yield* ConnectionStore.ConnectionStore;
-    const initial = yield* connected(companyId, connection);
-    if (write && initial.display.access !== "write") return yield* new Runtime.AccessDenied({});
-    const metadata = yield* store
-      .snapshot(companyId, connection.id, revision)
-      .pipe(Effect.mapError(storedRefusal));
-    if (metadata.integration !== "notion")
-      return yield* new ConnectionStore.ConnectionNotFound({
-        companyId,
-        lookup: { id: connection.id, revision }
-      });
-    if (write && metadata.snapshot.access !== "write") return yield* new Runtime.AccessDenied({});
-    const execute = yield* plan(metadata.snapshot, input, {
-      id: connection.id,
-      revision
+const run = Effect.fn("Notion.run")(function* <E extends Runtime.RuntimeError, I, A>(
+  target: Target<E>,
+  input: I,
+  plan: Plan<I, A>,
+  write: boolean = false
+) {
+  const { companyId, connection, deadline, recheck } = target;
+  const { revision } = connection;
+  if (revision === undefined) return yield* new Runtime.InvalidRequest({});
+  const source = yield* Source.Source;
+  const store = yield* ConnectionStore.ConnectionStore;
+  const initial = yield* connected(companyId, connection);
+  if (write && initial.display.access !== "write") return yield* new Runtime.AccessDenied({});
+  const metadata = yield* store
+    .snapshot(companyId, connection.id, revision)
+    .pipe(Effect.mapError(storedRefusal));
+  if (metadata.integration !== "notion")
+    return yield* new ConnectionStore.ConnectionNotFound({
+      companyId,
+      lookup: { id: connection.id, revision }
     });
-    const bytes = yield* ContractLimits.get("notion.read.bytes");
-    let dispatched = false;
-    return yield* source
-      .withSlot(
-        connection.id,
-        () =>
-          Effect.gen(function* () {
-            yield* recheck;
-            const current = yield* connected(companyId, connection);
-            if (write && current.display.access !== "write")
-              return yield* new Runtime.AccessDenied({});
-            const key = yield* store
-              .poolCredentials(
-                companyId,
-                { kind: "notion", id: connection.id, handle: connection.handle, revision },
-                current.credentialRevision
-              )
-              .pipe(Effect.mapError(storedRefusal), Effect.flatMap(Source.parseCredentials));
-            if (
-              current.display.workspace.id !== metadata.snapshot.workspace.id ||
-              key.workspaceId !== metadata.snapshot.workspace.id
+  if (write && metadata.snapshot.access !== "write") return yield* new Runtime.AccessDenied({});
+  const execute = yield* plan(metadata.snapshot, input, {
+    id: connection.id,
+    revision
+  }).pipe(Effect.mapError((error) => refusal(error, write)));
+  const bytes = yield* ContractLimits.get("notion.read.bytes");
+  let dispatched = false;
+  return yield* source
+    .withSlot(
+      connection.id,
+      () =>
+        Effect.gen(function* () {
+          yield* recheck;
+          const current = yield* connected(companyId, connection);
+          if (write && current.display.access !== "write")
+            return yield* new Runtime.AccessDenied({});
+          const key = yield* store
+            .poolCredentials(
+              companyId,
+              { kind: "notion", id: connection.id, handle: connection.handle, revision },
+              current.credentialRevision
             )
-              return yield* new Runtime.AccessDenied({});
-            const redacted = Redacted.make(key.key);
-            const budget = { remaining: bytes };
-            return yield* execute((request, mutation) =>
-              Effect.gen(function* () {
-                if (mutation) {
-                  // Ownership and access can change while the provider preflight is running.
-                  yield* recheck;
-                  const latest = yield* connected(companyId, connection);
-                  if (
-                    latest.display.access !== "write" ||
-                    latest.credentialRevision !== current.credentialRevision
-                  )
-                    return yield* new Runtime.AccessDenied({});
-                  dispatched = true;
-                }
-                return yield* source.send(redacted, request, bytes, budget, mutation);
-              }).pipe(
-                Effect.provideService(ConnectionStore.ConnectionStore, store),
-                Effect.mapError((cause) =>
-                  isNotionRefusal(cause) ? cause : new Source.Refusal({ code: "access_denied" })
+            .pipe(Effect.mapError(storedRefusal), Effect.flatMap(Source.parseCredentials));
+          if (
+            current.display.workspace.id !== metadata.snapshot.workspace.id ||
+            key.workspaceId !== metadata.snapshot.workspace.id
+          )
+            return yield* new Runtime.AccessDenied({});
+          const redacted = Redacted.make(key.key);
+          const budget = { remaining: bytes };
+          return yield* execute((request, mutation) =>
+            Effect.gen(function* () {
+              if (mutation) {
+                // Ownership and access can change while the provider preflight is running.
+                yield* recheck;
+                const latest = yield* connected(companyId, connection);
+                if (
+                  latest.display.access !== "write" ||
+                  latest.credentialRevision !== current.credentialRevision
                 )
+                  return yield* new Runtime.AccessDenied({});
+                dispatched = true;
+              }
+              return yield* source.send(redacted, request, bytes, budget, mutation);
+            }).pipe(
+              Effect.provideService(ConnectionStore.ConnectionStore, store),
+              Effect.mapError((cause) =>
+                isNotionRefusal(cause) ? cause : new Source.Refusal({ code: "access_denied" })
               )
-            );
-          }),
-        deadline
-      )
-      .pipe(
-        Effect.mapError((error) =>
-          dispatched && isNotionRefusal(error) && error.code === "timeout"
-            ? new Source.Refusal({ code: "unknown_outcome" })
-            : error
-        )
-      );
-  },
-  Effect.mapError((error) => (isNotionRefusal(error) ? refusal(error) : error))
-);
+            )
+          );
+        }),
+      deadline
+    )
+    .pipe(
+      Effect.mapError((error) => {
+        if (!isNotionRefusal(error)) return error;
+        if (dispatched && error.code === "timeout")
+          return refusal(new Source.Refusal({ code: "unknown_outcome" }));
+        return refusal(error, write && !dispatched);
+      })
+    );
+});
 
 export const declarationOf = (alias: string, binding: Binding.Binding["Service"]) => {
   if (!Object.hasOwn(binding.manifest.uses, alias)) return undefined;
