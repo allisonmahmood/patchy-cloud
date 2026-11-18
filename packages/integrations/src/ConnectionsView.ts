@@ -66,6 +66,8 @@ export interface Integration {
 /** An integration Patchy offers, as the catalogue lists it. */
 export interface Offer {
   readonly integration: Integration;
+  /** A local prototype can open its workspace directly. */
+  readonly href?: string;
   /** What connecting one gives patches, in at most eight words. */
   readonly line: string;
 }
@@ -330,7 +332,7 @@ const catalogue = (offers: ReadonlyArray<Offer>, rows_: ReadonlyArray<Row>, admi
     [
       ...offers.map((offer) => {
         const count = rows_.filter((item) => item.integration.key === offer.integration.key).length;
-        const href = connectPath(offer.integration.key);
+        const href = offer.href ?? connectPath(offer.integration.key);
         return row({
           lead: productMark(offer.integration.mark),
           name: offer.integration.label,
@@ -338,9 +340,9 @@ const catalogue = (offers: ReadonlyArray<Offer>, rows_: ReadonlyArray<Row>, admi
           ...(admin
             ? {
                 href,
-                end: linkButton("Connect", href, {
+                end: linkButton(offer.href ? "Open" : "Connect", href, {
                   size: "sm",
-                  ariaLabel: `Connect ${offer.integration.label}`
+                  ariaLabel: `${offer.href ? "Open" : "Connect"} ${offer.integration.label}`
                 })
               }
             : {})

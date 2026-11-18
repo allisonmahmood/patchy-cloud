@@ -7,7 +7,7 @@ import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import { Analytics } from "@patchy/analytics";
 import { Integration, integrations } from "@patchy/api";
-import { type RequireSession, Session } from "@patchy/auth";
+import { DevPersonas, type RequireSession, Session } from "@patchy/auth";
 import { Teams, Users } from "@patchy/companies";
 import { checkbox, choiceGroup, radio } from "@patchy/core";
 import { ContractLimits } from "@patchy/limits";
@@ -321,6 +321,22 @@ const rotateLabel = (integration: string) =>
 const offersOf = (shown: ReadonlyArray<Integration>) =>
   shown.map((integration) => pages[integration].offer);
 
+const prototypeOffers = Effect.fn("ConnectionPage.prototypeOffers")(function* (
+  viewer: RequireSession.Viewer["Service"]
+) {
+  return viewer.company.handle === "brightline" &&
+    viewer.role === "admin" &&
+    (yield* DevPersonas.enabled.pipe(Effect.catch(() => Effect.succeed(false))))
+    ? [
+        {
+          integration: { key: "notion-prototype", label: "Notion prototype", mark: "N" },
+          line: "Real Tasks and pages in the test workspace",
+          href: "/settings/integrations/notion-prototype"
+        }
+      ]
+    : [];
+});
+
 /**
  * The company's people by id, and its active admins' names for the line that tells members whom
  * to ask. A directory that can't be read leaves the pages and their actions working, without names.
@@ -377,7 +393,7 @@ const index = Effect.fn("ConnectionPage.index")(function* (
       admins: known?.admins ?? [],
       rows: connections.map((connection) => row(connection, usage, people, now)),
       lastCalls,
-      offers: offersOf(yield* offered),
+      offers: [...offersOf(yield* offered), ...(yield* prototypeOffers(viewer))],
       rotate: rotateLabel,
       filters: filters(query),
       now,
@@ -404,7 +420,7 @@ const catalogue = Effect.fn("ConnectionPage.catalogue")(function* (
       admin: viewer.role === "admin",
       admins,
       rows: connections.map((connection) => row(connection, new Map(), new Map(), now)),
-      offers: offersOf(yield* offered)
+      offers: [...offersOf(yield* offered), ...(yield* prototypeOffers(viewer))]
     })
   } satisfies Page;
 });

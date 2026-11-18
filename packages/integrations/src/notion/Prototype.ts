@@ -407,6 +407,8 @@ export const layer: Layer.Layer<
       if (viewer.company.handle !== "brightline" || viewer.role !== "admin")
         return HttpServerResponse.empty({ status: 403 });
       let p = probes.get(viewer.company.id);
+      if (!p && request.method === "GET" && request.url.split("?")[0] === work)
+        return HttpServerResponse.redirect(path, { status: 303 });
       let error = "";
       if (request.method === "POST") {
         const form = yield* HttpServerRequest.schemaBodyUrlParams(Form);
