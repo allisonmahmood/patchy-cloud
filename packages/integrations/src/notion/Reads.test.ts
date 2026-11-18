@@ -288,10 +288,11 @@ it.effect(
       const filtered = yield* list({ select: ["Name"], contains: { Project: rowId } }, saved);
       const denied = yield* filtered(notFound).pipe(Effect.flip);
       assert.equal(denied.dataSource, otherId);
+      const changedRelation = { ...liveRelation, relation: { data_source_id: id(5) } };
       const retargeted = response(({ url }) =>
         url.endsWith(otherId)
           ? { id: otherId, properties: {} }
-          : liveSchema([...fields, { ...liveRelation, relation: { data_source_id: id(5) } }])
+          : liveSchema([...fields, changedRelation])
       );
       const changed = yield* execute(retargeted.send).pipe(Effect.flip);
       assert.equal(changed.missing?.name, "Project");
