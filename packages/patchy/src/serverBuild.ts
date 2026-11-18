@@ -17,9 +17,10 @@ export interface GuestAliases {
   readonly imap: readonly string[];
   readonly github: readonly string[];
   readonly notion: readonly string[];
+  readonly notionWrites?: readonly string[];
 }
 export const guestAliases = (
-  uses: Readonly<Record<string, { readonly kind: string }>>
+  uses: Readonly<Record<string, { readonly kind: string; readonly access?: string }>>
 ): GuestAliases => {
   const of = (kind: string) =>
     Object.entries(uses)
@@ -31,7 +32,8 @@ export const guestAliases = (
     attio: of("attio"),
     imap: of("imap"),
     github: of("github"),
-    notion: of("notion")
+    notion: of("notion"),
+    notionWrites: of("notion").filter((alias) => uses[alias]?.access === "write")
   };
 };
 
@@ -127,7 +129,7 @@ const buildConfig = (
     ),
     ...agentPaths.map((file, index) => `import * as agent${index} from ${JSON.stringify(file)};`),
     // Computed keys, so a file named __proto__ is a key rather than the object's prototype.
-    `export default createGuest({${modules.map((name, index) => `[${JSON.stringify(name)}]: module${index}`).join(",")}},${JSON.stringify(aliases.sharedStores)},{${agent.files.map((name, index) => `[${JSON.stringify(name)}]: agent${index}`).join(",")}},${JSON.stringify(aliases.pidgeon)},${JSON.stringify(aliases.attio)},${JSON.stringify(aliases.imap)},${JSON.stringify(aliases.github)},${JSON.stringify(aliases.notion)});`
+    `export default createGuest({${modules.map((name, index) => `[${JSON.stringify(name)}]: module${index}`).join(",")}},${JSON.stringify(aliases.sharedStores)},{${agent.files.map((name, index) => `[${JSON.stringify(name)}]: agent${index}`).join(",")}},${JSON.stringify(aliases.pidgeon)},${JSON.stringify(aliases.attio)},${JSON.stringify(aliases.imap)},${JSON.stringify(aliases.github)},${JSON.stringify(aliases.notion)},${JSON.stringify(aliases.notionWrites ?? [])});`
   ].join("\n");
   return {
     configFile: false,

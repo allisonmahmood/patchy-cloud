@@ -1,4 +1,4 @@
-import { NotionAccess, notionPropertyType, type NotionSnapshot } from "@patchy/api";
+import { NotionAccess, NotionId, notionPropertyType, type NotionSnapshot } from "@patchy/api";
 import { ContractLimits } from "@patchy/limits";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -59,6 +59,10 @@ const refusals = {
   invalid_cursor: [400, "This cursor does not belong to the current Notion request."],
   offset_exhausted: [422, "Notion stopped at 10,000 rows. Narrow the filter and start again."],
   write_conflict: [409, "Notion reported a conflict. Try again."],
+  unknown_outcome: [
+    502,
+    "The Notion write may have been saved. Read the current state before trying again."
+  ],
   source_rate_limited: [429, "Notion is limiting requests. Try again shortly."],
   shape_mismatch: [422, "Notion returned an unexpected discovery shape. Nothing was saved."],
   too_large: [413, "Notion discovery exceeded a Patchy limit. Nothing was saved."],
@@ -76,6 +80,9 @@ const Bound = Schema.Struct({
 export class Refusal extends Schema.TaggedError<Refusal>()("NotionRefusal", {
   code: Schema.Literals(Record.keys(refusals)),
   upstreamStatus: Schema.optionalKey(Schema.Int),
+  rowId: Schema.optionalKey(NotionId),
+  property: Schema.optionalKey(Schema.String),
+  knownOptions: Schema.optionalKey(Schema.Array(Schema.String)),
   cause: Schema.optionalKey(SecretCause),
   retryAfterSeconds: Schema.optionalKey(Schema.Number),
   bound: Schema.optionalKey(Bound),
@@ -89,6 +96,14 @@ export class Refusal extends Schema.TaggedError<Refusal>()("NotionRefusal", {
   }
 
   override get message() {
+    if (this.code === "invalid_request" && this.property !== undefined) {
+      if (this.knownOptions === undefined)
+        return `Notion cannot write the value for “${this.property}”.`;
+      const options = this.knownOptions.join(", ");
+      return options.length > 0
+        ? `Choose a known option for “${this.property}”. Known options: ${options}.`
+        : `“${this.property}” has no known options. Refresh the connection after adding one in Notion.`;
+    }
     if (this.code === "source_unavailable" && this.upstreamStatus === 401)
       return "Notion did not accept the token. Paste a working internal connection token.";
     if (this.code === "source_rate_limited" && this.retryAfterSeconds !== undefined)
@@ -118,7 +133,8 @@ export class Source extends Context.Service<
       key: Redacted.Redacted<string>,
       request: HttpClientRequest.HttpClientRequest,
       maxBytes: number,
-      budget?: { remaining: number }
+      budget?: { remaining: number },
+      write?: boolean
     ) => Effect.Effect<unknown, Refusal>;
     readonly check: (
       key: Redacted.Redacted<string>,
@@ -206,7 +222,8 @@ const ErrorBody = Schema.Struct({
   additional_data: Schema.optionalKey(
     Schema.Struct({
       retry_after: Schema.optionalKey(Schema.Number),
-      limit_kind: Schema.optionalKey(Schema.String)
+      limit_kind: Schema.optionalKey(Schema.String),
+      committed_resource_id: Schema.optionalKey(NotionId)
     })
   )
 });
@@ -283,7 +300,8 @@ export const make = Effect.gen(function* () {
     key: Redacted.Redacted<string>,
     request: HttpClientRequest.HttpClientRequest,
     maxBytes: number,
-    budget?: { remaining: number }
+    budget?: { remaining: number },
+    write = false
   ) {
     const response = yield* client
       .execute(
@@ -296,28 +314,44 @@ export const make = Effect.gen(function* () {
       )
       .pipe(
         Effect.mapError(
-          (cause) => new Refusal({ code: "source_unavailable", cause: Redacted.make(cause) })
+          (cause) =>
+            new Refusal({
+              code: write ? "unknown_outcome" : "source_unavailable",
+              cause: Redacted.make(cause)
+            })
         ),
         Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
         Effect.provideService(Tracer.DisablePropagation, true)
       );
     const status = response.status;
-    if ((status >= 300 && status < 400) || status === 401 || (status >= 500 && status !== 529))
+    if (status >= 500 && status !== 529 && !(write && status === 503))
+      return yield* new Refusal({
+        code: write ? "unknown_outcome" : "source_unavailable",
+        upstreamStatus: status
+      });
+    if ((status >= 300 && status < 400) || status === 401)
       return yield* new Refusal({ code: "source_unavailable", upstreamStatus: status });
+    // A successful status, a 503 or an unclassified 409 can hide a commit.
+    const mayHaveCommitted =
+      write && ((status >= 200 && status < 300) || status === 503 || status === 409);
+    const unreadable = (otherwise: Refusal) =>
+      mayHaveCommitted
+        ? new Refusal({ code: "unknown_outcome", upstreamStatus: status })
+        : otherwise;
     if (
       Number(response.headers["content-length"]) > Math.min(maxBytes, budget?.remaining ?? maxBytes)
     )
-      return yield* tooLarge("bytes", maxBytes);
+      return yield* unreadable(tooLarge("bytes", maxBytes));
     const chunks = yield* response.stream.pipe(
-      Stream.mapError(
-        (cause) => new Refusal({ code: "source_unavailable", cause: Redacted.make(cause) })
+      Stream.mapError((cause) =>
+        unreadable(new Refusal({ code: "source_unavailable", cause: Redacted.make(cause) }))
       ),
       Stream.runFoldEffect(
         () => ({ length: 0, values: [] as Uint8Array[] }),
         (state, chunk) => {
           state.length += chunk.byteLength;
           if (state.length > maxBytes || chunk.byteLength > (budget?.remaining ?? maxBytes))
-            return Effect.fail(tooLarge("bytes", maxBytes));
+            return Effect.fail(unreadable(tooLarge("bytes", maxBytes)));
           if (budget) budget.remaining -= chunk.byteLength;
           state.values.push(chunk);
           return Effect.succeed(state);
@@ -331,24 +365,36 @@ export const make = Effect.gen(function* () {
       offset += chunk.byteLength;
     }
     const result = yield* json(decoder.decode(body)).pipe(
-      Effect.mapError(
-        (cause) =>
+      Effect.mapError((cause) =>
+        unreadable(
           new Refusal({
             code: "source_unavailable",
             upstreamStatus: status,
             cause: Redacted.make(cause)
           })
+        )
       )
     );
     if (status >= 200 && status < 300) return result;
     const error = Option.getOrUndefined(decodeError(result));
+    if (write && status === 503) {
+      const rowId = error?.additional_data?.committed_resource_id;
+      return yield* new Refusal({
+        code: "unknown_outcome",
+        upstreamStatus: status,
+        ...(rowId === undefined ? {} : { rowId })
+      });
+    }
     if (status === 403) {
       if (error?.additional_data?.limit_kind || /block limit/i.test(error?.message ?? ""))
         return yield* new Refusal({ code: "source_unavailable", upstreamStatus: status });
       return yield* new Refusal({ code: "access_denied" });
     }
     if (status === 404) return yield* new Refusal({ code: "not_found" });
-    if (status === 409) return yield* new Refusal({ code: "write_conflict" });
+    if (status === 409)
+      return yield* new Refusal({
+        code: !write || error?.code === "conflict_error" ? "write_conflict" : "unknown_outcome"
+      });
     if (status === 429 || status === 529) {
       const seconds =
         error?.retry_after ??

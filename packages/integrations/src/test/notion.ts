@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
+import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Source from "../notion/Source.js";
 
@@ -110,7 +111,7 @@ const task = (id: string, name: string, status: "todo" | "done", assignee: typeo
     Project: { id: "proj", type: "relation", relation: [], has_more: false }
   }
 });
-const tasksRows = [
+const initialRows = [
   task(firstRequestId, "Review signage", "todo", owner),
   task("20000000-0000-4000-8000-000000000002", "Book a studio", "todo", owner),
   task("20000000-0000-4000-8000-000000000003", "Send the brief", "todo", teammate),
@@ -120,10 +121,9 @@ const handbook = {
   ...page(handbookId, { type: "workspace", workspace: true }),
   properties: { title: { id: "title", type: "title", title: title("Requests handbook") } }
 };
-const documents = [handbook, ...tasksRows];
 const sources = [tasks, projects];
 const reads = new Map<string, unknown>([
-  ...documents.map((doc) => [`/v1/pages/${doc.id}`, doc] as const),
+  [`/v1/pages/${handbook.id}`, handbook],
   ...sources.map((source) => [`/v1/data_sources/${source.id}`, source] as const),
   [`/v1/databases/${tasksDatabaseId}`, database(tasksDatabaseId, "Project Tracker")],
   [`/v1/databases/${projectsDatabaseId}`, database(projectsDatabaseId, "Project Portfolio")],
@@ -195,11 +195,42 @@ const decodeSearch = Schema.decodeUnknownOption(
     })
   )
 );
+const decodeWrite = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      parent: Schema.optionalKey(Schema.Struct({ data_source_id: Schema.String })),
+      properties: Schema.optionalKey(
+        Schema.Struct({
+          title: Schema.optionalKey(
+            Schema.Struct({
+              title: Schema.Array(
+                Schema.Struct({ text: Schema.Struct({ content: Schema.String }) })
+              )
+            })
+          ),
+          STs: Schema.optionalKey(
+            Schema.Struct({ status: Schema.Struct({ id: Schema.Literals(["todo", "done"]) }) })
+          ),
+          who: Schema.optionalKey(
+            Schema.Struct({ people: Schema.Array(Schema.Struct({ id: Schema.String })) })
+          )
+        })
+      ),
+      in_trash: Schema.optionalKey(Schema.Boolean)
+    })
+  )
+);
 const decoder = new TextDecoder();
 
+interface Workspace {
+  readonly tasksRows: Map<string, ReturnType<typeof task>>;
+  nextRow: number;
+}
+
 /** Exercises the live adapter against a disposable workspace without a network request. */
-const client = HttpClient.make((request, url) =>
+const serve = (workspace: Workspace, request: HttpClientRequest.HttpClientRequest, url: URL) =>
   Effect.sync(() => {
+    const { tasksRows } = workspace;
     const respond = (body: unknown, status = 200) =>
       HttpClientResponse.fromWeb(request, Response.json(body, { status }));
     const refuse = (status: number, code: string) =>
@@ -227,6 +258,35 @@ const client = HttpClient.make((request, url) =>
         }
       });
     if (isPersonal) return refuse(403, "restricted_resource");
+    const row = tasksRows.get(url.pathname.slice("/v1/pages/".length));
+    const create = request.method === "POST" && url.pathname === "/v1/pages";
+    const update = request.method === "PATCH" && url.pathname.startsWith("/v1/pages/");
+    if ((create || update) && request.body._tag === "Uint8Array") {
+      if (update && !row) return refuse(404, "object_not_found");
+      const write = decodeWrite(decoder.decode(request.body.body));
+      if (write._tag === "None") return refuse(400, "validation_error");
+      const { parent, properties, in_trash } = write.value;
+      if (create && (parent?.data_source_id !== tasksId || properties?.title === undefined))
+        return refuse(400, "validation_error");
+      const id =
+        row?.id ?? `20000000-0000-4000-8000-${String(workspace.nextRow++).padStart(12, "0")}`;
+      const name =
+        properties?.title?.title.map(({ text }) => text.content).join("") ??
+        row?.properties.Name.title.map(({ plain_text }) => plain_text).join("") ??
+        "";
+      const status = properties?.STs?.status.id ?? row?.properties.Status.status.id ?? "todo";
+      const next = task(id, name, status, owner);
+      const assignee =
+        properties?.who?.people.map(({ id }) => (id === teammate.id ? teammate : owner)) ??
+        row?.properties.Assignee.people ??
+        [];
+      next.properties.Assignee.people = assignee;
+      next.in_trash = in_trash ?? row?.in_trash ?? false;
+      tasksRows.set(id, next);
+      return respond(next);
+    }
+    if (request.method === "GET" && url.pathname.startsWith("/v1/pages/") && row)
+      return respond(row);
     if (
       request.method === "POST" &&
       url.pathname === "/v1/search" &&
@@ -244,7 +304,7 @@ const client = HttpClient.make((request, url) =>
         const pages =
           filter?.value === "data_source"
             ? []
-            : documents.filter(({ properties }) =>
+            : [handbook, ...tasksRows.values()].filter(({ properties }) =>
                 includes("Name" in properties ? properties.Name.title : properties.title.title)
               );
         const dataSources =
@@ -278,13 +338,15 @@ const client = HttpClient.make((request, url) =>
       const offset = offsetOf("tasks", start_cursor ?? null);
       if (!Number.isSafeInteger(offset)) return refuse(400, "validation_error");
       const filters = filter === undefined ? [] : "and" in filter ? filter.and : [filter];
-      const matching = tasksRows.filter(({ properties }) =>
-        filters.every((f) => {
-          if (f.property === "who")
-            return properties.Assignee.people.some(({ id }) => id === f.people.contains);
-          const { id, name } = properties.Status.status;
-          return f.status.equals === name || f.status.equals === id;
-        })
+      const matching = [...tasksRows.values()].filter(
+        ({ properties, in_trash }) =>
+          !in_trash &&
+          filters.every((f) => {
+            if (f.property === "who")
+              return properties.Assignee.people.some(({ id }) => id === f.people.contains);
+            const { id, name } = properties.Status.status;
+            return f.status.equals === name || f.status.equals === id;
+          })
       );
       const projection = url.searchParams.getAll("filter_properties");
       const result = paginate("tasks", matching, offset, page_size);
@@ -298,9 +360,13 @@ const client = HttpClient.make((request, url) =>
       return respond({ ...result, results });
     }
     return refuse(404, "object_not_found");
-  })
-);
+  });
+
+const makeClient = () => {
+  const workspace = { tasksRows: new Map(initialRows.map((row) => [row.id, row])), nextRow: 5 };
+  return HttpClient.make((request, url) => serve(workspace, request, url));
+};
 
 export const layer = Layer.effect(Source.Source, Source.make).pipe(
-  Layer.provide(Layer.succeed(HttpClient.HttpClient, client))
+  Layer.provide(Layer.effect(HttpClient.HttpClient, Effect.sync(makeClient)))
 );

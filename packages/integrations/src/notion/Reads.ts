@@ -44,11 +44,17 @@ const RichText = Schema.Array(
     mention: Schema.optionalKey(Schema.Struct({ type: Schema.String }))
   })
 );
-const RawSchemaProperty = Schema.Struct({
-  id: Id,
-  type: Schema.String,
-  relation: Schema.optionalKey(Schema.Struct({ data_source_id: Schema.optionalKey(Id) }))
-});
+const liveOptions = Schema.decodeUnknownOption(
+  Schema.Struct({ options: Schema.Array(Schema.Struct({ id: Id })) })
+);
+const RawSchemaProperty = Schema.StructWithRest(
+  Schema.Struct({
+    id: Id,
+    type: Schema.String,
+    relation: Schema.optionalKey(Schema.Struct({ data_source_id: Schema.optionalKey(Id) }))
+  }),
+  [Schema.Record(Schema.String, Schema.Unknown)]
+);
 const RawSource = Schema.Struct({
   id: Id,
   properties: Schema.Record(Name, RawSchemaProperty)
@@ -57,7 +63,7 @@ const RawProperty = Schema.StructWithRest(
   Schema.Struct({ id: Id, type: Schema.String, has_more: Schema.optionalKey(Schema.Boolean) }),
   [Schema.Record(Schema.String, Schema.Unknown)]
 );
-const Parent = Schema.Struct({
+export const RowParent = Schema.Struct({
   type: Schema.String,
   data_source_id: Schema.optionalKey(NotionId)
 });
@@ -66,9 +72,11 @@ const PageInfo = Schema.Struct({
   id: NotionId,
   url: WebUrl,
   last_edited_time: Schema.String,
-  parent: Parent,
+  parent: RowParent,
   properties: Schema.Record(Name, Schema.Unknown)
 });
+export const belongsToSource = (parent: typeof RowParent.Type, sourceId: string) =>
+  parent.type === "data_source_id" && parent.data_source_id === sourceId;
 const RawRow = Schema.Struct({
   ...PageInfo.fields,
   created_time: Schema.String,
@@ -243,7 +251,7 @@ const paging = Effect.fnUntraced(function* (
 });
 
 const sourcePath = (id: string) => `/data_sources/${encodeURIComponent(id)}`;
-const pagePath = (id: string) => `/pages/${encodeURIComponent(id)}`;
+export const pagePath = (id: string) => `/pages/${encodeURIComponent(id)}`;
 const propertySegment = (id: string) => {
   try {
     return encodeURIComponent(decodeURIComponent(id));
@@ -253,7 +261,7 @@ const propertySegment = (id: string) => {
 };
 const propertyPath = (rowId: string, propertyId: string) =>
   `${pagePath(rowId)}/properties/${propertySegment(propertyId)}`;
-const sourceOf = (snapshot: NotionSnapshot, key: string) => {
+export const sourceOf = (snapshot: NotionSnapshot, key: string) => {
   const dataSource = snapshot.dataSources.find((candidate) => candidate.key === key);
   return dataSource === undefined
     ? Effect.fail(new Refusal({ code: "invalid_request" }))
@@ -269,11 +277,12 @@ const nameSource = (read: Effect.Effect<unknown, Refusal>, dataSource: string) =
     )
   );
 
-const checkSource = Effect.fnUntraced(function* (
+export const checkSource = Effect.fnUntraced(function* (
   send: Send,
   snapshot: NotionSnapshot,
   source: DataSource,
-  selected: readonly Property[]
+  selected: readonly Property[],
+  writtenOptions?: ReadonlyMap<Property, readonly string[]>
 ) {
   const targets = new Set(
     selected.flatMap(({ relationTarget }) => (relationTarget ? [relationTarget] : []))
@@ -288,7 +297,7 @@ const checkSource = Effect.fnUntraced(function* (
   );
   if (live.id !== source.id) return yield* shapeMismatch();
   const byId = new Map(Object.values(live.properties).map((property) => [property.id, property]));
-  for (const property of source.properties) {
+  for (const property of writtenOptions ? selected : source.properties) {
     const current = byId.get(property.id);
     if (
       current?.type !== property.type ||
@@ -297,6 +306,15 @@ const checkSource = Effect.fnUntraced(function* (
         current.relation?.data_source_id !== property.relationTarget)
     )
       return yield* shapeMismatch(property);
+    const chosen = writtenOptions?.get(property);
+    if (
+      chosen?.length &&
+      (current.type === "select" || current.type === "status" || current.type === "multi_select")
+    ) {
+      const options = Option.getOrUndefined(liveOptions(current[current.type]))?.options;
+      if (chosen.some((id) => !options?.some((option) => option.id === id)))
+        return yield* shapeMismatch(property);
+    }
   }
 });
 
@@ -366,8 +384,7 @@ const row = Effect.fnUntraced(function* (
   selected: readonly Property[],
   budget: { remaining: number; limit: number }
 ) {
-  if (raw.parent.type !== "data_source_id" || raw.parent.data_source_id !== source.id)
-    return yield* shapeMismatch();
+  if (!belongsToSource(raw.parent, source.id)) return yield* shapeMismatch();
   const byId = new Map(Object.values(raw.properties).map((property) => [property.id, property]));
   const output: Record<string, Json> = Object.create(null);
   for (const property of selected) {
@@ -572,8 +589,7 @@ export const planGet = Effect.fnUntraced(function* (
     if (answer === null) return null;
     const raw = yield* readRow(answer);
     if (raw.id !== id) return yield* shapeMismatch();
-    if (raw.parent.type !== "data_source_id" || raw.parent.data_source_id !== source.id)
-      return null;
+    if (!belongsToSource(raw.parent, source.id)) return null;
     yield* checkSource(send, snapshot, source, source.properties);
     return yield* row(send, source, raw, source.properties, {
       remaining: propertyLimit,

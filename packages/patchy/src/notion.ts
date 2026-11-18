@@ -1,11 +1,14 @@
 import type {
+  NotionAccess,
   NotionMarkdownOutput,
   NotionPeopleInput,
   NotionPeopleOutput,
   NotionRead,
   NotionRow as WireRow,
   NotionSearchInput,
-  NotionSearchOutput
+  NotionSearchOutput,
+  NotionWrite,
+  notionWrites
 } from "@patchy/api";
 import { decodeError } from "./clientError.js";
 
@@ -24,6 +27,7 @@ interface SourceDescription {
   readonly contains: Readonly<Record<string, string>>;
   readonly range: Readonly<Record<string, string | number>>;
   readonly order: string;
+  readonly writable?: Readonly<Record<string, unknown>>;
 }
 
 export type NotionSources = Readonly<Record<string, SourceDescription>>;
@@ -65,8 +69,22 @@ export type NotionSearchResult<DataSource extends string = string> = Omit<
 > & { readonly dataSource?: DataSource };
 export type NotionPerson = NotionPeopleOutput["people"][number];
 
-export type NotionClient<Sources extends NotionSources> = {
-  readonly [Name in keyof Sources]: NotionSourceClient<Sources[Name]>;
+type WriteResult<Name extends NotionWrite> = (typeof notionWrites)[Name]["output"]["Type"];
+type WritableProperties<Source extends SourceDescription> = Source extends {
+  readonly writable: infer Properties;
+}
+  ? Partial<Properties>
+  : never;
+interface NotionWriteClient<Source extends SourceDescription> {
+  create(properties: WritableProperties<Source>): Promise<WriteResult<"create">>;
+  update(id: string, properties: WritableProperties<Source>): Promise<WriteResult<"update">>;
+  trash(id: string): Promise<WriteResult<"trash">>;
+  restore(id: string): Promise<WriteResult<"restore">>;
+}
+
+export type NotionClient<Sources extends NotionSources, Access extends NotionAccess = "read"> = {
+  readonly [Name in keyof Sources]: NotionSourceClient<Sources[Name]> &
+    (Access extends "write" ? NotionWriteClient<Sources[Name]> : object);
 } & {
   readonly pages: { markdown(id: string): Promise<NotionMarkdown | null> };
   search(options?: NotionSearchOptions): Promise<{
@@ -78,14 +96,14 @@ export type NotionClient<Sources extends NotionSources> = {
   };
 };
 
-type Operation = `notion.${NotionRead}`;
+type Operation = `notion.${NotionRead | NotionWrite}`;
 type Call = (op: Operation, args: Readonly<Record<string, unknown>>) => Promise<unknown>;
 
 /** The host validates each request against the declaration and encodes its result. */
-export function createNotionClient<Sources extends NotionSources>(
-  connection: string,
-  call: Call
-): NotionClient<Sources> {
+export function createNotionClient<
+  Sources extends NotionSources,
+  Access extends NotionAccess = "read"
+>(connection: string, call: Call, access?: Access): NotionClient<Sources, Access> {
   const invoke = async (op: Operation, input: object) => {
     const args = Object.fromEntries(
       Object.entries(input).filter(([, value]) => value !== undefined)
@@ -107,10 +125,19 @@ export function createNotionClient<Sources extends NotionSources>(
   };
   const sourceClient = (source: string) => ({
     list: (options: object = {}) => invoke("notion.listRows", { ...options, source }),
-    get: (id: string) => invoke("notion.getRow", { source, id })
+    get: (id: string) => invoke("notion.getRow", { source, id }),
+    ...(access === "write"
+      ? {
+          create: (properties: object) => invoke("notion.create", { source, properties }),
+          update: (id: string, properties: object) =>
+            invoke("notion.update", { source, id, properties }),
+          trash: (id: string) => invoke("notion.trash", { source, id }),
+          restore: (id: string) => invoke("notion.restore", { source, id })
+        }
+      : {})
   });
   const sources = new Map<string, ReturnType<typeof sourceClient>>();
-  return new Proxy(Object.assign(Object.create(null), methods) as NotionClient<Sources>, {
+  return new Proxy(Object.assign(Object.create(null), methods) as NotionClient<Sources, Access>, {
     get(target, source) {
       if (typeof source !== "string") return undefined;
       if (Object.hasOwn(target, source)) return Reflect.get(target, source);

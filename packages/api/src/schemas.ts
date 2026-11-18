@@ -14,7 +14,7 @@ import { Snapshot } from "./postgresSnapshot.js";
 import { PostHogSnapshot } from "./posthogSnapshot.js";
 import { PidgeonSnapshot } from "./pidgeonSnapshot.js";
 import { AttioSnapshot } from "./attioSnapshot.js";
-import { NotionSnapshot } from "./notionSnapshot.js";
+import { NotionAccess, NotionSnapshot } from "./notionSnapshot.js";
 import { ImapSnapshot } from "./imapSnapshot.js";
 import { GithubSnapshot } from "./githubSnapshot.js";
 import { RepoKind, RepoSnapshot, RepoSummary } from "./repo.js";
@@ -605,7 +605,8 @@ export const AttioDeclaration = Schema.Struct({
 });
 export const NotionDeclaration = Schema.Struct({
   ...PostgresDeclaration.fields,
-  kind: Schema.Literal("notion")
+  kind: Schema.Literal("notion"),
+  access: Schema.optionalKey(NotionAccess)
 });
 /** One IMAP mailbox login, read-only. */
 export const ImapDeclaration = Schema.Struct({

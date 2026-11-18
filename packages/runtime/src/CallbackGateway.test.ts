@@ -988,12 +988,16 @@ it.layer(
         "notion.getRow",
         "notion.markdown",
         "notion.search",
-        "notion.listPeople"
+        "notion.listPeople",
+        "notion.create",
+        "notion.update",
+        "notion.trash",
+        "notion.restore"
       ]
     }
   ] as const)
     it.effect(
-      `${provider} runs only in actions, read-only ones included, and caps its arguments`,
+      `${provider} gates reads and writes by action permissions and caps its arguments`,
       () =>
         Effect.gen(function* () {
           const capabilities = yield* InvocationCapabilities.make;
@@ -1031,15 +1035,30 @@ it.layer(
               );
             }
           assert.deepStrictEqual(ran, []);
-          // Every operation reads, so a read-only action may make each.
+          const writes = new Set([
+            "notion.create",
+            "notion.update",
+            "notion.trash",
+            "notion.restore"
+          ]);
+          const reads = ops.filter((op) => !writes.has(op));
           for (const op of ops) {
             const readOnly = yield* Fixtures.issue(capabilities, {
               kind: "action",
               readOnly: true
             });
-            assert.isTrue((yield* gateway.callback(readOnly.token, readOnly.attempt, call(op))).ok);
+            const reply = yield* gateway.callback(readOnly.token, readOnly.attempt, call(op));
+            if (writes.has(op)) {
+              assert.include(reply, { ok: false, code: "access_denied" });
+              const writable = yield* Fixtures.issue(capabilities, { kind: "action" });
+              assert.isTrue(
+                (yield* gateway.callback(writable.token, writable.attempt, call(op))).ok
+              );
+            } else {
+              assert.isTrue(reply.ok);
+            }
           }
-          assert.deepStrictEqual(ran, [...ops]);
+          assert.deepStrictEqual(ran, [...reads, ...ops.filter((op) => writes.has(op))]);
           const action = yield* Fixtures.issue(capabilities, { kind: "action" });
           assert.include(
             yield* gateway.callback(action.token, action.attempt, {

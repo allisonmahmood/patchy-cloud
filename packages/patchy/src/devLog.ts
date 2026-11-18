@@ -46,13 +46,14 @@ export const invocation = Effect.fn("DevLog.invocation")(function* (
  * connection, and its recipients and subject as recent calls name them.
  */
 export const simulated = Effect.fn("DevLog.simulated")(function* (
-  write: PidgeonDev.Simulated,
-  json: boolean
+  write: Pick<PidgeonDev.Simulated, "viewerId" | "connection" | "summary">,
+  json: boolean,
+  integration = "Pidgeon"
 ) {
   yield* Console.log(
     json
       ? encodeJson({ type: "simulated", ...write })
-      : `${write.viewerId} ${write.connection} ${write.summary}: simulated in dev, nothing reached Pidgeon`
+      : `${write.viewerId} ${write.connection} ${write.summary}: simulated in dev, nothing reached ${integration}`
   );
 });
 

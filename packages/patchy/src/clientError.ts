@@ -186,7 +186,12 @@ type GithubDetails<C extends ErrorCode> = C extends "not_found"
         readonly reason?: string;
       }
     : Readonly<Record<string, unknown>>;
-type NotionDetails<C extends ErrorCode> = C extends "shape_mismatch"
+type NotionDetails<C extends ErrorCode> = C extends "unknown_outcome"
+  ? { readonly rowId?: string }
+  : C extends "invalid_request"
+    ? { readonly property?: string; readonly knownOptions?: readonly string[] }
+    : NotionReadDetails<C>;
+type NotionReadDetails<C extends ErrorCode> = C extends "shape_mismatch"
   ? { readonly property?: string }
   : C extends "not_found"
     ? { readonly dataSource?: string }

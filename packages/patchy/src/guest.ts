@@ -361,7 +361,8 @@ export function createGuest(
   attio: readonly string[] = [],
   imap: readonly string[] = [],
   github: readonly string[] = [],
-  notion: readonly string[] = []
+  notion: readonly string[] = [],
+  notionWrites: readonly string[] = []
 ) {
   let handlers: ReturnType<typeof dispatch>;
   try {
@@ -507,7 +508,11 @@ export function createGuest(
                       : github.includes(connection)
                         ? createGithubClient(connection, call)
                         : notion.includes(connection)
-                          ? createNotionClient(connection, call)
+                          ? createNotionClient(
+                              connection,
+                              call,
+                              notionWrites.includes(connection) ? "write" : "read"
+                            )
                           : connectionClient(call, connection, invalidRequest)
               ),
               run: names((module) =>

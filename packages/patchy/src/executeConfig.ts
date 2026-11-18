@@ -416,7 +416,14 @@ export const resolveStamps = (config: UnresolvedManifest, source: string): Execu
           stamp.id !== sharedTableId(declaration.patchId, declaration.table)))
     )
       throw new StaleGenerated();
-    uses[alias] = { ...declaration, id: stamp.id, revision: stamp.revision };
+    uses[alias] = {
+      ...declaration,
+      id: stamp.id,
+      revision: stamp.revision,
+      ...(generated.kind === "notion" && generated.access !== undefined
+        ? { access: generated.access }
+        : {})
+    };
   }
   return decodeManifest({ ...config, uses, manifestVersion: MANIFEST_VERSION, release: RELEASE });
 };

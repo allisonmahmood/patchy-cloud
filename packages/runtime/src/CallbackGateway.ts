@@ -2,6 +2,8 @@
 import { Buffer } from "node:buffer";
 import {
   FilePutUpload,
+  isNotionWrite,
+  NotionId,
   limitRefusal,
   runtimeBodyLimitId,
   type HandlerKind,
@@ -90,6 +92,10 @@ const connections: Readonly<Record<string, true>> = {
   "notion.markdown": true,
   "notion.search": true,
   "notion.listPeople": true,
+  "notion.create": true,
+  "notion.update": true,
+  "notion.trash": true,
+  "notion.restore": true,
   "attio.listRecords": true,
   "attio.getRecord": true,
   "attio.getManyRecords": true,
@@ -127,12 +133,14 @@ const allowed = (kind: HandlerKind, op: string) =>
       op === "shared.files.get" ||
       Object.hasOwn(actionFile, op) ||
       Object.hasOwn(connections, op)));
+const createdRow = Schema.is(Schema.Struct({ id: NotionId }));
 /** What a read-only action may not do; everything else an action may stays open to it. */
 const writes = (op: string) =>
   Object.hasOwn(writeTable, op) ||
   op === "files.put" ||
   op === "files.delete" ||
-  op === "pidgeon.write";
+  op === "pidgeon.write" ||
+  isNotionWrite(op);
 const viewerAuthority = (op: string) =>
   Object.hasOwn(shared, op) ||
   op === "shared.files.get" ||
@@ -427,13 +435,21 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
                 duration: deadlineMs,
                 orElse: () =>
                   Effect.fail(
-                    new Runtime.Timeout({
-                      deadlineMs,
-                      limitId:
-                        handler.kind === "integration"
-                          ? "integration.deadline"
-                          : "runtime.mutation.deadline"
-                    })
+                    isNotionWrite(request.op)
+                      ? new Runtime.UnknownOutcome({
+                          cause: new Runtime.Timeout({
+                            deadlineMs,
+                            limitId: "integration.deadline"
+                          }),
+                          correlationId: binding.correlationId
+                        })
+                      : new Runtime.Timeout({
+                          deadlineMs,
+                          limitId:
+                            handler.kind === "integration"
+                              ? "integration.deadline"
+                              : "runtime.mutation.deadline"
+                        })
                   )
               })
             );
@@ -496,6 +512,12 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
                     : reply?.ok
                       ? null
                       : "source_unavailable",
+              ...(request.op === "notion.create" &&
+              reply?.ok === true &&
+              "value" in reply &&
+              createdRow(reply.value)
+                ? { createdResourceId: reply.value.id }
+                : {}),
               durationMs: (yield* Clock.currentTimeMillis) - now,
               rowCount:
                 reply?.ok && "value" in reply ? (handler.rowCount?.(reply.value) ?? null) : null,

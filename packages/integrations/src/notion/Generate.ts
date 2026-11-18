@@ -8,7 +8,28 @@ const object = (fields: readonly (readonly [string, string])[], indent: string):
     ? "{}"
     : `{\n${fields.map(([name, type]) => `${indent}  readonly ${quote(name)}: ${type};`).join("\n")}\n${indent}}`;
 
-const describe = (source: NotionSnapshot["dataSources"][number]): string => {
+type DataSource = NotionSnapshot["dataSources"][number];
+const writeTypes: Readonly<Record<string, string>> = {
+  title: "string",
+  rich_text: "string",
+  number: "number | null",
+  date: "{ readonly start: string; readonly end?: string | null } | null",
+  checkbox: "boolean",
+  url: "string | null",
+  email: "string | null",
+  phone_number: "string | null",
+  people: "readonly string[]",
+  relation: "readonly string[]"
+};
+const writableType = ({ type, options }: DataSource["properties"][number]): string | undefined => {
+  if (type === "select" || type === "status" || type === "multi_select") {
+    const names = options?.map(({ name }) => quote(name)).join(" | ") || "never";
+    return type === "multi_select" ? `readonly (${names})[]` : `${names} | null`;
+  }
+  return Object.hasOwn(writeTypes, type) ? writeTypes[type] : undefined;
+};
+
+const describe = (source: DataSource, access: NotionSnapshot["access"]): string => {
   const properties = source.properties.flatMap(({ name, type }) => {
     const descriptor = notionPropertyType(type);
     return descriptor ? [{ name, ...descriptor }] : [];
@@ -40,7 +61,18 @@ const describe = (source: NotionSnapshot["dataSources"][number]): string => {
       ],
       "    "
     )};
-    readonly order: ${[...properties.map(({ name }) => name), ...times].map((name) => quote(name)).join(" | ")};
+    readonly order: ${[...properties.map(({ name }) => name), ...times].map((name) => quote(name)).join(" | ")};${
+      access === "write"
+        ? `
+    readonly writable: ${object(
+      source.properties.flatMap((property) => {
+        const type = writableType(property);
+        return type === undefined ? [] : [[property.name, type]];
+      }),
+      "    "
+    )};`
+        : ""
+    }
   }`;
 };
 
@@ -52,20 +84,20 @@ import { createNotionClient } from "patchy/client";
 import type { Call, NotionClient } from "patchy/client";
 
 export type Sources = ${object(
-      dataSources.map((source) => [source.key, describe(source)]),
+      dataSources.map((source) => [source.key, describe(source, access)]),
       ""
     )};
-export type Client = NotionClient<Sources>;
+export type Client = NotionClient<Sources, "${access}">;
 
 export function createClient(connection: string, call: Call): Client {
-  return createNotionClient<Sources>(connection, call);
+  return createNotionClient<Sources, "${access}">(connection, call, "${access}");
 }
 `,
     context: `# Notion connection ${declaration.handle}
 
 Use the data source's \`key\` in a Tier 2 action via \`ctx.connections.<alias>\`. Use \`list\` for a page of rows and \`get(id)\` for one row. The connection also exposes \`pages.markdown(id)\`, \`search\` and \`people.list\`. Read \`.agents/skills/patchy-notion/SKILL.md\` before building with this connection.
 
-Schema and access from snapshot revision ${declaration.revision}. After an admin refreshes the connection, run \`patchy refresh\` to pick up new schema.
+${access === "write" ? "Use `create`, `update`, `trash`, or `restore` on a data source in a Tier 2 action. Writes replace each named property. Use existing option names. Setting a status to null may reset it to Notion's default. `patchy dev` simulates writes, so later live reads won't show them.\n\n" : ""}Schema and access from snapshot revision ${declaration.revision}. After an admin refreshes the connection, run \`patchy refresh\` to pick up new schema.
 
 \`\`\`json
 ${json({ workspace, access, dataSources, exclusions })}

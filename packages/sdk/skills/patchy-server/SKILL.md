@@ -535,7 +535,7 @@ PGlite dev has one connection. It does not reproduce production connection conte
 | `notion.calls.concurrent` | contract | 3 | calls | host | Notion calls per connection in a server process; excess calls wait within their deadline | `busy` | No | release |
 | `notion.read.bytes` | contract | 8388608 | bytes | host | Decoded Notion responses collected for one read, including follow-up requests | `too_large` | No | release |
 | `notion.read.propertyItems` | contract | 1000 | items | host | Notion property items collected through follow-up requests for one read | `too_large` | No | release |
-| `runtime.notion.bytes` | contract | 65536 | bytes | patch | Arguments to one Notion read | `too_large` | Yes | release |
+| `runtime.notion.bytes` | contract | 500000 | bytes | patch | Arguments to one Notion call | `too_large` | Yes | release |
 | `notion.discovery.deadline` | contract | 60000 | milliseconds | company | Notion token check and all discovery requests when connecting, refreshing or replacing a token | `timeout` | No | release |
 | `notion.discovery.bytes` | contract | 8388608 | bytes | company | One raw Notion discovery answer and the encoded snapshot | `too_large` | No | release |
 | `notion.discovery.sources` | contract | 500 | data sources | company | Data sources one Notion snapshot keeps | `too_large` | No | release |

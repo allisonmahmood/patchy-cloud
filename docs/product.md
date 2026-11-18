@@ -1491,6 +1491,22 @@ by title, and `people.list` to get ids, names, and types for an assignee picker.
 The same reads run through the instance during `patchy dev`. The host keeps the
 Notion token and checks who can use the connection before calling Notion.
 
+### Writing Notion rows
+
+A Tier 2 action can create, update, trash, and restore rows on a Read and write
+connection. Patchy checks current access on the host and confirms the row belongs
+to the declared data source before updating it. An update replaces each named
+property and leaves other properties alone. Select, multi-select and status options
+must exist in the saved snapshot.
+
+Writes return the row id from Notion. Read the row separately to show its current
+properties. A write with an uncertain result returns `unknown_outcome`, with a
+row id when Notion supplies one. Check Notion before trying again. Writes trigger
+Notion's usual notifications, automations and webhooks.
+
+`patchy dev` simulates writes locally and logs operation, data source, row id and
+property names. Its reads still show the live workspace.
+
 ### Connecting Attio
 
 Attio is read-only and company-wide: one connection reads one Attio workspace

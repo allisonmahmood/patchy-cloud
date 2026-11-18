@@ -187,6 +187,9 @@ export interface Options extends DevExecution.Options {
   readonly instance: DevDoor.Instance;
   /** Shows a write dev simulated instead of sending, such as a Pidgeon reply; text by default. */
   readonly simulated?: (write: PidgeonDev.Simulated) => Effect.Effect<void>;
+  readonly simulatedNotion?: (
+    write: Pick<PidgeonDev.Simulated, "viewerId" | "connection" | "summary">
+  ) => Effect.Effect<void>;
 }
 
 const make = Effect.fn("DevResources.make")(function* (
@@ -309,7 +312,11 @@ const make = Effect.fn("DevResources.make")(function* (
     // through the instance, and Pidgeon's writes are simulated here, reaching neither.
     ...(yield* PostHogDev.handlers(options.instance)),
     ...(yield* AttioDev.handlers(options.instance)),
-    ...(yield* NotionDev.handlers(options.instance)),
+    ...(yield* NotionDev.handlers(
+      options.instance,
+      prepared.metadata.notion,
+      options.simulatedNotion ?? ((write) => DevLog.simulated(write, false, "Notion"))
+    )),
     ...(yield* ImapDev.handlers(options.instance, yield* Files.makeStagingLocal)),
     ...(yield* GithubDev.handlers(options.instance)),
     ...(yield* PidgeonDev.handlers(

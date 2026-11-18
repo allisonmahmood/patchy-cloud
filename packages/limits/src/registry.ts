@@ -431,10 +431,10 @@ export const registry = {
   },
   "runtime.notion.bytes": {
     kind: "contract",
-    default: 64 * 1024,
+    default: 500_000,
     scope: "patch",
     unit: "bytes",
-    measure: "Arguments to one Notion read",
+    measure: "Arguments to one Notion call",
     refusal: "too_large",
     overridable: true
   },
