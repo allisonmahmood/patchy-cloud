@@ -109,7 +109,7 @@ const createThrough = (
 
 it.effect("creates a row by property and option ids, sending only the write", () =>
   Effect.gen(function* () {
-    const notionSide = notion(() => ({ id: rowId, url: "https://notion.so/row", in_trash: false }));
+    const fake = notion(() => ({ id: rowId, url: "https://notion.so/row", in_trash: false }));
     const execute = yield* create({
       Name: "Review signage",
       Status: "To do",
@@ -118,9 +118,9 @@ it.effect("creates a row by property and option ids, sending only the write", ()
       Due: { start: "2026-01-01" },
       Link: null
     });
-    assert.deepEqual(yield* execute(notionSide.send), { id: rowId, url: "https://notion.so/row" });
-    assert.deepEqual(notionSide.sent(), ["POST /pages"]);
-    assert.deepEqual(body(notionSide.requests[0]!), {
+    assert.deepEqual(yield* execute(fake.send), { id: rowId, url: "https://notion.so/row" });
+    assert.deepEqual(fake.sent(), ["POST /pages"]);
+    assert.deepEqual(body(fake.requests[0]!), {
       ...ours,
       properties: {
         title: { title: [{ type: "text", text: { content: "Review signage" } }] },
@@ -136,7 +136,7 @@ it.effect("creates a row by property and option ids, sending only the write", ()
 
 it.effect("updates only the properties named, once the row is this data source's", () =>
   Effect.gen(function* () {
-    const notionSide = notion((request) =>
+    const fake = notion((request) =>
       request.method === "GET" ? { id: rowId, ...ours } : { id: rowId }
     );
     const execute = yield* planUpdate(snapshot, {
@@ -144,9 +144,9 @@ it.effect("updates only the properties named, once the row is this data source's
       id: rowId,
       properties: { Name: "", Status: null }
     });
-    assert.deepEqual(yield* execute(notionSide.send), { id: rowId });
-    assert.deepEqual(notionSide.sent(), [`GET /pages/${rowId}`, `PATCH /pages/${rowId}`]);
-    assert.deepEqual(body(notionSide.requests[1]!), {
+    assert.deepEqual(yield* execute(fake.send), { id: rowId });
+    assert.deepEqual(fake.sent(), [`GET /pages/${rowId}`, `PATCH /pages/${rowId}`]);
+    assert.deepEqual(body(fake.requests[1]!), {
       properties: { title: { title: [] }, stat: { status: null } }
     });
   })
@@ -158,12 +158,12 @@ it.effect("trashes and restores a row of this data source", () =>
       [planTrash, true],
       [planRestore, false]
     ] as const) {
-      const notionSide = notion((request) =>
+      const fake = notion((request) =>
         request.method === "GET" ? { id: rowId, ...ours } : { id: rowId, in_trash: inTrash }
       );
       const execute = yield* plan(snapshot, { source: "Tasks", id: rowId });
-      assert.deepEqual(yield* execute(notionSide.send), { id: rowId, inTrash });
-      assert.deepEqual(body(notionSide.requests[1]!), { in_trash: inTrash });
+      assert.deepEqual(yield* execute(fake.send), { id: rowId, inTrash });
+      assert.deepEqual(body(fake.requests[1]!), { in_trash: inTrash });
     }
   })
 );
@@ -190,10 +190,10 @@ it.effect("refuses a read-only property and an overlong value before planning a 
 
 it.effect("splits text into Notion's text objects between code points", () =>
   Effect.gen(function* () {
-    const notionSide = notion(() => ({ id: rowId, url: "https://notion.so/row" }));
+    const fake = notion(() => ({ id: rowId, url: "https://notion.so/row" }));
     // The 2,000th character starts a surrogate pair, which stays whole in the next object.
-    yield* (yield* create({ Name: `${"a".repeat(1999)}🧩b` }))(notionSide.send);
-    const parts = body(notionSide.requests[0]!).properties.title.title.map(
+    yield* (yield* create({ Name: `${"a".repeat(1999)}🧩b` }))(fake.send);
+    const parts = body(fake.requests[0]!).properties.title.title.map(
       (part: { text: { content: string } }) => part.text.content
     );
     assert.deepEqual(parts, ["a".repeat(1999), "🧩b"]);
@@ -202,25 +202,25 @@ it.effect("splits text into Notion's text objects between code points", () =>
 
 it.effect("refuses a row of another data source before writing", () =>
   Effect.gen(function* () {
-    const notionSide = notion(() => ({
+    const fake = notion(() => ({
       id: rowId,
       parent: { type: "data_source_id", data_source_id: projectsId }
     }));
     const execute = yield* planTrash(snapshot, { source: "Tasks", id: rowId });
-    assert.include(yield* execute(notionSide.send).pipe(Effect.flip), { code: "not_found" });
-    assert.deepEqual(notionSide.sent(), [`GET /pages/${rowId}`]);
+    assert.include(yield* execute(fake.send).pipe(Effect.flip), { code: "not_found" });
+    assert.deepEqual(fake.sent(), [`GET /pages/${rowId}`]);
   })
 );
 
 it.effect("refuses a relation to a data source no longer shared, with nothing written", () =>
   Effect.gen(function* () {
-    const notionSide = notion(() => new Source.Refusal({ code: "not_found" }));
+    const fake = notion(() => new Source.Refusal({ code: "not_found" }));
     const execute = yield* create({ Project: [rowId] });
-    assert.include(yield* execute(notionSide.send).pipe(Effect.flip), {
+    assert.include(yield* execute(fake.send).pipe(Effect.flip), {
       code: "not_found",
       dataSource: "Projects"
     });
-    assert.deepEqual(notionSide.sent(), [`GET /data_sources/${projectsId}`]);
+    assert.deepEqual(fake.sent(), [`GET /data_sources/${projectsId}`]);
   })
 );
 

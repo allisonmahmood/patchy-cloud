@@ -38,8 +38,8 @@ export type Send = (
   request: HttpClientRequest.HttpClientRequest
 ) => Effect.Effect<unknown, Refusal>;
 /**
- * A call checked against its snapshot, ready to send. A read's bad arguments are
- * `invalid_request`; a write's may also name what they got wrong.
+ * A call checked against its snapshot, ready to send. Bad arguments fail `invalid_request` with
+ * nothing sent; a write naming an option the snapshot doesn't know is a refusal naming the known.
  */
 export type Plan<I, A, E = Runtime.InvalidRequest> = (
   snapshot: NotionSnapshot,
