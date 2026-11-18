@@ -28,7 +28,7 @@ const common = {
   credentialRefusals: new Map<string, View.Field>(),
   credentials: (): Redacted.Redacted<string> | View.Notice => unbuilt,
   logged:
-    "Each call keeps its role, model, duration and token counts; the input and the answer are never logged."
+    "Each call keeps its patch, operation, duration and outcome; its model and token counts go to Patchy's own events. The input and the answer are never logged."
 };
 
 export const OpenAi = {
