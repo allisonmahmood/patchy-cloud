@@ -592,8 +592,10 @@ mounts read as the key's person; the instance logs each read as a machine call. 
 refused key fails the read `access_denied`, naming `patchy login` then a dev
 restart; an unreachable instance fails it `source_unavailable`; other dev work
 continues. Writes never run live: the daemon answers each Pidgeon send, reply and
-triage itself and logs it as `<viewer> pidgeon/<handle> <summary>: simulated in
-dev, nothing reached Pidgeon`, the summary naming a send's recipients and subject.
+triage and each Notion create, update, trash and restore itself and logs it as
+`<viewer> <connection> <summary>: simulated in dev, nothing reached Pidgeon` (or
+`Notion`), the summary naming a send's recipients and subject, or a Notion write's
+operation, data source, row and property names.
 Each call logs viewer, handler, outcome and milliseconds, plus
 `ctx.log` output and dev-only failure message/stack, without PostHog delivery.
 A daemon started with `--json` writes full wide events, invocation JSON and
