@@ -100,6 +100,15 @@
     },
     {
       "integration": "models",
+      "handle": "bouncer",
+      "description": "Failure mode: the provider answers with a redirect.",
+      "state": "connected",
+      "kind": "text",
+      "provider": "main",
+      "model": "fake-text-redirect"
+    },
+    {
+      "integration": "models",
       "handle": "offline",
       "description": "Failure mode: the provider can't be reached.",
       "state": "connected",
@@ -122,6 +131,7 @@
         "models/picky",
         "models/sloppy",
         "models/rambler",
+        "models/bouncer",
         "models/offline"
       ],
       "description": "Paste a request: a decision role routes it to a team, scores its urgency and spots spam, and a text role drafts a short formal reply. Buttons run each model failure and show what the page received."

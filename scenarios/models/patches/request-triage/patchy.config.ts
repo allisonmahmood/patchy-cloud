@@ -28,6 +28,7 @@ export default defineConfig({
     picky: models("picky"),
     sloppy: models("sloppy"),
     rambler: models("rambler"),
+    bouncer: models("bouncer"),
     offline: models("offline")
   }
 });

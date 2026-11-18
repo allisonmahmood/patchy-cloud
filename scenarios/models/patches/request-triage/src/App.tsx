@@ -12,6 +12,7 @@ const MODES: ReadonlyArray<readonly [Mode, string]> = [
   ["picky", "Refuses one decision question"],
   ["sloppy", "Typed output doesn't match"],
   ["rambler", "Output truncated at the cap"],
+  ["bouncer", "Provider answers a redirect"],
   ["offline", "Provider unreachable"],
   ["wrongKind", "decide on a text role"],
   ["badOutput", "Unsupported output shape"]

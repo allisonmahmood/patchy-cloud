@@ -91,6 +91,7 @@ const modes = [
   "picky",
   "sloppy",
   "rambler",
+  "bouncer",
   "offline",
   "wrongKind",
   "badOutput"
@@ -109,7 +110,9 @@ export const failure = action({
       subject: "Laptop won't boot",
       body: "My laptop shows a black screen since this morning. I need it today."
     };
-    const write = (role: "thinker" | "stuck" | "limited" | "refuser" | "offline" | "rambler") =>
+    const write = (
+      role: "thinker" | "stuck" | "limited" | "refuser" | "offline" | "rambler" | "bouncer"
+    ) =>
       ctx.connections[role].generate({
         instructions: "Draft a formal reply.",
         input,
@@ -123,6 +126,7 @@ export const failure = action({
       case "refuser":
       case "offline":
       case "rambler":
+      case "bouncer":
         outcome = (await write(mode)).text.slice(0, 80);
         break;
       case "picky": {

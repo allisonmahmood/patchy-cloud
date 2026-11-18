@@ -26,6 +26,9 @@ interface Entry {
   status: number | "dropped" | "pending";
   durationMs?: number;
   closedEarly: boolean;
+  /** The request's header names and top-level body keys, never their values. */
+  readonly headers: ReadonlyArray<string>;
+  readonly bodyKeys: ReadonlyArray<string>;
 }
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
@@ -225,6 +228,18 @@ export const start = (log: (line: string) => void) =>
         );
       const server = createServer((req: IncomingMessage, res: ServerResponse) => {
         if (req.method === "GET" && req.url === "/_log") return send(res, 200, entries);
+        if (req.url === "/trap") {
+          record({
+            at: new Date().toISOString(),
+            path: "/trap",
+            model: "",
+            status: 200,
+            closedEarly: false,
+            headers: Object.keys(req.headers).sort(),
+            bodyKeys: []
+          });
+          return send(res, 200, { followed: true });
+        }
         let raw = "";
         req.on("data", (chunk: Buffer) => (raw += chunk.toString("utf8")));
         req.on("end", () => {
@@ -243,7 +258,9 @@ export const start = (log: (line: string) => void) =>
             path: req.url ?? "",
             model,
             status: "pending",
-            closedEarly: false
+            closedEarly: false,
+            headers: Object.keys(req.headers).sort(),
+            bodyKeys: Object.keys(body).sort()
           };
           record(entry);
           res.on("close", () => {
@@ -257,6 +274,12 @@ export const start = (log: (line: string) => void) =>
               return req.socket.destroy();
             }
             if (model.includes("hang")) return;
+            if (model.includes("redirect")) {
+              // A provider that sends the request elsewhere: a client that follows carries the key.
+              entry.status = 307;
+              res.writeHead(307, { location: "/trap" });
+              return res.end();
+            }
             if (model.includes("rate-limited")) {
               entry.status = 429;
               return send(
