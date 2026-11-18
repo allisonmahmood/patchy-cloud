@@ -70,7 +70,6 @@ export const connect: ConnectFrame.ConnectSpec = {
   paste: { title: "Paste the token", fields: [token] },
   name: { example: "probe", describe: "Tasks and team pages", fields: [accessField] },
   once: {
-    title: "When patch access is available",
     reads: "everything shared with this connection",
     devReads: true,
     also: [

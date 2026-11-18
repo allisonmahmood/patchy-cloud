@@ -85,8 +85,6 @@ export interface ConnectSpec {
    * writes the platform's own facts around these, the same for every integration.
    */
   readonly once: {
-    /** A title that fits what this integration makes available. */
-    readonly title?: string;
     /** "this database, as the role you gave". */
     readonly reads: string;
     /** Its dev binding reads the real connection, rather than fixtures. */
@@ -193,7 +191,7 @@ export const render = (input: {
   const refusal =
     notice === undefined || notice.field !== undefined ? "" : Fields.focused(View.feedback(notice));
   const once = section({
-    title: spec.once.title ?? "Once connected",
+    title: "Once connected",
     body: `${canList([
       { can: true, text: `Every member reads ${spec.once.reads} through patches that use it` },
       ...(spec.once.devReads
