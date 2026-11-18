@@ -12,6 +12,7 @@ import * as Redacted from "effect/Redacted";
 import * as ConnectionStore from "../ConnectionStore.js";
 import * as CredentialKeys from "../CredentialKeys.js";
 import * as AttioSource from "../attio/Source.js";
+import * as NotionSource from "../notion/Source.js";
 import * as PidgeonSource from "../pidgeon/Source.js";
 import * as PostgresSource from "../postgres/Source.js";
 import * as PostHogSource from "../posthog/Source.js";
@@ -47,6 +48,7 @@ const services = Layer.mergeAll(
   PostHogSource.layer,
   PidgeonSource.layer,
   AttioSource.layer,
+  NotionSource.layer,
   ImapTest.offline
 ).pipe(
   Layer.provideMerge(PatchVisibilityTest.layer),

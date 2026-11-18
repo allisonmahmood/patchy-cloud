@@ -49,15 +49,9 @@ PGlite dev has one connection. It does not reproduce production connection conte
 | `attio.discovery.options` | contract | 2000 | options | company | Active options one Attio select or status keeps in a snapshot | `too_large` | No | release |
 | `attio.discovery.optionRequests` | contract | 2000 | requests | company | Requests an Attio discovery may have sent and still read options; past it, the rest are skipped and marked | None | No | release |
 | `attio.discovery.optionDeadline` | contract | 45000 | milliseconds | company | Time into an Attio discovery after which it reads no more options; the rest are skipped and marked | None | No | release |
-| `notion.calls.concurrent` | contract | 3 | calls | host | Notion calls per connection in a server process; excess calls wait within their deadline | `busy` | No | release |
-| `notion.read.bytes` | contract | 8388608 | bytes | host | Decoded Notion responses collected for one read, including follow-up requests | `too_large` | No | release |
-| `notion.read.propertyItems` | contract | 1000 | items | host | Notion property items collected through follow-up requests for one read | `too_large` | No | release |
-| `runtime.notion.bytes` | contract | 65536 | bytes | patch | Arguments to one Notion read | `too_large` | Yes | release |
+| `notion.calls.concurrent` | contract | 3 | calls | host | Notion calls at once through one internal connection, by its bot, in a server process; an excess call waits within its deadline | `busy` | No | release |
+| `notion.response.bytes` | contract | 8388608 | bytes | company | One raw Notion answer before decoding, the answers one call reads together, and a discovered snapshot | `too_large` | No | release |
 | `notion.discovery.deadline` | contract | 60000 | milliseconds | company | Notion token check and all discovery requests when connecting, refreshing or replacing a token | `timeout` | No | release |
-| `notion.discovery.bytes` | contract | 8388608 | bytes | company | One raw Notion discovery answer and the encoded snapshot | `too_large` | No | release |
-| `notion.discovery.sources` | contract | 500 | data sources | company | Data sources one Notion snapshot keeps | `too_large` | No | release |
-| `notion.discovery.properties` | contract | 200 | properties | company | Properties discovered per Notion data source | `too_large` | No | release |
-| `notion.discovery.options` | contract | 1000 | options | company | Options discovered per Notion property | `too_large` | No | release |
 | `github.connection.repositories` | contract | 100 | repositories | company | Repositories in one GitHub connection, left ones included | `limit_exceeded` | No | release |
 | `github.calls.concurrent` | contract | 4 | calls | host | GitHub requests per App installation at once in one server process, shared by every connection on it and by dev, published and administrative calls, token mints and discovery included; an excess call waits within its deadline | `busy` | No | release |
 | `github.host.concurrent` | contract | 8 | calls | host | GitHub requests at once in one server process across every installation, a person's own reads while they connect included; an excess call waits within its deadline | `busy` | No | release |

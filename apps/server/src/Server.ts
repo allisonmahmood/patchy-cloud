@@ -430,10 +430,11 @@ const services = Layer.mergeAll(
       Looks.layer,
       identity
     ).pipe(
-      // Connection administration and patches share each provider's source and its slots,
-      // and one pool of IMAP sessions that published patches and the dev door share. GitHub's
-      // App comes from the host's settings: empty, GitHub isn't offered; partly filled, the
-      // server refuses to start.
+      // One PostHog, Pidgeon, Attio, Notion, IMAP and GitHub source each, so connection
+      // administration and patches share each project's, address's, workspace's, bot's,
+      // mailbox's and installation's slots, and one pool of IMAP sessions that published patches
+      // and the dev door share. GitHub's App comes from the host's settings: empty, GitHub isn't
+      // offered; partly filled, the server refuses to start.
       Layer.provideMerge(
         SqlConnectionStore.layer.pipe(
           Layer.provide([CredentialKeys.layer, PostgresSource.layer, Teams.layer]),

@@ -258,6 +258,18 @@
       "state": "paused"
     },
     {
+      "integration": "notion",
+      "handle": "wiki",
+      "description": "The studio's Notion workspace: tasks and projects.",
+      "state": "connected"
+    },
+    {
+      "integration": "notion",
+      "handle": "old-wiki",
+      "description": "The workspace before the studio moved to its own Notion.",
+      "state": "paused"
+    },
+    {
       "integration": "pidgeon",
       "handle": "hello",
       "description": "hello@brightline.example, the studio's front door.",

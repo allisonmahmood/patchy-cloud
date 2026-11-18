@@ -18,5 +18,13 @@
     }
   ],
   "publisher": "allison",
+  "connections": [
+    {
+      "integration": "notion",
+      "handle": "wiki",
+      "description": "Brightline's Notion workspace: its Tasks and Projects databases.",
+      "state": "connected"
+    }
+  ],
   "patches": []
 }

@@ -73,20 +73,14 @@ export interface ConnectSpec {
    * `form` attribute, as GitHub's sign-in buttons do, so Enter in its fields never presses them.
    */
   readonly outside?: string;
-  /** Name it: an example handle, description prompt and any choice saved with the name. */
-  readonly name: {
-    readonly example: string;
-    readonly describe: string;
-    readonly fields?: Fields.Layout;
-  };
+  /** Name it: an example handle and what a description might say. */
+  readonly name: { readonly example: string; readonly describe: string };
   /**
    * Once connected: what patches read through it, whether builders' agents read it live while
    * they build, anything more it can do, what it never does, and at most one caveat. The frame
    * writes the platform's own facts around these, the same for every integration.
    */
   readonly once: {
-    /** A title that fits what this integration makes available. */
-    readonly title?: string;
     /** "this database, as the role you gave". */
     readonly reads: string;
     /** Its dev binding reads the real connection, rather than fixtures. */
@@ -104,8 +98,7 @@ const testAndConnect = button("Test and connect", { kind: "primary", pendingLabe
 export const shows = (spec: ConnectSpec): ReadonlyArray<View.Field> => [
   ...Fields.flat(spec.paste.fields).map((item) => item.field),
   "handle",
-  "description",
-  ...Fields.flat(spec.name.fields ?? []).map((item) => item.field)
+  "description"
 ];
 
 /** 1 Get it: the steps in the other system, then what to set or have. */
@@ -173,7 +166,7 @@ const nameIt = (
         placeholder: spec.describe,
         autofocus: focus && descriptionError !== undefined
       })
-  })}${Fields.renderAll(spec.fields ?? [], submitted, refusal)}`;
+  })}`;
 };
 
 /**
@@ -193,7 +186,7 @@ export const render = (input: {
   const refusal =
     notice === undefined || notice.field !== undefined ? "" : Fields.focused(View.feedback(notice));
   const once = section({
-    title: spec.once.title ?? "Once connected",
+    title: "Once connected",
     body: `${canList([
       { can: true, text: `Every member reads ${spec.once.reads} through patches that use it` },
       ...(spec.once.devReads

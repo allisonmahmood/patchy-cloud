@@ -408,36 +408,28 @@ export const registry = {
     unit: "calls",
     scope: "host",
     measure:
-      "Notion calls per connection in a server process; excess calls wait within their deadline",
+      "Notion calls at once through one internal connection, by its bot, in a server process; an excess call waits within its deadline",
     refusal: "busy",
-    overridable: false
-  },
-  "notion.read.bytes": {
-    kind: "contract",
-    default: 8 * 1024 * 1024,
-    scope: "host",
-    unit: "bytes",
-    measure: "Decoded Notion responses collected for one read, including follow-up requests",
-    refusal: "too_large",
-    overridable: false
-  },
-  "notion.read.propertyItems": {
-    kind: "contract",
-    default: 1000,
-    scope: "host",
-    unit: "items",
-    measure: "Notion property items collected through follow-up requests for one read",
-    refusal: "too_large",
     overridable: false
   },
   "runtime.notion.bytes": {
     kind: "contract",
-    default: 64 * 1024,
-    scope: "patch",
+    default: 65536,
     unit: "bytes",
-    measure: "Arguments to one Notion read",
+    scope: "viewer",
+    measure: "Notion operation arguments: a data source, filters, property names and a cursor",
     refusal: "too_large",
-    overridable: true
+    overridable: false
+  },
+  "notion.response.bytes": {
+    kind: "contract",
+    default: 8388608,
+    unit: "bytes",
+    scope: "company",
+    measure:
+      "One raw Notion answer before decoding, the answers one call reads together, and a discovered snapshot",
+    refusal: "too_large",
+    overridable: false
   },
   "notion.discovery.deadline": {
     kind: "contract",
@@ -447,42 +439,6 @@ export const registry = {
     measure:
       "Notion token check and all discovery requests when connecting, refreshing or replacing a token",
     refusal: "timeout",
-    overridable: false
-  },
-  "notion.discovery.bytes": {
-    kind: "contract",
-    default: 8388608,
-    unit: "bytes",
-    scope: "company",
-    measure: "One raw Notion discovery answer and the encoded snapshot",
-    refusal: "too_large",
-    overridable: false
-  },
-  "notion.discovery.sources": {
-    kind: "contract",
-    default: 500,
-    unit: "data sources",
-    scope: "company",
-    measure: "Data sources one Notion snapshot keeps",
-    refusal: "too_large",
-    overridable: false
-  },
-  "notion.discovery.properties": {
-    kind: "contract",
-    default: 200,
-    unit: "properties",
-    scope: "company",
-    measure: "Properties discovered per Notion data source",
-    refusal: "too_large",
-    overridable: false
-  },
-  "notion.discovery.options": {
-    kind: "contract",
-    default: 1000,
-    unit: "options",
-    scope: "company",
-    measure: "Options discovered per Notion property",
-    refusal: "too_large",
     overridable: false
   },
   "github.connection.repositories": {
