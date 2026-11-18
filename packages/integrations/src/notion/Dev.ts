@@ -29,6 +29,8 @@ import {
 import type * as Source from "./Source.js";
 import * as Writes from "./Writes.js";
 
+type Values = Readonly<Record<string, Schema.Json>>;
+
 /** A write dev answered itself, as dev's output shows it. Nothing reached Notion. */
 export interface Simulated {
   /** Whoever made the call: either local viewer. */
@@ -42,6 +44,30 @@ export interface Simulated {
 
 /** A row dev made stands for a Notion row, so it's checked as one. */
 const live = (id: string) => (id.startsWith("dev_") ? id.slice("dev_".length) : id);
+
+/** The same for rows a relation names, so a row dev made can be related to in the next call. */
+const liveRelations = <Args extends { readonly source: string; readonly properties: Values }>(
+  snapshot: NotionSnapshot,
+  args: Args
+): Args => {
+  const relations = new Set(
+    snapshot.dataSources
+      .find(({ key }) => key === args.source)
+      ?.properties.filter(({ type }) => type === "relation")
+      .map(({ name }) => name)
+  );
+  return {
+    ...args,
+    properties: Object.fromEntries(
+      Object.entries(args.properties).map(([name, value]) => [
+        name,
+        relations.has(name) && Array.isArray(value)
+          ? value.map((id) => (typeof id === "string" ? live(id) : id))
+          : value
+      ])
+    )
+  };
+};
 
 /**
  * Notion's operations for `patchy dev`. `connections` is generation's metadata for the repo's
@@ -135,13 +161,17 @@ export const handlers = Effect.fn("NotionDev.handlers")(function* (
     [notionReads.markdown.op]: read(notionReads.markdown),
     [notionReads.search.op]: read(notionReads.search),
     [notionReads.listPeople.op]: read(notionReads.listPeople),
-    [notionWrites.create.op]: simulate("create", notionWrites.create, Writes.planCreate, () =>
-      Effect.map(cryptography.randomUUID, (id) => ({ id: `dev_${id}`, url: "" }))
+    [notionWrites.create.op]: simulate(
+      "create",
+      notionWrites.create,
+      (snapshot, args) => Writes.planCreate(snapshot, liveRelations(snapshot, args)),
+      () => Effect.map(cryptography.randomUUID, (id) => ({ id: `dev_${id}`, url: "" }))
     ),
     [notionWrites.update.op]: simulate(
       "update",
       notionWrites.update,
-      (snapshot, args) => Writes.planUpdate(snapshot, { ...args, id: live(args.id) }),
+      (snapshot, args) =>
+        Writes.planUpdate(snapshot, { ...liveRelations(snapshot, args), id: live(args.id) }),
       ({ id }) => Effect.succeed({ id })
     ),
     [notionWrites.trash.op]: simulate(
