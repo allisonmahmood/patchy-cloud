@@ -1,15 +1,15 @@
 /**
- * Pidgeon: one company email address, read and answered through operations Patchy writes. Patch
- * code names an operation and its input, never a path, an address id or a key: Patchy fills in
- * the connection's address on every call, and anything that isn't on it answers `not_found`.
- * Reads travel as `pidgeon.read`; replies, sends and triage as `pidgeon.write`, which a `read`
- * connection refuses before Pidgeon sees anything.
+ * Pidgeon: one company inbox, read and answered through operations Patchy writes. Patch code names
+ * an operation and its input, never a path, an inbox id or a key: Patchy fills in the connection's
+ * inbox on every call, and anything it can't show is on that inbox answers `not_found`. Reads
+ * travel as `pidgeon.read`; replies, sends and triage as `pidgeon.write`, which a `read` connection
+ * refuses before Pidgeon sees anything.
  */
 import * as Schema from "effect/Schema";
 import { PidgeonLabel } from "./pidgeonSnapshot.js";
 import { DefinitionName } from "./schemas.js";
 
-/** An id Pidgeon gave a thread, message, label or attachment. */
+/** An id Pidgeon gave a thread, message or label. */
 export const PidgeonId = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/));
 /** Pidgeon's opaque `next_cursor`, passed back as it came. */
 const Cursor = Schema.String.check(Schema.isBetweenLength(1, 1024));
@@ -22,14 +22,17 @@ export const PidgeonEmail = Schema.String.check(
 const Recipients = Schema.Array(PidgeonEmail).check(Schema.isMaxLength(50));
 /** A plain-text body, up to 100,000 characters however they encode. */
 const Body = Schema.String.check(Schema.isBetweenLength(1, 100_000));
-const Search = Schema.String.check(Schema.isBetweenLength(1, 320));
+/** Pidgeon's search words: plain words, `"phrases"`, `or` and `-word`. */
+const Search = Schema.String.check(Schema.isBetweenLength(1, 200));
 export const pidgeonThreadStatuses = ["open", "waiting", "resolved", "human_review"] as const;
-/** Pidgeon's triage state for a conversation, shared by everyone who reads the address. */
+/** Pidgeon's triage state for a conversation, shared by everyone who reads the inbox. */
 export const PidgeonThreadStatus = Schema.Literals(pidgeonThreadStatuses);
-export const pidgeonFolders = ["inbox", "sent", "archive", "spam"] as const;
+export const pidgeonFolders = ["inbox", "archive", "spam", "trash"] as const;
+/** The one folder a conversation is in. */
+export const PidgeonFolder = Schema.Literals(pidgeonFolders);
 /**
- * Names one email a person is writing: the same draft sent again within Pidgeon's 24 hours is one
- * email. Patchy sends Pidgeon a hash of it with the connection and the patch, never the key itself.
+ * Names one email a person is writing. Patchy sends each draft key's email at most once, and
+ * answers the same draft sent again with what became of it.
  */
 export const PidgeonDraftKey = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]{8,128}$/));
 
@@ -42,14 +45,13 @@ export const PidgeonParty = Schema.Struct({
 /** A conversation as a list shows it. */
 export const PidgeonThread = Schema.Struct({
   id: Schema.String,
+  /** Null while every message in it is held for a person. */
   subject: Schema.NullOr(Schema.String),
   status: PidgeonThreadStatus,
-  /** Who sent the newest message. */
-  from: Schema.NullOr(PidgeonParty),
-  /** The first line of the newest message. */
-  preview: Schema.NullOr(Schema.String),
+  folder: PidgeonFolder,
+  labels: Schema.Array(PidgeonLabel),
   messageCount: Schema.Int,
-  hasAttachments: Schema.Boolean,
+  unreadCount: Schema.Int,
   lastMessageAt: Schema.NullOr(Schema.String),
   createdAt: Schema.String
 });
@@ -61,7 +63,7 @@ export const PidgeonFirewall = Schema.Struct({
   verdict: Schema.Literals(["clean", "suspicious"]),
   kinds: Schema.Array(Schema.String)
 });
-/** A file a message carried: its metadata, and its text through `attachments.text` if it's text. */
+/** A file a message carried: its metadata only. */
 export const PidgeonAttachment = Schema.Struct({
   id: Schema.String,
   filename: Schema.String,
@@ -69,15 +71,10 @@ export const PidgeonAttachment = Schema.Struct({
   /** Bytes. */
   size: Schema.Int
 });
-/** What happened to mail the address sent: the worst any recipient reached, such as `bounced`. */
-export const PidgeonDelivery = Schema.Struct({
-  state: Schema.String,
-  deliveredAt: Schema.NullOr(Schema.String)
-});
 /**
- * One message: plain text cleaned by the firewall, never headers, HTML or its source. A message the
- * firewall `held` for a person has no subject, text or attachments until someone releases it in
- * Pidgeon.
+ * One message: plain text cleaned by the firewall, never headers, HTML or its source. A message
+ * the firewall `held` for a person has no subject, text or attachments until someone releases it
+ * in Pidgeon.
  */
 export const PidgeonMessage = Schema.Struct({
   id: Schema.String,
@@ -87,15 +84,13 @@ export const PidgeonMessage = Schema.Struct({
   cc: Schema.Array(PidgeonParty),
   subject: Schema.NullOr(Schema.String),
   createdAt: Schema.String,
-  /** Written in Pidgeon's test mode: it never left Pidgeon. */
+  /** Pidgeon's test mode: it never left Pidgeon. */
   test: Schema.Boolean,
   held: Schema.Boolean,
   text: Schema.String,
-  /** Null on mail this address sent. */
+  /** Null on mail this inbox sent. */
   firewall: Schema.NullOr(PidgeonFirewall),
-  attachments: Schema.Array(PidgeonAttachment),
-  /** Null on mail that arrived, and on a send nobody has reported on yet. */
-  delivery: Schema.NullOr(PidgeonDelivery)
+  attachments: Schema.Array(PidgeonAttachment)
 });
 export const PidgeonSearchHit = Schema.Struct({
   messageId: Schema.String,
@@ -103,55 +98,24 @@ export const PidgeonSearchHit = Schema.Struct({
   from: PidgeonParty,
   to: Schema.Array(Schema.String),
   subject: Schema.NullOr(Schema.String),
+  /** The first 200 characters of the firewall's clean text. */
   preview: Schema.NullOr(Schema.String),
   hasAttachments: Schema.Boolean,
   held: Schema.Boolean,
   createdAt: Schema.String
 });
-export const PidgeonAttachmentText = Schema.Struct({
-  id: Schema.String,
-  filename: Schema.String,
-  contentType: Schema.String,
-  size: Schema.Int,
-  /** Cleaned by the firewall. */
-  text: Schema.String,
-  /** The file ran past 200,000 characters and the rest was cut. */
-  truncated: Schema.Boolean,
-  /** Null on a file this address sent. */
-  firewall: Schema.NullOr(PidgeonFirewall)
-});
 /**
- * What Pidgeon did with one email. `sent`: handed on, to everyone but the `rejected` recipients.
- * `pending_approval`: nothing was sent; it waits as a draft for a person to approve in Pidgeon,
- * for `approval.reason`, until `approval.expiresAt`. `replayed` marks the first send's answer to
- * the same draft sent again; `test`, a test-mode send, which never left Pidgeon.
+ * What became of one email. `sent`: Pidgeon handed it to the mail service. `held`: when Patchy
+ * last looked, Pidgeon was keeping it for a member of the account to approve; sending the same
+ * draft again looks again. `replayed` marks an answer to a draft key that was sent before: nothing
+ * went out again.
  */
-export const PidgeonSent = Schema.Union([
-  Schema.Struct({
-    status: Schema.Literal("sent"),
-    messageId: Schema.String,
-    threadId: Schema.String,
-    /** Recipients the mail provider refused at hand-off; the rest were sent to. */
-    rejected: Schema.Array(Schema.Struct({ address: Schema.String, reason: Schema.String })),
-    replayed: Schema.Boolean,
-    test: Schema.Boolean
-  }),
-  Schema.Struct({
-    status: Schema.Literal("pending_approval"),
-    draftId: Schema.String,
-    threadId: Schema.String,
-    approval: Schema.Struct({
-      /**
-       * `first_contact`: the address asks a person before writing to someone new.
-       * `risky_thread`: mail in the conversation tried to give the agent instructions.
-       */
-      reason: Schema.Literals(["first_contact", "risky_thread"]),
-      expiresAt: Schema.String
-    }),
-    replayed: Schema.Boolean,
-    test: Schema.Boolean
-  })
-]);
+export const PidgeonSent = Schema.Struct({
+  status: Schema.Literals(["sent", "held"]),
+  messageId: Schema.String,
+  threadId: Schema.String,
+  replayed: Schema.Boolean
+});
 const Labels = Schema.Struct({ labels: Schema.Array(PidgeonLabel) });
 
 /** Each read's input and result, by the name patch code calls it. */
@@ -159,6 +123,8 @@ export const pidgeonReads = {
   "threads.list": {
     input: Schema.Struct({
       status: Schema.optionalKey(PidgeonThreadStatus),
+      folder: Schema.optionalKey(PidgeonFolder),
+      labelId: Schema.optionalKey(PidgeonId),
       limit: Schema.optionalKey(Limit),
       cursor: Schema.optionalKey(Cursor)
     }),
@@ -180,12 +146,7 @@ export const pidgeonReads = {
   "messages.get": { input: Schema.Struct({ id: PidgeonId }), output: PidgeonMessage },
   "messages.search": {
     input: Schema.Struct({
-      text: Schema.optionalKey(Search),
-      from: Schema.optionalKey(Search),
-      to: Schema.optionalKey(Search),
-      labelId: Schema.optionalKey(PidgeonId),
-      hasAttachment: Schema.optionalKey(Schema.Boolean),
-      folder: Schema.optionalKey(Schema.Literals(pidgeonFolders)),
+      text: Search,
       limit: Schema.optionalKey(Limit),
       cursor: Schema.optionalKey(Cursor)
     }),
@@ -195,8 +156,7 @@ export const pidgeonReads = {
     })
   },
   // No arguments: an empty Struct would let any key through, so this one refuses every key.
-  "labels.list": { input: Schema.Record(Schema.String, Schema.Never), output: Labels },
-  "attachments.text": { input: Schema.Struct({ id: PidgeonId }), output: PidgeonAttachmentText }
+  "labels.list": { input: Schema.Record(Schema.String, Schema.Never), output: Labels }
 } as const;
 /** Each reply, send and triage's input and result. */
 export const pidgeonWrites = {
@@ -241,8 +201,7 @@ export const PidgeonRead = Schema.Union([
   call("threads.get", pidgeonReads["threads.get"].input),
   call("messages.get", pidgeonReads["messages.get"].input),
   call("messages.search", pidgeonReads["messages.search"].input),
-  call("labels.list", pidgeonReads["labels.list"].input),
-  call("attachments.text", pidgeonReads["attachments.text"].input)
+  call("labels.list", pidgeonReads["labels.list"].input)
 ]);
 export type PidgeonRead = typeof PidgeonRead.Type;
 
@@ -259,11 +218,10 @@ export const PidgeonDevRead = Schema.Union([
   devCall("threads.get", pidgeonReads["threads.get"].input),
   devCall("messages.get", pidgeonReads["messages.get"].input),
   devCall("messages.search", pidgeonReads["messages.search"].input),
-  devCall("labels.list", pidgeonReads["labels.list"].input),
-  devCall("attachments.text", pidgeonReads["attachments.text"].input)
+  devCall("labels.list", pidgeonReads["labels.list"].input)
 ]);
 export type PidgeonDevRead = typeof PidgeonDevRead.Type;
-/** One reply, send or triage on a declared connection whose key can send. */
+/** One reply, send or triage on a declared connection that may send. */
 export const PidgeonWrite = Schema.Union([
   call("messages.reply", pidgeonWrites["messages.reply"].input),
   call("messages.send", pidgeonWrites["messages.send"].input),
@@ -285,8 +243,7 @@ export const pidgeonOperations = {
       pidgeonReads["threads.get"].output,
       PidgeonMessage,
       pidgeonReads["messages.search"].output,
-      Labels,
-      PidgeonAttachmentText
+      Labels
     ]),
     kind: "integration"
   },

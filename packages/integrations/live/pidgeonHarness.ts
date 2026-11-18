@@ -1,24 +1,24 @@
 // @effect-diagnostics nodeBuiltinImport:off — node:crypto draws the run's tag.
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
-import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Source from "../src/pidgeon/Source.js";
 
 /**
- * The live tier's Pidgeon: pidgeon.ai in test mode, with `PIDGEON_TEST_ADMIN_KEY`. One account
- * serves every run and every developer's dev environment, its budgets shared: 120 requests a
- * minute on the free plan, 300 test mints an hour and 10 active keys, test keys included, two of
- * them the admin keys. So a run paces its calls, waits out a 429 or a full key count, keeps few
- * keys alive at once, and tags what it makes with its own code; it sweeps what's left, its own
- * when it ends and anyone's stale ones before it starts. That account also holds an address that
- * isn't ours: the tests read and assert only on what they made, and nothing here prints what
- * Pidgeon lists.
+ * The live tier's Pidgeon: pidgeon.ai in test mode, with the account's test keys. One account
+ * serves every run and every developer's dev environment, and its request budget is shared, so a
+ * run paces its calls and waits out a 429. A run makes its own inboxes, named with its tag, records
+ * each id as it's made, and deletes what it made when it ends; before it starts it deletes stale
+ * run-tagged inboxes nobody can still be using. That account also holds an inbox that isn't the
+ * tier's: the tests read and assert only on what they made, never change anything else, and
+ * nothing here prints what Pidgeon lists.
  */
 
 /**
@@ -27,33 +27,40 @@ import * as Source from "../src/pidgeon/Source.js";
  */
 const realFetch = globalThis.fetch;
 
-/** The test admin key, when this machine or CI has one; the suite skips without it. */
+/**
+ * The test admin key, when this machine or CI has one; the suite skips without it. The Send and
+ * Read keys, made in Pidgeon's dashboard as an admin would, are what connections paste; the level
+ * checks that need them skip without them.
+ */
 export const ADMIN_KEY = process.env.PIDGEON_TEST_ADMIN_KEY;
+export const SEND_KEY = process.env.PIDGEON_TEST_SEND_KEY || undefined;
+export const READ_KEY = process.env.PIDGEON_TEST_READ_KEY || undefined;
 export const admin = () => Redacted.make(ADMIN_KEY ?? "");
+/** The key a connection that sends pastes: the Send key, or the admin key without one. */
+export const sender = () => SEND_KEY ?? ADMIN_KEY ?? "";
 
 /**
- * This run's tag, in every handle, key name and address it makes: CI's run id, so its sweep step
- * finds the same run after a cancel, or six random characters.
+ * This run's tag, in every handle and inbox it makes: CI's run id, so its sweep step finds the
+ * same run after a cancel, or six random characters.
  */
 export const RUN = `lv${(process.env.PIDGEON_TEST_RUN_ID ?? randomBytes(3).toString("hex"))
   .toLowerCase()
   .replace(/[^a-z0-9]/g, "")
   .slice(0, 16)}`;
+/** Every inbox the tier makes is named `patchy-<run>-…`. */
+const PREFIX = `patchy-${RUN}-`;
 
-/** One request as the harness saw it, for matching faults and counting calls. */
+/** One request as the harness saw it, for counting calls. */
 export interface Sent {
   readonly method: string;
-  /** Under `/api/v1`. */
+  /** Under `/v1`. */
   readonly path: string;
-  readonly body: string;
 }
 
-/** At most one request per this many milliseconds: two runs at once stay under 120 a minute. */
-const PACE_MS = 1_250;
-/** The longest one call sits out 429s and a full key count before it fails, saying so. */
+/** At most one request per this many milliseconds, so runs sharing the account stay polite. */
+const PACE_MS = 250;
+/** The longest one call sits out 429s before it fails, saying so. */
 const MAX_WAIT_S = 240;
-/** How long a full key count is waited out before the mint is asked again. */
-const KEY_CAP_WAIT_S = 15;
 /**
  * The longest a run's tests may use Pidgeon, from when this module loads; CI's job stops at the
  * same mark. After it, only the run's own sweep calls Pidgeon.
@@ -63,50 +70,9 @@ const runEnds = Date.now() + RUN_LIMIT_MS;
 /** Older than any run can still be using: three run limits. */
 const STALE_MS = 3 * RUN_LIMIT_MS;
 
-const faults: Array<{ match: (sent: Sent) => boolean; value: string; times: number }> = [];
-/** Every request sent, and what the run made: its keys and its addresses. */
+/** Every request sent, and the inboxes this run made, by id. */
 export const sent: Sent[] = [];
-export const minted = new Set<string>();
 export const created = new Set<string>();
-
-/**
- * At most this many of a run's keys may be active at once: the account allows 10, two of them the
- * admin keys, and developers' dev environments share the rest. A mint past it fails the test,
- * sending nothing. The run's own keys are counted from Pidgeon's answers: minted until revoked.
- */
-const KEY_CAP = 6;
-const alive = new Set<string>();
-let peak = 0;
-
-/**
- * Sends `Pidgeon-Test-Fail: value` on the next `times` requests that match. The suite never asks
- * for a 429: every 429 is the shared budget's, which the harness waits out.
- */
-export const fail = (match: (sent: Sent) => boolean, value: string, times = 1) => {
-  faults.push({ match, value, times });
-};
-export const route =
-  (method: string, path: string | RegExp) =>
-  (request: Sent): boolean =>
-    request.method === method &&
-    (typeof path === "string" ? request.path === path : path.test(request.path));
-
-const bodyOf = (request: HttpClientRequest.HttpClientRequest) =>
-  request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "";
-
-/** The data id of a write's answer, when it made something. */
-const idOf = (text: string): string | undefined => {
-  try {
-    const parsed: unknown = JSON.parse(text);
-    if (typeof parsed !== "object" || parsed === null || !("data" in parsed)) return undefined;
-    const data = parsed.data;
-    return typeof data === "object" && data !== null && "id" in data && typeof data.id === "string"
-      ? data.id
-      : undefined;
-  } catch {
-    return undefined;
-  }
-};
 
 /** One pace for the whole run, however many sources it builds. */
 const gate = Semaphore.makeUnsafe(1);
@@ -119,53 +85,18 @@ const next = gate.withPermits(1)(
   })
 );
 
-/** Node's fetch, paced, with the faults a test asked for, recording what the run made. */
+/** Node's fetch, paced, recording what the run sent. */
 const paced = Effect.gen(function* () {
   const fetch = yield* HttpClient.HttpClient;
   return HttpClient.make((request) =>
     Effect.gen(function* () {
       const url = new URL(request.url);
-      const seen: Sent = {
-        method: request.method,
-        path: url.pathname.replace(/^\/api\/v1/, ""),
-        body: bodyOf(request)
-      };
-      const index = faults.findIndex((fault) => fault.match(seen));
-      const fault = index === -1 ? undefined : faults[index]!;
-      if (fault !== undefined && --fault.times === 0) faults.splice(index, 1);
-      const outgoing =
-        fault === undefined
-          ? request
-          : request.pipe(HttpClientRequest.setHeader("pidgeon-test-fail", fault.value));
-      if (seen.method === "POST" && seen.path === "/api-keys" && alive.size >= KEY_CAP)
-        return yield* Effect.die(
-          new Error(
-            `The live Pidgeon run ${RUN} already holds ${alive.size} active keys, its cap, so it minted no more.`
-          )
-        );
       yield* next;
-      sent.push(seen);
+      sent.push({ method: request.method, path: url.pathname.replace(/^\/v1/, "") });
       const response = yield* fetch
-        .execute(outgoing)
+        .execute(request)
         .pipe(Effect.provideService(FetchHttpClient.Fetch, realFetch));
-      const text = yield* response.text;
-      if (response.status >= 200 && response.status < 300 && seen.method === "POST") {
-        const id = idOf(text);
-        if (id !== undefined && seen.path === "/api-keys") minted.add(id);
-        if (id !== undefined && seen.path === "/identities") created.add(id);
-        if (id !== undefined && seen.path === "/api-keys") {
-          alive.add(id);
-          peak = Math.max(peak, alive.size);
-        }
-      }
-      // A revoke that answered, or a key already gone, is no longer the run's to count.
-      const revoked = /^\/api-keys\/([^/]+)$/.exec(seen.path)?.[1];
-      if (
-        seen.method === "DELETE" &&
-        revoked !== undefined &&
-        ((response.status >= 200 && response.status < 300) || response.status === 404)
-      )
-        alive.delete(decodeURIComponent(revoked));
+      const text = response.status === 204 ? null : yield* response.text;
       return HttpClientResponse.fromWeb(
         request,
         new Response(text, { status: response.status, headers: new Headers(response.headers) })
@@ -175,22 +106,9 @@ const paced = Effect.gen(function* () {
 });
 
 /**
- * Seconds to sit out a refusal of the shared budget before asking again: a 429's Retry-After, or
- * a while for the account's full key count to free a slot. Any other refusal is the test's.
- */
-const budgetWait = (error: Source.CallError): number | undefined =>
-  error._tag !== "PidgeonRateLimited"
-    ? undefined
-    : error.limit === "requests"
-      ? (error.retryAfterSeconds ?? 5)
-      : /active keys/i.test(error.details.message)
-        ? KEY_CAP_WAIT_S
-        : undefined;
-
-/**
- * The production source over that paced fetch, waiting out the shared budget outside the call's
- * own timeout and asking again with the caller's allowance anew, as if the wait never happened.
- * `limited`, it refuses every call once the run's limit has passed, sending nothing.
+ * The production source over that paced fetch, waiting out a 429 outside the call's own timeout
+ * and asking again with the caller's allowance anew. `limited`, it refuses every call once the
+ * run's limit has passed, sending nothing.
  */
 const waiting = (limited: boolean) =>
   Effect.gen(function* () {
@@ -204,7 +122,10 @@ const waiting = (limited: boolean) =>
       const attempt = (until: number, waited: number): ReturnType<typeof inner.call> =>
         inner.call(token, request, until).pipe(
           Effect.catch((error) => {
-            const seconds = budgetWait(error);
+            const seconds =
+              error._tag === "PidgeonRateLimited" && error.limit === "requests"
+                ? (error.retryAfterSeconds ?? 5)
+                : undefined;
             if (seconds === undefined || waited + seconds > MAX_WAIT_S) return Effect.fail(error);
             return Effect.sleep(Math.ceil(seconds * 1_000) + 250).pipe(
               Effect.andThen(
@@ -225,24 +146,18 @@ export const layer = Layer.effect(Source.Source, waiting(true)).pipe(Layer.provi
 export const sweepLayer = Layer.effect(Source.Source, waiting(false)).pipe(Layer.provide(http));
 
 /**
- * Refuses, before anything changes, a `PIDGEON_TEST_ADMIN_KEY` that isn't a test key: a live
- * key's addresses and keys would be live ones, which no sweep touches. Never says the key.
+ * Refuses, before anything changes, a key that isn't a test key: a live key's mail would leave
+ * Pidgeon. Never says the key.
  */
-export const requireTestKey = Effect.gen(function* () {
-  const source = yield* Source.Source;
-  const answer = yield* source.call(admin(), { method: "GET", path: "/me" }, Date.now() + 60_000);
-  const data = Source.data(answer.body);
-  const key =
-    typeof data === "object" && data !== null && "key" in data && typeof data.key === "object"
-      ? data.key
-      : null;
-  if (key === null || !("test" in key) || key.test !== true)
-    return yield* Effect.die(
-      new Error(
-        "PIDGEON_TEST_ADMIN_KEY isn't a test key. The live tier only runs with a test admin key, so it changed nothing."
+export const requireTestKey = Effect.suspend(() =>
+  [ADMIN_KEY, SEND_KEY, READ_KEY].every((key) => key === undefined || Source.isTestToken(key))
+    ? Effect.void
+    : Effect.die(
+        new Error(
+          "A PIDGEON_TEST_*_KEY isn't a test key. The live tier only runs with test keys, so it changed nothing."
+        )
       )
-    );
-});
+);
 
 /** One call as the admin, for what a test sets up or checks itself. */
 export const call = Effect.fn("live.call")(function* (
@@ -253,179 +168,230 @@ export const call = Effect.fn("live.call")(function* (
   return yield* source.call(token, request, Date.now() + 60_000);
 });
 
-/**
- * Uploads a text file to one of the run's own test addresses as the admin, for mail a test sends
- * with it: Pidgeon takes files as a multipart form, which `call` doesn't send. Answers its id.
- */
-export const upload = (identityId: string, filename: string, text: string) =>
-  Effect.gen(function* () {
-    const client = yield* HttpClient.HttpClient;
-    const form = new FormData();
-    form.set("identity_id", identityId);
-    form.set("file", new Blob([text], { type: "text/plain" }), filename);
-    yield* next;
-    sent.push({ method: "POST", path: "/attachments", body: "" });
-    const response = yield* client.execute(
-      HttpClientRequest.post(`${Source.BASE_URL}/attachments`).pipe(
-        HttpClientRequest.bearerToken(Redacted.value(admin())),
-        HttpClientRequest.setHeader("idempotency-key", `${RUN}-upload-${identityId}-${filename}`),
-        HttpClientRequest.bodyFormData(form)
-      )
+const Inbox = Schema.Struct({
+  id: Schema.String,
+  address: Schema.String,
+  created_at: Schema.String
+});
+const decodeInbox = Schema.decodeUnknownOption(Inbox);
+const Inboxes = Schema.Struct({
+  data: Schema.Array(Schema.Unknown),
+  next_cursor: Schema.NullOr(Schema.String)
+});
+const decodeInboxes = Schema.decodeUnknownOption(Inboxes);
+
+/** Every inbox the account has, as far as the harness reads one; never printed. */
+const inboxes = Effect.gen(function* () {
+  const found: Array<typeof Inbox.Type> = [];
+  let cursor: string | null = null;
+  do {
+    const page = decodeInboxes(
+      (yield* call(admin(), {
+        method: "GET",
+        path: "/email/inboxes",
+        query: { limit: 100, ...(cursor === null ? {} : { cursor }) }
+      })).body
     );
-    const id = idOf(yield* response.text);
-    if (response.status >= 300 || id === undefined)
-      return yield* Effect.die(new Error(`Pidgeon refused the upload with ${response.status}.`));
-    return id;
-  }).pipe(
-    Effect.provideService(FetchHttpClient.Fetch, realFetch),
-    Effect.provide(FetchHttpClient.layer)
-  );
+    if (Option.isNone(page)) return yield* new Source.Unavailable({ stage: "response" });
+    for (const item of page.value.data) {
+      const inbox = decodeInbox(item);
+      if (Option.isSome(inbox)) found.push(inbox.value);
+    }
+    cursor = page.value.next_cursor === cursor ? null : page.value.next_cursor;
+  } while (cursor !== null);
+  return found;
+});
+
+/** A refusal by its name, and the status Pidgeon answered, never Pidgeon's words or a key. */
+const named = (error: Source.CallError) =>
+  error._tag === "PidgeonUnavailable" && error.upstreamStatus !== undefined
+    ? `${error._tag} ${error.upstreamStatus}`
+    : error._tag;
 
 /**
- * Changes one of this run's own test addresses as the admin: whether it sends to anyone, asks a
- * person before writing to someone new, or holds suspicious mail. Refuses, changing nothing, an
- * address this run didn't make or one that isn't a test address of the run's.
+ * Makes one of the run's own inboxes, `patchy-<run>-<name>@pidgeon.email`, with the admin key,
+ * recording its id. An answer lost on the way back is found again by its name, so names are
+ * fixed. Every live file shares the run's tag, as CI gives all of them one, and Pidgeon never
+ * gives a deleted address out again, so each file's names carry the file: `connect-desk`,
+ * `ops-desk`.
  */
-export const reconfigure = Effect.fn("live.reconfigure")(function* (
-  identityId: string,
-  change: {
-    readonly send_policy?: "open" | "reply_only";
-    readonly send_approval?: "none" | "first_contact";
-    readonly hold_suspicious?: true;
+export const inbox = Effect.fn("live.inbox")(function* (name: string, displayName?: string) {
+  const address = `${PREFIX}${name}@pidgeon.email`;
+  const made = yield* call(admin(), {
+    method: "POST",
+    path: "/email/inboxes",
+    body: {
+      name: `${PREFIX}${name}`,
+      kind: "agent",
+      ...(displayName === undefined ? {} : { display_name: displayName })
+    }
+  }).pipe(
+    Effect.map((answer) => decodeInbox(answer.body)),
+    Effect.mapError(named),
+    Effect.result
+  );
+  const answered = made._tag === "Success" ? made.success : Option.none<typeof Inbox.Type>();
+  const found = Option.isSome(answered)
+    ? answered.value
+    : (yield* inboxes).find((item) => item.address === address);
+  if (found === undefined || found.address !== address)
+    return yield* Effect.die(
+      new Error(
+        `Pidgeon didn't make the run's inbox ${name}: ${made._tag === "Failure" ? `it answered ${made.failure}` : "its answer wasn't an inbox of that name"}.`
+      )
+    );
+  created.add(found.id);
+  return found;
+});
+
+/**
+ * Delivers test mail from outside to one of the run's own inboxes, as Pidgeon's test mode lets a
+ * test key: the message's id and whether the firewall held it.
+ */
+export const inbound = Effect.fn("live.inbound")(function* (
+  inboxId: string,
+  mail: {
+    readonly from: string;
+    readonly subject: string;
+    readonly text: string;
+    readonly html?: string;
+    readonly inReplyTo?: string;
   }
 ) {
-  const path = `/identities/${encodeURIComponent(identityId)}`;
-  const found = Source.data((yield* call(admin(), { method: "GET", path })).body);
-  const ours =
-    created.has(identityId) &&
-    typeof found === "object" &&
-    found !== null &&
-    "test" in found &&
-    found.test === true &&
-    "local_part" in found &&
-    typeof found.local_part === "string" &&
-    found.local_part.startsWith(`patchy-${RUN}-`);
-  if (!ours)
-    return yield* Effect.die(
-      new Error("The live tier only changes test addresses its own run made; it changed nothing.")
-    );
-  yield* call(admin(), {
-    method: "PATCH",
-    path,
-    body: change,
-    idempotencyKey: `${RUN}-${createHash("sha256")
-      .update(JSON.stringify([identityId, change]))
-      .digest("hex")
-      .slice(0, 24)}`
+  if (!created.has(inboxId))
+    return yield* Effect.die(new Error("The live tier only mails inboxes its own run made."));
+  const answer = yield* call(admin(), {
+    method: "POST",
+    path: "/email/test/inbound",
+    body: {
+      inbox_id: inboxId,
+      from: mail.from,
+      from_name: "A customer",
+      subject: mail.subject,
+      text: mail.text,
+      ...(mail.html === undefined ? {} : { html: mail.html }),
+      ...(mail.inReplyTo === undefined ? {} : { in_reply_to: mail.inReplyTo })
+    }
   });
+  const body = answer.body as { readonly message_id?: string; readonly outcome?: string };
+  if (typeof body.message_id !== "string")
+    return yield* Effect.die(new Error("Pidgeon didn't deliver the run's test mail."));
+  return { messageId: body.message_id, held: body.outcome === "held" };
 });
 
 /** How many requests this run has sent that match. */
 export const count = (match: (request: Sent) => boolean) => sent.filter(match).length;
+export const route =
+  (method: string, path: string | RegExp) =>
+  (request: Sent): boolean =>
+    request.method === method &&
+    (typeof path === "string" ? request.path === path : path.test(request.path));
 
-/** Every item of one of Pidgeon's lists, as plain records; never printed. */
-const everything = (path: string) =>
-  Effect.gen(function* () {
-    const source = yield* Source.Source;
-    const items: Array<Record<string, unknown>> = [];
-    let cursor: string | null = null;
-    do {
-      const page = yield* source.call(
-        admin(),
-        {
-          method: "GET",
-          path,
-          // Pidgeon's own page size: `/api-keys` refuses a larger limit.
-          query: cursor === null ? {} : { cursor }
-        },
-        Date.now() + 60_000
-      );
-      const data = Source.data(page.body);
-      for (const item of Array.isArray(data) ? data : [])
-        if (typeof item === "object" && item !== null) items.push({ ...item });
-      const envelope: unknown = page.body;
-      cursor =
-        typeof envelope === "object" &&
-        envelope !== null &&
-        "next_cursor" in envelope &&
-        typeof envelope.next_cursor === "string"
-          ? envelope.next_cursor
-          : null;
-    } while (cursor !== null);
-    return items;
-  });
-
-const text = (item: Record<string, unknown>, field: string) =>
-  typeof item[field] === "string" ? item[field] : "";
-const older = (item: Record<string, unknown>) =>
-  Date.now() - Date.parse(text(item, "created_at")) > STALE_MS;
-
-/** One sweep's counts, and what stopped it when it couldn't list. */
+/**
+ * One sweep's counts: what it deleted, the deletions that failed, how many of those were this
+ * run's own, and what stopped it when it couldn't list.
+ */
 export interface Swept {
-  readonly keys: number;
-  readonly addresses: number;
+  readonly inboxes: number;
+  readonly failed: number;
+  readonly left: number;
   readonly problem?: string;
 }
 
 /**
- * Revokes keys and deletes test addresses the live tier left: this run's, by its tag, and, when
- * `stale`, anyone's that no run still uses. It only ever touches a key named `Patchy …`, in test
- * mode and below admin: this run's, or a stale one, reaching nothing because its address is gone.
- * It only ever deletes a test address: this run's, or a stale run-tagged one. Never a live
- * address, an admin key or a key Patchy didn't name. Stale means older than any run can still be
- * using, three run limits.
+ * Deletes inboxes the live tier left: this run's, by the ids it recorded and its tag, and, when
+ * `stale`, run-tagged ones older than any run can still be using, three run limits. It only ever
+ * deletes an inbox named `patchy-lv…-` on pidgeon.email: never the account's own inbox, nor any
+ * other. A deletion that fails doesn't stop the rest; it's counted, and `left` says how many of
+ * the run's own are still there.
  */
 export const sweep = (stale: boolean) =>
   Effect.gen(function* () {
     const source = yield* Source.Source;
-    const until = () => Date.now() + 60_000;
-    let keys = 0;
-    let addresses = 0;
-    // Addresses first, so a key that reached one reaches nothing by the time keys are listed.
-    for (const identity of yield* everything("/identities")) {
-      const local = text(identity, "local_part");
-      if (identity.test !== true) continue;
-      const ours = local.startsWith(`patchy-${RUN}-`);
-      const left = stale && /^patchy-lv[a-z0-9]+-/.test(local) && older(identity);
-      if (!(ours || left)) continue;
-      const deleted = yield* source
-        .call(admin(), { method: "DELETE", path: `/identities/${text(identity, "id")}` }, until())
-        .pipe(Effect.option);
-      if (deleted._tag === "Some") addresses++;
+    let deleted = 0;
+    let failed = 0;
+    let left = 0;
+    for (const found of yield* inboxes) {
+      const local = found.address.endsWith("@pidgeon.email")
+        ? found.address.slice(0, -"@pidgeon.email".length)
+        : "";
+      const ours = local.startsWith(PREFIX) || created.has(found.id);
+      const old =
+        stale &&
+        /^patchy-lv[a-z0-9]+-/.test(local) &&
+        Date.now() - Date.parse(found.created_at) > STALE_MS;
+      if (!(local.startsWith("patchy-lv") && (ours || old))) continue;
+      const gone = yield* source
+        .call(
+          admin(),
+          { method: "DELETE", path: `/email/inboxes/${encodeURIComponent(found.id)}` },
+          Date.now() + 60_000
+        )
+        .pipe(
+          Effect.asVoid,
+          // Gone already, as when a test deleted it: done all the same.
+          Effect.catchTags({ PidgeonNotFound: () => Effect.void }),
+          Effect.option
+        );
+      if (Option.isSome(gone)) {
+        deleted++;
+        created.delete(found.id);
+      } else {
+        failed++;
+        if (ours) left++;
+      }
     }
-    for (const key of yield* everything("/api-keys")) {
-      const name = text(key, "name");
-      // Never anything but a test key Patchy named, below admin: never an admin key, ours or not.
-      if (
-        key.revoked_at !== null ||
-        !name.startsWith("Patchy ") ||
-        key.test !== true ||
-        !(key.access === "read" || key.access === "draft" || key.access === "send")
-      )
-        continue;
-      const ours = name.startsWith(`Patchy ${RUN}-`);
-      const dead =
-        stale && Array.isArray(key.identity_ids) && key.identity_ids.length === 0 && older(key);
-      if (!(ours || dead)) continue;
-      const revoked = yield* source
-        .call(admin(), { method: "DELETE", path: `/api-keys/${text(key, "id")}` }, until())
-        .pipe(Effect.option);
-      if (revoked._tag === "Some") keys++;
-    }
-    const swept: Swept = { keys, addresses };
+    const swept: Swept = { inboxes: deleted, failed, left };
     return swept;
   }).pipe(
     // A sweep that couldn't list says so by the refusal's name, never its words or what it listed.
-    Effect.catch((error) => Effect.succeed<Swept>({ keys: 0, addresses: 0, problem: error._tag }))
+    Effect.catch((error) =>
+      Effect.succeed<Swept>({ inboxes: 0, failed: 0, left: 0, problem: error._tag })
+    )
   );
+
+/**
+ * Fails, saying how many, when a sweep couldn't delete an inbox it meant to, the run's own or an
+ * earlier run's stale one, or couldn't list them to tell: nothing in Pidgeon expires them.
+ */
+export const requireSwept = (swept: Swept) =>
+  swept.problem !== undefined
+    ? Effect.die(
+        new Error(`Pidgeon run ${RUN}'s sweep couldn't list its inboxes (${swept.problem}).`)
+      )
+    : swept.failed > 0
+      ? Effect.die(
+          new Error(
+            `Pidgeon run ${RUN}'s sweep couldn't delete ${swept.failed} ${swept.failed === 1 ? "inbox" : "inboxes"}${swept.left === 0 ? "" : `, ${swept.left} of them its own`}.`
+          )
+        )
+      : Effect.void;
 
 const told = (swept: Swept, what: string) =>
   swept.problem === undefined
-    ? `${swept.keys} ${what}keys and ${swept.addresses} ${what}addresses`
+    ? `${swept.inboxes} ${what}inboxes${swept.failed === 0 ? "" : ` (${swept.failed} failed to delete)`}`
     : `nothing (${swept.problem})`;
 
-/** What a run cost the account's shared budgets, and what the sweeps took: counts only. */
+/** What a run cost the account's shared budget, and what the sweeps took: counts only. */
 export const summary = (swept: { readonly before: Swept; readonly after: Swept }) =>
   console.log(
-    `Pidgeon live run ${RUN}: ${sent.length} calls, ${minted.size} keys minted, at most ${peak} active at once; swept ${told(swept.before, "stale ")} before, ${told(swept.after, "")} after.`
+    `Pidgeon live run ${RUN}: ${sent.length} calls; swept ${told(swept.before, "stale ")} before, ${told(swept.after, "")} after.`
   );
+
+/**
+ * A live file's cleanup, as a layer: refuses keys that aren't test keys, then sweeps stale
+ * leftovers of any run before the tests; after them, however they ended, sweeps everything this
+ * run made and fails the file when any of it is left.
+ */
+export const cleanup = Layer.effectDiscard(
+  Effect.gen(function* () {
+    yield* requireTestKey;
+    const before = yield* sweep(true);
+    yield* Effect.addFinalizer(() =>
+      sweep(false).pipe(
+        Effect.tap((after) => Effect.sync(() => summary({ before, after }))),
+        Effect.flatMap(requireSwept)
+      )
+    );
+  })
+).pipe(Layer.provide(sweepLayer));

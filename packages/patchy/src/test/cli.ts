@@ -541,16 +541,14 @@ export const generateProjectResponse = (
     if (declaration.kind === "pidgeon") {
       const stamp = { ...declaration, id: "conn-support", revision: 1 };
       const snapshot = {
-        version: 1 as const,
+        version: 2 as const,
         address: {
           email: "support@acme.example",
-          displayName: "Support",
-          sendPolicy: "reply_only"
+          displayName: "Support"
         },
         access: "send" as const,
         test: false,
-        labels: [{ id: "lbl-1", name: "Warranty", colour: "amber" }],
-        plan: "free"
+        labels: [{ id: "lbl-1", name: "Warranty", colour: "amber" }]
       };
       pidgeon[alias] = { declaration: stamp, snapshot };
       const generated = generatePidgeon(stamp, snapshot);

@@ -215,7 +215,7 @@ all other levels print the wire body with no added `ok` wrapper.
 
 For a company connection, run `pnpm patchy list connections`, then
 `pnpm patchy list connections <integration>/<handle>` for its snapshot and
-`takenAt`: a Postgres schema, a PostHog project's events and properties, a Pidgeon address and its labels, an Attio workspace's objects and lists, an IMAP mailbox and its folders, a GitHub account and its repositories, or a Notion workspace's shared data sources and properties.
+`takenAt`: a Postgres schema, a PostHog project's events and properties, a Pidgeon inbox and its labels, an Attio workspace's objects and lists, an IMAP mailbox and its folders, a GitHub account and its repositories, or a Notion workspace's shared data sources and properties.
 `list connections --all` adds offered integrations. A null snapshot is
 unavailable, not an empty source. Only connected entries carry an `add` hint;
 disconnected entries point to `/settings/integrations`. Discovery grants no access.

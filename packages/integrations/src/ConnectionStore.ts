@@ -21,6 +21,7 @@ import type * as CredentialKeys from "./CredentialKeys.js";
 import * as PostgresSource from "./postgres/Source.js";
 import * as PostHogSource from "./posthog/Source.js";
 import type * as PidgeonKeys from "./pidgeon/Keys.js";
+import type * as PidgeonLedger from "./pidgeon/Ledger.js";
 import * as PidgeonSource from "./pidgeon/Source.js";
 import * as AttioSource from "./attio/Source.js";
 import * as NotionSource from "./notion/Source.js";
@@ -210,7 +211,7 @@ export class ConnectionRetargetRequired extends Schema.TaggedError<ConnectionRet
     return "These credentials name a different database. Point the connection elsewhere to discover its schema before switching.";
   }
 }
-/** A Pidgeon connection is one address: another address is another connection. */
+/** A Pidgeon connection is one inbox: another inbox is another connection. */
 export class ConnectionRetargetUnavailable extends Schema.TaggedError<ConnectionRetargetUnavailable>()(
   "ConnectionRetargetUnavailable",
   {}
@@ -218,7 +219,7 @@ export class ConnectionRetargetUnavailable extends Schema.TaggedError<Connection
   readonly code = "connection_retarget_unavailable";
   readonly status = 409;
   override get message() {
-    return "A Pidgeon connection is one address and can't move to another. Connect the other address as a new connection.";
+    return "A Pidgeon connection is one inbox and can't move to another. Connect the other inbox as a new connection.";
   }
 }
 /** A connect by this name is still running in this process; a second submit doesn't start another. */
@@ -288,7 +289,7 @@ export class ConnectionStorageFailed extends Schema.TaggedError<ConnectionStorag
       "delete",
       "resolve",
       "poolCredentials",
-      "countSend",
+      "drafts",
       "sends",
       "pauseLogin"
     ]),
@@ -415,10 +416,9 @@ export interface ConnectInput {
 export interface CredentialsInput extends Identity {
   readonly credentials: Redacted.Redacted<string>;
 }
-/** A deleted connection, and the key Patchy couldn't revoke after it, named for an admin. */
+/** A deleted connection, as it was before it went. */
 export interface Deleted {
   readonly connection: Connection;
-  readonly keyLeft: string | null;
 }
 
 /** Callers authorize company membership and admin actions before entering this service. */
@@ -497,8 +497,8 @@ export class ConnectionStore extends Context.Service<
     ) => Effect.Effect<Connection, ConnectionError>;
     readonly test: (input: Identity) => Effect.Effect<Connection, ConnectionError>;
     /**
-     * New credentials for the same target. A Pidgeon connection takes an admin key and mints a new
-     * key for its address, at the same access (Replace key) or another (Change access).
+     * New credentials for the same target. A Pidgeon connection takes a new key for the same inbox
+     * (Replace key), or no key and the access patches have now (Change access).
      */
     readonly rotate: (input: CredentialsInput) => Effect.Effect<Connection, ConnectionError>;
     readonly retarget: (input: CredentialsInput) => Effect.Effect<Connection, ConnectionError>;
@@ -523,8 +523,8 @@ export class ConnectionStore extends Context.Service<
       ids: ReadonlyArray<string>
     ) => Effect.Effect<ReadonlySet<string>, ConnectionStorageFailed>;
     /**
-     * Returns the connection as it was before deletion; `report` runs as `connect`'s does. A key
-     * Patchy minted revokes itself once the row is gone; one that couldn't is named in `keyLeft`.
+     * Returns the connection as it was before deletion; `report` runs as `connect`'s does. A
+     * Pidgeon connection's key isn't revoked: Patchy can't, so its page tells the admin to.
      */
     readonly delete: (
       input: Identity,
@@ -545,16 +545,39 @@ export class ConnectionStore extends Context.Service<
       credentialRevision: number
     ) => Effect.Effect<Redacted.Redacted<string>, ConnectionError>;
     /**
-     * Counts one send or reply from a Pidgeon connection on `day` (UTC, `YYYY-MM-DD`) before
-     * Pidgeon sees it, in one atomic statement, so the count holds across processes and restarts.
-     * Answers false, counting nothing, once the day's count has reached `budget`.
+     * Claims a Pidgeon email's row by its draft key before a worker talks to Pidgeon, charging a
+     * new email to the connection's budget for `day` in the same transaction, so the count holds
+     * across processes and restarts (`pidgeon/Ledger.ts`).
      */
-    readonly countSend: (
+    readonly claimDraft: (
+      input: PidgeonLedger.ClaimInput
+    ) => Effect.Effect<
+      PidgeonLedger.Claim,
+      ConnectionStorageFailed | ConnectionMutationUnavailable
+    >;
+    /** One change by the claim's holder, while it still holds it: whether it did. */
+    readonly recordDraft: (
+      change: PidgeonLedger.Change
+    ) => Effect.Effect<boolean, ConnectionStorageFailed | ConnectionMutationUnavailable>;
+    /** Ends a claim its holder still has. */
+    readonly releaseDraft: (
+      key: PidgeonLedger.Key & { readonly owner: string }
+    ) => Effect.Effect<void, ConnectionStorageFailed | ConnectionMutationUnavailable>;
+    /** A draft key's row as it stands, for a worker whose change's answer was lost. */
+    readonly readDraft: (
+      key: PidgeonLedger.Key
+    ) => Effect.Effect<
+      PidgeonLedger.Row | undefined,
+      ConnectionStorageFailed | ConnectionMutationUnavailable
+    >;
+    /**
+     * How many of a Pidgeon connection's emails may still leave without Patchy: a send issued and
+     * not known sent, or one held for a member to approve.
+     */
+    readonly unsettledSends: (
       companyId: string,
-      id: string,
-      day: string,
-      budget: number
-    ) => Effect.Effect<boolean, ConnectionStorageFailed>;
+      id: string
+    ) => Effect.Effect<number, ConnectionStorageFailed>;
     /** How many sends and replies a Pidgeon connection has counted on `day` (UTC). */
     readonly sends: (
       companyId: string,

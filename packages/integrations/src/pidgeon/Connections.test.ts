@@ -29,8 +29,9 @@ import { NodeCryptography } from "@patchy/core";
 import * as PatchVisibilityTest from "../test/patchVisibility.js";
 
 /**
- * Patchy's side of Pidgeon connections, offline: what needs no answer from Pidgeon beyond a revoke
- * or a read. What Pidgeon does with keys and addresses is the live tier's
+ * Patchy's side of Pidgeon connections, offline, against the scripted double: a key pasted from
+ * Pidgeon's dashboard, checked without changing anything, kept with the one inbox at the address
+ * typed; Replace key, Change access, Test and Delete. What Pidgeon does for real is the live tier's
  * (`packages/integrations/live`).
  */
 
@@ -56,19 +57,32 @@ const fixture = Layer.mergeAll(
   Layer.provideMerge(NodeCryptography.layer)
 );
 
-/** A store over the canned transport, and a seeded connection. */
-const setup = (handle: string, options: { readonly test?: boolean } = {}) =>
-  Effect.gen(function* () {
-    const pidgeon = PidgeonTest.canned();
-    const store = yield* SqlConnectionStore.make.pipe(Effect.provide([pidgeon.layer, Teams.layer]));
-    const id = `conn_${handle.replaceAll("-", "_")}`;
-    const seeded = yield* PidgeonTest.seed({ ...who, id, handle, ...options });
-    return { pidgeon, store, id, key: seeded.key };
-  });
+/** A Pidgeon account with a desk inbox, an events inbox, and a store over it. */
+const account = Effect.gen(function* () {
+  const pidgeon = PidgeonTest.double();
+  const desk = pidgeon.inbox("desk@acme.example", { displayName: "Acme Desk" });
+  const events = pidgeon.inbox("hooks@acme.example", { kind: "events" });
+  const billing = pidgeon.label(desk, "Billing", "amber");
+  const store = yield* SqlConnectionStore.make.pipe(Effect.provide([pidgeon.layer, Teams.layer]));
+  return { pidgeon, desk, events, billing, store };
+});
+/** A connect as the page submits one. */
+const connecting = (handle: string, request: Keys.ConnectRequest) => ({
+  integration: "pidgeon" as const,
+  ...who,
+  handle,
+  description: "Customer questions",
+  credentials: Keys.connectSecret(request)
+});
 const identity = (id: string) => ({ ...who, id });
-const revokes = (requests: ReadonlyArray<PidgeonTest.Sent>, keyId: string) =>
-  requests.filter(PidgeonTest.route("DELETE", `/api-keys/${keyId}`)).length;
-/** Waits, on the real clock, for work a test can't join, such as a detached delete. */
+/** Requests that could change something in Pidgeon, leaving out the level check. */
+const changes = (requests: ReadonlyArray<PidgeonTest.Built>) =>
+  requests.filter(
+    (sent) =>
+      sent.method !== "GET" &&
+      !(sent.method === "POST" && sent.path === `/email/drafts/${Keys.NOTHING}/send`)
+  );
+/** Waits, on the real clock, for work a test can't join. */
 const eventually = (done: () => boolean) =>
   Effect.gen(function* () {
     for (let tries = 0; tries < 400; tries++) {
@@ -79,34 +93,207 @@ const eventually = (done: () => boolean) =>
   });
 
 it.layer(fixture)("Pidgeon connections, offline", (it) => {
-  it.effect("refuses what can't be an admin key before asking Pidgeon anything", () =>
+  it.effect("refuses what can't be a Pidgeon key before asking Pidgeon anything", () =>
     Effect.gen(function* () {
-      const pidgeon = PidgeonTest.canned();
-      const store = yield* SqlConnectionStore.make.pipe(
-        Effect.provide([pidgeon.layer, Teams.layer])
-      );
+      const { pidgeon, store } = yield* account;
       const refused = yield* store
-        .connect({
-          integration: "pidgeon",
-          ...who,
-          handle: "not-a-key",
-          description: "",
-          credentials: Keys.connectSecret({
-            adminKey: "not a key",
-            attempt: "attempt00001",
-            access: "read",
-            address: { id: "idn" }
-          })
-        })
+        .connect(
+          connecting("not-a-key", { key: "not a key", email: "desk@acme.example", access: "read" })
+        )
         .pipe(Effect.flip);
-      assert.instanceOf(refused, Keys.InvalidAdminKey);
+      assert.instanceOf(refused, Keys.InvalidKey);
       assert.deepStrictEqual(pidgeon.requests, []);
     })
   );
 
-  it.effect("refuses to delete a declared connection, revoking nothing", () =>
+  it.effect("connects one inbox with the pasted key, keeping the key with the inbox's id", () =>
     Effect.gen(function* () {
-      const { pidgeon, store, id, key } = yield* setup("declared");
+      const { pidgeon, desk, billing, store } = yield* account;
+      const token = pidgeon.key("send");
+      // The address as typed: its case and the spaces around it don't matter.
+      const connected = yield* store.connect(
+        connecting("desk", { key: token, email: " DESK@acme.example ", access: "send" })
+      );
+      assert.deepStrictEqual(connected.display, {
+        email: "desk@acme.example",
+        inboxId: desk,
+        access: "send",
+        test: true
+      });
+      const snapshot = yield* store.snapshot(who.companyId, connected.id, 1);
+      assert.deepStrictEqual(snapshot, {
+        integration: "pidgeon",
+        snapshot: {
+          version: 2,
+          address: { email: "desk@acme.example", displayName: "Acme Desk" },
+          access: "send",
+          test: true,
+          labels: [{ id: billing, name: "Billing", colour: "amber" }]
+        }
+      });
+      const keys = yield* CredentialKeys.CredentialKeys;
+      const sql = yield* SqlClient.SqlClient;
+      const [row] = yield* sql<{ readonly credentials: string; readonly keyId: string }>`SELECT
+        credentials, key_id AS "keyId" FROM connections WHERE id = ${connected.id}`;
+      const secret = yield* keys.decrypt(
+        { companyId: who.companyId, id: connected.id, integration: "pidgeon" },
+        row!
+      );
+      assert.deepStrictEqual(yield* Source.parseCredentials(secret), { inboxId: desk, key: token });
+      // Nothing was made, sent or changed in Pidgeon.
+      assert.deepStrictEqual(changes(pidgeon.requests), []);
+    })
+  );
+
+  it.effect(
+    "refuses a key Pidgeon rejects, an address no inbox has, an events inbox, then send with a Read key",
+    () =>
+      Effect.gen(function* () {
+        const { pidgeon, store } = yield* account;
+        const reader = pidgeon.key("read");
+        const sender = pidgeon.key("send");
+        const unknown = `pgn_test_${"r".repeat(32)}`;
+        const desk = "desk@acme.example";
+        const cases = [
+          [{ key: unknown, email: desk, access: "read" }, "PidgeonKeyRejected"],
+          [{ key: sender, email: "sales@acme.example", access: "send" }, "PidgeonInboxNotFound"],
+          [{ key: sender, email: "hooks@acme.example", access: "read" }, "PidgeonNoInbox"],
+          // The inbox is checked before what the key may do.
+          [{ key: reader, email: "sales@acme.example", access: "send" }, "PidgeonInboxNotFound"],
+          [{ key: reader, email: desk, access: "send" }, "PidgeonCantSend"]
+        ] as const;
+        for (const [index, [request, refusal]] of cases.entries())
+          assert.strictEqual(
+            (yield* store.connect(connecting(`refused-${index}`, request)).pipe(Effect.flip))._tag,
+            refusal
+          );
+        assert.deepStrictEqual(
+          (yield* store.list(who.companyId)).filter((item) => item.handle.startsWith("refused-")),
+          []
+        );
+        // A Read key connects at Read.
+        assert.include(
+          (yield* store.connect(connecting("reads", { key: reader, email: desk, access: "read" })))
+            .display,
+          { access: "read" }
+        );
+        assert.deepStrictEqual(changes(pidgeon.requests), []);
+      })
+  );
+
+  it.effect(
+    "replaces the key with one that reaches the same inbox and can do what patches may",
+    () =>
+      Effect.gen(function* () {
+        const { pidgeon, desk, store } = yield* account;
+        const connected = yield* store.connect(
+          connecting("swap", {
+            key: pidgeon.key("send"),
+            email: "desk@acme.example",
+            access: "send"
+          })
+        );
+        const replace = (key: string) =>
+          store.rotate({ ...identity(connected.id), credentials: Keys.changeSecret({ key }) });
+        assert.instanceOf(
+          yield* replace(pidgeon.key("read")).pipe(Effect.flip),
+          Keys.NewKeyCantSend
+        );
+        // A key of another account doesn't reach the inbox.
+        const stranger = pidgeon.key("send");
+        pidgeon.fault(
+          (sent) =>
+            sent.method === "GET" &&
+            sent.path === `/email/inboxes/${desk}` &&
+            sent.authorization === `Bearer ${stranger}`,
+          {
+            status: 404,
+            body: { error: { code: "not_found", message: "There is no such inbox." } }
+          }
+        );
+        assert.instanceOf(yield* replace(stranger).pipe(Effect.flip), Keys.OtherAccount);
+        const live = pidgeon.key("send", { live: true });
+        const replaced = yield* replace(live);
+        assert.deepInclude(replaced, {
+          credentialRevision: connected.credentialRevision + 1,
+          metadataRevision: 2
+        });
+        assert.deepStrictEqual(replaced.display, { ...connected.display, test: false });
+        assert.include((yield* store.snapshot(who.companyId, connected.id, 2)).snapshot, {
+          test: false,
+          access: "send"
+        });
+        assert.deepStrictEqual(changes(pidgeon.requests), []);
+      })
+  );
+
+  it.effect("changes access locally, checking only that a key patches may send with can send", () =>
+    Effect.gen(function* () {
+      const { pidgeon, store } = yield* account;
+      const reader = pidgeon.key("read");
+      const connected = yield* store.connect(
+        connecting("access", { key: reader, email: "desk@acme.example", access: "read" })
+      );
+      const change = (access: Keys.Access) =>
+        store.rotate({ ...identity(connected.id), credentials: Keys.changeSecret({ access }) });
+      assert.instanceOf(yield* change("send").pipe(Effect.flip), Keys.StoredCantSend);
+      yield* store.rotate({
+        ...identity(connected.id),
+        credentials: Keys.changeSecret({ key: pidgeon.key("send") })
+      });
+      const raised = yield* change("send");
+      assert.include(raised.display, { access: "send" });
+      assert.include((yield* store.snapshot(who.companyId, connected.id, 3)).snapshot, {
+        access: "send"
+      });
+      // Lowering asks Pidgeon nothing.
+      const before = pidgeon.requests.length;
+      const lowered = yield* change("read");
+      assert.include(lowered.display, { access: "read" });
+      assert.include((yield* store.snapshot(who.companyId, connected.id, 4)).snapshot, {
+        access: "read"
+      });
+      assert.strictEqual(pidgeon.requests.length, before);
+    })
+  );
+
+  it.effect("tests and resumes with the stored key, saying when it stopped or its inbox went", () =>
+    Effect.gen(function* () {
+      const { pidgeon, desk, store } = yield* account;
+      const token = pidgeon.key("send");
+      const connected = yield* store.connect(
+        connecting("checked", { key: token, email: "desk@acme.example", access: "send" })
+      );
+      yield* store.test(identity(connected.id));
+      yield* store.disconnect(identity(connected.id));
+      pidgeon.revoke(token);
+      assert.instanceOf(
+        yield* store.reconnect(identity(connected.id)).pipe(Effect.flip),
+        Keys.StoredKeyRejected
+      );
+      pidgeon.key("send", { token });
+      pidgeon.removeInbox(desk);
+      assert.instanceOf(
+        yield* store.test(identity(connected.id)).pipe(Effect.flip),
+        Keys.InboxGone
+      );
+      assert.instanceOf(
+        yield* store.refresh(identity(connected.id)).pipe(Effect.flip),
+        ConnectionStore.ConnectionNotConnected
+      );
+    })
+  );
+
+  it.effect("deletes an unused connection without asking Pidgeon, and refuses a declared one", () =>
+    Effect.gen(function* () {
+      const { pidgeon, store } = yield* account;
+      const declared = yield* store.connect(
+        connecting("declared", {
+          key: pidgeon.key("read"),
+          email: "desk@acme.example",
+          access: "read"
+        })
+      );
       const sql = yield* SqlClient.SqlClient;
       yield* sql`INSERT INTO patches (id, company_id, owner_user_id, title, name)
         VALUES ('pat_pidgeon_decl', ${who.companyId}, ${who.userId}, 'Desk', 'desk-declared')`;
@@ -116,86 +303,68 @@ it.layer(fixture)("Pidgeon connections, offline", (it) => {
         publish_status)
         VALUES ('ver_pidgeon_decl', 'pat_pidgeon_decl', 1, 'desk.html', 'test', 1, ${DEV_SEED.tokenId},
           ${who.userId}, 1, 'test', 1, 1, 0,
-          ${JSON.stringify({ uses: { desk: { kind: "pidgeon", handle: "declared", id, revision: 1 } } })}::jsonb,
+          ${JSON.stringify({ uses: { desk: { kind: "pidgeon", handle: "declared", id: declared.id, revision: 1 } } })}::jsonb,
           'pidgeon-decl', 'test', '{}'::jsonb, 201)`;
       assert.instanceOf(
-        yield* store.delete(identity(id)).pipe(Effect.flip),
+        yield* store.delete(identity(declared.id)).pipe(Effect.flip),
         ConnectionStore.ConnectionInUse
       );
-      assert.strictEqual(revokes(pidgeon.requests, key.id), 0);
+      const unused = yield* store.connect(
+        connecting("unused", {
+          key: pidgeon.key("read"),
+          email: "desk@acme.example",
+          access: "read"
+        })
+      );
+      const before = pidgeon.requests.length;
+      assert.strictEqual((yield* store.delete(identity(unused.id))).connection.id, unused.id);
+      assert.strictEqual(pidgeon.requests.length, before);
     })
-  );
-
-  it.effect(
-    "revokes a deleted connection's keys when Delete's request is interrupted or its COMMIT answer lost",
-    () =>
-      Effect.gen(function* () {
-        const { pidgeon, store, id, key } = yield* setup("interrupted");
-        const revoking = yield* Deferred.make<void>();
-        const revoke = PidgeonTest.route("DELETE", `/api-keys/${key.id}`);
-        pidgeon.hold(revoke, revoking);
-        const deleting = yield* store.delete(identity(id)).pipe(Effect.forkChild);
-        yield* eventually(() => pidgeon.requests.some(revoke));
-        yield* Fiber.interrupt(deleting);
-        yield* Deferred.succeed(revoking, undefined);
-        yield* eventually(() => pidgeon.requests.filter(revoke).length === 1);
-        assert.deepStrictEqual(
-          (yield* store.list(who.companyId)).filter((item) => item.id === id),
-          []
-        );
-        // The row went though COMMIT's answer was lost: its keys, a retired one too, revoke
-        // themselves all the same.
-        const lossy = PidgeonTest.canned();
-        const { store: losing, armed } = yield* losingCommits(lossy.layer);
-        const lost = yield* PidgeonTest.seed({
-          ...who,
-          id: "conn_ack_lost",
-          handle: "ack-lost",
-          retired: [{ id: "key-old", name: "Patchy ack-lost oldattempt01" }]
-        });
-        armed.next = { kind: "lose" };
-        const deleted = yield* losing.delete(identity("conn_ack_lost"));
-        assert.isNull(deleted.keyLeft);
-        assert.strictEqual(revokes(lossy.requests, lost.key.id), 1);
-        assert.strictEqual(revokes(lossy.requests, "key-old"), 1);
-      })
   );
 
   it.effect("reports a deletion once, from the delete whose own COMMIT answered", () =>
     Effect.gen(function* () {
-      const { store, id } = yield* setup("raced");
-      const failing = PidgeonTest.canned();
-      const { store: losing, armed } = yield* losingCommits(failing.layer);
+      const { pidgeon, store } = yield* account;
+      const { id } = yield* store.connect(
+        connecting("raced", {
+          key: pidgeon.key("read"),
+          email: "desk@acme.example",
+          access: "read"
+        })
+      );
+      const { store: losing, armed } = yield* losingCommits(pidgeon.layer);
       const reports: Array<string> = [];
       const by = (admin: string) => () => Effect.sync(() => void reports.push(admin));
       // A's DELETE rolls back at COMMIT; B deletes it and reports before A hears back.
       armed.next = { kind: "fail", meanwhile: store.delete(identity(id), by("B")) };
-      const deleted = yield* losing.delete(identity(id), by("A"));
-      // A finds the row gone and its keys revoke themselves, but it can't tell it removed the row.
-      assert.isNull(deleted.keyLeft);
+      yield* losing.delete(identity(id), by("A")).pipe(Effect.ignore);
       assert.deepStrictEqual(reports, ["B"]);
     })
   );
 
   it.effect(
-    "admits four calls per address, refuses the next busy, and sends a waiting one as things stand",
+    "admits four calls per inbox, refuses the next busy, and sends a waiting one as things stand",
     () =>
       Effect.gen(function* () {
-        const { pidgeon, store, id, key } = yield* setup("busy");
-        const connection = { id, handle: "busy" };
+        const { pidgeon, store } = yield* account;
+        const token = pidgeon.key("read");
+        const connected = yield* store.connect(
+          connecting("busy", { key: token, email: "desk@acme.example", access: "read" })
+        );
+        const connection = { id: connected.id, handle: "busy" };
         const source = yield* Source.Source.pipe(Effect.provide(pidgeon.layer));
-        const threads = PidgeonTest.route("GET", "/threads");
+        const threads = PidgeonTest.route("GET", "/email/threads");
         const slots = registry["pidgeon.calls.concurrent"].default;
         const release = yield* Deferred.make<void>();
         pidgeon.hold(threads, release, slots);
         const call = (deadline: number) =>
-          Calls.withAddress(
+          Calls.withInbox(
             { companyId: who.companyId, connection, deadline, recheck: Effect.void },
-            (address) =>
-              address.call({
+            (inbox) =>
+              inbox.call({
                 method: "GET",
-                path: "/threads",
-                query: { identity_id: address.credentials.identityId }
+                path: "/email/threads",
+                query: { inbox_id: inbox.credentials.inboxId }
               })
           ).pipe(
             Effect.provideService(ConnectionStore.ConnectionStore, store),
@@ -214,7 +383,7 @@ it.layer(fixture)("Pidgeon connections, offline", (it) => {
         assert.instanceOf(yield* Fiber.join(busy).pipe(Effect.flip), Source.Busy);
         // A call that waits while the connection is disconnected sends nothing.
         const waiting = yield* call(now + 60_000);
-        yield* store.disconnect(identity(id));
+        yield* store.disconnect(identity(connected.id));
         yield* Deferred.succeed(release, undefined);
         yield* Effect.forEach(running, Fiber.join);
         assert.instanceOf(
@@ -223,27 +392,21 @@ it.layer(fixture)("Pidgeon connections, offline", (it) => {
         );
         assert.strictEqual(sent(), slots);
         assert.isTrue(
-          pidgeon.requests
-            .filter(threads)
-            .every((sent) => sent.authorization === `Bearer ${key.token}`)
+          pidgeon.requests.filter(threads).every((sent) => sent.authorization === `Bearer ${token}`)
         );
       })
   );
 
   it.effect("stays hidden from the release before Pidgeon, which still lists the rest", () =>
     Effect.gen(function* () {
-      const { pidgeon, id } = yield* setup("hidden");
-      const sql = yield* SqlClient.SqlClient;
-      yield* sql`INSERT INTO patches (id, company_id, owner_user_id, title, name)
-        VALUES ('pat_pidgeon_hidden', ${who.companyId}, ${who.userId}, 'Hidden', 'desk-hidden')`;
-      yield* sql`INSERT INTO patch_versions (id, patch_id, version_number, object_key, content_hash,
-        file_size, created_by_machine_token_id, owner_user_id, tier, release, manifest_version,
-        wire_version, schema_revision, manifest, publish_key, payload_digest, publish_response,
-        publish_status)
-        VALUES ('ver_pidgeon_hidden', 'pat_pidgeon_hidden', 1, 'hidden.html', 'test', 1, ${DEV_SEED.tokenId},
-          ${who.userId}, 1, 'test', 1, 1, 0,
-          ${JSON.stringify({ uses: { desk: { kind: "pidgeon", handle: "hidden", id, revision: 1 } } })}::jsonb,
-          'pidgeon-hidden', 'test', '{}'::jsonb, 201)`;
+      const { pidgeon, store } = yield* account;
+      const { id } = yield* store.connect(
+        connecting("hidden", {
+          key: pidgeon.key("read"),
+          email: "desk@acme.example",
+          access: "read"
+        })
+      );
       // That release's queries: the same store, knowing only the integrations it shipped.
       const before = yield* SqlConnectionStore.knowing(["postgres", "posthog"]).pipe(
         Effect.provide([pidgeon.layer, Teams.layer])
@@ -252,7 +415,6 @@ it.layer(fixture)("Pidgeon connections, offline", (it) => {
         (yield* before.list(who.companyId)).map((item) => item.id),
         id
       );
-      assert.isFalse((yield* before.usage(who.companyId)).has(id));
       const declaration = { kind: "pidgeon" as const, handle: "hidden", id, revision: 1 };
       const refusals = yield* Effect.all([
         Effect.flip(before.get(who.companyId, id)),

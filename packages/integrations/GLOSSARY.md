@@ -65,7 +65,7 @@ An admin's setting on one connection that keeps a patch's [guests](../companies/
 _Avoid_: guest access, allow list, sensitive flag
 
 **Metadata**:
-The source's shape as discovered for one connection, never its business rows. Postgres metadata is a schema snapshot; PostHog metadata is an events snapshot; Pidgeon metadata is an address snapshot; Attio metadata is a workspace snapshot; IMAP metadata is a mailbox snapshot; GitHub metadata is a repository snapshot; Notion metadata is a data source snapshot. A stored snapshot names its own integration, so it reads correctly after its connection is deleted.
+The source's shape as discovered for one connection, never its business rows. Postgres metadata is a schema snapshot; PostHog metadata is an events snapshot; Pidgeon metadata is an address snapshot of its inbox; Attio metadata is a workspace snapshot; IMAP metadata is a mailbox snapshot; GitHub metadata is a repository snapshot; Notion metadata is a data source snapshot. A stored snapshot names its own integration, so it reads correctly after its connection is deleted.
 _Avoid_: instance, fixture
 
 **Schema snapshot**:

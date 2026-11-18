@@ -40,11 +40,12 @@ jobs:
           fi
 
   pidgeon-suite:
-    # Pidgeon's test mode, with the repository's test admin key. Every run shares that account
-    # with developers' dev environments: 120 requests a minute and 10 active keys, two of them the
-    # admin keys. A run keeps at most three keys alive, paces itself, stops using Pidgeon after
-    # 20 minutes, as this job does, and sweeps however it ends. Runs wait in one account-wide
-    # queue and none is cancelled: a cancelled run would leave its keys and addresses with only
+    # Pidgeon's test mode, with the repository's test keys: the admin key makes and deletes the
+    # run's own inboxes, and the Send and Read keys, when the repository has them, are what
+    # connections paste; the checks that need them skip without them. Every run shares that
+    # account with developers' dev environments, so a run paces itself, stops using Pidgeon after
+    # 20 minutes, as this job does, and sweeps its inboxes however it ends. Runs wait in one
+    # account-wide queue and none is cancelled: a cancelled run would leave its inboxes with only
     # minutes for its sweep. Only a run that tests waits in it.
     needs: pidgeon-changes
     if: needs.pidgeon-changes.outputs.run == 'true'
@@ -56,6 +57,8 @@ jobs:
     timeout-minutes: 20
     env:
       PIDGEON_TEST_ADMIN_KEY: ${{ secrets.PIDGEON_TEST_ADMIN_KEY }}
+      PIDGEON_TEST_SEND_KEY: ${{ secrets.PIDGEON_TEST_SEND_KEY }}
+      PIDGEON_TEST_READ_KEY: ${{ secrets.PIDGEON_TEST_READ_KEY }}
       PIDGEON_TEST_RUN_ID: ${{ github.run_id }}${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v7

@@ -4,7 +4,6 @@ import type { PidgeonLabel as ApiLabel } from "../../api/src/pidgeonSnapshot.js"
 import { isPatchyError } from "./clientError.js";
 import {
   createPidgeonClient,
-  type PidgeonAttachmentText,
   type PidgeonLabel,
   type PidgeonMessage,
   type PidgeonReader,
@@ -28,7 +27,6 @@ it("mirrors the wire's results, so a field the host leaves out can't be typed in
   expectTypeOf<PidgeonThread>().toEqualTypeOf<typeof Api.PidgeonThread.Type>();
   expectTypeOf<PidgeonMessage>().toEqualTypeOf<typeof Api.PidgeonMessage.Type>();
   expectTypeOf<PidgeonSearchHit>().toEqualTypeOf<typeof Api.PidgeonSearchHit.Type>();
-  expectTypeOf<PidgeonAttachmentText>().toEqualTypeOf<typeof Api.PidgeonAttachmentText.Type>();
   expectTypeOf<PidgeonSent>().toEqualTypeOf<typeof Api.PidgeonSent.Type>();
   expectTypeOf<PidgeonLabel>().toEqualTypeOf<typeof ApiLabel.Type>();
   type Out<K extends keyof typeof Api.pidgeonReads> =
@@ -42,10 +40,10 @@ it("mirrors the wire's results, so a field the host leaves out can't be typed in
   expectTypeOf<Awaited<ReturnType<PidgeonReader["messages"]["search"]>>>().toEqualTypeOf<
     Out<"messages.search">
   >();
-  // A held send has no message id: a patch reads `status` before it can treat one as sent.
-  expectTypeOf<Extract<PidgeonSent, { status: "pending_approval" }>>().not.toHaveProperty(
-    "messageId"
-  );
+  // A search names its words: there's no search for everything.
+  expectTypeOf<Parameters<PidgeonReader["messages"]["search"]>[0]>().toEqualTypeOf<
+    (typeof Api.pidgeonReads)["messages.search"]["input"]["Type"]
+  >();
 });
 
 it("gives a read connection's client no write methods, at runtime or in its types", async () => {
@@ -65,11 +63,15 @@ it("gives a read connection's client no write methods, at runtime or in its type
 it("leaves out options set to undefined, which the broker refuses, and sends each call as written", async () => {
   const { calls, call } = recording();
   const support = createPidgeonClient("support", call, "send");
-  await support.threads.list({ status: undefined, limit: 10, cursor: undefined });
+  await support.threads.list({
+    status: undefined,
+    folder: "archive",
+    limit: 10,
+    cursor: undefined
+  });
   await support.threads.get("thr_1", { cursor: undefined });
-  await support.messages.search({ text: "order", folder: undefined });
+  await support.messages.search({ text: "order", cursor: undefined });
   await support.labels.list();
-  await support.attachments.text("att_1");
   await support.messages.reply("msg_1", {
     text: "Hi",
     cc: undefined,
@@ -86,7 +88,11 @@ it("leaves out options set to undefined, which the broker refuses, and sends eac
   expect(calls).toEqual([
     {
       op: "pidgeon.read",
-      args: { connection: "support", operation: "threads.list", input: { limit: 10 } }
+      args: {
+        connection: "support",
+        operation: "threads.list",
+        input: { folder: "archive", limit: 10 }
+      }
     },
     {
       op: "pidgeon.read",
@@ -97,10 +103,6 @@ it("leaves out options set to undefined, which the broker refuses, and sends eac
       args: { connection: "support", operation: "messages.search", input: { text: "order" } }
     },
     { op: "pidgeon.read", args: { connection: "support", operation: "labels.list", input: {} } },
-    {
-      op: "pidgeon.read",
-      args: { connection: "support", operation: "attachments.text", input: { id: "att_1" } }
-    },
     {
       op: "pidgeon.write",
       args: {
@@ -159,7 +161,7 @@ it("throws Pidgeon's refusals with their operation, so their details narrow", as
     );
   expect(isPatchyError(error, "idempotency_conflict", "pidgeon")).toBe(true);
   if (!isPatchyError(error, "idempotency_conflict", "pidgeon")) return;
-  expectTypeOf(error.details.reason).toEqualTypeOf<"mismatch" | "in_progress">();
+  expectTypeOf(error.details.reason).toEqualTypeOf<"mismatch" | "in_progress" | "unconfirmed">();
   expect(error).toMatchObject({
     operation: "pidgeon.write",
     retryAfter: 7,

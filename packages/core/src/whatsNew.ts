@@ -60,6 +60,26 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 45,
+    date: "2026-11-18",
+    through: "e31eaab99867af1fe45d68b912bc394dda0399a5",
+    changes: [
+      {
+        kind: "Improved",
+        title: "Pidgeon works on its new platform",
+        detail:
+          "Pidgeon moved to a new platform, and its old one stops on 22 November. To connect an inbox, an admin pastes a key from Pidgeon's dashboard, types the inbox's address and chooses Read or Read and send. A Pidgeon key reaches every inbox in its account, so Patchy keeps each connection to the one inbox you typed. An email a patch sends still goes once, even when it asks twice.",
+        prs: [1458]
+      }
+    ],
+    behindTheScenes: [
+      "Pidgeon connections made before this release are removed, since they can't work on Pidgeon's new platform."
+    ],
+    patchChanges: [
+      "Pidgeon's contract follows Pidgeon's new API. threads.list takes folder and labelId, and a thread drops from, preview and hasAttachments for folder, labels and unreadCount. messages.search requires text, 1 to 200 characters, and its from, to, labelId, hasAttachment and folder filters are gone. attachments.text is removed. messages.get drops delivery, and a held message answers not_found. messages.reply and messages.send answer { status: \"sent\" | \"held\", messageId, threadId, replayed }, with no rejected, test or pending_approval. idempotency_conflict gains reason unconfirmed: Patchy can't tell whether the email left, and doesn't send it again. Check every Pidgeon call against the patchy-pidgeon skill, and drop what the patch read from the removed fields."
+    ]
+  },
+  {
     id: 44,
     date: "2026-11-15",
     through: "b653816089b808ff28989e6fd179a43bdfa48810",

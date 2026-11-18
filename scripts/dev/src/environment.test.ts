@@ -315,11 +315,11 @@ it("never shows the admin key a failed fill quotes, naming the step instead", ()
   const sentinel = "pgn_test_SENTINELdevRunnerKey001";
   // Playwright's call log quotes what it was asked to type into an input it couldn't fill.
   const playwright = new Error(
-    `locator.fill: Timeout 5000ms exceeded.\nCall log:\n  - waiting for locator('#pidgeon-key')\n  - fill("${sentinel}")\n  - element is not enabled`
+    `locator.fill: Timeout 5000ms exceeded.\nCall log:\n  - waiting for locator('#connection-key')\n  - fill("${sentinel}")\n  - element is not enabled`
   );
-  const failed = connectFailed("pidgeon/support", "pasting the admin key", playwright);
+  const failed = connectFailed("pidgeon/support", "filling in the connect form", playwright);
   assert.include(failed.message, "pidgeon/support");
-  assert.include(failed.message, "while pasting the admin key");
+  assert.include(failed.message, "while filling in the connect form");
   for (const shown of [
     failed.message,
     String(failed),
