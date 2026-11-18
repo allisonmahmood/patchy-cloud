@@ -690,6 +690,7 @@ export const make = (
             input.op.startsWith("attio.") ||
             input.op.startsWith("imap.") ||
             input.op.startsWith("github.") ||
+            input.op.startsWith("models.") ||
             input.op.startsWith("members.") ||
             (version.manifest.tier === 2 &&
               input.op !== "files.redeem" &&
