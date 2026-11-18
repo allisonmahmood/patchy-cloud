@@ -12,11 +12,11 @@ import { Companies, Users, Teams } from "@patchy/companies";
 import { NodeCryptography } from "@patchy/core";
 import {
   AttioSource,
-  NotionSource,
   ConnectionStore,
   CredentialKeys,
   ImapNetwork,
   ImapSource,
+  NotionSource,
   PidgeonSource,
   PostgresSource,
   PostHogSource,

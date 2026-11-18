@@ -1,6 +1,6 @@
 import * as parse5 from "parse5";
 import { describe, expect, it } from "vitest";
-import { documentTitle, headStart } from "./html-policy.js";
+import { boundedTreeAdapter, documentTitle, headStart } from "./html-policy.js";
 
 /** A page's title is read under the parser's bounds: within them it reads, past one it is null. */
 const titled = (markup: string) => documentTitle(`<title>Bounded</title>${markup}`);
@@ -27,9 +27,8 @@ describe("documentTitle", () => {
   it("bounds the repair of misnested markup", () => {
     // Table content outside a cell moves to just before the table, which is cheap.
     expect(titled(`<table>${"stray<br>".repeat(6000)}</table>`)).toBe("Bounded");
-    // Closing <b> early moves every child of the block it crosses, front first.
-    expect(titled(`<b><div>${"<br>".repeat(600)}</b>`)).toBe("Bounded");
-    expect(titled(`<b><div>${"<br>".repeat(6000)}</b>`)).toBeNull();
+    // Closing <b> early moves every child of the block it crosses, last first, which is cheap too.
+    expect(titled(`<b><div>${"<br>".repeat(15000)}</b>`)).toBe("Bounded");
     // Formatting left open across paragraphs is cloned into each; distinct attributes defeat the
     // parser's own cap of three alike, so each "x<p>" clones all 500.
     const open = Array.from({ length: 500 }, (_, index) => `<b a=${index}>`).join("");
@@ -127,5 +126,25 @@ describe("headStart", () => {
     const attributes = Array.from({ length: 300 }, (_, index) => ` a${index}`).join("");
     expect(headStart(`\u{FEFF}<!doctype html><html${attributes}><head>`)).toBe(16);
     expect(headStart(`<html${attributes}><head>`)).toBe(0);
+  });
+});
+
+describe("boundedTreeAdapter", () => {
+  it("bounds error recovery that moves nodes from the front of a long sibling list", () => {
+    // No known input makes parse5 8.1 move nodes this way; before 8.1 a misnested </b> did.
+    const detachEvery = (order: "last first" | "front first") => () => {
+      const tree = boundedTreeAdapter();
+      const parent = tree.createDocumentFragment();
+      const children = Array.from({ length: 6000 }, () => {
+        const child = tree.createElement("br", parse5.html.NS.HTML, []);
+        tree.appendChild(parent, child);
+        return child;
+      });
+      if (order === "last first") children.reverse();
+      for (const child of children) tree.detachNode(child);
+    };
+
+    expect(detachEvery("last first")).not.toThrow();
+    expect(detachEvery("front first")).toThrow("HTML needs too much repair to check");
   });
 });
