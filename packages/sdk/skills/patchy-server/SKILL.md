@@ -24,7 +24,7 @@ Failed builds retain the last good binding. `src/` saves still reload the shell.
 Fill `fixtures/shared-<alias>.sql` and `fixtures/postgres-<handle>.sql` with invented
 rows for `ctx.shared` tables and Postgres `ctx.connections`, and put invented shared
 files in `fixtures/shared-<alias>/`; restart after fixture or config edits. PostHog,
-Pidgeon, Attio and IMAP have no fixture: `patchy-loop` says what dev reads, and
+Pidgeon, Attio, IMAP, GitHub and Notion have no fixture: `patchy-loop` says what dev reads, and
 `../patchy-pidgeon/SKILL.md` that dev simulates Pidgeon's writes.
 Read `dev.log` for each call's viewer, handler, outcome and milliseconds, `ctx.log`
 output, each thrown error's message and stack, which browsers never receive, and
@@ -156,8 +156,8 @@ options?)` accepts `Uint8Array`, `ArrayBuffer` or `Blob`; `put(name, upload)`
   forced past the types with `access_denied`. Only actions take the flag.
 
 Queries and read-only actions are reads; every other mutation or action is a
-change, even one that writes nothing. So Postgres, PostHog, Pidgeon, Attio and IMAP reads
-count as reads only from a read-only action, and a read-only action can't reply,
+change, even one that writes nothing. So Postgres, PostHog, Pidgeon, Attio, IMAP, GitHub and
+Notion reads count as reads only from a read-only action, and a read-only action can't reply,
 send or triage through Pidgeon.
 
 All three kinds expose `ctx.members`, the company's member directory, once
@@ -203,8 +203,8 @@ viewer's current access on every callback. An unshare or source access loss can
 refuse a later callback even if an earlier read succeeded in the same query.
 Handle that refusal rather than serving an earlier value as current data.
 
-Queries have no `ctx.connections`. Company Postgres, PostHog, Pidgeon, Attio and IMAP calls
-belong in actions, not subscribed queries. The host enforces this kind rule, even
+Queries have no `ctx.connections`. Company Postgres, PostHog, Pidgeon, Attio, IMAP, GitHub and
+Notion calls belong in actions, not subscribed queries. The host enforces this kind rule, even
 if code bypasses the TypeScript context. A Pidgeon send takes the draft key the
 page made for that email, passed in the action's arguments; read
 `../patchy-pidgeon/SKILL.md`. Attio's reads are in `../patchy-attio/SKILL.md`, and a
@@ -428,7 +428,8 @@ tells the agent, and a call missing the field is refused before the handler
 runs.
 
 To agents, a query or read-only action is a read and anything else is a change,
-so Postgres, PostHog, Pidgeon, Attio and IMAP reads count as reads only from a read-only action.
+so Postgres, PostHog, Pidgeon, Attio, IMAP, GitHub and Notion reads count as reads only from a
+read-only action.
 Clients decide whether to ask the person before a change, and most ask every
 time. Patchy's log records each change and action as "Person via Client",
 failures included. A query that succeeds without `ctx.log` leaves no row; a

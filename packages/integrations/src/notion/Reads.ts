@@ -320,12 +320,15 @@ export const planList = Effect.fnUntraced(function* (
     const property = field(input.range.property);
     const kind = property && notionPropertyType(property.type)?.range;
     if (!property || !kind) return yield* invalid();
+    const before = filters.length;
     for (const operator of ["gt", "gte", "lt", "lte"] as const) {
       const value = input.range[operator];
       if (value === undefined) continue;
       if (kind === "number" ? typeof value !== "number" : !isDate(value)) return yield* invalid();
       filters.push(on(property, { [comparisons[kind][operator]]: value }));
     }
+    // A range with no bound would list everything while looking filtered.
+    if (filters.length === before) return yield* invalid();
   }
   let sort: Json | undefined;
   if (input.orderBy !== undefined) {

@@ -128,6 +128,7 @@ it.effect("refuses arguments the snapshot doesn't take, with nothing to send", (
       { eq: { Missing: "x" } },
       { contains: { Assignee: "not an id" } },
       { range: { property: "createdTime", gt: "yesterday" } },
+      { range: { property: "createdTime" } },
       { select: ["Unknown"] }
     ];
     for (const input of refused)
