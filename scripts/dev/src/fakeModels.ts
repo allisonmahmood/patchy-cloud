@@ -13,6 +13,8 @@
  *   - `refuse`: a text model refuses; a decision model refuses the last question.
  *   - `invalid`: a typed output that doesn't match its schema.
  *   - `truncated`: stop at max_output_tokens, status incomplete.
+ *   - `load`: the call picks its own answer time, with `[delay=<ms>]` or `[at=<epoch ms>]` in its
+ *     input, for the slot load test (`scenarios/models/load.mjs`).
  * Each request is logged with whether the caller closed the connection before the answer
  * (`closedEarly`), the evidence that a cut-off cancelled it; `GET /_log` returns the last 200.
  */
@@ -323,7 +325,11 @@ export const start = (log: (line: string) => void) =>
             });
           };
           const delay = /delay-(\d+)/.exec(model);
-          if (delay === null) answer();
+          const at = model.includes("load") ? /\[at=(\d+)\]/.exec(raw) : null;
+          const after = model.includes("load") ? /\[delay=(\d+)\]/.exec(raw) : null;
+          if (at !== null) setTimeout(answer, Math.max(0, Number(at[1]) - Date.now()));
+          else if (after !== null) setTimeout(answer, Number(after[1]));
+          else if (delay === null) answer();
           else setTimeout(answer, Number(delay[1]));
         });
       });

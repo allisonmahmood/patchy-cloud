@@ -15,7 +15,11 @@ export default defineConfig({
         reply: t.text(),
         by: t.text()
       }
-    )
+    ),
+    loadRuns: table("Rows the load test's model action writes after its call: who, and which write.", {
+      by: t.text(),
+      note: t.text()
+    })
   },
   files: {},
   uses: {
@@ -29,6 +33,8 @@ export default defineConfig({
     sloppy: models("sloppy"),
     rambler: models("rambler"),
     bouncer: models("bouncer"),
-    offline: models("offline")
+    offline: models("offline"),
+    loader: models("loader"),
+    scorer: models("scorer")
   }
 });

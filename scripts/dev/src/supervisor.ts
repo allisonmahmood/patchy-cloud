@@ -258,6 +258,21 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
   // driver, an API token) leaks in.
   // PROTOTYPE: model calls go to a loopback fake provider; the server honours it only in development.
   const fakeModels = yield* FakeModels.start(enqueue("models"));
+  // PROTOTYPE: the slot mode and model gate a load test chose, passed through when set.
+  const loadTest = Object.fromEntries(
+    Object.entries(
+      yield* Config.all({
+        PATCHY_DEV_SLOT_MODE: Config.option(Config.String("PATCHY_DEV_SLOT_MODE")),
+        PATCHY_DEV_MODEL_GATE: Config.option(Config.String("PATCHY_DEV_MODEL_GATE"))
+      })
+    ).flatMap(([name, value]) => (Option.isSome(value) ? [[name, value.value]] : []))
+  );
+  if (Object.keys(loadTest).length > 0)
+    yield* say(
+      `load test: ${Object.entries(loadTest)
+        .map(([name, value]) => `${name}=${value}`)
+        .join(" ")}`
+    );
   yield* say(`models: fake provider at ${fakeModels.url} (requests logged as [models], GET /_log)`);
   yield* say(
     personas
@@ -283,7 +298,8 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
           PATCHY_STORAGE_DIR: files.storageDir,
           PATCHY_PUBLIC_BASE_URL: plan.apiUrl,
           PATCHY_DEV_MAILBOXES: files.mailboxes,
-          PATCHY_DEV_MODELS_URL: fakeModels.url
+          PATCHY_DEV_MODELS_URL: fakeModels.url,
+          ...loadTest
         },
         extendEnv: false,
         stdin: "ignore",

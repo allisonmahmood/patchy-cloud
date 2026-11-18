@@ -1,5 +1,8 @@
 {
-  "company": { "name": "Juniper Works", "handle": "juniper" },
+  "company": {
+    "name": "Juniper Works",
+    "handle": "juniper"
+  },
   "people": [
     {
       "key": "allison",
@@ -7,7 +10,96 @@
       "email": "allison@juniperworks.example",
       "role": "admin"
     },
-    { "key": "sam", "name": "Sam Ortega", "email": "sam@juniperworks.example", "role": "member" }
+    {
+      "key": "sam",
+      "name": "Sam Ortega",
+      "email": "sam@juniperworks.example",
+      "role": "member"
+    },
+    {
+      "key": "ada",
+      "name": "Ada Brooks",
+      "email": "ada@juniperworks.example",
+      "role": "member"
+    },
+    {
+      "key": "bea",
+      "name": "Bea Lindqvist",
+      "email": "bea@juniperworks.example",
+      "role": "member"
+    },
+    {
+      "key": "cal",
+      "name": "Cal Moreno",
+      "email": "cal@juniperworks.example",
+      "role": "member"
+    },
+    {
+      "key": "dev",
+      "name": "Dev Patel",
+      "email": "dev@juniperworks.example",
+      "role": "member"
+    },
+    {
+      "key": "eli",
+      "name": "Eli Fischer",
+      "email": "eli@juniperworks.example",
+      "role": "member"
+    },
+    {
+      "key": "fay",
+      "name": "Fay Okafor",
+      "email": "fay@juniperworks.example",
+      "role": "member"
+    },
+    {
+      "key": "gus",
+      "name": "Gus Romano",
+      "email": "gus@juniperworks.example",
+      "role": "member"
+    },
+    {
+      "key": "hal",
+      "name": "Hal Nakamura",
+      "email": "hal@juniperworks.example",
+      "role": "member"
+    },
+    {
+      "key": "ivy",
+      "name": "Ivy Chen",
+      "email": "ivy@juniperworks.example",
+      "role": "member"
+    },
+    {
+      "key": "jon",
+      "name": "Jon Weber",
+      "email": "jon@juniperworks.example",
+      "role": "member"
+    },
+    {
+      "key": "kit",
+      "name": "Kit Duarte",
+      "email": "kit@juniperworks.example",
+      "role": "member"
+    },
+    {
+      "key": "lou",
+      "name": "Lou Haddad",
+      "email": "lou@juniperworks.example",
+      "role": "member"
+    },
+    {
+      "key": "max",
+      "name": "Max Varga",
+      "email": "max@juniperworks.example",
+      "role": "member"
+    },
+    {
+      "key": "nia",
+      "name": "Nia Mensah",
+      "email": "nia@juniperworks.example",
+      "role": "member"
+    }
   ],
   "publisher": "allison",
   "connections": [
@@ -115,6 +207,24 @@
       "kind": "text",
       "provider": "main",
       "model": "fake-text-unreachable"
+    },
+    {
+      "integration": "models",
+      "handle": "loader",
+      "description": "Load test: a text model whose answer time each call picks.",
+      "state": "connected",
+      "kind": "text",
+      "provider": "main",
+      "model": "fake-text-load"
+    },
+    {
+      "integration": "models",
+      "handle": "scorer",
+      "description": "Load test: a decision model whose answer time each call picks.",
+      "state": "connected",
+      "kind": "decision",
+      "provider": "main",
+      "model": "fake-decide-load"
     }
   ],
   "patches": [
@@ -132,7 +242,9 @@
         "models/sloppy",
         "models/rambler",
         "models/bouncer",
-        "models/offline"
+        "models/offline",
+        "models/loader",
+        "models/scorer"
       ],
       "description": "Paste a request: a decision role routes it to a team, scores its urgency and spots spam, and a text role drafts a short formal reply. Buttons run each model failure and show what the page received."
     }
