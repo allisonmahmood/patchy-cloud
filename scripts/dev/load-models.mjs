@@ -129,7 +129,7 @@ const callers = new Map();
 const replay = async (context, frame) => {
   const captured = new Promise((resolve) => {
     const listener = async (request) => {
-      if (request.method() !== "POST" || new URL(request.url()).pathname !== "/runtime/call") return;
+      if (request.method() !== "POST" || !new URL(request.url()).pathname.endsWith("/runtime/call")) return;
       const body = request.postDataJSON();
       if (body?.args?.handler !== "load.quick") return;
       context.off("request", listener);
