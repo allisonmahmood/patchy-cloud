@@ -19,9 +19,9 @@ const { rows, cursor } = await ctx.connections.probe.Tasks.list({
 });
 ```
 
-- `list` takes `eq`, `contains`, `range`, `orderBy`, `select`, `limit` and `cursor`. The generated type names the supported properties for each filter. Filters use AND. Option values are strings. `contains` on people and relations takes an id.
+- `list` takes `eq`, `contains`, `range`, `orderBy`, `select`, `limit` and `cursor`. The generated type names the supported properties for each filter. Filters use AND. Option values are strings. `contains` on people and relations takes an id. Use `select` for the columns you need. Returning or filtering on a relation checks whether the target is still shared.
 - `limit` is 1–100. A null cursor ends the list. Reuse the cursor with the same data source, filters, order and selection. Choose a narrower filter if Notion exhausts its result limit.
-- A row is `{ id, url, createdTime, lastEditedTime, inTrash, properties }`. Properties use the snapshot's names. A rename in Notion keeps existing code working. A deleted or retyped property fails the call and names the property.
+- A row is `{ id, url, createdTime, lastEditedTime, inTrash, properties }`. Properties use the snapshot's names. A rename in Notion keeps existing code working. A deleted or retyped property in the requested rows fails the call and names the property.
 - `Tasks.get(id)` returns one row, or null when the row is missing, unshared or belongs to another data source.
 - `pages.markdown(id)` returns `{ id, title, url, markdown, truncated }`, or null when the page is missing or unshared. `truncated` marks content Notion cut off. Unsupported blocks remain `<unknown>` tags.
 - `search({ text, kind, limit, cursor })` finds shared pages and data sources by title, most recently edited first. `kind` accepts `"page"` or `"data_source"`. The result has `results` and `cursor`; each result has `kind`, `id`, `title`, `url` and `lastEditedTime`. A row from a discovered data source also has its `dataSource` key.

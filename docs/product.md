@@ -1461,7 +1461,9 @@ schema context. Actions use the connection through `ctx.connections`.
 
 A data source's `list` returns a page of rows and a cursor. Filter and projection names
 come from the generated client. Patchy resolves them by property id against the saved
-snapshot. Renames keep working. A missing or retyped property is refused by name.
+snapshot. Renames keep working. A missing or retyped property in the requested rows
+is refused by name. Use `select` to read just the columns you need. A list that
+returns or filters on a relation checks that the target is still shared.
 A cursor belongs to the connection, snapshot, data source, filters and order.
 
 Use `get(id)` for a single row. It returns null when the row is missing, unshared,
