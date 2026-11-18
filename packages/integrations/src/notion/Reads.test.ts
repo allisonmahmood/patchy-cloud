@@ -95,24 +95,15 @@ it.effect("queries stable IDs and paginates with the selected snapshot names aft
       select: ["Name", "Status"],
       limit: 1
     } as const;
-    const mock = response((request) =>
-      request.method === "GET"
-        ? liveSchema(
-            fields.map((field) => (field.id === "title" ? { ...field, name: "Renamed" } : field))
-          )
-        : page(
-            [
-              row({
-                Renamed: rowFields.Name,
-                Status: rowFields.Status,
-                Assignee: rowFields.Assignee
-              })
-            ],
-            body(request).start_cursor ? null : "upstream"
-          )
-    );
+    const mock = response((request) => {
+      assert.equal(request.method, "POST");
+      return page(
+        [row({ Renamed: rowFields.Name, Status: rowFields.Status })],
+        body(request).start_cursor ? null : "upstream"
+      );
+    });
     const first = yield* (yield* list(input))(mock.send);
-    const query = mock.requests[1]!;
+    const query = mock.requests[0]!;
     assert.equal(query.url, `/data_sources/${sourceId}/query`);
     assert.deepEqual(body(query), {
       result_type: "page",
@@ -132,7 +123,8 @@ it.effect("queries stable IDs and paginates with the selected snapshot names aft
     assert.notEqual(first.cursor, "upstream");
     const cursor = first.cursor!;
     assert.isNull((yield* (yield* list({ ...input, cursor }))(mock.send)).cursor);
-    assert.equal(body(mock.requests[3]!).start_cursor, "upstream");
+    assert.equal(body(mock.requests[1]!).start_cursor, "upstream");
+    assert.lengthOf(mock.requests, 2);
     assert.equal(
       (yield* list({ ...input, eq: { Status: "Done" }, cursor }).pipe(Effect.flip)).code,
       "invalid_cursor"
@@ -162,22 +154,66 @@ it.effect("refuses unsupported filters before a sender exists", () =>
   })
 );
 
-it.effect("names a deleted or retyped property before querying rows", () =>
+it.effect("names a deleted or retyped property from the query response", () =>
   Effect.gen(function* () {
     const execute = yield* list({});
     for (const changed of [
-      fields.slice(1),
-      fields.map((field) => (field.id === "title" ? { ...field, type: "rich_text" } : field))
+      { Status: rowFields.Status, Assignee: rowFields.Assignee, Done: rowFields.Done },
+      { ...rowFields, Name: property("title", "rich_text", []) }
     ]) {
-      const mock = response(() => liveSchema(changed));
+      const mock = response(() => page([row(changed)]));
       const failure = yield* execute(mock.send).pipe(Effect.flip);
       assert.equal(failure.code, "shape_mismatch");
       assert.equal(failure.missing?.name, "Name");
       assert.deepEqual(
         mock.requests.map(({ method }) => method),
-        ["GET"]
+        ["POST"]
       );
     }
+  })
+);
+
+it.effect("checks the schema when an empty query page cannot prove the selected fields", () =>
+  Effect.gen(function* () {
+    const execute = yield* list({ select: ["Status"] });
+    const mock = response(({ method }) =>
+      method === "POST" ? page([]) : liveSchema(fields.filter(({ id }) => id !== "stat"))
+    );
+    const failure = yield* execute(mock.send).pipe(Effect.flip);
+    assert.equal(failure.code, "shape_mismatch");
+    assert.equal(failure.missing?.name, "Status");
+    assert.deepEqual(
+      mock.requests.map(({ method }) => method),
+      ["POST", "GET"]
+    );
+  })
+);
+
+it.effect("names a changed filter property when Notion rejects the query", () =>
+  Effect.gen(function* () {
+    const execute = yield* list({ eq: { Status: "To do" }, select: ["Name"] });
+    const mock = response(() =>
+      liveSchema(
+        fields.map((field) => (field.id === "stat" ? { ...field, type: "number" } : field))
+      )
+    );
+    const failure = yield* execute((request) =>
+      mock
+        .send(request)
+        .pipe(
+          Effect.flatMap((result) =>
+            request.method === "POST"
+              ? Effect.fail(new Refusal({ code: "invalid_query" }))
+              : Effect.succeed(result)
+          )
+        )
+    ).pipe(Effect.flip);
+    assert.equal(failure.code, "shape_mismatch");
+    assert.equal(failure.missing?.name, "Status");
+    assert.deepEqual(
+      mock.requests.map(({ method }) => method),
+      ["POST", "GET"]
+    );
   })
 );
 
@@ -242,10 +278,24 @@ it.effect(
       });
       const { rows } = yield* execute(mock.send);
       assert.deepEqual(rows[0]?.properties.Project, [rowId, otherId]);
-      assert.equal(mock.requests.filter(({ url }) => url.endsWith(otherId)).length, 1);
+      assert.deepEqual(
+        mock.requests.slice(0, 3).map(({ url }) => url),
+        [`/data_sources/${otherId}`, `/data_sources/${sourceId}`, `/data_sources/${sourceId}/query`]
+      );
       const missing = yield* execute(notFound).pipe(Effect.flip);
       assert.equal(missing.code, "not_found");
       assert.equal(missing.dataSource, otherId);
+      const filtered = yield* list({ select: ["Name"], contains: { Project: rowId } }, saved);
+      const denied = yield* filtered(notFound).pipe(Effect.flip);
+      assert.equal(denied.dataSource, otherId);
+      const retargeted = response(({ url }) =>
+        url.endsWith(otherId)
+          ? { id: otherId, properties: {} }
+          : liveSchema([...fields, { ...liveRelation, relation: { data_source_id: id(5) } }])
+      );
+      const changed = yield* execute(retargeted.send).pipe(Effect.flip);
+      assert.equal(changed.missing?.name, "Project");
+      assert.lengthOf(retargeted.requests, 2);
       const bounded = yield* list(options, saved).pipe(
         Effect.provideService(ContractLimits.overrides, { "notion.read.propertyItems": 1 })
       );
