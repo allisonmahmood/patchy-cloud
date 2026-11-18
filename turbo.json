@@ -32,6 +32,18 @@
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/scripts/copy-sdk-artifact.mjs"],
       "outputs": ["dist/**", "artifacts/**"]
     },
+    "@patchy/docs#build": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/docs/limits.md",
+        "$TURBO_ROOT$/packages/sdk/skills/patchy-tables/SKILL.md"
+      ],
+      "outputs": [".next/**", "!.next/cache/**"]
+    },
+    "@patchy/docs#typecheck": {
+      "dependsOn": []
+    },
     "dev": {
       "cache": false,
       "persistent": true

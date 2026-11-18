@@ -1,0 +1,78 @@
+---
+title: Patches and tiers
+description: What a patch is, and what each runtime tier runs and reaches.
+---
+
+## Patches
+
+A **patch** is the unit people build and publish on Patchy Cloud, anything from a single page to a full CRM. Each is one built thing in a company's cloud: stored as one, permissioned as one, provisioned as one, at one address, at one runtime tier. What differs between patches is where their code runs.
+
+A patch belongs to one user in the company, its **owner**, who is the only one who publishes to it. It is shared with the whole company by default.
+
+**Publishing** creates a **version**, an immutable copy of the patch, and serves it at once to everyone the patch is shared with. There is no unpublished patch in the cloud: the working copy stays on the builder's machine.
+
+A patch comes from one of two places:
+
+- **A single HTML file**, published as a tier 1 page. It runs its own inline script, carries every resource it uses, and reaches no tables, files or connections.
+- **A patch repo**, started by `patchy init` at tier 1 or 2. Its `patchy.config.ts` holds the patch's name and tier and defines the tables and file stores the patch owns. On tier 2 it also declares the connections, shared tables, shared stores and member directory its handlers use.
+
+Tables and file stores belong to the patch, not to a version or a tier, so their data stays through every publish.
+
+In the portal a tier 1 patch is a **page** and a tier 2 patch is a **tool**.
+
+## Runtime tiers
+
+A tier is where a patch's code runs. It changes nothing about ownership, versions or addresses. Each version has exactly one tier, set explicitly in `patchy.config.ts`; the patch's tier is the tier of the version it serves.
+
+### Tier 1: the browser
+
+All of a tier 1 patch's code runs in the viewer's browser, in a sandboxed frame, as the viewer. It never holds the viewer's login or any credential.
+
+It reaches only its own patch:
+
+- its own tables and files, through Patchy, which checks every call against the viewer's current access
+- who the viewer is, through `me()`
+- the page's own routes
+
+It has no server code and no outbound network. Other patches' shared tables and stores, the member directory and company connections are refused from the browser as `server_required`.
+
+Reads of its own tables can be subscribed, so one viewer's write updates every other open copy without a reload. Every row of its tables is readable by whoever can open the patch, and its rules are advisory: a viewer can make the same writes from the browser's developer tools. Direct writes are last-write-wins.
+
+A tier 1 patch can be shared **public**, open to anyone with the link. A public patch runs its browser code and reaches no data: `me()` answers null and its tables and files are unavailable.
+
+Tier 1 code runs only while someone has the patch open. Its writes persist after the browser closes.
+
+### Tier 2: hosted handlers
+
+Tier 2 adds server code: **query**, **mutation** and **action** handlers exported from `server/*.ts`. The page calls these handlers instead of its tables.
+
+Handlers run on Patchy's machines in credential-free processes, while someone has the patch open or their agent is calling it. They hold no login and no credential and have no path to the internet; everything they do goes through Patchy.
+
+- A **query** reads under one read-only snapshot, and its result can be subscribed to.
+- A **mutation** groups its reads and writes of the patch's own tables into one transaction. A conflicting write re-runs the whole handler, up to three attempts.
+- An **action** does work outside one transaction: file bytes, company connections, and calls to sibling queries and mutations.
+
+Query, mutation and action deadlines are 3, 5 and 60 seconds.
+
+Beyond the patch's own tables and files, handlers reach:
+
+- other patches' shared tables and shared stores, read-only
+- the company's member directory, read-only
+- company connections: Postgres, PostHog, Attio and Email (IMAP), each read-only, and Pidgeon, which reads email and, when its key allows, sends it
+
+Calls on the patch's own tables and files act as the patch. Calls on shared sources, the member directory and connections act as the viewer, and the viewer's access is checked again on each one.
+
+Tools in a tier 2 repo's `agent/` folder are what people's own agents call, as them, through Patchy MCP. Tier 1 has no agent tools.
+
+A tier 2 patch is shared with its company or its teams; it cannot be public.
+
+### Changing tier
+
+Changing a patch's tier means editing `tier` in `patchy.config.ts`, running `patchy refresh` and publishing a new version. A version's tier never changes in place.
+
+### Tiers 3 and 4
+
+Neither is built.
+
+- **Tier 3** would start work with no viewer present: inbound HTTP routes, webhooks, schedules and unattended automations.
+- **Tier 4** would be a sandboxed computer for agents.

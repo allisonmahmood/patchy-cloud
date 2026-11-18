@@ -30,5 +30,14 @@ packages/patchy/artifacts/
 # CDK synth output.
 apps/infra/cdk.out/
 
+# The docs app's Next.js output, and the reference pages its generate script writes from
+# their sources. Listed here, not in the app, because `bun fmt` reads only this .gitignore.
+apps/docs/.next/
+apps/docs/.source/
+apps/docs/next-env.d.ts
+apps/docs/*.tsbuildinfo
+apps/docs/content/docs/tables.md
+apps/docs/content/docs/limits.md
+
 # The display font: a release takes it from its private bucket (docs/OPERATIONS.md › The display font).
 /packages/core/fonts/CabinetGrotesk-Extrabold.woff2

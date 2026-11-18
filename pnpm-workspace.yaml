@@ -22,6 +22,9 @@ minimumReleaseAge: 1440
 # alerts. mise, CI and corepack install the packageManager version, and
 # engines.pnpm refuses pnpm 11, so pnpm need not switch versions itself.
 pmOnFail: ignore
+# A project gets an optional peer only from its own dependencies. Without this, the docs
+# app's React fills @clerk/shared's optional peers and ships in the server image.
+projectScopedOptionalPeers: true
 # Two copies of `effect` in the tree break Context/Layer identity, so every
 # transitive `effect` resolves to the catalog version. The @effect/* packages we
 # depend on are pinned alongside it. pnpm overrides match exact names, not
