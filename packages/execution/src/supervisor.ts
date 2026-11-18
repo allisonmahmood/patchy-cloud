@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalDate:off globalDateInEffect:off preferSchemaOverJson:off -- residency uses wall time and OS RSS; tuple keys encode already-validated identities without delimiter collisions.
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off globalDateInEffect:off globalJsonInEffect:off -- residency uses wall time and OS RSS; tuple keys encode already-validated identities without delimiter collisions.
 import { createServer } from "node:http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { limitRefusal, limitRefusalFields } from "@patchy/api";
