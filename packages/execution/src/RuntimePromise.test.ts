@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- the release harness hashes the exact guest bytes in Node.
 import { createHash } from "node:crypto";
 import { expect, it } from "@effect/vitest";
+import type * as GuestProtocol from "@patchy/api/guest";
 import * as Executor from "@patchy/runtime/executor";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -19,10 +20,68 @@ const viewer = {
 
 const callbackUrl = "http://127.0.0.1:1/callback";
 
+// What the engine itself gives a handler whose Node imports the loader's scan never saw
+// (`runtime.node` in the fixture). Pinned exactly, so an engine release that widens any of
+// them fails here: which built-ins load, what the process stub's getBuiltinModule resolves or
+// throws for, the stub's whole surface, its environment, and which Node globals exist. Left
+// loose, because the guest reports only that they are there: platform's value, which follows
+// the host; features, which describes the Node build workerd imitates; and nextTick, which
+// only schedules a callback.
+const nodeRuntime = {
+  modules: ["node:process"],
+  builtins: { resolved: ["process", "node:process"], threw: [] },
+  process: {
+    exports: ["default", "env", "exit", "features", "getBuiltinModule", "nextTick", "platform"],
+    members: ["env", "exit", "features", "getBuiltinModule", "nextTick", "platform"],
+    env: [],
+    PATH: "undefined"
+  },
+  globals: []
+};
+
+// workerd's own modules the same hidden imports reach (`runtime.workerd`), pinned so a release
+// that adds one fails here. None is supported, and none reaches past the guest:
+// cloudflare:workers sees the guest's empty environment and only its own exports;
+// cloudflare:sockets meets the network refusal test/network.ts proves; the ai and br clients
+// only call a fetcher they are handed, and the global one is refused as `refusals` shows; the
+// rest are classes, constants and request adapters. cloudflare:email is registered, but the
+// internal module it needs isn't, so getBuiltinModule throws for it.
+const workerdModules = {
+  modules: [
+    "cloudflare:ai",
+    "cloudflare:br",
+    "cloudflare:node",
+    "cloudflare:pipelines",
+    "cloudflare:sockets",
+    "cloudflare:vectorize",
+    "cloudflare:workers",
+    "cloudflare:workflows"
+  ],
+  builtins: {
+    resolved: [
+      "cloudflare:ai",
+      "cloudflare:br",
+      "cloudflare:node",
+      "cloudflare:pipelines",
+      "cloudflare:sockets",
+      "cloudflare:vectorize",
+      "cloudflare:workers",
+      "cloudflare:workflows"
+    ],
+    threw: ["cloudflare:email"]
+  },
+  workers: { env: [], exports: ["default"] }
+};
+
 // One workerd and engine serve every handler case; the handlers are pure.
 class RuntimePromise extends Context.Service<
   RuntimePromise,
-  { readonly run: (handler: string) => Effect.Effect<unknown, Executor.ExecutionError> }
+  {
+    readonly invoke: (
+      handler: string
+    ) => Effect.Effect<GuestProtocol.InvokeReply, Executor.ExecutionError>;
+    readonly run: (handler: string) => Effect.Effect<unknown, Executor.ExecutionError>;
+  }
 >()("@patchy/execution/RuntimePromise.test/RuntimePromise") {}
 
 const bound = Layer.effect(
@@ -37,11 +96,12 @@ const bound = Layer.effect(
       sha256: createHash("sha256").update(runtimePromiseBundle).digest("hex"),
       bundle: runtimePromiseBundle
     });
-    const run = Effect.fnUntraced(function* (handler: string) {
-      const response = yield* engine.invoke({
+    let calls = 0;
+    const invoke = (handler: string) =>
+      engine.invoke({
         wire: 1,
         binding,
-        invocationId: `runtime-promise-${handler}`,
+        invocationId: `runtime-promise-${handler}-${++calls}`,
         attemptId: "first",
         processGeneration: 0,
         deadline: Date.now() + 10_000,
@@ -50,6 +110,8 @@ const bound = Layer.effect(
         viewer,
         callback: { url: callbackUrl, capability: "host-only-test-capability" }
       });
+    const run = Effect.fnUntraced(function* (handler: string) {
+      const response = yield* invoke(handler);
       expect(response.outcome).toBe("returned");
       if (response.outcome !== "returned")
         throw new Error(`Guest did not return: ${response.outcome}`);
@@ -57,7 +119,7 @@ const bound = Layer.effect(
       if (!response.reply.ok) throw new Error(`Runtime promise failed: ${response.reply.code}`);
       return response.reply.value;
     });
-    return RuntimePromise.of({ run });
+    return RuntimePromise.of({ invoke, run });
   })
 ).pipe(Layer.provide(FetchHttpClient.layer));
 
@@ -118,20 +180,57 @@ it.layer(bound, { excludeTestServices: true, timeout: 30_000 })("server runtime 
     })
   );
 
-  it.effect("refuses network and dynamic code without exposing Node globals", () =>
+  it.effect("refuses network and dynamic code", () =>
     Effect.gen(function* () {
       const { run } = yield* RuntimePromise;
       expect(yield* run("refusals")).toEqual({
         fetches: [true, true, true, true],
         evalRefused: true,
-        functionRefused: true,
-        process: "undefined",
-        Buffer: "undefined"
+        functionRefused: true
       });
+    })
+  );
+
+  it.effect(
+    "past the loader's scan, the engine offers no Node built-in but an empty process stub",
+    () =>
+      Effect.gen(function* () {
+        const { run } = yield* RuntimePromise;
+        expect(yield* run("node")).toEqual(nodeRuntime);
+      })
+  );
+
+  it.effect("past the loader's scan, workerd's own modules are exactly the known ones", () =>
+    Effect.gen(function* () {
+      const { run } = yield* RuntimePromise;
+      expect(yield* run("workerd")).toEqual(workerdModules);
+    })
+  );
+
+  it.effect("the process stub's exit ends only its own call", () =>
+    Effect.gen(function* () {
+      const { invoke } = yield* RuntimePromise;
+      // An ordinary throw returns "exit threw", so only exit itself ends the call this way.
+      expect(yield* invoke("exit")).toMatchObject({ outcome: "guest_failed" });
+      expect((yield* invoke("node")).outcome).toBe("returned");
     })
   );
 });
 
+it.live(
+  "inspection gets the same answer from the engine to built-in imports the scan misses",
+  () =>
+    Effect.gen(function* () {
+      const handlers = yield* Inspection.inspect(runtimePromiseBundle);
+      const reported = (name: string): unknown =>
+        JSON.parse(handlers[`runtime.${name}`]?.description ?? "null");
+      expect(reported("node")).toEqual(nodeRuntime);
+      expect(reported("workerd")).toEqual(workerdModules);
+    }),
+  30_000
+);
+
+// The loader's early scan; the engine's own answer past it is `runtime.node` above.
 it.live(
   "refuses Node built-ins and socket imports at load",
   () =>
