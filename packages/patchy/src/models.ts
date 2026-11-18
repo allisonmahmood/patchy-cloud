@@ -21,8 +21,8 @@ export type ModelQuestion =
   | {
       readonly type: "scale";
       readonly instructions: string;
-      /** Two to 10 levels, lowest first. */
-      readonly levels: readonly [string, string, ...string[]];
+      /** Two to 10 distinct levels, lowest first; Patchy refuses fewer `invalid_request`. */
+      readonly levels: readonly string[];
     }
   | { readonly type: "yesNo"; readonly instructions: string };
 

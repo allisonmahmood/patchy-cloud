@@ -23,17 +23,38 @@ There is no fixture: `patchy dev` calls the real role, as **In `patchy dev`** be
 
 ## decide (decision roles)
 
-`await ctx.connections.<alias>.decide({ input, questions })`. `input` is a string or JSON. `questions` holds 1 to 20 questions by names of your own; question names and option keys start with a letter, then letters, digits and `_`:
+`await ctx.connections.<alias>.decide({ input, questions })` answers `{ answers, usage }`, with one entry in `answers` per question, by its name:
+
+```ts
+const { answers } = await ctx.connections.triage.decide({
+  input: text,
+  questions: {
+    team: {
+      type: "choice",
+      instructions: "Which team handles this?",
+      options: { it: "Laptops, accounts", billing: "Invoices, refunds" }
+    },
+    urgency: {
+      type: "scale",
+      instructions: "How urgent is it?",
+      levels: ["can wait", "this week", "today"]
+    }
+  }
+});
+const team = answers.team?.choice ?? "unrouted"; // null: the model refused that question
+```
+
+`input` is a string or JSON. `questions` holds 1 to 20 questions by names of your own; question names and option keys start with a letter, then letters, digits and `_`:
 
 - `{ type: "choice", instructions, options: { key: "what it means", ... } }`, 2 to 50 options, each meaning up to 1,000 characters: answers `{ choice, probabilities }`, `choice` typed as one of the keys, `probabilities` each key's.
-- `{ type: "scale", instructions, levels: ["lowest", ..., "highest"] }`, 2 to 10 distinct levels: answers `{ level, score, probabilities }`. `score` is the probability-weighted level, from 0 (the first) to the number of levels less one.
+- `{ type: "scale", instructions, levels: ["lowest", ..., "highest"] }`, 2 to 10 distinct levels: answers `{ level, score, probabilities }`, `level` typed as one of the levels when they're written inline or `as const`. `score` is the probability-weighted level, from 0 (the first) to the number of levels less one.
 - `{ type: "yesNo", instructions }`, instructions stating something true or not: answers `{ probability }`, from 0 to 1.
 
 Each answer is `null` when the model refused that question, and the types make the caller handle it; the other answers still come back. One call answers every question about one input.
 
 ## generate (text roles)
 
-`await ctx.connections.<alias>.generate({ instructions, input, maxOutputTokens })` answers `{ text, usage }`. `instructions` is optional, up to 4,000 characters; `input` is a string or JSON. `maxOutputTokens` is required, 1 to 16,000: a model that reaches it fails `output_truncated` with `details.maxOutputTokens`, and returns nothing.
+`await ctx.connections.<alias>.generate({ instructions, input, maxOutputTokens })` answers `{ text, usage }`: `const { text } = await ctx.connections.writer.generate({ ... })`. `instructions` is optional, up to 4,000 characters; `input` is a string or JSON. `maxOutputTokens` is required, 1 to 16,000: a model that reaches it fails `output_truncated` with `details.maxOutputTokens`, and returns nothing.
 
 With `output: t.object({ ... })` from `patchy/server`, it answers `{ value, usage }`, `value` typed by the object. Patchy asks the model for that shape and checks the answer before returning it: one that doesn't match fails `shape_mismatch`. Every field is required, of `t.text()`, `t.integer()`, `t.number()`, `t.boolean()`, `t.enum([...])`, `t.array(...)` and `t.object({ ... })`; `.describe("...")` tells the model what a field holds. Optional and nullable fields, timestamps, JSON, rows and files are refused `invalid_request` with `details.path` before the model is asked.
 
@@ -59,6 +80,7 @@ Model output is the model's, not the company's word: show it as such, and never 
 
 - **Calls are real.** `patchy dev` sends each call through Patchy, as the person your publishing key belongs to, from either local viewer: the colleague mount calls as you too. The company's provider answers with the role's model, at the company's cost, so answers in dev are what the published patch gets.
 - Each call counts against your allowance of 200 model calls per UTC day in `patchy dev`, across every repo and role, counted before the provider hears it. Past it, calls fail `rate_limited` with `limitId` `models.dev.calls.daily`, `details.limit` `"devDaily"`, and `retryAfter` until 00:00 UTC; nothing is sent. Published patches aren't counted.
+- Pages run in a browser. Without one, `pnpm patchy dev agent <tool> '<json>'` runs a tool in `agent/` as the dev viewer, and so any role call its code makes, as `../patchy-server/SKILL.md` says; a tool left in `agent/` publishes.
 - Calls in dev share the gate with published patches, get the local action's remaining time, and appear on the role's Calls tab marked Dev, naming your machine.
 - A key that expired or was revoked, or a deactivated account, fails calls `access_denied` naming `patchy login`: log in, then `pnpm patchy dev stop` and `pnpm patchy dev`. An unreachable instance fails them `source_unavailable`. The rest of dev keeps working. The instance also limits dev calls per person and per network address with `rate_limited`.
 

@@ -32,7 +32,7 @@ export function createClient(connection: string, call: Call): Client {
 
 const decideDoc = `## decide
 
-\`ctx.connections.<alias>.decide({ input, questions })\`, in an action. \`input\` is a string or JSON. \`questions\` holds one to 20 questions by a name of your own, each one of:
+\`const { answers, usage } = await ctx.connections.<alias>.decide({ input, questions })\`, in an action: \`answers.<name>\` is each question's answer, by the name you gave it. \`input\` is a string or JSON. \`questions\` holds one to 20 questions by a name of your own, each one of:
 
 - \`{ type: "choice", instructions, options: { key: "what it means", ... } }\`: 2 to 50 options. Its answer is \`{ choice, probabilities }\`: the likeliest option's key and each option's probability.
 - \`{ type: "scale", instructions, levels: ["lowest", ..., "highest"] }\`: 2 to 10 levels. Its answer is \`{ level, score, probabilities }\`: the likeliest level, the probability-weighted level from 0 to the number of levels less one, and each level's probability.
@@ -42,7 +42,7 @@ Each answer is \`null\` when the model refused that question; the other answers 
 
 const generateDoc = `## generate
 
-\`ctx.connections.<alias>.generate({ instructions, input, maxOutputTokens })\`, in an action, answers \`{ text, usage }\`. \`input\` is a string or JSON. \`maxOutputTokens\` is required, at most 16,000: a model that reaches it fails \`output_truncated\` and returns nothing.
+\`const { text, usage } = await ctx.connections.<alias>.generate({ instructions, input, maxOutputTokens })\`, in an action. \`input\` is a string or JSON. \`maxOutputTokens\` is required, at most 16,000: a model that reaches it fails \`output_truncated\` and returns nothing.
 
 With \`output\`, a \`t.object({...})\` from \`patchy/server\`, it answers \`{ value, usage }\`, \`value\` typed by the object: Patchy asks the model for that shape and checks its answer before returning it, failing \`shape_mismatch\` when it doesn't match. Every field is required; fields are \`t.text()\`, \`t.integer()\`, \`t.number()\`, \`t.boolean()\`, \`t.enum([...])\`, \`t.array(...)\` and \`t.object({...})\` of those, and \`.describe("...")\` tells the model what a field holds. Anything else is refused \`invalid_request\` before the model is asked.
 
