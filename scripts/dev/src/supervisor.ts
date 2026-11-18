@@ -258,12 +258,14 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
   // driver, an API token) leaks in.
   // PROTOTYPE: model calls go to a loopback fake provider; the server honours it only in development.
   const fakeModels = yield* FakeModels.start(enqueue("models"));
-  // PROTOTYPE: the slot mode and model gate a load test chose, passed through when set.
+  // PROTOTYPE: the slot mode and model gate a load test chose, and Bun's cap on a process's
+  // simultaneous fetches, passed through when set.
   const loadTest = Object.fromEntries(
     Object.entries(
       yield* Config.all({
         PATCHY_DEV_SLOT_MODE: Config.option(Config.String("PATCHY_DEV_SLOT_MODE")),
-        PATCHY_DEV_MODEL_GATE: Config.option(Config.String("PATCHY_DEV_MODEL_GATE"))
+        PATCHY_DEV_MODEL_GATE: Config.option(Config.String("PATCHY_DEV_MODEL_GATE")),
+        BUN_CONFIG_MAX_HTTP_REQUESTS: Config.option(Config.String("BUN_CONFIG_MAX_HTTP_REQUESTS"))
       })
     ).flatMap(([name, value]) => (Option.isSome(value) ? [[name, value.value]] : []))
   );
