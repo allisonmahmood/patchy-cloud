@@ -85,63 +85,81 @@ const decodeSearch = Schema.decodeUnknownOption(
 );
 const decoder = new TextDecoder();
 
-/** Exercises the live adapter against a disposable workspace without a network request. */
-const client = HttpClient.make((request) =>
-  Effect.sync(() => {
-    const respond = (body: unknown, status = 200) =>
-      HttpClientResponse.fromWeb(request, Response.json(body, { status }));
-    const refuse = (status: number, code: string) =>
-      respond({ object: "error", status, code }, status);
-    const url = new URL(request.url);
-    const authorization = request.headers.authorization;
-    const isPersonal = authorization === `Bearer ${personalToken}`;
-    if (authorization !== `Bearer ${internalToken}` && !isPersonal)
-      return refuse(401, "unauthorized");
-    if (
-      url.origin !== "https://api.notion.com" ||
-      request.headers["notion-version"] !== "2026-03-11"
-    )
-      return refuse(400, "invalid_request");
-    if (request.method === "GET" && url.pathname === "/v1/users/me")
+/** An offline Notion response, used by integration tests and the dev scenario. */
+const reply = (url: URL, method: string, headers: Headers, body: string | undefined) => {
+  const respond = (body: unknown, status = 200) => Response.json(body, { status });
+  const refuse = (status: number, code: string) =>
+    respond({ object: "error", status, code }, status);
+  const authorization = headers.get("authorization");
+  const isPersonal = authorization === `Bearer ${personalToken}`;
+  if (authorization !== `Bearer ${internalToken}` && !isPersonal)
+    return refuse(401, "unauthorized");
+  if (url.origin !== "https://api.notion.com" || headers.get("notion-version") !== "2026-03-11")
+    return refuse(400, "invalid_request");
+  if (method === "GET" && url.pathname === "/v1/users/me")
+    return respond({
+      object: "user",
+      type: "bot",
+      id: isPersonal
+        ? "43a8babc-b582-4a97-b5ec-3274552f6ac7"
+        : "a0955069-c85c-4497-bd27-978f5519b4b0",
+      bot: {
+        owner: { type: isPersonal ? "user" : "workspace" },
+        workspace_id: workspaceId,
+        workspace_name: isPersonal ? null : "Notion Probe"
+      }
+    });
+  if (isPersonal) return refuse(403, "restricted_resource");
+  if (method === "POST" && url.pathname === "/v1/search" && body !== undefined) {
+    const search = decodeSearch(body);
+    if (search._tag === "Some" && search.value.start_cursor === undefined)
+      return respond({ object: "list", results: [tasks], has_more: true, next_cursor: cursor });
+    if (search._tag === "Some" && search.value.start_cursor === cursor)
+      return respond({ object: "list", results: [projects], has_more: false, next_cursor: null });
+    return refuse(400, "validation_error");
+  }
+  if (method === "GET" && url.pathname.startsWith("/v1/databases/")) {
+    const id = url.pathname.split("/").at(-1);
+    const name = id && databases.get(id);
+    if (id && name)
       return respond({
-        object: "user",
-        type: "bot",
-        id: isPersonal
-          ? "43a8babc-b582-4a97-b5ec-3274552f6ac7"
-          : "a0955069-c85c-4497-bd27-978f5519b4b0",
-        bot: {
-          owner: { type: isPersonal ? "user" : "workspace" },
-          workspace_id: workspaceId,
-          workspace_name: isPersonal ? null : "Notion Probe"
-        }
+        object: "database",
+        id,
+        title: title(name),
+        url: `https://app.notion.com/p/${id.replaceAll("-", "")}`
       });
-    if (isPersonal) return refuse(403, "restricted_resource");
-    if (
-      request.method === "POST" &&
-      url.pathname === "/v1/search" &&
-      request.body._tag === "Uint8Array"
-    ) {
-      const search = decodeSearch(decoder.decode(request.body.body));
-      if (search._tag === "Some" && search.value.start_cursor === undefined)
-        return respond({ object: "list", results: [tasks], has_more: true, next_cursor: cursor });
-      if (search._tag === "Some" && search.value.start_cursor === cursor)
-        return respond({ object: "list", results: [projects], has_more: false, next_cursor: null });
-      return refuse(400, "validation_error");
-    }
-    if (request.method === "GET" && url.pathname.startsWith("/v1/databases/")) {
-      const id = url.pathname.split("/").at(-1);
-      const name = id && databases.get(id);
-      if (id && name)
-        return respond({
-          object: "database",
-          id,
-          title: title(name),
-          url: `https://app.notion.com/p/${id.replaceAll("-", "")}`
-        });
-    }
-    return refuse(404, "object_not_found");
-  })
+  }
+  return refuse(404, "object_not_found");
+};
+
+const client = HttpClient.make((request, url) =>
+  Effect.sync(() =>
+    HttpClientResponse.fromWeb(
+      request,
+      reply(
+        url,
+        request.method,
+        new Headers(request.headers),
+        request.body._tag === "Uint8Array" ? decoder.decode(request.body.body) : undefined
+      )
+    )
+  )
 );
+
+/** In the disposable dev server, only Notion requests are intercepted. */
+export const makeFetch =
+  (fallback: typeof fetch): typeof fetch =>
+  async (input, init) => {
+    const url = URL.parse(input instanceof Request ? input.url : input);
+    if (url?.origin !== "https://api.notion.com") return fallback(input, init);
+    const request = new Request(input, init);
+    return reply(
+      url,
+      request.method,
+      request.headers,
+      request.body === null ? undefined : await request.text()
+    );
+  };
 
 export const layer = Layer.effect(Source.Source, Source.make).pipe(
   Layer.provide(Layer.succeed(HttpClient.HttpClient, client))

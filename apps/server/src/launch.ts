@@ -24,7 +24,7 @@ import * as HttpServer from "effect/http/HttpServer";
 import { ClientDocumentNetwork, DemoLink, DevPersonas, Session } from "@patchy/auth";
 import { PgCompanyDatabases } from "@patchy/company-database";
 import { S3ContentStore } from "@patchy/content-store";
-import { CredentialKeys, NotionSource } from "@patchy/integrations";
+import { CredentialKeys } from "@patchy/integrations";
 import * as Sql from "@patchy/sql";
 import { Runtime, RuntimeStream } from "@patchy/runtime";
 import * as Server from "./Server.js";
@@ -41,10 +41,7 @@ const httpServer = Layer.unwrap(
   )
 );
 
-const server = <E, NotionError>(
-  mail: Layer.Layer<Server.MailNetwork, E>,
-  notion: Layer.Layer<NotionSource.Source, NotionError>
-) =>
+const server = <E>(mail: Layer.Layer<Server.MailNetwork, E>) =>
   Layer.effectDiscard(
     Effect.gen(function* () {
       const streams = yield* RuntimeStream.RuntimeStream;
@@ -69,7 +66,7 @@ const server = <E, NotionError>(
       yield* announce;
     })
   ).pipe(
-    Layer.provideMerge(Server.withNotion(notion)),
+    Layer.provideMerge(Server.layer),
     Layer.provide([Sql.layer, ClientDocumentNetwork.layer, mail, NodeCryptography.layer]),
     Layer.provide(httpServer)
   );
@@ -79,10 +76,7 @@ const server = <E, NotionError>(
  * missing Clerk key (or personas secret) or public origin behind a connection error, then runs
  * the server until a signal.
  */
-export const launch = <E, NotionError = never>(
-  mail: Layer.Layer<Server.MailNetwork, E>,
-  notion: Layer.Layer<NotionSource.Source, NotionError> = NotionSource.layer
-) =>
+export const launch = <E>(mail: Layer.Layer<Server.MailNetwork, E>) =>
   NodeRuntime.runMain(
     Effect.gen(function* () {
       yield* Config.all([
@@ -98,6 +92,6 @@ export const launch = <E, NotionError = never>(
         (yield* Config.String("NODE_ENV").pipe(Config.withDefault("development"))) === "production"
       )
         yield* S3ContentStore.config;
-      return yield* Layer.launch(server(mail, notion));
+      return yield* Layer.launch(server(mail));
     })
   );
