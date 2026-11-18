@@ -1013,6 +1013,10 @@ can quote it.
   this worktree, and the `agent`, `worker-claude` and `worker-codex` launchers.
   `trial` is part of the loop too, at a model run per side.
 
+- **Notion.** Run `pnpm test:notion` with `NOTION_TEST_INTERNAL_TOKEN` set from
+  the disposable probe's internal connection. The test discovers the workspace
+  and its shared Tasks schema. It reads metadata and makes no Notion changes.
+
 ## How the runner works
 
 `scripts/dev/` is an Effect program. `start` writes `.local/dev/plan.json` and

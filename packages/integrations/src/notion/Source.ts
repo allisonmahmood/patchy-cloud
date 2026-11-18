@@ -54,7 +54,8 @@ const refusals = {
     404,
     "Notion could not find the database or it is no longer shared with the connection."
   ],
-  invalid_query: [400, "Notion refused a discovery request that Patchy built."],
+  invalid_request: [400, "Notion refused a value in the request."],
+  invalid_query: [400, "Notion refused a request that Patchy built."],
   write_conflict: [409, "Notion reported a conflict. Try again."],
   source_rate_limited: [429, "Notion is limiting requests. Try again shortly."],
   shape_mismatch: [422, "Notion returned an unexpected discovery shape. Nothing was saved."],
@@ -75,7 +76,10 @@ export class Refusal extends Schema.TaggedError<Refusal>()("NotionRefusal", {
   upstreamStatus: Schema.optionalKey(Schema.Int),
   cause: Schema.optionalKey(SecretCause),
   retryAfterSeconds: Schema.optionalKey(Schema.Number),
-  bound: Schema.optionalKey(Bound)
+  bound: Schema.optionalKey(Bound),
+  missing: Schema.optionalKey(
+    Schema.Struct({ kind: Schema.Literals(["property", "option"]), name: Schema.String })
+  )
 }) {
   get status() {
     return refusals[this.code][0];
@@ -88,6 +92,8 @@ export class Refusal extends Schema.TaggedError<Refusal>()("NotionRefusal", {
       return `Notion is limiting requests. Try again in ${this.retryAfterSeconds} seconds.`;
     if (this.code === "too_large" && this.bound !== undefined)
       return `Notion discovery exceeded the Patchy limit for ${this.bound.name} (${this.bound.limit}). Nothing was saved.`;
+    if (this.code === "shape_mismatch" && this.missing !== undefined)
+      return `Notion could not find ${this.missing.kind} “${this.missing.name}”. Refresh the connection and try again.`;
     return refusals[this.code][1];
   }
 }
@@ -182,6 +188,7 @@ const DatabaseBody = Schema.Struct({
   url: Schema.String.check(Schema.isPattern(/^https:\/\//))
 });
 const ErrorBody = Schema.Struct({
+  code: Schema.optionalKey(Schema.String),
   message: Schema.optionalKey(Schema.String),
   retry_after: Schema.optionalKey(Schema.Number),
   additional_data: Schema.optionalKey(
@@ -200,6 +207,27 @@ const decodeSearchSource = Schema.decodeUnknownOption(SourceBody);
 const decodeSource = Schema.decodeUnknownEffect(SourceBody);
 const decodeDatabase = Schema.decodeUnknownEffect(DatabaseBody);
 const decodeError = Schema.decodeUnknownOption(ErrorBody);
+const invalidRequest = (error: typeof ErrorBody.Type | undefined) => {
+  if (error?.code === "validation_error" && error.message !== undefined) {
+    // Notion returns these validation cases under the same code. Keep only the missing name.
+    const property = /^Could not find property with name or id: ([^\r\n]+)$/.exec(
+      error.message
+    )?.[1];
+    const option = /^\w+ option "([^"\r\n]+)" not found for property "/i.exec(error.message)?.[1];
+    const name = property ?? option;
+    if (name !== undefined)
+      return new Refusal({
+        code: "shape_mismatch",
+        ...(name.length <= 256 && !/ntn_[a-z0-9]{20,}/i.test(name)
+          ? { missing: { kind: property === undefined ? "option" : "property", name } }
+          : {})
+      });
+    if (/^body\.filter\.date\.\w+ should be a valid ISO 8601 date string/m.test(error.message))
+      return new Refusal({ code: "invalid_request" });
+  }
+  return new Refusal({ code: "invalid_query" });
+};
+
 const supported = new Set([
   "title",
   "rich_text",
@@ -337,7 +365,7 @@ export const make = Effect.gen(function* () {
           : {})
       });
     }
-    if (status === 400) return yield* new Refusal({ code: "invalid_query" });
+    if (status === 400) return yield* invalidRequest(error);
     return yield* new Refusal({ code: "source_unavailable", upstreamStatus: status });
   });
 

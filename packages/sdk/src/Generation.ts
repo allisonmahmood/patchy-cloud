@@ -505,7 +505,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
         });
         skills.add("patchy-posthog");
       }
-      factories[alias] = `./uses/${alias}.js`;
+      if (files.has(client)) factories[alias] = `./uses/${alias}.js`;
     } else if (declaration.kind === "sharedStore") {
       const source = yield* patches
         .sharedStore(declaration.patchId, declaration.store, companyId, viewerId)

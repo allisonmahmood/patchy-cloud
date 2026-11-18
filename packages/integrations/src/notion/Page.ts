@@ -98,7 +98,7 @@ export const invalidAccess: View.Notice = {
 export const rotate = {
   title: (name: string) => `Replace the token for ${name}`,
   consequence:
-    "The replacement must belong to the same Notion workspace. Patchy checks the token and discovers what it can see before saving it.",
+    "Paste the replacement from the same Notion workspace as soon as you reset the token. Requests using a revoked token fail until you replace it. Patchy checks the new token and discovers what it can see before saving it.",
   fields: (submitted: Fields.Submitted, refusal?: View.Notice) =>
     Fields.render(token, submitted, refusal, true),
   shows: ["key"]
