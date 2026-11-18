@@ -43,6 +43,7 @@ import * as GithubDev from "./github/Dev.js";
 import * as PidgeonDev from "./pidgeon/Dev.js";
 import * as PidgeonOperations from "./pidgeon/Operations.js";
 import * as PostgresSource from "./postgres/Source.js";
+import * as NotionSource from "./notion/Source.js";
 import * as ImapDev from "./imap/Dev.js";
 import * as ImapSessions from "./imap/Sessions.js";
 import * as ImapSource from "./imap/Source.js";
@@ -284,7 +285,7 @@ const serve = (
     Layer.provideMerge(runtime),
     Layer.provideMerge(
       SqlConnectionStore.layer.pipe(
-        Layer.provide(PostgresSource.layer),
+        Layer.provide([PostgresSource.layer, NotionSource.layer]),
         Layer.provideMerge(double.layer),
         Layer.provideMerge(mail.layer),
         Layer.provideMerge(workspace.layer),

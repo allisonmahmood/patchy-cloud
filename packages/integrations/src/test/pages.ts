@@ -20,6 +20,7 @@ import type * as PidgeonSource from "../pidgeon/Source.js";
 import * as PostgresSource from "../postgres/Source.js";
 import * as PostHogSource from "../posthog/Source.js";
 import * as AttioSource from "../attio/Source.js";
+import * as NotionSource from "../notion/Source.js";
 import type * as ImapSource from "../imap/Source.js";
 import * as ImapTest from "./imap.js";
 import * as GithubTest from "./github.js";
@@ -77,6 +78,7 @@ export const services = (
     ),
     Layer.provideMerge(PostHogSource.layer),
     Layer.provideMerge(attio),
+    Layer.provideMerge(NotionSource.layer),
     Layer.provideMerge(imap),
     Layer.provideMerge(pidgeon),
     Layer.provideMerge(github),

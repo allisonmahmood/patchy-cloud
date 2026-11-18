@@ -21,6 +21,7 @@ import * as CredentialKeys from "./CredentialKeys.js";
 import * as Source from "./postgres/Source.js";
 import * as PostHogSource from "./posthog/Source.js";
 import * as AttioSource from "./attio/Source.js";
+import * as NotionSource from "./notion/Source.js";
 import * as ImapTest from "./test/imap.js";
 import * as GithubTest from "./test/github.js";
 import * as PidgeonSource from "./pidgeon/Source.js";
@@ -96,6 +97,7 @@ const layer = Layer.mergeAll(ConnectionsApi.layer, HttpServer.layerServices).pip
         Source.layer,
         PostHogSource.layer,
         AttioSource.layer,
+        NotionSource.layer,
         ImapTest.offline,
         PidgeonSource.layer,
         CredentialKeys.layerFromKeys(

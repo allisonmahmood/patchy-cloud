@@ -80,7 +80,7 @@ const product = {
 /** Another project, reached by its own key. */
 const other = { ...product, id: 999, key: "phx_otherProjectKey01" } satisfies PostHogDouble.Project;
 const posthog = PostHogDouble.make(PostHogDouble.project(product, other));
-const fixture = SqlConnectionStore.layerWithoutNotion.pipe(
+const fixture = SqlConnectionStore.layer.pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       CredentialKeys.layerFromKeys(Redacted.make(`old:${oldKey}`)),

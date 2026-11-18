@@ -432,7 +432,7 @@ const services = Layer.mergeAll(
       // App comes from the host's settings: empty, GitHub isn't offered; partly filled, the
       // server refuses to start.
       Layer.provideMerge(
-        SqlConnectionStore.layerWithoutNotion.pipe(
+        SqlConnectionStore.layer.pipe(
           Layer.provide([CredentialKeys.layer, PostgresSource.layer, Teams.layer]),
           Layer.provideMerge(PostHogSource.layer),
           Layer.provideMerge(PidgeonSource.layer),
