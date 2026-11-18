@@ -1190,7 +1190,7 @@ connected by someone GitHub shows administering them, and patches read their CI
 runs, job logs, check runs and pull requests. Other integrations and personal
 connections remain planned.
 
-An **integration** is a capability Patchy builds and maintains, the same for every company. Postgres was the first, PostHog the second, Pidgeon the third, the first that can write, Attio the fourth, Email (IMAP) the fifth GitHub the sixth and Notion the seventh; Salesforce and Gmail are examples of future integrations, not offered connections. A **connection** is the live, credentialed instance of an integration. That distinction was drawn with [Companies](#integrations-and-connections); this section is the layer itself — how a connection comes to exist, how a patch declares and uses one, and what patch code is actually handed.
+An **integration** is a capability Patchy builds and maintains, the same for every company. Postgres was the first, PostHog the second, Pidgeon the third, the first that can write, Attio the fourth, Email (IMAP) the fifth, GitHub the sixth and Notion the seventh; Salesforce and Gmail are examples of future integrations, not offered connections. A **connection** is the live, credentialed instance of an integration. That distinction was drawn with [Companies](#integrations-and-connections); this section is the layer itself — how a connection comes to exist, how a patch declares and uses one, and what patch code is actually handed.
 
 Integrations sit inside the **primitive** model. **Patch-scoped** primitives — the patch's own tables and file stores — are defined in config and provisioned with the patch. **Company-scoped** primitives — connections and the database those tables live in — are shared infrastructure, never owned by a consuming patch. A table remains patch-owned wherever it physically lives. Connections and shared tables are declared dependencies; omitting a definition does not delete its provisioned resources.
 
@@ -1446,7 +1446,8 @@ each read's ids, never a body or search text.
 
 A company admin connects a workspace-owned internal connection under Settings → Integrations.
 Patchy checks the token's workspace and bot identity before discovering data sources and
-saving the encrypted credential. Notion personal access tokens belong to individual users.
+saving the encrypted credential. It refuses personal access tokens and public connections'
+tokens, which act for one person.
 
 Share each database directly in Notion. The Overview shows the data sources and properties the
 connection discovered, including status options and relation targets in its metadata. Search

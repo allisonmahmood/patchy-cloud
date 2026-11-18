@@ -145,7 +145,6 @@ export const layer = (metadata: ReadonlyArray<DevConnection> = []) => {
       rotate: unavailable,
       retarget: unavailable,
       refresh: unavailable,
-      changeNotionAccess: unavailable,
       disconnect: unavailable,
       reconnect: unavailable,
       describe: unavailable,

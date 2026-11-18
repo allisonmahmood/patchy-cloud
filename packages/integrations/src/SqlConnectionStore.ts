@@ -8,7 +8,6 @@ import {
   ImapSnapshot,
   integrations,
   type Integration,
-  type NotionAccess,
   NotionSnapshot,
   PidgeonSnapshot,
   PostHogSnapshot
@@ -42,7 +41,6 @@ import {
   ConnectionHandleTaken,
   ConnectInProgress,
   ConnectionInUse,
-  ConnectionMutationUnavailable,
   ConnectionNotConnected,
   ConnectionNotFound,
   ConnectionRetargetRequired,
@@ -1099,10 +1097,25 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       );
     });
 
+    // ---------- Notion: a workspace's internal connection, its access Patchy's own setting ----------
+
+    const notionSecret = (current: StoredNotion) =>
+      keys.decrypt(current, current).pipe(Effect.flatMap(NotionSource.parseCredentials));
+    /** What a snapshot says about its connection, as the connection shows it. */
+    const notionDisplay = (snapshot: NotionSnapshot, keyHint: string): NotionSource.Display => ({
+      workspace: snapshot.workspace,
+      botId: snapshot.botId,
+      access: snapshot.access,
+      keyHint
+    });
+
+    /** Connect: the token's check and discovery at the access chosen, saved together or not at all. */
     const notionConnect = Effect.fn("ConnectionStore.notionConnect")(function* (
       input: ConnectInput,
       report?: (connection: Connection) => Effect.Effect<void>
     ) {
+      const request = yield* NotionSource.parseConnect(input.credentials);
+      // An interrupted connect never keeps the name.
       return yield* claimed(
         input,
         Effect.gen(function* () {
@@ -1111,18 +1124,15 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
             integration: "notion" as const,
             id: yield* cryptography.internalId("conn")
           };
+          const key = Redacted.make(request.key);
           const snapshot = yield* audited(
             identity,
             "notion.discover",
-            notion.inspect(input.credentials, input.notionAccess ?? "read")
+            notion.inspect(key, request.access)
           );
-          const { workspace, botId, access } = snapshot;
           const encrypted = yield* keys.encrypt(
             identity,
-            NotionSource.credentials({
-              key: Redacted.value(input.credentials),
-              workspaceId: workspace.id
-            })
+            NotionSource.credentials({ key: request.key, workspaceId: snapshot.workspace.id })
           );
           const now = yield* Clock.currentTimeMillis;
           return yield* reportedTransaction(
@@ -1131,12 +1141,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
               input,
               {
                 integration: "notion",
-                display: {
-                  workspace,
-                  botId,
-                  access,
-                  keyHint: NotionSource.keyHint(input.credentials)
-                }
+                display: notionDisplay(snapshot, NotionSource.keyHint(key))
               },
               encrypted,
               { integration: "notion", snapshot },
@@ -1148,111 +1153,109 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       );
     });
 
-    const notionSecret = (current: StoredNotion) =>
-      keys.decrypt(current, current).pipe(Effect.flatMap(NotionSource.parseCredentials));
-
-    /** A queued call must still have an active admin and the connection it started with. */
-    const notionCall = <A, E>(
+    /**
+     * Saves a snapshot as the connection's next revision under its lock, with the display it
+     * implies and a replacement token when there is one; a discovery also stamps when it ran.
+     */
+    const notionSave = (
       input: Identity,
       current: StoredNotion,
-      op: "notion.discover" | "notion.check",
-      call: Effect.Effect<A, E>
+      saved: {
+        readonly snapshot: NotionSnapshot;
+        readonly keyHint: string;
+        readonly encrypted?: CredentialKeys.EncryptedCredentials | undefined;
+      },
+      discovered: boolean
     ) =>
-      audited(
-        { ...input, integration: "notion" },
-        op,
-        notion.withSlot(input.id, (waited) =>
-          waited
-            ? sql
-                .withTransaction(
-                  Effect.gen(function* () {
-                    yield* lockAdministrator(input);
-                    yield* lock(input, current);
-                  })
-                )
-                .pipe(Effect.provideService(SqlClient.SqlClient, sql), Effect.andThen(call))
-            : call
-        )
-      );
+      Effect.gen(function* () {
+        const { snapshot, keyHint, encrypted } = saved;
+        const now = yield* Clock.currentTimeMillis;
+        return yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* lock(input, current);
+            const revision = current.metadataRevision + 1;
+            yield* writeSnapshot(input, revision, { integration: "notion", snapshot }, now);
+            yield* sql`UPDATE connections SET metadata_revision = ${revision},
+              display = ${encodeDisplay({ integration: "notion", display: notionDisplay(snapshot, keyHint) })}
+              ${encrypted === undefined ? sql`` : sql`, credentials = ${encrypted.credentials}, key_id = ${encrypted.keyId}, credential_revision = credential_revision + 1`}
+              ${discovered ? sql`, last_tested_at = to_timestamp(${now / 1_000}), last_discovered_at = to_timestamp(${now / 1_000})` : sql``}
+              WHERE id = ${input.id} AND company_id = ${input.companyId}`;
+            return yield* get(input.companyId, input.id);
+          })
+        );
+      });
 
-    /** Refresh and replace use the same discovery and commit. A failed probe keeps the old token. */
+    /**
+     * Refresh with the stored token, or Replace token with a new one from the same workspace: the
+     * check and a fresh discovery, attributed to the admin. A failed check keeps the working token.
+     */
     const notionDiscover = Effect.fn("ConnectionStore.notionDiscover")(function* (
       input: Identity,
       current: StoredNotion,
-      replacement?: Redacted.Redacted<string>
+      replacement?: string
     ) {
       if (replacement === undefined && current.status !== "connected")
         return yield* new ConnectionNotConnected({});
-      const key = replacement ?? Redacted.make((yield* notionSecret(current)).key);
-      const snapshot = yield* notionCall(
-        input,
-        current,
+      const token = replacement ?? (yield* notionSecret(current)).key;
+      const key = Redacted.make(token);
+      const snapshot = yield* audited(
+        { ...input, integration: "notion" },
         "notion.discover",
         notion.inspect(key, current.display.access, current.display.workspace.id)
       );
-      const { workspace, botId, access } = snapshot;
-      const display = { workspace, botId, access, keyHint: NotionSource.keyHint(key) };
       const encrypted =
         replacement === undefined
           ? undefined
           : yield* keys.encrypt(
               current,
-              NotionSource.credentials({ key: Redacted.value(key), workspaceId: workspace.id })
+              NotionSource.credentials({ key: token, workspaceId: snapshot.workspace.id })
             );
-      const now = yield* Clock.currentTimeMillis;
-      return yield* sql.withTransaction(
-        Effect.gen(function* () {
-          yield* lock(input, current);
-          const revision = current.metadataRevision + 1;
-          yield* writeSnapshot(input, revision, { integration: "notion", snapshot }, now);
-          yield* sql`UPDATE connections SET metadata_revision = ${revision},
-          display = ${encodeDisplay({ integration: "notion", display })},
-          last_tested_at = to_timestamp(${now / 1_000}), last_discovered_at = to_timestamp(${now / 1_000})
-          ${encrypted === undefined ? sql`` : sql`, credentials = ${encrypted.credentials}, key_id = ${encrypted.keyId}, credential_revision = credential_revision + 1`}
-          WHERE id = ${input.id} AND company_id = ${input.companyId}`;
-          return yield* get(input.companyId, input.id);
-        })
+      return yield* notionSave(
+        input,
+        current,
+        { snapshot, keyHint: NotionSource.keyHint(key), encrypted },
+        true
       );
     });
 
+    /**
+     * Replace token or Change access, as their dialogs submit them. Access is Patchy's own
+     * setting, so changing it asks Notion nothing; the kept schema takes a new revision either
+     * way, so generation follows the access.
+     */
+    const notionChange = Effect.fn("ConnectionStore.notionChange")(function* (
+      input: CredentialsInput,
+      current: StoredNotion
+    ) {
+      const change = yield* NotionSource.parseChange(input.credentials);
+      if ("key" in change) return yield* notionDiscover(input, current, change.key);
+      if (change.access === current.display.access) return yield* get(input.companyId, input.id);
+      const kept = yield* snapshot(input.companyId, input.id, current.metadataRevision);
+      if (kept.integration !== "notion")
+        return yield* new ConnectionNotFound({
+          companyId: input.companyId,
+          lookup: { id: input.id }
+        });
+      return yield* notionSave(
+        input,
+        current,
+        { snapshot: { ...kept.snapshot, access: change.access }, keyHint: current.display.keyHint },
+        false
+      );
+    });
+
+    /** Test and Reconnect: the stored token's check, recorded in recent calls as the admin's. */
     const notionCheck = Effect.fn("ConnectionStore.notionCheck")(function* (
       input: Identity,
       current: StoredNotion
     ) {
       const { key, workspaceId } = yield* notionSecret(current);
-      yield* notionCall(
-        input,
-        current,
+      yield* audited(
+        { ...input, integration: "notion" },
         "notion.check",
         notion.check(Redacted.make(key), workspaceId)
       );
     });
-
-    const changeNotionAccess = Effect.fn("ConnectionStore.changeNotionAccess")(
-      (input: Identity & { readonly access: NotionAccess }) =>
-        sql.withTransaction(
-          Effect.gen(function* () {
-            const current = yield* lock(input);
-            if (current.integration !== "notion")
-              return yield* new ConnectionMutationUnavailable({});
-            if (current.display.access === input.access) return current;
-            const kept = yield* snapshot(input.companyId, input.id, current.metadataRevision);
-            if (kept.integration !== "notion") return yield* new ConnectionChanged({});
-            const revision = current.metadataRevision + 1;
-            yield* writeSnapshot(
-              input,
-              revision,
-              { ...kept, snapshot: { ...kept.snapshot, access: input.access } },
-              yield* Clock.currentTimeMillis
-            );
-            yield* sql`UPDATE connections SET metadata_revision = ${revision},
-            display = ${encodeDisplay({ integration: "notion", display: { ...current.display, access: input.access } })}
-            WHERE id = ${input.id} AND company_id = ${input.companyId}`;
-            return yield* get(input.companyId, input.id);
-          })
-        ),
-      Effect.catchTags(safe("changeNotionAccess"))
-    );
 
     // ---------- IMAP: a mailbox login, paused when its server refuses it ----------
 
@@ -1522,8 +1525,8 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
           return yield* new GithubConnection.SignInRequired({});
         return { flow: flow.value, who: flow.value.signedIn.value };
       });
-    /** Locks the company before checking the active admin and locking the affected row. */
-    const lockAdministrator = (input: { readonly companyId: string; readonly userId: string }) =>
+    /** The admin check, which locks the company first, as every change that consumes a flow does. */
+    const githubAdmin = (input: { readonly companyId: string; readonly userId: string }) =>
       Users.lockAdministrator({ companyId: input.companyId, actorId: input.userId }).pipe(
         Effect.catchTags({
           RoleForbidden: (cause) =>
@@ -1609,7 +1612,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
           return yield* githubSaved(
             input,
             Effect.gen(function* () {
-              yield* lockAdministrator(input);
+              yield* githubAdmin(input);
               const held = yield* GithubClaims.consumeFlow({
                 id: flow.id,
                 companyId: input.companyId,
@@ -1823,7 +1826,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       return yield* githubSaved(
         input,
         Effect.gen(function* () {
-          yield* lockAdministrator(input);
+          yield* githubAdmin(input);
           const held = yield* GithubClaims.consumeFlow({
             id: flow.id,
             companyId: input.companyId,
@@ -1875,7 +1878,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       const saved = yield* githubSaved(
         input,
         Effect.gen(function* () {
-          yield* lockAdministrator(input);
+          yield* githubAdmin(input);
           const held = yield* GithubClaims.consumeFlow({
             id: flow.id,
             companyId: input.companyId,
@@ -1971,8 +1974,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         const current = yield* stored(input);
         if (current.integration === "pidgeon") return yield* pidgeonChange(input, current);
         if (current.integration === "attio") return yield* attioReplace(input, current);
-        if (current.integration === "notion")
-          return yield* notionDiscover(input, current, input.credentials);
+        if (current.integration === "notion") return yield* notionChange(input, current);
         if (current.integration === "imap") return yield* imapReplace(input, current);
         if (current.integration === "github") return yield* githubChange(input, current);
         const target = yield* testTarget(current.integration, input.credentials);
@@ -2455,7 +2457,6 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       rotate,
       retarget,
       refresh,
-      changeNotionAccess,
       disconnect,
       reconnect,
       describe,

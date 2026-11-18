@@ -428,7 +428,7 @@ const services = Layer.mergeAll(
       identity
     ).pipe(
       // One PostHog, Pidgeon, Attio, Notion, IMAP and GitHub source each, so connection
-      // administration and patches share each project's, address's, workspace's, connection's,
+      // administration and patches share each project's, address's, workspace's, bot's,
       // mailbox's and installation's slots, and one pool of IMAP sessions that published patches
       // and the dev door share. GitHub's App comes from the host's settings: empty, GitHub isn't
       // offered; partly filled, the server refuses to start.

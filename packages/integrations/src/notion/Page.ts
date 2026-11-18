@@ -1,10 +1,11 @@
 import { NotionAccess, type NotionSnapshot } from "@patchy/api";
-import * as Redacted from "effect/Redacted";
+import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import type * as ConnectionStore from "../ConnectionStore.js";
 import type * as ConnectFrame from "../ConnectFrame.js";
 import type * as View from "../ConnectionsView.js";
 import * as Fields from "../Fields.js";
+import * as Source from "./Source.js";
 
 type Connection = Extract<ConnectionStore.Connection, { readonly integration: "notion" }>;
 
@@ -86,13 +87,27 @@ export const credentialRefusals: ReadonlyMap<string, View.Field> = new Map([
   ["notion_other_workspace", "key"]
 ]);
 
-export const credentials = (form: Fields.Submitted) => Redacted.make((form.key ?? "").trim());
-export const isAccess = Schema.is(NotionAccess);
-export const invalidAccess: View.Notice = {
+const isAccess = Schema.is(NotionAccess);
+const invalidAccess: View.Notice = {
   message: "Choose Read or Read and write.",
   code: "notion_invalid_access",
   status: 422,
   field: "access"
+};
+
+/**
+ * What an admin submitted as one secret, or the refusal at the field that stops it: connect takes
+ * the token and the access, Replace token only a token, Change access only the access.
+ */
+export const credentials = (
+  form: Fields.Submitted,
+  current?: ConnectionStore.Connection
+): Redacted.Redacted<string> | View.Notice => {
+  if (current !== undefined && form.key === undefined)
+    return isAccess(form.access) ? Source.changeSecret({ access: form.access }) : invalidAccess;
+  const key = (form.key ?? "").trim();
+  if (current !== undefined) return Source.changeSecret({ key });
+  return isAccess(form.access) ? Source.connectSecret({ key, access: form.access }) : invalidAccess;
 };
 
 export const rotate = {
