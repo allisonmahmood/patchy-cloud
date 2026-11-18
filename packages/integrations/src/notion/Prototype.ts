@@ -63,7 +63,7 @@ const connect: ConnectFrame.ConnectSpec = {
   getIt: {
     title: "Prepare the probe workspace",
     steps: [
-      "Use prototype_notion for the local fake, or an internal connection token for #936's isolated workspace. Share its Tasks database and probe page with the connection."
+      "Use prototype_notion for the local fake, or an internal connection token for #936's isolated workspace. Share a probe page to test pages. Share a Tasks database to test rows."
     ]
   },
   paste: {
@@ -210,6 +210,14 @@ type Probe = {
 /** Single prototype adapter: maps fixed task/page operations to provider requests. */
 const call = Effect.fn("NotionPrototype.call")(function* (probe: Probe, form: Form) {
   const id = form.id || probe.task;
+  const page = form.page || probe.page;
+  const op = form.op ?? "";
+  if (["list", "get", "create", "update", "trash", "restore"].includes(op) && !probe.source)
+    return yield* Effect.fail("Share the Tasks database with the connection and connect again.");
+  if (["get", "update", "trash", "restore"].includes(op) && !id)
+    return yield* Effect.fail("Enter a Notion task ID or create a task first.");
+  if (["read", "edit", "child"].includes(op) && !page)
+    return yield* Effect.fail("Enter the Notion page ID from the probe page link.");
   const properties = {
     ...(form.title ? { Name: { title: text(form.title) } } : {}),
     ...(form.status ? { Status: { status: { name: form.status } } } : {}),
@@ -238,10 +246,10 @@ const call = Effect.fn("NotionPrototype.call")(function* (probe: Probe, form: Fo
       body = { in_trash: form.op === "trash" };
       break;
     case "read":
-      route = `pages/${encodeURIComponent(form.page || probe.page)}/markdown`;
+      route = `pages/${encodeURIComponent(page)}/markdown`;
       break;
     case "edit":
-      route = `pages/${encodeURIComponent(form.page || probe.page)}/markdown`;
+      route = `pages/${encodeURIComponent(page)}/markdown`;
       method = "PATCH";
       body = { type: "replace_content", replace_content: { new_str: form.markdown } };
       break;
@@ -249,7 +257,7 @@ const call = Effect.fn("NotionPrototype.call")(function* (probe: Probe, form: Fo
       route = "pages";
       method = "POST";
       body = {
-        parent: { page_id: form.page || probe.page },
+        parent: { page_id: page },
         properties: { title: { title: text(form.childTitle || "Child page") } },
         markdown: form.markdown || "# Child page"
       };
@@ -288,12 +296,16 @@ function workspace(probe: Probe) {
     main:
       section({
         title: "Discovered schema",
-        body: disclosure("Tasks: title, status and assignee", pretty(probe.schema))
+        body: probe.source
+          ? disclosure("Tasks: title, status and assignee", pretty(probe.schema))
+          : "No Tasks database found. Share it with the connection and connect again to test rows."
       }) +
-      section({
-        title: "Tasks",
-        body: `<form method="post" action="${work}">${entry("id", "Task ID", probe.task)}${entry("title", "Title", "Prototype follow-up")}${entry("status", "Status", "Backlog")}${entry("assignee", "Assignee's Notion user ID")}<div class="cluster">${actions(["list", "get", "create", "update", "trash", "restore"])}</div></form>`
-      }) +
+      (probe.source
+        ? section({
+            title: "Tasks",
+            body: `<form method="post" action="${work}">${entry("id", "Task ID", probe.task)}${entry("title", "Title", "Prototype follow-up")}${entry("status", "Status", "Backlog")}${entry("assignee", "Assignee's Notion user ID")}<div class="cluster">${actions(["list", "get", "create", "update", "trash", "restore"])}</div></form>`
+          })
+        : "") +
       section({
         title: "Pages and wiki",
         body: `<form method="post" action="${work}">${entry("page", "Page ID", probe.page)}${entry("childTitle", "Child page title", "Prototype child")}${field({ id: "markdown", label: "Markdown", control: (aria) => textarea(aria, { name: "markdown", value: initialMarkdown + "\n\n**Prototype edit**" }) })}<div class="cluster">${actions(["read", "edit", "child", "unshare", "reshare"])}</div></form>`
@@ -349,24 +361,22 @@ export const layer: Layer.Layer<
             if ((self.bot as { owner?: { type?: string } })?.owner?.type !== "workspace")
               return yield* Effect.fail("Use an internal connection owned by the workspace.");
             const schema = yield* send("search", "POST", {
+              query: "Tasks",
               filter: { property: "object", value: "data_source" },
               page_size: 100
             });
-            const source = (schema.results as { id: string }[])?.[0]?.id;
-            if (!source)
-              return yield* Effect.fail(
-                "Share the probe Tasks database directly with this connection."
-              );
+            const source = (schema.results as { id: string }[])?.[0]?.id ?? "";
+            const fake = form.key === "prototype_notion";
             probe = {
               send,
               walk: "",
               step: 0,
-              fake: form.key === "prototype_notion",
+              fake,
               handle: form.handle || "probe",
               schema,
               source,
-              task: "task-1",
-              page: "page-1",
+              task: fake ? "task-1" : "",
+              page: fake ? "page-1" : "",
               last: self,
               request: "Connected and discovered",
               error: ""
