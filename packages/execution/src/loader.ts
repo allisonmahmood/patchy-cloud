@@ -1,7 +1,6 @@
 // @effect-diagnostics globalDate:off preferSchemaOverJson:off -- workerd request time and JSON HTTP framing are native Worker APIs.
 import { WorkerEntrypoint } from "cloudflare:workers";
 import * as GuestProtocol from "@patchy/api/guest";
-import { isNotionWrite } from "@patchy/api";
 import * as Schema from "effect/Schema";
 import { parse } from "es-module-lexer/minimal/js";
 
@@ -47,7 +46,6 @@ interface LiveAttempt {
   readonly reference: AttemptReference;
   readonly callback: GuestProtocol.Invoke["callback"];
   readonly callbackService: Fetcher;
-  lostWriteReply: boolean;
 }
 const strict = { onExcessProperty: "error" } as const;
 const decodeBind = Schema.decodeUnknownSync(GuestProtocol.BindRequest, strict);
@@ -161,12 +159,7 @@ async function invoke(
     deadline: request.deadline,
     serial: ++serial
   };
-  const live: LiveAttempt = {
-    reference,
-    callback: request.callback,
-    callbackService,
-    lostWriteReply: false
-  };
+  const live = { reference, callback: request.callback, callbackService };
   activeAttempts.add(attemptKey);
   attempts.set(reference.serial, live);
   const started = Date.now();
@@ -198,12 +191,7 @@ async function invoke(
       });
     const reply = decodeGuestReply(await response.json());
     // Even a late return remains guest data. Only the host knows whether effects committed.
-    return json({
-      outcome: "returned",
-      reply,
-      guestMs: Date.now() - started,
-      ...(live.lostWriteReply ? { lostWriteReply: true } : {})
-    });
+    return json({ outcome: "returned", reply, guestMs: Date.now() - started });
   } catch {
     return json({ outcome: "guest_failed", guestMs: Date.now() - started });
   } finally {
@@ -316,12 +304,6 @@ export class Callbacks extends WorkerEntrypoint<Environment, AttemptReference> {
       return GuestProtocol.callbackFileTooLarge;
     const live = liveAttempt(this.ctx.props);
     if (live === undefined) return endedCallback(this.ctx.props);
-    const write = isNotionWrite(operation.op);
-    const lostWrite = () => {
-      live.lostWriteReply = true;
-      return GuestProtocol.lostWriteCallbackReply;
-    };
-    let dispatched = false;
     try {
       const headers = new Headers({
         authorization: `Bearer ${live.callback.capability}`,
@@ -341,7 +323,6 @@ export class Callbacks extends WorkerEntrypoint<Environment, AttemptReference> {
         );
         body = operation.body.bytes as Uint8Array<ArrayBuffer>;
       }
-      dispatched = true;
       const response = await live.callbackService.fetch(live.callback.url, {
         method: "POST",
         headers,
@@ -349,8 +330,6 @@ export class Callbacks extends WorkerEntrypoint<Environment, AttemptReference> {
         redirect: "manual",
         signal: AbortSignal.timeout(Math.max(1, Math.ceil(live.reference.deadline - Date.now())))
       });
-      if (write && response.headers.get(GuestProtocol.callbackReplyLostHeader) === "1")
-        return lostWrite();
       let reply: GuestProtocol.CallbackReply;
       if (response.ok && response.headers.get("x-patchy-file-body") === "1") {
         const bytes = await readFileBody(response);
@@ -364,11 +343,10 @@ export class Callbacks extends WorkerEntrypoint<Environment, AttemptReference> {
         };
       } else reply = decodeCallbackReply(await response.json());
       // The host may finish or supersede the attempt while its body is arriving.
-      if (liveAttempt(this.ctx.props) !== live)
-        return write ? lostWrite() : endedCallback(this.ctx.props);
+      if (liveAttempt(this.ctx.props) !== live) return endedCallback(this.ctx.props);
       return reply;
     } catch {
-      if (write && dispatched) return lostWrite();
+      // A lost reply says nothing about commit. Settlement and safe retry belong to the host.
       return Date.now() >= live.reference.deadline
         ? refusal("timeout", "The invocation callback deadline has passed.")
         : refusal("source_unavailable", "The invocation callback could not complete.");

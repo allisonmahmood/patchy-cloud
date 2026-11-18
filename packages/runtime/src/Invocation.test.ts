@@ -1,6 +1,6 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
-import { CURRENT_RELEASE, WIRE_VERSION, GuestProtocol } from "@patchy/api";
+import { CURRENT_RELEASE, WIRE_VERSION, type GuestProtocol } from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { ContractLimits, Limits, OperatingLimits } from "@patchy/limits";
@@ -439,35 +439,6 @@ it.layer(services)("Invocation", (it) => {
         });
         assert.notProperty(yield* relay(["postgres.query", "posthog.query"]), "operation");
       })
-  );
-
-  it.effect("relays the loader's lost write reply and rejects guest-authored copies", () =>
-    Effect.gen(function* () {
-      const lost = GuestProtocol.lostWriteCallbackReply;
-      const cases = [
-        [true, lost, "unknown_outcome"],
-        [false, lost, "handler_failed"],
-        [true, { ...lost, details: { rowId: "untrusted" } }, "handler_failed"]
-      ] as const;
-      for (const [index, [observed, reply, expected]] of cases.entries()) {
-        const invocations = yield* makeInvocation(() =>
-          Effect.succeed({
-            outcome: "returned",
-            guestMs: 1,
-            reply,
-            ...(observed ? { lostWriteReply: true } : {})
-          })
-        );
-        const failure = yield* invocations
-          .call(
-            { handler: "demo.action", args: {} },
-            { ...binding, correlationId: `lost-write-${index}` }
-          )
-          .pipe(Effect.flip);
-        assert.strictEqual(failure.code, expected);
-        if (expected === "unknown_outcome") assert.strictEqual(failure.message, lost.error);
-      }
-    })
   );
 
   it.effect("preserves executor capacity refusals and sanitises executor defects", () =>

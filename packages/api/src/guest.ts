@@ -67,14 +67,6 @@ export const CallbackReply = Schema.Union([
 ]);
 export type CallbackReply = typeof CallbackReply.Type;
 
-export const callbackReplyLostHeader = "x-patchy-callback-reply-lost";
-export const lostWriteCallbackReply = {
-  ok: false,
-  source: "patchy",
-  code: "unknown_outcome",
-  error: "Notion may have saved the change. Check Notion before trying again."
-} as const satisfies RuntimeFailure;
-
 /** Only the loader sees the callback address and capability; neither enters guest props. */
 export const Invoke = Schema.Struct({
   wire: Schema.Literal(wireVersion),
@@ -114,12 +106,7 @@ export const InspectionReply = Schema.Union([
 export type InspectionReply = typeof InspectionReply.Type;
 /** Engine observations are separate from guest claims; only the host classifies settlement. */
 export const InvokeReply = Schema.Union([
-  Schema.Struct({
-    outcome: Schema.Literal("returned"),
-    reply: GuestReply,
-    guestMs: milliseconds,
-    lostWriteReply: Schema.optionalKey(Schema.Literal(true))
-  }),
+  Schema.Struct({ outcome: Schema.Literal("returned"), reply: GuestReply, guestMs: milliseconds }),
   Schema.Struct({ outcome: Schema.Literal("deadline"), guestMs: milliseconds }),
   Schema.Struct({ outcome: Schema.Literal("guest_failed"), guestMs: milliseconds })
 ]);

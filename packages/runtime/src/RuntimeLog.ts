@@ -111,7 +111,6 @@ export class RuntimeLog extends Context.Service<
       readonly durationMs: number;
       readonly rowCount: number | null;
       readonly bytes?: number | null;
-      readonly createdResourceId?: string;
     }) => Effect.Effect<void, SqlError>;
     readonly find: (input: {
       readonly companyId: string;
@@ -244,9 +243,7 @@ export const make = Effect.gen(function* () {
     yield* sql`
       UPDATE runtime_calls SET outcome = ${input.outcome}, duration_ms = ${input.durationMs},
         row_count = ${input.rowCount}, bytes = ${input.bytes ?? null},
-        outcome_code = ${input.outcomeCode ?? null},
-        resource = CASE WHEN ${input.createdResourceId ?? null}::text IS NULL THEN resource
-          ELSE concat_ws(' · ', resource, ${input.createdResourceId ?? null}::text) END
+        outcome_code = ${input.outcomeCode ?? null}
       WHERE correlation_id = ${input.correlationId} AND outcome = 'pending'`;
   });
 

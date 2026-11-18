@@ -468,11 +468,6 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
               });
       if (!live()) return refusedCallback();
       if (Date.now() >= invocation.attempt.deadline) return deadlineCallback();
-      let forwarded = false;
-      const markLost = (response: HttpServerResponse.HttpServerResponse) =>
-        forwarded
-          ? HttpServerResponse.setHeader(response, GuestProtocol.callbackReplyLostHeader, "1")
-          : response;
       return yield* Effect.gen(function* () {
         const body = yield* readCallbackBody(request.stream);
         if (!live()) return refusedCallback();
@@ -486,7 +481,6 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
         };
         if (request.headers["x-patchy-callback"] !== undefined)
           headers["x-patchy-callback"] = request.headers["x-patchy-callback"];
-        forwarded = true;
         const response = yield* http
           .execute(
             HttpClientRequest.post(invocation.target).pipe(
@@ -496,7 +490,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
           )
           .pipe(Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }));
         const bytes = yield* readCallbackBody(response.stream);
-        if (!live()) return markLost(refusedCallback());
+        if (!live()) return refusedCallback();
         return HttpServerResponse.uint8Array(bytes, {
           status: response.status,
           contentType: response.headers["content-type"] ?? "application/json",
@@ -511,14 +505,12 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
         Effect.catchTags({
           CallbackBodyTooLarge: () =>
             Effect.succeed(
-              markLost(
-                HttpServerResponse.jsonUnsafe(GuestProtocol.callbackFileTooLarge, { status: 413 })
-              )
+              HttpServerResponse.jsonUnsafe(GuestProtocol.callbackFileTooLarge, { status: 413 })
             ),
-          TimeoutError: () => Effect.succeed(markLost(deadlineCallback())),
-          SupervisorError: () => Effect.succeed(markLost(refusedCallback())),
-          HttpClientError: () => Effect.succeed(markLost(unavailableCallback())),
-          HttpServerError: () => Effect.succeed(markLost(unavailableCallback()))
+          TimeoutError: () => Effect.succeed(deadlineCallback()),
+          SupervisorError: () => Effect.succeed(refusedCallback()),
+          HttpClientError: () => Effect.succeed(unavailableCallback()),
+          HttpServerError: () => Effect.succeed(unavailableCallback())
         })
       );
     })

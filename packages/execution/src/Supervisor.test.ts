@@ -146,34 +146,6 @@ const idleHost = (_request: IncomingMessage, response: ServerResponse) => {
 };
 const largeAggregate = { "execution.residency.bytes": 8 * 1024 ** 3 } as const;
 
-it.live("reports an uncertain Notion write when the proxied host reply is lost", () =>
-  Effect.gen(function* () {
-    let writes = 0;
-    const host = yield* listener((request) => {
-      request.resume();
-      request.on("end", () => {
-        writes++;
-        request.socket.destroy();
-      });
-    });
-    const supervisor = yield* Supervisor.make({
-      callbackUrls: [host.url],
-      operatingLimits: largeAggregate
-    });
-    const loaded = yield* bind(
-      supervisor,
-      "ver_lost_write",
-      source.replace('op: "hold"', 'op: "notion.create"')
-    );
-    expect(yield* supervisor.invoke(invocation(loaded, host.url, "callback"))).toMatchObject({
-      outcome: "returned",
-      lostWriteReply: true,
-      reply: GuestProtocol.lostWriteCallbackReply
-    });
-    expect(writes).toBe(1);
-  }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer]))
-);
-
 it.live("keeps a loaded process callable across issuing-host replacement", () =>
   Effect.gen(function* () {
     const first = yield* listener((_request, response) => {

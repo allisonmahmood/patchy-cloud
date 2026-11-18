@@ -678,56 +678,6 @@ it.layer(
       )
   );
 
-  it.effect("reserves the Notion write reply before dispatch and charges actual reply bytes", () =>
-    Effect.gen(function* () {
-      const rowId = "00000000-0000-4000-8000-000000000002";
-      const input = { op: "notion.create", args: { connection: "probe" } };
-      let writes = 0;
-      const check = (limit: number, url: string) =>
-        Effect.gen(function* () {
-          const capabilities = yield* InvocationCapabilities.make;
-          const gateway = yield* CallbackGateway.make({
-            "notion.create": {
-              kind: "integration",
-              run: () =>
-                Effect.sync(() => {
-                  writes++;
-                  return { id: rowId, url };
-                })
-            }
-          }).pipe(
-            Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities)
-          );
-          const action = yield* Fixtures.issue(capabilities, { kind: "action" });
-          const reply = yield* gateway.callback(action.token, action.attempt, input);
-          return { reply, bytes: action.tree.bytes };
-        }).pipe(
-          Effect.scoped,
-          Effect.provideService(ContractLimits.overrides, { "tier2.callbacks.bytes": limit })
-        );
-
-      const url = "https://notion.so/task";
-      assert.include((yield* check(100, url)).reply, { ok: false, code: "limit_exceeded" });
-      assert.equal(writes, 0);
-
-      const success = yield* check(8_192, url);
-      assert.deepStrictEqual(success.reply, { ok: true, value: { id: rowId, url } });
-      assert.equal(
-        success.bytes,
-        JSON.stringify(input).length + JSON.stringify(success.reply).length
-      );
-      assert.equal(writes, 1);
-
-      const oversized = yield* check(8_192, url + "x".repeat(10_000));
-      assert.deepInclude(oversized.reply, {
-        ok: false,
-        code: "unknown_outcome",
-        details: { rowId }
-      });
-      assert.equal(writes, 2);
-    })
-  );
-
   it.effect("a fenced integration records an unknown outcome rather than a confirmed failure", () =>
     Effect.gen(function* () {
       const capabilities = yield* InvocationCapabilities.make;
@@ -1038,16 +988,12 @@ it.layer(
         "notion.getRow",
         "notion.markdown",
         "notion.search",
-        "notion.listPeople",
-        "notion.create",
-        "notion.update",
-        "notion.trash",
-        "notion.restore"
+        "notion.listPeople"
       ]
     }
   ] as const)
     it.effect(
-      `${provider} gates reads and writes by action permissions and caps its arguments`,
+      `${provider} runs only in actions, read-only ones included, and caps its arguments`,
       () =>
         Effect.gen(function* () {
           const capabilities = yield* InvocationCapabilities.make;
@@ -1085,30 +1031,15 @@ it.layer(
               );
             }
           assert.deepStrictEqual(ran, []);
-          const writes = new Set([
-            "notion.create",
-            "notion.update",
-            "notion.trash",
-            "notion.restore"
-          ]);
-          const reads = ops.filter((op) => !writes.has(op));
+          // Every operation reads, so a read-only action may make each.
           for (const op of ops) {
             const readOnly = yield* Fixtures.issue(capabilities, {
               kind: "action",
               readOnly: true
             });
-            const reply = yield* gateway.callback(readOnly.token, readOnly.attempt, call(op));
-            if (writes.has(op)) {
-              assert.include(reply, { ok: false, code: "access_denied" });
-              const writable = yield* Fixtures.issue(capabilities, { kind: "action" });
-              assert.isTrue(
-                (yield* gateway.callback(writable.token, writable.attempt, call(op))).ok
-              );
-            } else {
-              assert.isTrue(reply.ok);
-            }
+            assert.isTrue((yield* gateway.callback(readOnly.token, readOnly.attempt, call(op))).ok);
           }
-          assert.deepStrictEqual(ran, [...reads, ...ops.filter((op) => writes.has(op))]);
+          assert.deepStrictEqual(ran, [...ops]);
           const action = yield* Fixtures.issue(capabilities, { kind: "action" });
           assert.include(
             yield* gateway.callback(action.token, action.attempt, {
@@ -1120,6 +1051,48 @@ it.layer(
           assert.strictEqual(ran.length, ops.length);
         }).pipe(Effect.scoped)
     );
+  it.effect("a read-only action never dispatches a Notion write; another action does", () =>
+    Effect.gen(function* () {
+      const capabilities = yield* InvocationCapabilities.make;
+      const ops = ["notion.create", "notion.update", "notion.trash", "notion.restore"] as const;
+      const ran: Array<string> = [];
+      const gateway = yield* CallbackGateway.make(
+        Object.fromEntries(
+          ops.map((op): [string, Runtime.JsonHandler] => [
+            op,
+            {
+              kind: "integration",
+              connectionId: () => "notion-connection",
+              run: () =>
+                Effect.sync(() => {
+                  ran.push(op);
+                  return { ok: true };
+                })
+            }
+          ])
+        )
+      ).pipe(Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities));
+      const readOnly = yield* Fixtures.issue(capabilities, { kind: "action", readOnly: true });
+      for (const op of ops)
+        assert.include(
+          yield* gateway.callback(readOnly.token, readOnly.attempt, {
+            op,
+            args: { connection: "probe" }
+          }),
+          { ok: false, code: "access_denied", error: "A read-only action cannot write." }
+        );
+      assert.deepStrictEqual(ran, []);
+      const action = yield* Fixtures.issue(capabilities, { kind: "action" });
+      for (const op of ops)
+        assert.isTrue(
+          (yield* gateway.callback(action.token, action.attempt, {
+            op,
+            args: { connection: "probe" }
+          })).ok
+        );
+      assert.deepStrictEqual(ran, [...ops]);
+    }).pipe(Effect.scoped)
+  );
   it.effect("IMAP runs only in actions, read-only ones included, and caps its arguments", () =>
     Effect.gen(function* () {
       const capabilities = yield* InvocationCapabilities.make;
