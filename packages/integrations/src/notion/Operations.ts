@@ -1,5 +1,4 @@
-import { NotionId, notionReads, type NotionRead, type NotionSnapshot } from "@patchy/api";
-import { Cryptography } from "@patchy/core";
+import { NotionId, notionReads, type NotionRead } from "@patchy/api";
 import { ContractLimits } from "@patchy/limits";
 import { Binding, Runtime } from "@patchy/runtime/core";
 import * as Clock from "effect/Clock";
@@ -7,9 +6,8 @@ import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as ConnectionStore from "../ConnectionStore.js";
-import { connectionRecheck, ownerCheck, type DevRead, type Target } from "../definition.js";
+import { connectionRecheck, type DevRead, type Target } from "../definition.js";
 import * as Reads from "./Reads.js";
 import * as Source from "./Source.js";
 
@@ -24,43 +22,27 @@ export class ConnectionNotDeclared extends Schema.TaggedError<ConnectionNotDecla
   }
 }
 
+/** A Notion refusal as the wire carries it: its code, status and message, and what it names. */
 const refusal = (error: Source.Refusal): Runtime.RuntimeError => {
+  const { code, dataSource, property, retryAfterSeconds } = error;
+  // Only the token check refuses these; a stored token that no longer parses is Patchy's side.
   if (
-    error.code === "invalid_credentials" ||
-    error.code === "notion_not_workspace_key" ||
-    error.code === "notion_other_workspace"
+    code === "invalid_credentials" ||
+    code === "notion_not_workspace_key" ||
+    code === "notion_other_workspace"
   )
     return new Runtime.SourceUnavailable({ cause: error });
-  const { code, bound, dataSource, missing, retryAfterSeconds } = error;
+  const details: Readonly<Record<string, string>> | undefined =
+    dataSource !== undefined ? { dataSource } : property !== undefined ? { property } : undefined;
   return {
     code,
     status: error.status,
-    message:
-      code === "too_large"
-        ? `This Notion read exceeded the Patchy limit${bound ? ` for ${bound.name} (${bound.limit})` : ""}.`
-        : code === "shape_mismatch" && missing === undefined
-          ? "Notion returned an unexpected read response."
-          : code === "timeout"
-            ? "Notion did not answer before the read deadline."
-            : error.message,
-    ...(code === "shape_mismatch" && missing?.kind === "property"
-      ? { details: { property: missing.name } }
-      : code === "not_found" && dataSource !== undefined
-        ? { details: { dataSource } }
-        : code === "offset_exhausted"
-          ? { details: { maxOffset: 10000 } }
-          : {}),
-    ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }),
-    ...(bound?.name === "bytes" ? { limitId: "notion.read.bytes", value: bound.limit } : {}),
-    ...(bound?.name === "property items"
-      ? { limitId: "notion.read.propertyItems", value: bound.limit }
-      : {})
+    message: error.message,
+    ...(details === undefined ? {} : { details }),
+    ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds })
   };
 };
-
-const isNotionRefusal = Schema.is(Source.Refusal);
-const isConnectionNotFound = Schema.is(ConnectionStore.ConnectionNotFound);
-const isConnectionNotConnected = Schema.is(ConnectionStore.ConnectionNotConnected);
+const isRefusal = Schema.is(Source.Refusal);
 
 const storedRefusal = (cause: ConnectionStore.ConnectionError) =>
   cause._tag === "ConnectionNotFound" || cause._tag === "ConnectionNotConnected"
@@ -69,83 +51,64 @@ const storedRefusal = (cause: ConnectionStore.ConnectionError) =>
       ? new Runtime.AccessDenied({ cause })
       : new Runtime.SourceUnavailable({ cause });
 
-const connected = Effect.fn("Notion.connected")(function* (
-  companyId: string,
-  declaration: Target["connection"]
-) {
-  const connections = yield* ConnectionStore.ConnectionStore;
-  const current = yield* connections
-    .get(companyId, declaration.id)
-    .pipe(Effect.mapError(storedRefusal));
-  if (current.integration !== "notion" || current.handle !== declaration.handle)
-    return yield* new ConnectionStore.ConnectionNotFound({
-      companyId,
-      lookup: { id: declaration.id }
-    });
-  if (current.status !== "connected") return yield* new ConnectionStore.ConnectionNotConnected({});
-  return current;
-});
-
-type Send = (
-  request: HttpClientRequest.HttpClientRequest
-) => Effect.Effect<unknown, Source.Refusal>;
-type Plan<I, A> = (
-  snapshot: NotionSnapshot,
-  input: I,
-  binding: { readonly id: string; readonly revision: number }
-) => Effect.Effect<
-  (send: Send) => Effect.Effect<A, Source.Refusal>,
-  Source.Refusal,
-  Cryptography.Cryptography
->;
-
-const read = Effect.fn("Notion.read")(
-  function* <E extends Runtime.RuntimeError, I, A>(target: Target<E>, input: I, plan: Plan<I, A>) {
+/**
+ * One call as its door admitted it. Its arguments are checked against the version's snapshot
+ * first, with nothing sent. Then, holding one of the bot's slots: the door's recheck of the caller,
+ * the connection still connected and still this integration and handle, and the token decrypted
+ * right before sending. The connection's absence and the door's refusal come back as they are,
+ * for the door to say.
+ */
+const run = Effect.fn("Notion.run")(
+  function* <E extends Runtime.RuntimeError, I, A>(
+    target: Target<E>,
+    input: I,
+    plan: Reads.Plan<I, A>
+  ) {
     const { companyId, connection, deadline, recheck } = target;
-    const { revision } = connection;
+    const revision = connection.revision;
     if (revision === undefined) return yield* new Runtime.InvalidRequest({});
-    const source = yield* Source.Source;
     const store = yield* ConnectionStore.ConnectionStore;
-    yield* connected(companyId, connection);
-    const metadata = yield* store
+    const source = yield* Source.Source;
+    const stored = yield* store
       .snapshot(companyId, connection.id, revision)
       .pipe(Effect.mapError(storedRefusal));
-    if (metadata.integration !== "notion")
+    if (stored.integration !== "notion")
       return yield* new ConnectionStore.ConnectionNotFound({
         companyId,
         lookup: { id: connection.id, revision }
       });
-    const execute = yield* plan(metadata.snapshot, input, {
-      id: connection.id,
-      revision
-    });
-    const bytes = yield* ContractLimits.get("notion.read.bytes");
+    const execute = yield* plan(stored.snapshot, input);
+    // The slot is the snapshot's bot's, which needs no read of the connection before it.
     return yield* source.withSlot(
-      connection.id,
-      () =>
-        Effect.gen(function* () {
-          yield* recheck;
-          const current = yield* connected(companyId, connection);
-          const key = yield* store
-            .poolCredentials(
-              companyId,
-              { kind: "notion", id: connection.id, handle: connection.handle, revision },
-              current.credentialRevision
-            )
-            .pipe(Effect.mapError(storedRefusal), Effect.flatMap(Source.parseCredentials));
-          if (
-            current.display.workspace.id !== metadata.snapshot.workspace.id ||
-            key.workspaceId !== metadata.snapshot.workspace.id
-          )
-            return yield* new Runtime.AccessDenied({});
-          const redacted = Redacted.make(key.key);
-          const budget = { remaining: bytes };
-          return yield* execute((request) => source.send(redacted, request, bytes, budget));
-        }),
+      stored.snapshot.botId,
       deadline
+    )(
+      Effect.gen(function* () {
+        yield* recheck;
+        const current = yield* store
+          .get(companyId, connection.id)
+          .pipe(Effect.mapError(storedRefusal));
+        if (current.integration !== "notion" || current.handle !== connection.handle)
+          return yield* new ConnectionStore.ConnectionNotFound({
+            companyId,
+            lookup: { id: connection.id }
+          });
+        if (current.status !== "connected")
+          return yield* new ConnectionStore.ConnectionNotConnected({});
+        const { key } = yield* store
+          .poolCredentials(
+            companyId,
+            { kind: "notion", id: connection.id, handle: connection.handle, revision },
+            current.credentialRevision
+          )
+          .pipe(Effect.mapError(storedRefusal), Effect.flatMap(Source.parseCredentials));
+        const token = Redacted.make(key);
+        const budget = { remaining: yield* ContractLimits.get("notion.response.bytes") };
+        return yield* execute((request) => source.send(token, request, { budget }));
+      })
     );
   },
-  Effect.mapError((error) => (isNotionRefusal(error) ? refusal(error) : error))
+  Effect.mapError((error) => (isRefusal(error) ? refusal(error) : error))
 );
 
 export const declarationOf = (alias: string, binding: Binding.Binding["Service"]) => {
@@ -154,54 +117,64 @@ export const declarationOf = (alias: string, binding: Binding.Binding["Service"]
   return declaration?.kind === "notion" ? declaration : undefined;
 };
 
-const safeLabel = /^[\p{L}\p{N}_ -]{1,80}$/u;
+/** A data source key or property name as recent calls may show it; anything else is left out. */
+const label = /^[\p{L}\p{N}_ -]{1,80}$/u;
+const isLabel = (value: unknown): value is string => typeof value === "string" && label.test(value);
 const isId = Schema.is(NotionId);
+/** The data source and the property names a list filters, orders or selects by, never a value. */
 const sourceAndProperties = (args: unknown): string | null => {
-  if (!Predicate.isObject(args) || typeof args.source !== "string" || !safeLabel.test(args.source))
-    return null;
-  const fields = new Set<string>();
+  if (!Predicate.isObject(args) || !isLabel(args.source)) return null;
+  const names = new Set<string>();
   for (const filter of [args.eq, args.contains])
-    if (Predicate.isObject(filter)) for (const key of Object.keys(filter)) fields.add(key);
+    if (Predicate.isObject(filter)) for (const name of Object.keys(filter)) names.add(name);
   for (const field of [args.range, args.orderBy])
-    if (Predicate.isObject(field) && typeof field.property === "string") fields.add(field.property);
-  if (Array.isArray(args.select))
-    for (const field of args.select) if (typeof field === "string") fields.add(field);
-  const names = [...fields].filter((field) => safeLabel.test(field)).slice(0, 8);
-  return names.length === 0 ? args.source : `${args.source} · ${names.join(", ")}`;
+    if (Predicate.isObject(field) && typeof field.property === "string") names.add(field.property);
+  if (Array.isArray(args.select)) for (const name of args.select) names.add(name);
+  const shown = [...names].filter(isLabel).slice(0, 8);
+  return shown.length === 0 ? args.source : `${args.source} · ${shown.join(", ")}`;
 };
-const identifier = (args: unknown) => (Predicate.isObject(args) && isId(args.id) ? args.id : null);
-const nothingNamed = () => null;
+const idOf = (args: unknown) => (Predicate.isObject(args) && isId(args.id) ? args.id : null);
 const count = (key: "rows" | "results" | "people") => (value: unknown) =>
   Predicate.isObject(value) && Array.isArray(value[key]) ? value[key].length : null;
 const oneOrNone = (value: unknown) => (value === null ? 0 : 1);
 
-const recorded = {
+/**
+ * How each call reads in recent calls: the data source, the property names and the ids it
+ * named, and how many rows came back. Never a filter value, search text, row value or page text.
+ */
+export const recorded: {
+  readonly [K in NotionRead]: {
+    readonly resource: (args: unknown) => string | null;
+    readonly rowCount: (value: unknown) => number | null;
+  };
+} = {
   listRows: { resource: sourceAndProperties, rowCount: count("rows") },
   getRow: {
-    resource: (args: unknown) => {
-      const source = sourceAndProperties(args);
-      const id = identifier(args);
-      return source !== null && id !== null ? `${source} · ${id}` : (source ?? id);
-    },
+    resource: (args: unknown) =>
+      [sourceAndProperties(args), idOf(args)].filter((part) => part !== null).join(" · ") || null,
     rowCount: oneOrNone
   },
-  markdown: { resource: identifier, rowCount: oneOrNone },
-  search: { resource: nothingNamed, rowCount: count("results") },
-  listPeople: { resource: nothingNamed, rowCount: count("people") }
+  markdown: { resource: idOf, rowCount: oneOrNone },
+  search: { resource: () => null, rowCount: count("results") },
+  listPeople: { resource: () => null, rowCount: count("people") }
 };
 
+/**
+ * One read for `patchy dev` through the instance's dev door (ADR-0013): the caller is the
+ * door's, the alias stays in the repo, and the declaration's revision picks the snapshot.
+ */
 const devRead = <I, A>(
   name: NotionRead,
   input: Schema.Decoder<I>,
-  plan: Plan<I, A>
-): DevRead<Source.Source | Cryptography.Cryptography> => {
+  plan: Reads.Plan<I, A>
+): DevRead<Source.Source> => {
   const decode = Schema.decodeUnknownEffect(input, { onExcessProperty: "error" });
   return {
     ...recorded[name],
     run: (target, args) =>
       decode(args).pipe(
         Effect.mapError((cause) => new Runtime.InvalidRequest({ cause })),
-        Effect.flatMap((value) => read(target, value, plan))
+        Effect.flatMap((value) => run(target, value, plan))
       )
   };
 };
@@ -213,13 +186,16 @@ export const devReads = {
   "notion.listPeople": devRead("listPeople", notionReads.listPeople.input, Reads.planPeople)
 };
 
+/**
+ * Published patches' handlers. They share the server's one Source with the dev door and
+ * connection administration, so a bot's slots span them all.
+ */
 export const makeHandlers = Effect.gen(function* () {
   const source = yield* Source.Source;
   const connections = yield* ConnectionStore.ConnectionStore;
-  const cryptography = yield* Cryptography.Cryptography;
   const deadlineMs = yield* ContractLimits.get("integration.deadline");
 
-  const invoke = <I, A>(alias: string, input: I, plan: Plan<I, A>) =>
+  const invoke = <I, A>(alias: string, input: I, plan: Reads.Plan<I, A>) =>
     Effect.gen(function* () {
       const binding = yield* Binding.Binding;
       const connection = declarationOf(alias, binding);
@@ -230,8 +206,7 @@ export const makeHandlers = Effect.gen(function* () {
         binding.identity.user.id !== binding.principal?.userId
       )
         return yield* new Runtime.AccessDenied({});
-      yield* ownerCheck(binding, connection.id);
-      return yield* read(
+      return yield* run(
         {
           companyId: binding.companyId,
           connection,
@@ -246,16 +221,9 @@ export const makeHandlers = Effect.gen(function* () {
     }).pipe(
       Effect.provideService(Source.Source, source),
       Effect.provideService(ConnectionStore.ConnectionStore, connections),
-      Effect.provideService(Cryptography.Cryptography, cryptography),
-      Effect.mapError((error) => {
-        if (isConnectionNotFound(error)) return new Runtime.AccessDenied({ cause: error });
-        if (isConnectionNotConnected(error))
-          return {
-            code: "access_denied" as const,
-            status: 403,
-            message: "This Notion connection is paused. Ask a company administrator to resume it."
-          };
-        return error;
+      Effect.catchTags({
+        ConnectionNotFound: (cause) => Effect.fail(new Runtime.AccessDenied({ cause })),
+        ConnectionNotConnected: (cause) => Effect.fail(new Runtime.AccessDenied({ cause }))
       })
     );
   const handler = <
@@ -263,13 +231,13 @@ export const makeHandlers = Effect.gen(function* () {
     O extends Schema.Top & Schema.Codec<unknown, unknown>
   >(
     name: NotionRead,
-    { guest: input, output }: { guest: I; output: O },
+    { guest, output }: { readonly guest: I; readonly output: O },
     run: (args: I["Type"]) => Effect.Effect<O["Type"], Runtime.RuntimeError, Binding.Binding>
   ) =>
     Runtime.handler(
       {
         kind: "integration",
-        input,
+        input: guest,
         output,
         ...recorded[name],
         connectionId: (args, binding) =>
