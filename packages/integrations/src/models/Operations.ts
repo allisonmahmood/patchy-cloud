@@ -3,8 +3,10 @@
  * actions only. Each loads the role as it stands now, so an admin's remap reaches published
  * patches at once, then the provider connection it points at and that connection's key. One
  * provider request per call, never retried, cut off a second before the action's own deadline so
- * the handler hears why. Each call adds an entry to the request's wide event: role, model,
- * duration, tokens and outcome, never the prompt or the answer. PROTOTYPE.
+ * the handler hears why. Calls to one provider connection pass a fair gate (CallGate): a call past
+ * its limits waits its turn until that cut-off, then rechecks its viewer and reloads the key. Each
+ * call adds an entry to the request's wide event: role, model, gate wait, duration, tokens and
+ * outcome, never the prompt or the answer. PROTOTYPE.
  */
 import {
   ModelsDecide,
@@ -22,9 +24,11 @@ import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
+import * as Config from "effect/Config";
 import * as Schema from "effect/Schema";
+import * as CallGate from "../CallGate.js";
 import * as ConnectionStore from "../ConnectionStore.js";
-import { operation, ownerCheck, ViewerRefusal } from "../definition.js";
+import { operation, ownerCheck, viewerRecheck, ViewerRefusal } from "../definition.js";
 import * as Errors from "./Errors.js";
 import * as Source from "./Source.js";
 
@@ -42,6 +46,7 @@ export class ConnectionNotDeclared extends Schema.TaggedError<ConnectionNotDecla
 export const ModelErrors = Schema.Union([
   ConnectionNotDeclared,
   Errors.Timeout,
+  Errors.Busy,
   Errors.RateLimited,
   Errors.Unavailable,
   Errors.InvalidRequest,
@@ -56,7 +61,37 @@ export const ModelErrors = Schema.Union([
 export const RESERVE_MS = 1_000;
 const FALLBACK_MS = 60_000;
 
+/**
+ * The gate's starting numbers, per provider connection in each replica. 16 running keeps one
+ * company's calls a small share of a process's outbound requests while leaving a provider's usual
+ * request rate far off (16 calls of 20 s are under 50 a minute); 4 per person lets a page's few
+ * calls run together and stops one agent's burst taking the connection; 32 waiting, 8 of them a
+ * person's, bounds a queue whose tail would mostly wait out its cut-off anyway.
+ */
+export const GATE: CallGate.Limits = { concurrent: 16, perPerson: 4, waiting: 32, perPersonWaiting: 8 };
+
+export class GateConfigRefused extends Schema.TaggedError<GateConfigRefused>()(
+  "ModelsGateConfigRefused",
+  { value: Schema.String }
+) {
+  override get message() {
+    return `PATCHY_DEV_MODEL_GATE=${this.value} is honoured only with NODE_ENV=development or test, as names concurrent, perPerson, waiting and perPersonWaiting with whole numbers.`;
+  }
+}
+
+/** The gate's limits: the starting numbers, or a dev instance's `PATCHY_DEV_MODEL_GATE` for a load test. */
+const gateLimits = Effect.gen(function* () {
+  const override = yield* Config.option(Config.String("PATCHY_DEV_MODEL_GATE"));
+  if (Option.isNone(override)) return GATE;
+  const environment = yield* Config.String("NODE_ENV").pipe(Config.withDefault("production"));
+  const parsed = CallGate.parseLimits(override.value, GATE);
+  if ((environment !== "development" && environment !== "test") || parsed === undefined)
+    return yield* new GateConfigRefused({ value: override.value });
+  return parsed;
+});
+
 const isUnavailable = Schema.is(Errors.Unavailable);
+const isBusy = Schema.is(Errors.Busy);
 const isAbsent = Schema.is(
   Schema.Union([ConnectionStore.ConnectionNotFound, ConnectionStore.ConnectionNotConnected])
 );
@@ -122,6 +157,7 @@ const provider = Effect.fn("ModelsOperations.provider")(function* (companyId: st
 const perform = Effect.fn("ModelsOperations.perform")(function* <
   A extends { readonly usage: ModelUsage }
 >(
+  gate: CallGate.Gate,
   alias: string,
   op: "decide" | "generate",
   send: (
@@ -152,6 +188,7 @@ const perform = Effect.fn("ModelsOperations.perform")(function* <
     return yield* new Errors.InvalidRequest({ reason: "kind", kind });
   const model = found.display.model;
   const source = yield* Source.Source;
+  let admitted: CallGate.Admitted | undefined;
   const record = (exit: Exit.Exit<A, unknown>) =>
     Effect.gen(function* () {
       const ended = yield* Clock.currentTimeMillis;
@@ -163,10 +200,21 @@ const perform = Effect.fn("ModelsOperations.perform")(function* <
         : Predicate.isObject(error) && "usage" in error && Predicate.isObject(error.usage)
           ? (error.usage as ModelUsage)
           : undefined;
+      const gated =
+        admitted !== undefined
+          ? {
+              gateWaitMs: admitted.waitedMs,
+              gateRunning: admitted.running,
+              gateWaiting: admitted.waiting
+            }
+          : isBusy(error)
+            ? { gateWaitMs: error.waitedMs }
+            : {};
       yield* WideEvents.modelCall({
         op,
         role: declaration.handle,
         model,
+        ...gated,
         durationMs: ended - started,
         inputTokens: usage?.inputTokens ?? null,
         outputTokens: usage?.outputTokens ?? null,
@@ -177,40 +225,63 @@ const perform = Effect.fn("ModelsOperations.perform")(function* <
             : "interrupted"
       });
     });
-  const work = Effect.gen(function* () {
-    const target = yield* loaded(provider(companyId, found.display.provider));
-    const cutoff = Math.max(1, deadline - RESERVE_MS - (yield* Clock.currentTimeMillis));
-    return yield* send({ key: target.key, model }, source).pipe(
-      // Interrupting the request aborts its fetch, which closes the provider's connection.
-      Effect.timeoutOrElse({
-        duration: cutoff,
-        orElse: () => Effect.fail(new Errors.Timeout({ milliseconds: cutoff }))
+  const until = deadline - RESERVE_MS;
+  const work = gate
+    .run({ connection: found.display.provider, person: identity.user.id }, until, (through) =>
+      Effect.gen(function* () {
+        admitted = through;
+        // A call that waited asks again whether its viewer may still call, as other gates do.
+        if (through.waitedMs > 0) yield* viewerRecheck(binding);
+        // The key as it is now, after any wait.
+        const target = yield* loaded(provider(companyId, found.display.provider));
+        const cutoff = Math.max(1, until - (yield* Clock.currentTimeMillis));
+        return yield* send({ key: target.key, model }, source).pipe(
+          // Interrupting the request aborts its fetch, which closes the provider's connection.
+          Effect.timeoutOrElse({
+            duration: cutoff,
+            orElse: () => Effect.fail(new Errors.Timeout({ milliseconds: cutoff }))
+          })
+        );
+      })
+    )
+    .pipe(
+      Effect.catchTags({
+        CallGateRefused: (refused) =>
+          Effect.fail(
+            new Errors.Busy({
+              limit: refused.limit,
+              value: refused.value,
+              waitedMs: Math.round(refused.waitedMs)
+            })
+          )
       })
     );
-  });
   return yield* Effect.onExit(work, record);
 });
 
-const decide = operation({
-  input: ModelsDecide,
-  output: ModelsDecided,
-  errors: ModelErrors,
-  run: ({ connection, input, questions }: typeof ModelsDecide.Type) =>
-    perform(connection, "decide", (target, source) =>
-      source.decide({ key: target.key, model: target.model, input, questions })
-    )
-});
-const generate = operation({
-  input: ModelsGenerate,
-  output: ModelsGenerated,
-  errors: ModelErrors,
-  run: ({ connection, ...request }: typeof ModelsGenerate.Type) =>
-    perform(connection, "generate", (target, source) =>
-      source.generate({ key: target.key, model: target.model, ...request })
-    )
+const operationsWith = (gate: CallGate.Gate) => ({
+  decide: operation({
+    input: ModelsDecide,
+    output: ModelsDecided,
+    errors: ModelErrors,
+    run: ({ connection, input, questions }: typeof ModelsDecide.Type) =>
+      perform(gate, connection, "decide", (target, source) =>
+        source.decide({ key: target.key, model: target.model, input, questions })
+      )
+  }),
+  generate: operation({
+    input: ModelsGenerate,
+    output: ModelsGenerated,
+    errors: ModelErrors,
+    run: ({ connection, ...request }: typeof ModelsGenerate.Type) =>
+      perform(gate, connection, "generate", (target, source) =>
+        source.generate({ key: target.key, model: target.model, ...request })
+      )
+  })
 });
 
-export const operations = { decide, generate };
+/** The operations' shapes, for the integration's definition; the handlers below run them. */
+export const operations = operationsWith(CallGate.make(GATE));
 
 /** The role a call names, for recent calls; never its input or questions. */
 const connectionId = (args: unknown, binding: Binding.Binding["Service"]): string | null => {
@@ -228,6 +299,8 @@ const connectionId = (args: unknown, binding: Binding.Binding["Service"]): strin
 export const makeHandlers = Effect.gen(function* () {
   const source = yield* Source.Source;
   const connections = yield* ConnectionStore.ConnectionStore;
+  // One gate for this server process: every model call to a provider connection passes it.
+  const { decide, generate } = operationsWith(CallGate.make(yield* gateLimits));
   const provide = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
       Effect.provideService(Source.Source, source),

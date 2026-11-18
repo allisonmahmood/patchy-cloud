@@ -149,5 +149,36 @@ export class Refused extends Schema.TaggedError<Refused>()("ModelsRefused", { us
   }
 }
 
+/**
+ * Patchy's gate for the provider connection refused: its waiting room was full, or the call
+ * waited its turn until its cut-off. Nothing was sent, so nothing was billed.
+ */
+export class Busy extends Schema.TaggedError<Busy>()("ModelsBusy", {
+  limit: Schema.Literals(["concurrent", "perPerson", "waiting", "personWaiting"]),
+  value: Schema.Int,
+  waitedMs: Schema.Int
+}) {
+  readonly code = "busy" as const;
+  readonly status = 503;
+  get limitId() {
+    return `models.calls.${this.limit}`;
+  }
+  get scope() {
+    return this.limit === "perPerson" || this.limit === "personWaiting" ? "viewer" : "company";
+  }
+  /** A full waiting room may clear in a moment; a wait to the cut-off advises no retry. */
+  get retryAfterSeconds() {
+    return this.waitedMs === 0 ? 1 : undefined;
+  }
+  get details() {
+    return { waitedMs: this.waitedMs };
+  }
+  override get message() {
+    return this.waitedMs === 0
+      ? "Too many model calls are already waiting on this provider connection, so Patchy sent nothing. Try again shortly."
+      : `This provider connection stayed busy for the ${Math.round(this.waitedMs / 1_000)} s this call could wait, so Patchy sent nothing.`;
+  }
+}
+
 export type CallError =
   Timeout | RateLimited | Unavailable | InvalidRequest | ShapeMismatch | OutputTruncated | Refused;
