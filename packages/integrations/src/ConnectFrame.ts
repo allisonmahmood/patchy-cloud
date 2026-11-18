@@ -73,12 +73,8 @@ export interface ConnectSpec {
    * `form` attribute, as GitHub's sign-in buttons do, so Enter in its fields never presses them.
    */
   readonly outside?: string;
-  /** Name it: an example handle, description prompt and any choice saved with the name. */
-  readonly name: {
-    readonly example: string;
-    readonly describe: string;
-    readonly fields?: Fields.Layout;
-  };
+  /** Name it: an example handle and what a description might say. */
+  readonly name: { readonly example: string; readonly describe: string };
   /**
    * Once connected: what patches read through it, whether builders' agents read it live while
    * they build, anything more it can do, what it never does, and at most one caveat. The frame
@@ -102,8 +98,7 @@ const testAndConnect = button("Test and connect", { kind: "primary", pendingLabe
 export const shows = (spec: ConnectSpec): ReadonlyArray<View.Field> => [
   ...Fields.flat(spec.paste.fields).map((item) => item.field),
   "handle",
-  "description",
-  ...Fields.flat(spec.name.fields ?? []).map((item) => item.field)
+  "description"
 ];
 
 /** 1 Get it: the steps in the other system, then what to set or have. */
@@ -171,7 +166,7 @@ const nameIt = (
         placeholder: spec.describe,
         autofocus: focus && descriptionError !== undefined
       })
-  })}${Fields.renderAll(spec.fields ?? [], submitted, refusal)}`;
+  })}`;
 };
 
 /**

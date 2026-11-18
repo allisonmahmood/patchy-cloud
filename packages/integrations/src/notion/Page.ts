@@ -41,7 +41,7 @@ const token: Fields.Spec = {
   name: "key",
   field: "key",
   label: "Internal connection token",
-  hint: "Patchy checks the token and discovers data sources before saving. The token is encrypted and never shown again.",
+  hint: "Encrypted, and never shown again. Patchy checks it and reads the shared databases' schemas before saving.",
   autocomplete: "new-password",
   maxlength: 512
 };
@@ -50,33 +50,44 @@ const accessField: Fields.Spec = {
   name: "access",
   field: "access",
   label: "Access",
+  hint: "Read and write lets patches add, change and trash rows.",
   initial: "read",
+  width: "sm",
   choices: [
     { value: "read", label: "Read" },
     { value: "write", label: "Read and write" }
   ]
 };
 
+/** What the connect page asks for, in the shared frame, of a Notion workspace owner. */
 export const connect: ConnectFrame.ConnectSpec = {
   getIt: {
-    title: "Set up an internal connection",
+    title: "Make an internal connection",
     steps: [
-      "As a workspace owner, create an internal connection in the Notion Developer portal.",
-      "Enable Read content and Read user information without email. For write access, also enable Insert content and Update content.",
-      "Use Add connections on each database in Notion to share it directly with this connection."
+      "In Notion's Developer portal, a workspace owner creates an internal connection with these capabilities, then shares each database patches should use with it, through Add connections. Patches see only what is shared with it."
     ],
-    note: "After sharing more databases, use Refresh workspace. Notion search can take time to find newly shared content."
+    table: {
+      head: ["Capability", "Set to"],
+      rows: [
+        ["Read content", "On"],
+        ["Read user information", "Without email addresses"],
+        ["Insert content, Update content", "On for Read and write, otherwise off"]
+      ]
+    },
+    note: "Shared something later? Press Refresh workspace on the connection's page, and again if Notion hasn't listed it yet."
   },
-  paste: { title: "Paste the token", fields: [token] },
-  name: { example: "probe", describe: "Tasks and team pages", fields: [accessField] },
+  paste: { title: "Paste the token", fields: [token, accessField] },
+  name: { example: "tasks", describe: "Tasks, projects and the team wiki" },
   once: {
     reads: "everything shared with this connection",
     devReads: true,
-    also: [
-      "With write access, patches can add, change and trash rows. Changes can notify people or trigger Notion automations and webhooks. Trashing or restoring a row doesn't undo those effects."
+    also: ["With Read and write, those patches add, change and trash rows"],
+    cannot: [
+      "Nothing is written while a patch is being built",
+      "Page text, comments and files are never changed"
     ],
-    cannot: ["Writes in local dev reach Notion"],
-    caveat: "Individual Notion permissions don't carry over. This release discovers the schema."
+    caveat:
+      "A write is an ordinary Notion edit: it notifies people and runs automations and webhooks, and trashing a row doesn't undo those. Notion's own page permissions don't carry over."
   }
 };
 
