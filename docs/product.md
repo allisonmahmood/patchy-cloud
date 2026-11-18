@@ -1465,8 +1465,9 @@ tier 1 pages can't reach it. A data source's `list` returns a page of rows and N
 cursor, which goes back as `start_cursor` unchanged; a cursor from another list is Notion's
 `invalid_request`. Filter, order and selection names come from the generated client, and
 Patchy checks them against the version's snapshot, then sends them by property id, so renames
-keep working. Nothing else is sent before the query: a selected property deleted or retyped in
-Notion fails `shape_mismatch` naming it when the rows come back, a data source no longer shared
+keep working. Nothing else is sent before the query: a property deleted or retyped in Notion
+fails `shape_mismatch` naming it when the rows come back without it, or Notion's own
+`invalid_request` when a filter, order or selection names it; a data source no longer shared
 fails `not_found` naming it, and a list past Notion's 10,000th row fails `offset_exhausted`.
 People, relations and mentions Notion cuts at 25 are read whole, within the call's
 `notion.response.bytes`. A relation whose target database was unshared reads as Notion
