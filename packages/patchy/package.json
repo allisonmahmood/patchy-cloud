@@ -80,8 +80,8 @@
     "typecheck": "effect-tsgo tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
-    "@babel/parser": "8.0.8",
-    "@babel/types": "8.0.8",
+    "@babel/parser": "8.1.2",
+    "@babel/types": "8.1.2",
     "@effect/platform-node": "catalog:",
     "@effect/sql-pglite": "catalog:",
     "@effect/vitest": "catalog:",
@@ -105,20 +105,20 @@
     "css-tree": "^3.2.1",
     "effect": "catalog:",
     "ignore": "^7.0.11",
-    "papaparse": "5.7.0",
+    "papaparse": "5.7.1",
     "parse5": "catalog:",
-    "semver": "^7.7.2",
+    "semver": "^7.8.6",
     "typescript": "7.0.2",
-    "vite": "^8.3.4",
+    "vite": "^8.3.8",
     "vite-plugin-singlefile": "^2.3.4",
-    "vitest": "^5.0.5",
+    "vitest": "^5.1.0",
     "yaml": "2.9.1"
   },
   "dependencies": {
-    "@electric-sql/pglite": "0.5.10",
+    "@electric-sql/pglite": "0.5.16",
     "@preact/signals": "2.11.4",
     "@preact/signals-core": "1.14.5",
-    "preact": "11.1.0"
+    "preact": "11.2.0"
   },
   "bundledDependencies": [
     "@electric-sql/pglite",

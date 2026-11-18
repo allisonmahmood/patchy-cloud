@@ -3,7 +3,7 @@ packages:
   - "packages/*"
   - "scripts/dev"
 catalog:
-  parse5: ^8.0.1
+  parse5: ^8.1.1
   # Effect packages share one version; Dependabot bumps these together
   # (see .github/dependabot.yml). Only the Effect checker has its own release
   # line: it ships Effect-patched builds of exact TypeScript versions, so it
@@ -24,10 +24,9 @@ minimumReleaseAge: 1440
 pmOnFail: ignore
 # Two copies of `effect` in the tree break Context/Layer identity, so every
 # transitive `effect` resolves to the catalog version. The @effect/* packages we
-# depend on are pinned alongside it. pnpm overrides match exact names, not
-# scope globs, so packages we only get transitively (today:
-# @effect/platform-node-shared) follow their parent's exact range instead of
-# being listed here -- a stale entry here would be worse than none.
+# depend on are pinned alongside it, each by name. Packages we only get
+# transitively (today: @effect/platform-node-shared) follow their parent's exact
+# range instead of being listed here -- a stale entry here would be worse than none.
 overrides:
   effect: "catalog:"
   "@effect/platform-node": "catalog:"
@@ -55,3 +54,8 @@ allowBuilds:
   "@embedded-postgres/linux-ia32": true
   "@embedded-postgres/linux-ppc64": true
   simple-git-hooks: true
+# pnpm can link the agent skills a dependency ships into .claude/skills and
+# .agents/skills once approved. Those directories hold only this repo's own
+# skills (docs/SKILL_DISTRIBUTION.md), so pnpm links none and asks about none.
+skills:
+  dirs: []
