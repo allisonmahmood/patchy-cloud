@@ -7,6 +7,7 @@
  * `PATCHY_DEV_MAILBOXES` names the file listing them, which is read again for every session, so
  * a mailbox added to a running instance works at once. A missing file means none.
  */
+// @effect-diagnostics globalFetch:off -- the offline Notion scenario intercepts fetch in this dev process.
 // @effect-diagnostics nodeBuiltinImport:off -- the network seam asks synchronously, once per session.
 import { readFileSync } from "node:fs";
 import * as Config from "effect/Config";
@@ -14,7 +15,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { ImapNetwork, NotionSource } from "@patchy/integrations";
+import { ImapNetwork } from "@patchy/integrations";
 import * as NotionTest from "../../../packages/integrations/src/test/notion.js";
 import { launch } from "@patchy/server/launch";
 
@@ -29,15 +30,15 @@ const listed = (file: string) => (): ReadonlyArray<ImapNetwork.LoopbackServer> =
   }
 };
 
+// The supervisor sets this only for the disposable Notion scenario.
+if (Effect.runSync(Config.Boolean("PATCHY_DEV_NOTION_FAKE").pipe(Config.withDefault(false)))) {
+  globalThis.fetch = NotionTest.makeFetch(globalThis.fetch);
+}
+
 launch(
   Layer.unwrap(
     Effect.map(Config.option(Config.String("PATCHY_DEV_MAILBOXES")), (file) =>
       ImapNetwork.loopback(Option.isSome(file) ? listed(file.value) : () => [])
-    )
-  ),
-  Layer.unwrap(
-    Effect.map(Config.Boolean("PATCHY_DEV_NOTION_FAKE").pipe(Config.withDefault(false)), (fake) =>
-      fake ? NotionTest.layer : NotionSource.layer
     )
   )
 );
