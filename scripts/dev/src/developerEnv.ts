@@ -1,9 +1,9 @@
 /**
- * Clerk development settings, the seed's optional Clerk user id, a Pidgeon test admin key, an
- * Attio read key, and the development GitHub App with an installation and repositories to seed,
+ * Clerk development settings, the seed's optional Clerk user id, Pidgeon test admin and Send keys,
+ * an Attio read key, and the development GitHub App with an installation and repositories to seed,
  * from `$XDG_CONFIG_HOME/patchy-cloud/dev.env` (`~/.config/patchy-cloud/dev.env`). Clerk's and the
- * GitHub App's settings reach the server; the user id is consumed by the seed, the Pidgeon and
- * Attio keys by a scenario's connect page, and the GitHub installation and repositories by the
+ * GitHub App's settings reach the server; the user id is consumed by the seed, the Pidgeon keys by
+ * a scenario's inbox and connect page, the Attio key by its connect page, and the GitHub installation and repositories by the
  * `github` scenario's seed. Other settings in this developer-owned file never enter the dev instance.
  */
 import * as Config from "effect/Config";
@@ -76,10 +76,18 @@ export const developerEnvFile = Effect.fn("developerEnvFile")(function* (home: s
 });
 
 /**
- * The Pidgeon test admin key a scenario's connections paste, `PIDGEON_TEST_ADMIN_KEY`: from the
- * environment, else from the developer's dev.env. None, and the scenario skips Pidgeon.
+ * The Pidgeon test admin key that makes a scenario's test inbox and delivers its mail,
+ * `PIDGEON_TEST_ADMIN_KEY`: from the environment, else from the developer's dev.env. None, and the
+ * scenario skips Pidgeon.
  */
 export const readPidgeonTestKey = (file: string) => readKey("PIDGEON_TEST_ADMIN_KEY", file);
+
+/**
+ * The Pidgeon test key a scenario's connect page is given, `PIDGEON_TEST_SEND_KEY`, as an admin
+ * pastes a Send key from Pidgeon's dashboard: from the environment, else the developer's dev.env.
+ * None, and the admin key connects instead.
+ */
+export const readPidgeonSendKey = (file: string) => readKey("PIDGEON_TEST_SEND_KEY", file);
 
 /**
  * The Attio read key a scenario's connections paste, `ATTIO_TEST_READ_KEY`: from the environment,

@@ -37,7 +37,7 @@ const json = (status: number, body: unknown, headers: Record<string, string> = {
 const refusal = (code: string, message: string, field?: string) => ({
   error: { code, message, ...(field === undefined ? {} : { field }) }
 });
-const key = Redacted.make("pgn_live_sourceTestKey0001");
+const key = Redacted.make("pgn_test_sourceTestKey00000000000001");
 
 it.effect("names each of Pidgeon's answers as Patchy's refusal, by status and code", () =>
   Effect.gen(function* () {
@@ -47,50 +47,19 @@ it.effect("names each of Pidgeon's answers as Patchy's refusal, by status and co
         (error) => assert.instanceOf(error, Source.KeyRejected)
       ],
       [
-        json(402, refusal("entitlement", "You can have 3 inboxes at the moment.")),
+        json(402, refusal("payment_required", "This month's free emails are used.")),
         (error) => assert.deepInclude(error, { _tag: "PidgeonRateLimited", limit: "plan" })
       ],
       [
-        json(403, refusal("forbidden", "This key has read access, and that needs draft.")),
+        json(403, refusal("forbidden", "This key cannot do that: it needs `send` access or more.")),
         (error) => assert.instanceOf(error, Source.Forbidden)
       ],
       [
-        json(403, refusal("not_permitted", "support@ only replies to people who wrote first.")),
-        (error) =>
-          assert.deepInclude(error, {
-            _tag: "PidgeonRefused",
-            details: {
-              reason: "not_permitted",
-              message: "support@ only replies to people who wrote first."
-            }
-          })
-      ],
-      [
-        json(403, refusal("blocked", "That recipient is blocked.")),
-        (error) => assert.deepInclude(error, { _tag: "PidgeonRefused" })
-      ],
-      [
-        json(404, refusal("not_found", "We couldn't find that conversation.")),
-        (error) => assert.instanceOf(error, Source.NotFound)
-      ],
-      [
-        json(409, refusal("conflict", "help@acme.example already exists.", "localPart")),
-        (error) =>
-          assert.deepInclude(error, {
-            _tag: "PidgeonConflict",
-            details: { field: "localPart", message: "help@acme.example already exists." }
-          })
-      ],
-      [
-        // The same Idempotency-Key with another request, or from another key: nothing was done.
-        json(409, refusal("idempotency_mismatch", "That Idempotency-Key was used differently.")),
-        (error) => assert.instanceOf(error, Source.IdempotencyMismatch)
-      ],
-      [
-        json(403, refusal("held", "A person must release this message first.")),
+        json(403, refusal("held", "This message is held for a person.")),
         (error) => assert.instanceOf(error, Source.Held)
       ],
       [
+        // Pidgeon's words name a conversation that may not be the connection's: never kept.
         json(
           403,
           refusal(
@@ -98,29 +67,29 @@ it.effect("names each of Pidgeon's answers as Patchy's refusal, by status and co
             "This contains text an API key read in conversation 7c0e…."
           )
         ),
+        (error) => {
+          assert.instanceOf(error, Source.ExfiltrationBlocked);
+          assert.notInclude(error.message, "7c0e");
+        }
+      ],
+      [
+        json(404, refusal("not_found", "There is no such draft in this account.")),
+        (error) => assert.instanceOf(error, Source.NotFound)
+      ],
+      [
+        json(409, refusal("draft_not_editable", "This draft is no longer a draft.")),
+        (error) => assert.deepInclude(error, { _tag: "PidgeonConflict" })
+      ],
+      [
+        json(400, refusal("invalid", "Send `to`: at least one address.", "to")),
         (error) =>
           assert.deepInclude(error, {
-            _tag: "PidgeonRefused",
-            details: {
-              reason: "exfiltration_blocked",
-              message: "This contains text an API key read in conversation 7c0e…."
-            }
+            _tag: "PidgeonInvalid",
+            details: { field: "to", message: "Send `to`: at least one address." }
           })
       ],
       [
-        // Test mode's dropped answer: the work was done, so it reads as an answer lost.
-        json(504, refusal("test_dropped", "Pidgeon-Test-Fail: drop dropped this answer.")),
-        (error) => assert.deepInclude(error, { stage: "status", upstreamStatus: 504 })
-      ],
-      [
-        json(
-          400,
-          refusal("validation", "Too big: expected string to have <=60 characters", "name")
-        ),
-        (error) => assert.deepInclude(error, { _tag: "PidgeonInvalid" })
-      ],
-      [
-        json(429, refusal("rate_limited", "Too many attempts. Try again in 9 minutes.")),
+        json(429, refusal("rate_limited", "Too many requests.")),
         (error) => {
           assert.deepInclude(error, { _tag: "PidgeonRateLimited", limit: "requests" });
           assert.notProperty(error, "retryAfterSeconds");
@@ -138,25 +107,39 @@ it.effect("names each of Pidgeon's answers as Patchy's refusal, by status and co
         (error) => assert.include(error.message, "Try again in 25 minutes.")
       ],
       [
-        // A new message to someone the address just wrote to: the address's cooldown, not the account's rate.
-        json(
-          429,
-          refusal(
-            "recipient_cooldown",
-            "This address wrote to ana@example.com in the last 10 minutes. Reply in that conversation, or send a new message in 10 minutes."
-          ),
-          { "retry-after": "573" }
-        ),
-        (error) =>
-          assert.deepInclude(error, {
-            _tag: "PidgeonRateLimited",
-            limit: "recipient_cooldown",
-            retryAfterSeconds: 573,
-            details: {
-              message:
-                "This address wrote to ana@example.com in the last 10 minutes. Reply in that conversation, or send a new message in 10 minutes."
-            }
-          })
+        // A 429 in any other shape, a proxy's say, isn't Pidgeon's: Patchy can't tell it ran.
+        new Response("<html>Too Many Requests</html>", { status: 429 }),
+        (error) => assert.deepInclude(error, { stage: "status", upstreamStatus: 429 })
+      ],
+      [
+        new Response("", { status: 429 }),
+        (error) => assert.deepInclude(error, { stage: "status", upstreamStatus: 429 })
+      ],
+      [
+        // Pidgeon documents no 422, so it's no refusal of Pidgeon's, whatever it says.
+        json(422, refusal("invalid", "Send `to`: at least one address.", "to")),
+        (error) => assert.deepInclude(error, { stage: "status", upstreamStatus: 422 })
+      ],
+      [
+        json(502, refusal("send_failed", "The mail service refused the message.")),
+        (error) => assert.deepInclude(error, { _tag: "PidgeonMailRefused", reason: "send_failed" })
+      ],
+      [
+        json(503, refusal("unavailable", "The mail service is busy.")),
+        (error) => assert.deepInclude(error, { _tag: "PidgeonMailRefused", reason: "unavailable" })
+      ],
+      [
+        json(507, refusal("storage_full", "The account's 10 GB is used.")),
+        (error) => assert.deepInclude(error, { _tag: "PidgeonMailRefused", reason: "storage_full" })
+      ],
+      [
+        // A 5xx is Pidgeon's own word only with the code its docs give it.
+        json(502, refusal("bad_gateway", "Upstream.")),
+        (error) => assert.deepInclude(error, { stage: "status", upstreamStatus: 502 })
+      ],
+      [
+        new Response("<html>busy</html>", { status: 503 }),
+        (error) => assert.deepInclude(error, { stage: "status", upstreamStatus: 503 })
       ],
       [
         json(500, refusal("internal", "Something went wrong.")),
@@ -168,7 +151,7 @@ it.effect("names each of Pidgeon's answers as Patchy's refusal, by status and co
       ],
       [
         // Pidgeon's words are kept for people, never anything shaped like a secret.
-        json(400, refusal("validation", "pgn_live_secretEchoedBack1 is not allowed here.")),
+        json(400, refusal("invalid", "pgn_test_secretEchoedBack1 is not allowed here.")),
         (error) =>
           assert.deepInclude(error, {
             details: { message: "pgn_… is not allowed here." }
@@ -179,106 +162,61 @@ it.effect("names each of Pidgeon's answers as Patchy's refusal, by status and co
       const { source } = yield* over(() => answer.clone());
       check(
         yield* source
-          .call(key, { method: "GET", path: "/me" }, Number.MAX_SAFE_INTEGER)
+          .call(key, { method: "GET", path: "/email/inboxes" }, Number.MAX_SAFE_INTEGER)
           .pipe(Effect.flip)
       );
     }
-    const { source } = yield* over(() =>
-      json(202, { data: { id: "m1" } }, { "idempotent-replay": "true" })
-    );
+    const { source } = yield* over(() => json(202, { id: "m1", thread_id: "t1", status: "held" }));
     assert.deepStrictEqual(
       yield* source.call(
         key,
-        { method: "POST", path: "/messages", body: {}, idempotencyKey: "a" },
+        { method: "POST", path: "/email/drafts/m1/send" },
         Number.MAX_SAFE_INTEGER
       ),
-      { body: { data: { id: "m1" } }, replayed: true }
+      { status: 202, body: { id: "m1", thread_id: "t1", status: "held" } }
     );
+    const deleted = yield* over(() => new Response(null, { status: 204 }));
+    assert.deepStrictEqual(
+      yield* deleted.source.call(
+        key,
+        { method: "DELETE", path: "/email/drafts/m1" },
+        Number.MAX_SAFE_INTEGER
+      ),
+      { status: 204, body: null }
+    );
+    // Past the deadline, nothing is sent at all.
+    const expired = yield* over(() => json(200, {}));
+    assert.deepInclude(
+      yield* expired.source
+        .call(key, { method: "GET", path: "/email/inboxes" }, (yield* Clock.currentTimeMillis) - 1)
+        .pipe(Effect.flip),
+      { _tag: "PidgeonTimeout", milliseconds: 0 }
+    );
+    assert.strictEqual(expired.requests.length, 0);
   })
-);
-
-it.effect(
-  "waits out a write Pidgeon is still answering, then sends it again under the same key",
-  () =>
-    Effect.gen(function* () {
-      // Recorded: Pidgeon's answer while the first request with this Idempotency-Key runs.
-      const inProgress = () =>
-        json(
-          409,
-          refusal(
-            "idempotency_in_progress",
-            "The first request with this Idempotency-Key hasn't answered yet."
-          ),
-          { "retry-after": "2" }
-        );
-      const answers = [
-        inProgress(),
-        json(201, { data: { id: "k1", token: null } }, { "idempotent-replay": "true" })
-      ];
-      const { source, requests } = yield* over(() => answers.shift()!);
-      const request = {
-        method: "POST",
-        path: "/api-keys",
-        body: { name: "Patchy support attempt00001" },
-        idempotencyKey: "mint-1"
-      } as const;
-      const sent = yield* source.call(key, request, 60_000).pipe(Effect.forkChild);
-      for (let turn = 0; turn < 100 && requests.length < 1; turn++) yield* Effect.yieldNow;
-      yield* TestClock.adjust("2 seconds");
-      assert.deepStrictEqual(yield* Fiber.join(sent), {
-        body: { data: { id: "k1", token: null } },
-        replayed: true
-      });
-      assert.deepStrictEqual(
-        requests.map((sentRequest) => sentRequest.headers["idempotency-key"]),
-        ["mint-1", "mint-1"]
-      );
-      // Past the deadline, nothing is sent at all.
-      const expired = yield* over(() => json(200, { data: {} }));
-      assert.deepInclude(
-        yield* expired.source
-          .call(key, request, (yield* Clock.currentTimeMillis) - 1)
-          .pipe(Effect.flip),
-        { _tag: "PidgeonTimeout", milliseconds: 0 }
-      );
-      assert.strictEqual(expired.requests.length, 0);
-      // One still running at the deadline is a timeout, with nothing more sent.
-      const late = yield* over(inProgress);
-      assert.instanceOf(
-        yield* late.source
-          .call(key, request, (yield* Clock.currentTimeMillis) + 1_000)
-          .pipe(Effect.flip),
-        Source.Timeout
-      );
-      assert.strictEqual(late.requests.length, 1);
-      // A request that asks to fail is told Pidgeon's wait instead, with nothing sent again.
-      const told = yield* over(inProgress);
-      assert.deepInclude(
-        yield* told.source.call(key, { ...request, inProgress: "fail" }, 60_000).pipe(Effect.flip),
-        { _tag: "PidgeonIdempotencyInProgress", retryAfterSeconds: 2 }
-      );
-      assert.strictEqual(told.requests.length, 1);
-    })
 );
 
 it.effect("sends only to Pidgeon's API, with the key as a bearer token, never a path out", () =>
   Effect.gen(function* () {
-    const { source, requests } = yield* over(() => json(200, { data: {} }));
+    const { source, requests } = yield* over(() => json(200, {}));
     yield* source.call(
       key,
       {
         method: "POST",
-        path: "/identities",
+        path: "/email/inboxes/inb_1/drafts",
         query: { limit: 2, skipped: undefined },
-        body: { local_part: "help" },
-        idempotencyKey: "attempt"
+        body: { to: ["help@acme.example"] }
       },
       Number.MAX_SAFE_INTEGER
     );
-    assert.strictEqual(requests[0]!.url.href, "https://pidgeon.ai/api/v1/identities?limit=2");
+    assert.strictEqual(
+      requests[0]!.url.href,
+      "https://pidgeon.ai/v1/email/inboxes/inb_1/drafts?limit=2"
+    );
     assert.strictEqual(requests[0]!.headers.authorization, `Bearer ${Redacted.value(key)}`);
-    assert.strictEqual(requests[0]!.headers["idempotency-key"], "attempt");
-    for (const path of ["/../../elsewhere", "/me/../../../v2/me", "me"]) {
+    // Pidgeon ignores Idempotency-Key, so Patchy never sends one.
+    assert.notProperty(requests[0]!.headers, "idempotency-key");
+    for (const path of ["/../../elsewhere", "/email/../../api/v1/me", "email"]) {
       const refused = yield* source
         .call(key, { method: "GET", path }, Number.MAX_SAFE_INTEGER)
         .pipe(Effect.flip);
@@ -294,7 +232,7 @@ it.effect("refuses a redirect without following it", () =>
       () => new Response(null, { status: 307, headers: { location: "https://elsewhere.example/" } })
     );
     const refused = yield* source
-      .call(key, { method: "GET", path: "/me" }, Number.MAX_SAFE_INTEGER)
+      .call(key, { method: "GET", path: "/email/inboxes" }, Number.MAX_SAFE_INTEGER)
       .pipe(Effect.flip);
     assert.deepInclude(refused, { stage: "redirect", upstreamStatus: 307 });
     assert.strictEqual(requests.length, 1);
@@ -318,7 +256,7 @@ it.effect("refuses an endless body at the byte cap before decoding it", () =>
         )
     );
     const refused = yield* source
-      .call(key, { method: "GET", path: "/threads" }, Number.MAX_SAFE_INTEGER)
+      .call(key, { method: "GET", path: "/email/threads" }, Number.MAX_SAFE_INTEGER)
       .pipe(Effect.flip);
     assert.instanceOf(refused, Source.TooLarge);
     assert.isAtMost(sent, registry["runtime.result.bytes"].default / chunk.byteLength + 2);
@@ -329,10 +267,10 @@ it.effect("gives up at the caller's deadline, and never waits past a call's own"
   Effect.gen(function* () {
     const { source } = yield* over(() => new Promise<Response>(() => {}));
     const short = yield* source
-      .call(key, { method: "GET", path: "/me" }, 2_000)
+      .call(key, { method: "GET", path: "/email/inboxes" }, 2_000)
       .pipe(Effect.forkChild);
     const long = yield* source
-      .call(key, { method: "GET", path: "/me" }, Number.MAX_SAFE_INTEGER)
+      .call(key, { method: "GET", path: "/email/inboxes" }, Number.MAX_SAFE_INTEGER)
       .pipe(Effect.forkChild);
     yield* TestClock.adjust("2 seconds");
     assert.deepInclude(yield* Fiber.join(short).pipe(Effect.flip), { milliseconds: 2_000 });
@@ -343,13 +281,13 @@ it.effect("gives up at the caller's deadline, and never waits past a call's own"
   })
 );
 
-it.effect("lets four calls run per address and refuses the next busy, with nothing sent", () =>
+it.effect("lets four calls run per inbox and refuses the next busy, with nothing sent", () =>
   Effect.gen(function* () {
     const releases: Array<() => void> = [];
     const { source, requests } = yield* over(
       () =>
         new Promise<Response>((resolve) => {
-          releases.push(() => resolve(json(200, { data: {} })));
+          releases.push(() => resolve(json(200, {})));
         })
     );
     const slots = registry["pidgeon.calls.concurrent"].default;
@@ -358,19 +296,19 @@ it.effect("lets four calls run per address and refuses the next busy, with nothi
         .withSlot(
           identity,
           deadline
-        )(source.call(key, { method: "GET", path: "/threads" }, deadline))
+        )(source.call(key, { method: "GET", path: "/email/threads" }, deadline))
         .pipe(Effect.forkChild);
     const running = yield* Effect.forEach(Array.from({ length: slots }), () =>
-      run("addr-help", 60_000)
+      run("inb-help", 60_000)
     );
     for (let turn = 0; turn < 100 && requests.length < slots; turn++) yield* Effect.yieldNow;
     assert.strictEqual(requests.length, slots);
-    const queued = yield* run("addr-help", 30_000);
-    const refused = yield* run("addr-help", 3_000);
-    // Another address has its own gate.
+    const queued = yield* run("inb-help", 30_000);
+    const refused = yield* run("inb-help", 3_000);
+    // Another inbox has its own gate.
     const elsewhere = yield* source
       .withSlot(
-        "addr-orders",
+        "inb-orders",
         3_000
       )(Effect.succeed("ran"))
       .pipe(Effect.forkChild);
@@ -392,8 +330,8 @@ it.effect("lets four calls run per address and refuses the next busy, with nothi
 it.effect("keeps the key's stored form round-tripping, and refuses anything else", () =>
   Effect.gen(function* () {
     const stored = {
-      identityId: "00000000-0000-4000-8000-000000000001",
-      key: { id: "k1", token: "pgn_live_storedKey0001" }
+      inboxId: "00000000-0000-4000-8000-000000000001",
+      key: `pgn_${"k".repeat(32)}`
     };
     assert.deepStrictEqual(yield* Source.parseCredentials(Source.credentials(stored)), stored);
     assert.instanceOf(

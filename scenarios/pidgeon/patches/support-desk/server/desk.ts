@@ -1,4 +1,4 @@
-// The support address, read and answered on the server: each action reaches it through
+// The support inbox, read and answered on the server: each action reaches it through
 // ctx.connections.support as the person viewing, and returns only what the page shows.
 import { action, t } from "../patchy/_generated/server.js";
 import type { Message, Sent, Thread } from "../patchy/_generated/uses/support.js";
@@ -13,9 +13,9 @@ const thread = t.object({
   id: t.text(),
   subject: t.nullable(t.text()),
   status,
-  from: t.nullable(party),
-  preview: t.nullable(t.text()),
-  hasAttachments: t.boolean(),
+  labels: t.array(label),
+  messageCount: t.number(),
+  unreadCount: t.number(),
   lastMessageAt: t.nullable(t.text())
 });
 const message = t.object({
@@ -28,16 +28,10 @@ const message = t.object({
   firewall,
   attachments: t.array(
     t.object({ id: t.text(), filename: t.text(), contentType: t.text(), size: t.number() })
-  ),
-  delivery: t.nullable(t.object({ state: t.text() }))
+  )
 });
-/** What Pidgeon did with one email: `pending_approval` sent nothing yet. */
-const sent = t.object({
-  status: t.enum(["sent", "pending_approval"]),
-  threadId: t.text(),
-  rejected: t.array(t.text()),
-  expiresAt: t.nullable(t.text())
-});
+/** What became of one email: `held` waits for a member of the Pidgeon account to approve it. */
+const sent = t.object({ status: t.enum(["sent", "held"]), threadId: t.text() });
 
 const toParty = ({ email, name }: { readonly email: string; readonly name: string | null }) => ({
   email,
@@ -47,9 +41,9 @@ const toThread = (found: Thread) => ({
   id: found.id,
   subject: found.subject,
   status: found.status,
-  from: found.from === null ? null : toParty(found.from),
-  preview: found.preview,
-  hasAttachments: found.hasAttachments,
+  labels: found.labels.map(({ id, name, colour }) => ({ id, name, colour })),
+  messageCount: found.messageCount,
+  unreadCount: found.unreadCount,
   lastMessageAt: found.lastMessageAt
 });
 const toMessage = (found: Message) => ({
@@ -68,17 +62,11 @@ const toMessage = (found: Message) => ({
     filename,
     contentType,
     size
-  })),
-  delivery: found.delivery === null ? null : { state: found.delivery.state }
+  }))
 });
-const toSent = (answer: Sent) => ({
-  status: answer.status,
-  threadId: answer.threadId,
-  rejected: answer.status === "sent" ? answer.rejected.map((item) => item.address) : [],
-  expiresAt: answer.status === "pending_approval" ? answer.approval.expiresAt : null
-});
+const toSent = (answer: Sent) => ({ status: answer.status, threadId: answer.threadId });
 
-/** The address's latest conversations, newest first. */
+/** The inbox's latest conversations, newest first. */
 export const inbox = action({
   readOnly: true,
   args: {},
@@ -87,7 +75,7 @@ export const inbox = action({
     (await ctx.connections.support.threads.list({ limit: 100 })).threads.map(toThread)
 });
 
-/** Messages matching the text, by relevance. */
+/** Messages matching the words, newest first. */
 export const search = action({
   readOnly: true,
   args: { text: t.text() },
@@ -145,7 +133,7 @@ export const conversation = action({
   }
 });
 
-/** Every label the address has. */
+/** Every label the inbox has. */
 export const labels = action({
   readOnly: true,
   args: {},
@@ -158,15 +146,7 @@ export const labels = action({
     }))
 });
 
-/** A text attachment's contents. */
-export const attachment = action({
-  readOnly: true,
-  args: { id: t.text() },
-  result: t.text(),
-  handler: async (ctx, args) => (await ctx.connections.support.attachments.text(args.id)).text
-});
-
-/** Moves a conversation to a status everyone reading the address shares. */
+/** Moves a conversation to a status everyone reading the inbox shares. */
 export const setStatus = action({
   args: { id: t.text(), status },
   result: status,
@@ -186,7 +166,7 @@ export const relabel = action({
   }
 });
 
-/** Answers a message's sender in its thread; the draft key makes a retry one email. */
+/** Answers a message in its thread; the draft key makes a retry one email. */
 export const reply = action({
   args: { id: t.text(), text: t.text(), idempotencyKey: t.text() },
   result: sent,
@@ -199,7 +179,7 @@ export const reply = action({
     )
 });
 
-/** Starts a conversation from the address; the draft key makes a retry one email. */
+/** Starts a conversation from the inbox; the draft key makes a retry one email. */
 export const send = action({
   args: {
     to: t.array(t.text()),

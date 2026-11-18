@@ -1,35 +1,36 @@
 import { decodeError } from "./clientError.js";
 
 /**
- * One Pidgeon address's client, the same on a tier 1 page and in a tier 2 action. Patchy writes
- * every Pidgeon request and fills in the address, so these methods can't name another one. A
- * connection whose key only reads gets no write methods; one forced past its types is refused.
- * These types mirror `packages/api/src/pidgeon.ts`, the wire they decode.
+ * One Pidgeon inbox's client, the same on a tier 1 page and in a tier 2 action. Patchy writes
+ * every Pidgeon request and fills in the inbox, so these methods can't name another one. A
+ * connection that only reads gets no write methods; one forced past its types is refused. These
+ * types mirror `packages/api/src/pidgeon.ts`, the wire they decode.
  */
 
 export type PidgeonThreadStatus = "open" | "waiting" | "resolved" | "human_review";
+/** The one folder a conversation is in. */
+export type PidgeonFolder = "inbox" | "archive" | "spam" | "trash";
 export interface PidgeonParty {
   readonly email: string;
   readonly name: string | null;
-}
-export interface PidgeonThread {
-  readonly id: string;
-  readonly subject: string | null;
-  /** Pidgeon's triage state, shared by everyone who reads the address. */
-  readonly status: PidgeonThreadStatus;
-  /** Who sent the newest message. */
-  readonly from: PidgeonParty | null;
-  /** The first line of the newest message. */
-  readonly preview: string | null;
-  readonly messageCount: number;
-  readonly hasAttachments: boolean;
-  readonly lastMessageAt: string | null;
-  readonly createdAt: string;
 }
 export interface PidgeonLabel {
   readonly id: string;
   readonly name: string;
   readonly colour: string;
+}
+export interface PidgeonThread {
+  readonly id: string;
+  /** Null while every message in it is held for a person. */
+  readonly subject: string | null;
+  /** Pidgeon's triage state, shared by everyone who reads the inbox. */
+  readonly status: PidgeonThreadStatus;
+  readonly folder: PidgeonFolder;
+  readonly labels: readonly PidgeonLabel[];
+  readonly messageCount: number;
+  readonly unreadCount: number;
+  readonly lastMessageAt: string | null;
+  readonly createdAt: string;
 }
 /**
  * Pidgeon Firewall's reading of mail: `suspicious` when it tries to steer an AI, imitates a sender
@@ -39,17 +40,13 @@ export interface PidgeonFirewall {
   readonly verdict: "clean" | "suspicious";
   readonly kinds: readonly string[];
 }
+/** A file a message carried: its metadata only. */
 export interface PidgeonAttachment {
   readonly id: string;
   readonly filename: string;
   readonly contentType: string;
   /** Bytes. */
   readonly size: number;
-}
-/** What happened to mail the address sent: the worst any recipient reached, such as `bounced`. */
-export interface PidgeonDelivery {
-  readonly state: string;
-  readonly deliveredAt: string | null;
 }
 export interface PidgeonMessage {
   readonly id: string;
@@ -63,16 +60,14 @@ export interface PidgeonMessage {
   readonly test: boolean;
   /**
    * Pidgeon Firewall holds it for a person: its subject, text and attachments stay empty, and it
-   * can't be read or answered until someone releases it in Pidgeon.
+   * can't be read by id or answered until someone releases it in Pidgeon.
    */
   readonly held: boolean;
   /** Plain text, cleaned by the firewall. Visible instructions aimed at an AI stay in it. */
   readonly text: string;
-  /** Null on mail this address sent. */
+  /** Null on mail this inbox sent. */
   readonly firewall: PidgeonFirewall | null;
   readonly attachments: readonly PidgeonAttachment[];
-  /** Null on mail that arrived, and on a send nobody has reported on yet. */
-  readonly delivery: PidgeonDelivery | null;
 }
 export interface PidgeonSearchHit {
   readonly messageId: string;
@@ -80,57 +75,27 @@ export interface PidgeonSearchHit {
   readonly from: PidgeonParty;
   readonly to: readonly string[];
   readonly subject: string | null;
+  /** The first 200 characters of the firewall's clean text. */
   readonly preview: string | null;
   readonly hasAttachments: boolean;
   readonly held: boolean;
   readonly createdAt: string;
 }
-export interface PidgeonAttachmentText {
-  readonly id: string;
-  readonly filename: string;
-  readonly contentType: string;
-  readonly size: number;
-  /** Cleaned by the firewall. */
-  readonly text: string;
-  /** The file ran past 200,000 characters and the rest was cut. */
-  readonly truncated: boolean;
-  readonly firewall: PidgeonFirewall | null;
+/**
+ * What became of one email. Read `status` before treating it as sent: `held` means Pidgeon was
+ * keeping it for a member of the account to approve when Patchy last looked, and sending the same
+ * draft again looks again.
+ */
+export interface PidgeonSent {
+  readonly status: "sent" | "held";
+  readonly messageId: string;
+  readonly threadId: string;
+  /** This draft key was sent before: its answer, and nothing went out again. */
+  readonly replayed: boolean;
 }
 /**
- * What Pidgeon did with one email. Read `status` before treating it as sent: `pending_approval`
- * sent nothing, and waits as a draft for a person to approve in Pidgeon.
- */
-export type PidgeonSent =
-  | {
-      readonly status: "sent";
-      readonly messageId: string;
-      readonly threadId: string;
-      /** Recipients the mail provider refused; the rest were sent to. */
-      readonly rejected: readonly { readonly address: string; readonly reason: string }[];
-      /** This draft was sent before: the first send's answer, and nothing went out again. */
-      readonly replayed: boolean;
-      /** A test-mode send: it never left Pidgeon. */
-      readonly test: boolean;
-    }
-  | {
-      readonly status: "pending_approval";
-      readonly draftId: string;
-      readonly threadId: string;
-      readonly approval: {
-        /**
-         * `first_contact`: the address asks a person before writing to someone new.
-         * `risky_thread`: mail in the conversation tried to give the agent instructions.
-         */
-        readonly reason: "first_contact" | "risky_thread";
-        /** It expires unsent at this time if nobody decides. */
-        readonly expiresAt: string;
-      };
-      readonly replayed: boolean;
-      readonly test: boolean;
-    };
-/**
- * Names one email from when the person starts writing it until it sends: `crypto.randomUUID()`
- * fits. 8 to 128 of `A–Z a–z 0–9 _ -`. Sending the same draft again within 24 hours is one email.
+ * Names one email from when the person starts writing it until a send answers: `crypto.randomUUID()`
+ * fits. 8 to 128 of `A–Z a–z 0–9 _ -`. Patchy sends each key's email at most once.
  */
 export interface PidgeonDraft {
   readonly idempotencyKey: string;
@@ -138,9 +103,11 @@ export interface PidgeonDraft {
 
 export interface PidgeonReader {
   readonly threads: {
-    /** The address's conversations, newest first. */
+    /** The inbox's conversations, newest first. */
     list(options?: {
       readonly status?: PidgeonThreadStatus;
+      readonly folder?: PidgeonFolder;
+      readonly labelId?: string;
       readonly limit?: number;
       readonly cursor?: string;
     }): Promise<{ readonly threads: readonly PidgeonThread[]; readonly nextCursor: string | null }>;
@@ -156,24 +123,19 @@ export interface PidgeonReader {
     }>;
   };
   readonly messages: {
+    /** One message; a held one answers `not_found`. */
     get(id: string): Promise<PidgeonMessage>;
-    /** The address's mail by relevance, through Pidgeon's 1,000 best matches. */
-    search(options?: {
-      readonly text?: string;
-      readonly from?: string;
-      readonly to?: string;
-      readonly labelId?: string;
-      readonly hasAttachment?: boolean;
-      readonly folder?: "inbox" | "sent" | "archive" | "spam";
+    /**
+     * The inbox's mail by words, newest first: plain words, `"phrases"`, `or` and `-word`, 1 to
+     * 200 characters. Held mail is never found.
+     */
+    search(options: {
+      readonly text: string;
       readonly limit?: number;
       readonly cursor?: string;
     }): Promise<{ readonly hits: readonly PidgeonSearchHit[]; readonly nextCursor: string | null }>;
   };
   readonly labels: { list(): Promise<readonly PidgeonLabel[]> };
-  readonly attachments: {
-    /** A text attachment's contents, cleaned by the firewall. Other files are metadata only. */
-    text(id: string): Promise<PidgeonAttachmentText>;
-  };
 }
 export interface PidgeonSender extends PidgeonReader {
   readonly threads: PidgeonReader["threads"] & {
@@ -183,12 +145,12 @@ export interface PidgeonSender extends PidgeonReader {
     unlabel(id: string, labelId: string): Promise<readonly PidgeonLabel[]>;
   };
   readonly messages: PidgeonReader["messages"] & {
-    /** Answers the message's sender in its thread. */
+    /** Answers a message in its thread: its sender, or, for one this inbox sent, its recipients. */
     reply(
       id: string,
       draft: { readonly text: string; readonly cc?: readonly string[] } & PidgeonDraft
     ): Promise<PidgeonSent>;
-    /** A new conversation from the address; its send policy may refuse it whole. */
+    /** A new conversation from the inbox. */
     send(
       draft: {
         readonly to: string | readonly string[];
@@ -244,10 +206,9 @@ export function createPidgeonClient(
     },
     messages: {
       get: (id) => read("messages.get", { id }),
-      search: (options = {}) => read("messages.search", options)
+      search: (options) => read("messages.search", options)
     },
-    labels: { list: async () => (await read<Labels>("labels.list")).labels },
-    attachments: { text: (id) => read("attachments.text", { id }) }
+    labels: { list: async () => (await read<Labels>("labels.list")).labels }
   };
   if (access === "read") return reader;
   const sender: PidgeonSender = {
@@ -271,8 +232,7 @@ export function createPidgeonClient(
           idempotencyKey
         })
     },
-    labels: reader.labels,
-    attachments: reader.attachments
+    labels: reader.labels
   };
   return sender;
 }

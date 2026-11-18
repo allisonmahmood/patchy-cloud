@@ -15,9 +15,6 @@ export interface DevConnection {
 /** Metadata only: no platform SQL, credential keyring, credentials or network source. */
 export const layer = (metadata: ReadonlyArray<DevConnection> = []) => {
   const unavailable = () => Effect.fail(new ConnectionStore.ConnectionMutationUnavailable({}));
-  // Sends counted in this process only, by connection and UTC day.
-  const sends = new Map<string, number>();
-  const sendKey = (companyId: string, id: string, day: string) => `${companyId}\n${id}\n${day}`;
   // The developer owns the local patch, and generation handed them only the connections they
   // may build with, so those are the ones its calls reach.
   const builds = (companyId: string, id: string) =>
@@ -159,15 +156,13 @@ export const layer = (metadata: ReadonlyArray<DevConnection> = []) => {
           )
         ),
       delete: unavailable,
-      countSend: (companyId, id, day, budget) =>
-        Effect.sync(() => {
-          const key = sendKey(companyId, id, day);
-          const count = sends.get(key) ?? 0;
-          if (count >= budget) return false;
-          sends.set(key, count + 1);
-          return true;
-        }),
-      sends: (companyId, id, day) => Effect.sync(() => sends.get(sendKey(companyId, id, day)) ?? 0),
+      // Dev simulates every Pidgeon send, so none reaches the ledger.
+      claimDraft: unavailable,
+      recordDraft: unavailable,
+      releaseDraft: unavailable,
+      readDraft: unavailable,
+      unsettledSends: () => Effect.succeed(0),
+      sends: () => Effect.succeed(0),
       // Dev reads a real mailbox through the instance's dev door, whose own store pauses it.
       pauseLogin: () => Effect.void
     })

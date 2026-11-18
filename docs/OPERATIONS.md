@@ -113,9 +113,10 @@ securely through its environment, never through an agent transcript.
 
 ### Pidgeon
 
-A Pidgeon connection keeps only the key Patchy minted for its address, encrypted
-under this keyring; admin keys are never stored. The server calls only
-`https://pidgeon.ai/api/v1`, and needs no Pidgeon configuration of its own.
+A Pidgeon connection keeps the key an admin made in Pidgeon's dashboard, with the
+one inbox it serves, encrypted under this keyring. The key reaches the admin's
+whole Pidgeon account, and Patchy keeps patches to the inbox. The server calls
+only `https://pidgeon.ai/v1`, and needs no Pidgeon configuration of its own.
 
 ### Attio
 

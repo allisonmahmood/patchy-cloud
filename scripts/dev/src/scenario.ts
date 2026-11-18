@@ -130,8 +130,8 @@ export const RepoPatch = Schema.Struct({
 
 /**
  * A company connection the publisher makes through its connect page, as an admin would, before
- * any patch publishes. Pidgeon's pastes the developer's test admin key and creates a new test
- * address on pidgeon.email, which Pidgeon deletes a day later. Attio's pastes the developer's
+ * any patch publishes. Pidgeon's makes a new test inbox on pidgeon.email with the developer's test
+ * admin key, which `down` deletes, then pastes their Send test key and types that inbox's address. Attio's pastes the developer's
  * read-only key to Patchy's probe workspace; it only reads, so there's nothing to take down.
  * IMAP's starts a dev mailbox in Docker on this machine and types its login; `down` removes it.
  * GitHub's isn't made through its page, which signs in on GitHub: it's seeded from the developer's
@@ -141,11 +141,11 @@ export const PidgeonScenarioConnection = Schema.Struct({
   integration: Schema.Literal("pidgeon"),
   handle: Slug,
   description: Schema.NonEmptyString,
-  /** The new address's local part; a code after it makes each environment's its own. */
+  /** The new inbox's name, before the @; a code after it makes each environment's its own. */
   localPart: Slug,
   displayName: Schema.NonEmptyString,
   access: Schema.Literals(["read", "send"]),
-  /** A file beside `scenario.json` holding the mail `up` delivers to the new address. */
+  /** A file beside `scenario.json` holding the mail `up` delivers to the new inbox. */
   mail: Schema.optionalKey(Schema.NonEmptyString)
 });
 export const AttioScenarioConnection = Schema.Struct({
@@ -180,9 +180,9 @@ export type LiveConnection = typeof LiveConnection.Type;
  * and nothing reaches its integration. `up` saves it connected, as the publisher, before any patch
  * publishes, then leaves it in `state`: `connected`; `paused`, disconnected by the publisher; or
  * `needs-attention` for its integration's own reason, an Attio key a Test found writable, an IMAP
- * login the mail server refused, a Pidgeon key Patchy replaced but couldn't revoke, or, by its
- * `reason`, a GitHub App uninstalled from its account, its permissions changed, or a repository
- * gone from its installation. Postgres and PostHog keep no such reason.
+ * login the mail server refused, or, by its `reason`, a GitHub App uninstalled from its account,
+ * its permissions changed, or a repository gone from its installation. Postgres, PostHog and
+ * Pidgeon keep no such reason; a Pidgeon test key is its own, `test`.
  */
 export const OfflineConnection = Schema.Struct({
   integration: Schema.Literals(["postgres", "posthog", "attio", "pidgeon", "imap", "github"]),
@@ -370,7 +370,9 @@ export const loadScenario = Effect.fn("loadScenario")(function* (worktree: strin
   const reasonless = offlineConnections(scenario).find(
     (connection) =>
       (connection.state === "needs-attention" &&
-        (connection.integration === "postgres" || connection.integration === "posthog")) ||
+        (connection.integration === "postgres" ||
+          connection.integration === "posthog" ||
+          connection.integration === "pidgeon")) ||
       (connection.test === true && connection.integration !== "pidgeon") ||
       (connection.suspended === true && connection.integration !== "github")
   );
