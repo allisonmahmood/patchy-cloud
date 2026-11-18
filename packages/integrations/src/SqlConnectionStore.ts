@@ -245,6 +245,16 @@ const SnapshotDetail = Schema.Union([
     ...detailFields,
     integration: Schema.Literal("github"),
     snapshot: Schema.NullOr(GithubSnapshot)
+  }),
+  Schema.Struct({
+    ...detailFields,
+    integration: Schema.Literal("openai"),
+    snapshot: Schema.NullOr(OpenAiSnapshot)
+  }),
+  Schema.Struct({
+    ...detailFields,
+    integration: Schema.Literal("models"),
+    snapshot: Schema.NullOr(ModelsSnapshot)
   })
 ]);
 const Lookup = Schema.Struct({
@@ -458,6 +468,16 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
             snapshot: row.snapshot === null || stamp === null ? null : { ...row.snapshot, ...stamp }
           } satisfies ConnectionDetail;
         if (row.integration === "github")
+          return {
+            ...row,
+            snapshot: row.snapshot === null || stamp === null ? null : { ...row.snapshot, ...stamp }
+          } satisfies ConnectionDetail;
+        if (row.integration === "openai")
+          return {
+            ...row,
+            snapshot: row.snapshot === null || stamp === null ? null : { ...row.snapshot, ...stamp }
+          } satisfies ConnectionDetail;
+        if (row.integration === "models")
           return {
             ...row,
             snapshot: row.snapshot === null || stamp === null ? null : { ...row.snapshot, ...stamp }

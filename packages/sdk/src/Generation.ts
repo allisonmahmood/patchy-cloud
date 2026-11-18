@@ -330,7 +330,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
     attio: Record<string, (typeof DeclarationMetadata.Type)["attio"][string]>;
     imap: Record<string, (typeof DeclarationMetadata.Type)["imap"][string]>;
     github: Record<string, (typeof DeclarationMetadata.Type)["github"][string]>;
-    models: Record<string, (typeof DeclarationMetadata.Type)["models"][string]>;
+    models: Record<string, NonNullable<(typeof DeclarationMetadata.Type)["models"]>[string]>;
     shared: Record<string, (typeof DeclarationMetadata.Type)["shared"][string]>;
   } = {
     postgres: Object.create(null),

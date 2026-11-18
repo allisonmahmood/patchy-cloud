@@ -21,7 +21,7 @@ const decodeAliases = Schema.decodeUnknownSync(
       attio: Schema.Array(Schema.String),
       imap: Schema.Array(Schema.String),
       github: Schema.Array(Schema.String),
-      models: Schema.Array(Schema.String)
+      models: Schema.optionalKey(Schema.Array(Schema.String))
     })
   )
 );

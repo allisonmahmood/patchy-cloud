@@ -396,7 +396,9 @@ export const make = Effect.gen(function* () {
     const ending = (): Errors.CallError | undefined =>
       seen.refused || seen.finish === "content-filter"
         ? new Errors.Refused({ usage: usage() })
-        : seen.finish === "length"
+        : // @effect/ai-openai 4.0.5 maps no `max_output_tokens` finish to "length", so a cut-off
+          // Responses answer reads "unknown": the provider's count at the cap says it instead.
+          seen.finish === "length" || (seen.usage?.outputTokens ?? 0) >= call.maxOutputTokens
           ? new Errors.OutputTruncated({ maxOutputTokens: call.maxOutputTokens, usage: usage() })
           : undefined;
     if (schema === undefined) {

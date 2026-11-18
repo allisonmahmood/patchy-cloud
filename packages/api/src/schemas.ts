@@ -954,11 +954,13 @@ export const DeclarationMetadata = Schema.Struct({
     Schema.String,
     Schema.Struct({ declaration: GithubDeclaration, snapshot: GithubSnapshot })
   ).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
-  // As for Pidgeon: a release before model roles generates none.
-  models: Schema.Record(
-    Schema.String,
-    Schema.Struct({ declaration: ModelsDeclaration, snapshot: ModelsSnapshot })
-  ).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
+  // PROTOTYPE: optional, so callers from before model roles build metadata without it.
+  models: Schema.optionalKey(
+    Schema.Record(
+      Schema.String,
+      Schema.Struct({ declaration: ModelsDeclaration, snapshot: ModelsSnapshot })
+    )
+  ),
   // `companyWide`: whether everyone in the company can open the source, so `patchy dev`'s
   // colleague, on none of the developer's teams, can read it. A release before teams sends none,
   // which reads as everyone.

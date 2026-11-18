@@ -38,17 +38,21 @@ type Schema = {
 };
 
 /** A value of the shape a JSON schema describes: the first enum member, one array item. */
-const sample = (schema: Schema, name: string): Json => {
+const sample = (schema: Schema, name: string, input: string): Json => {
   if (schema.enum !== undefined && schema.enum.length > 0) return schema.enum[0]!;
-  if (schema.anyOf !== undefined && schema.anyOf.length > 0) return sample(schema.anyOf[0]!, name);
+  if (schema.anyOf !== undefined && schema.anyOf.length > 0)
+    return sample(schema.anyOf[0]!, name, input);
   const type = Array.isArray(schema.type) ? schema.type[0] : schema.type;
   switch (type) {
     case "object":
       return Object.fromEntries(
-        Object.entries(schema.properties ?? {}).map(([key, value]) => [key, sample(value, key)])
+        Object.entries(schema.properties ?? {}).map(([key, value]) => [
+          key,
+          sample(value, key, input)
+        ])
       );
     case "array":
-      return [sample(schema.items ?? {}, name)];
+      return [sample(schema.items ?? {}, name, input)];
     case "integer":
       return 3;
     case "number":
@@ -56,7 +60,7 @@ const sample = (schema: Schema, name: string): Json => {
     case "boolean":
       return false;
     default:
-      return `A ${name} from the fake model.`;
+      return /reply|draft|text|body/i.test(name) ? draft(input) : `A ${name} from the fake model.`;
   }
 };
 
@@ -68,7 +72,7 @@ const draft = (input: string) => {
 const tokens = (text: string) => Math.max(1, Math.ceil(text.length / 4));
 
 const has = (text: string, words: readonly string[]) =>
-  words.some((word) => text.toLowerCase().includes(word));
+  words.some((word) => text.toLowerCase().includes(word.replace(/s$/, "")));
 
 type Question =
   | { type: "choice"; name: string; choices: { value: string; description: string }[] }
@@ -161,7 +165,7 @@ const responses = (body: ResponsesBody, model: string) => {
   let text =
     format?.type === "json_schema" && format.schema !== undefined
       ? JSON.stringify(
-          model.includes("invalid") ? { unexpected: true } : sample(format.schema, "value")
+          model.includes("invalid") ? { unexpected: true } : sample(format.schema, "value", input)
         )
       : draft(input);
   const cap = body.max_output_tokens ?? 1_000;

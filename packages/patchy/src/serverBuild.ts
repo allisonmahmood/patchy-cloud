@@ -16,7 +16,7 @@ export interface GuestAliases {
   readonly attio: readonly string[];
   readonly imap: readonly string[];
   readonly github: readonly string[];
-  readonly models: readonly string[];
+  readonly models?: readonly string[];
 }
 export const guestAliases = (
   uses: Readonly<Record<string, { readonly kind: string }>>
@@ -127,7 +127,7 @@ const buildConfig = (
     ),
     ...agentPaths.map((file, index) => `import * as agent${index} from ${JSON.stringify(file)};`),
     // Computed keys, so a file named __proto__ is a key rather than the object's prototype.
-    `export default createGuest({${modules.map((name, index) => `[${JSON.stringify(name)}]: module${index}`).join(",")}},${JSON.stringify(aliases.sharedStores)},{${agent.files.map((name, index) => `[${JSON.stringify(name)}]: agent${index}`).join(",")}},${JSON.stringify(aliases.pidgeon)},${JSON.stringify(aliases.attio)},${JSON.stringify(aliases.imap)},${JSON.stringify(aliases.github)},${JSON.stringify(aliases.models)});`
+    `export default createGuest({${modules.map((name, index) => `[${JSON.stringify(name)}]: module${index}`).join(",")}},${JSON.stringify(aliases.sharedStores)},{${agent.files.map((name, index) => `[${JSON.stringify(name)}]: agent${index}`).join(",")}},${JSON.stringify(aliases.pidgeon)},${JSON.stringify(aliases.attio)},${JSON.stringify(aliases.imap)},${JSON.stringify(aliases.github)},${JSON.stringify(aliases.models ?? [])});`
   ].join("\n");
   return {
     configFile: false,
