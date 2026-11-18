@@ -156,16 +156,17 @@ const encodeCredentials = Schema.encodeSync(credentialsJson);
 const decodeCredentials = Schema.decodeUnknownEffect(credentialsJson, {
   onExcessProperty: "error"
 });
+/** A secret as `decode` reads it; one that doesn't decode isn't a credential Patchy made. */
+const parsed =
+  <A>(decode: (input: unknown) => Effect.Effect<A, Schema.SchemaError>) =>
+  (secret: Redacted.Redacted<string>) =>
+    decode(Redacted.value(secret)).pipe(
+      Effect.mapError(
+        (cause) => new Refusal({ code: "invalid_credentials", cause: Redacted.make(cause) })
+      )
+    );
 export const credentials = (value: Credentials) => Redacted.make(encodeCredentials(value));
-export const parseCredentials = Effect.fn("Notion.parseCredentials")(function* (
-  secret: Redacted.Redacted<string>
-) {
-  return yield* decodeCredentials(Redacted.value(secret)).pipe(
-    Effect.mapError(
-      (cause) => new Refusal({ code: "invalid_credentials", cause: Redacted.make(cause) })
-    )
-  );
-});
+export const parseCredentials = parsed(decodeCredentials);
 /** A pasted token's last characters, safe to show. */
 export const keyHint = (key: Redacted.Redacted<string>) => `…${Redacted.value(key).slice(-4)}`;
 
@@ -186,24 +187,8 @@ export const connectSecret = (value: typeof ConnectRequest.Type) =>
   Redacted.make(encodeConnect(value));
 export const changeSecret = (value: typeof ChangeRequest.Type) =>
   Redacted.make(encodeChange(value));
-export const parseConnect = Effect.fn("Notion.parseConnect")(function* (
-  secret: Redacted.Redacted<string>
-) {
-  return yield* decodeConnect(Redacted.value(secret)).pipe(
-    Effect.mapError(
-      (cause) => new Refusal({ code: "invalid_credentials", cause: Redacted.make(cause) })
-    )
-  );
-});
-export const parseChange = Effect.fn("Notion.parseChange")(function* (
-  secret: Redacted.Redacted<string>
-) {
-  return yield* decodeChange(Redacted.value(secret)).pipe(
-    Effect.mapError(
-      (cause) => new Refusal({ code: "invalid_credentials", cause: Redacted.make(cause) })
-    )
-  );
-});
+export const parseConnect = parsed(decodeConnect);
+export const parseChange = parsed(decodeChange);
 
 const hasKeyShape = Schema.is(Key);
 const SelfBody = Schema.Struct({
