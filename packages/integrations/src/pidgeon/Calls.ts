@@ -4,10 +4,10 @@ import * as ConnectionStore from "../ConnectionStore.js";
 import * as Source from "./Source.js";
 
 /**
- * How a call reaches a connected Pidgeon address: it waits for one of the address's slots, then
- * checks its caller and the connection again and loads the key as it stands when the call is
- * sent. A call that waited through Replace key sends the new key; one whose connection was
- * disconnected or moved meanwhile sends nothing.
+ * How a call reaches a connected Pidgeon inbox: it waits for one of the inbox's slots, then checks
+ * its caller and the connection again and loads the key as it stands when the call is sent. A
+ * call that waited through Replace key sends the new key; one whose connection was disconnected
+ * meanwhile sends nothing.
  */
 
 /** Which connection a call goes to and until when, for a caller its door already admitted. */
@@ -22,8 +22,8 @@ export interface Target<E = never> {
 
 export type Connection = Extract<ConnectionStore.Connection, { readonly integration: "pidgeon" }>;
 
-/** The address as a call found it once it held a slot, and a sender with its key as stored then. */
-export interface Address {
+/** The inbox as a call found it once it held a slot, and a sender with its key as stored then. */
+export interface Inbox {
   readonly connection: Connection;
   readonly credentials: Source.Credentials;
   /** Sends one request with that key, within the target's deadline. */
@@ -73,27 +73,28 @@ export const connect = Effect.fn("PidgeonCalls.connect")(function* (
 
 /**
  * Runs `use` for the connection once it holds a slot, with the connection and key it loads then.
- * The deadline bounds both the wait and every call `use` sends; a full gate refuses `busy` with
- * nothing sent.
+ * The key reaches the whole Pidgeon account, so `use` keeps every request to the connection's
+ * inbox itself. The deadline bounds both the wait and every call `use` sends; a full gate refuses
+ * `busy` with nothing sent.
  */
-export const withAddress = Effect.fn("PidgeonCalls.withAddress")(function* <E, A, E2, R2>(
+export const withInbox = Effect.fn("PidgeonCalls.withInbox")(function* <E, A, E2, R2>(
   target: Target<E>,
-  use: (address: Address) => Effect.Effect<A, E2, R2>
+  use: (inbox: Inbox) => Effect.Effect<A, E2, R2>
 ) {
   const first = yield* load(target.companyId, target.connection);
   const source = yield* Source.Source;
   return yield* source.withSlot(
-    first.credentials.identityId,
+    first.credentials.inboxId,
     target.deadline
   )(
     Effect.gen(function* () {
       // The caller or the connection may have changed while this call waited: send only as they
-      // stand now, with the key stored now, and never to an address the connection left.
+      // stand now, with the key stored now, and never for an inbox the connection doesn't hold.
       yield* target.recheck;
       const current = yield* load(target.companyId, target.connection);
-      if (current.credentials.identityId !== first.credentials.identityId)
+      if (current.credentials.inboxId !== first.credentials.inboxId)
         return yield* new ConnectionStore.ConnectionChanged({});
-      const token = Redacted.make(current.credentials.key.token);
+      const token = Redacted.make(current.credentials.key);
       return yield* use({
         ...current,
         call: (request) => source.call(token, request, target.deadline)

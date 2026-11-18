@@ -1654,8 +1654,9 @@ const trial = Command.make(
 );
 
 /**
- * Takes down the Pidgeon test addresses the worktree's environment recorded, and their keys, before
- * the environment folder that records them goes; fails, removing nothing, when it can't.
+ * Takes down the Pidgeon test inboxes the worktree's environment recorded, before the environment
+ * folder that records them goes; fails, removing nothing, when it can't. The keys are the
+ * developer's own, made in Pidgeon's dashboard, and stay.
  */
 const takeDownPidgeon = Effect.fn("takeDownPidgeon")(function* (root: string) {
   const home = yield* Config.String("HOME");

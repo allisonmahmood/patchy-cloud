@@ -268,7 +268,7 @@
       "integration": "pidgeon",
       "handle": "billing",
       "description": "billing@brightline.example: invoices out, remittances in.",
-      "state": "needs-attention"
+      "state": "connected"
     },
     {
       "integration": "pidgeon",

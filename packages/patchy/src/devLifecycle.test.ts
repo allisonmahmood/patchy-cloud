@@ -187,10 +187,10 @@ const thread = {
   id: "thr_1",
   subject: "Where is my order?",
   status: "open",
-  from: { email: "sam@customer.example", name: "Sam" },
-  preview: "Hi, my order 1043…",
+  folder: "inbox",
+  labels: [],
   messageCount: 1,
-  hasAttachments: false,
+  unreadCount: 1,
   lastMessageAt: "2026-10-26T09:00:00.000Z",
   createdAt: "2026-10-25T08:00:00.000Z"
 };
@@ -310,16 +310,14 @@ const makeFixture = Effect.fn("test.lifecycle.fixture")(function* (
                         support: {
                           declaration: support,
                           snapshot: {
-                            version: 1,
+                            version: 2,
                             address: {
                               email: "support@acme.example",
-                              displayName: null,
-                              sendPolicy: "reply_only"
+                              displayName: null
                             },
                             access: "send",
                             test: false,
-                            labels: [],
-                            plan: "free"
+                            labels: []
                           }
                         }
                       }
@@ -871,7 +869,7 @@ it.live(
         );
       const sent = yield* call(started.url, "server.call", { handler: "live.send", args: {} });
       assert.nestedPropertyVal(sent, "value.status", "sent");
-      assert.nestedPropertyVal(sent, "value.test", true);
+      assert.nestedPropertyVal(sent, "value.replayed", false);
       // Only the reads reached the instance, both as the key's person.
       assert.deepStrictEqual(
         devReads.map((request) => request.authorization),

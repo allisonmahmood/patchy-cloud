@@ -4,7 +4,6 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -16,13 +15,15 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 /**
- * Pidgeon (pidgeon.ai), email addresses for software. The credentialed server makes every call,
- * only to Pidgeon's API host, and never follows a redirect. Answers, refusals included, are read
- * under a byte cap before they are decoded, and each address's calls pass one gate per process,
- * shared by connection administration, `patchy dev` and published patches.
+ * Pidgeon (pidgeon.ai), email inboxes for software, on its `/v1` API. The credentialed server
+ * makes every call, only to Pidgeon's API host, and never follows a redirect. Answers, refusals
+ * included, are read under a byte cap before they are decoded, and each inbox's calls pass one
+ * gate per process, shared by connection administration, `patchy dev` and published patches.
+ * The key a connection holds reaches the whole Pidgeon account; what keeps a call to the
+ * connection's one inbox is the operations' own checks, never the key.
  */
 
-export const BASE_URL = "https://pidgeon.ai/api/v1";
+export const BASE_URL = "https://pidgeon.ai/v1";
 const base = new URL(`${BASE_URL}/`);
 
 const SecretCause = Schema.Redacted(Schema.Unknown, { disallowJsonEncode: true });
@@ -37,7 +38,10 @@ export class KeyRejected extends Schema.TaggedError<KeyRejected>()("PidgeonKeyRe
     return "Pidgeon didn't accept this key: it was revoked or mistyped.";
   }
 }
-/** The key may not do this: its access is too low, or the account is on hold. */
+/**
+ * The key may not do this: its access is too low, the inbox only receives, or a send rule or the
+ * do-not-send list refuses a recipient, which Pidgeon's message names.
+ */
 export class Forbidden extends Schema.TaggedError<Forbidden>()("PidgeonForbidden", {
   details: Schema.Struct({ message: Explanation })
 }) {
@@ -48,43 +52,41 @@ export class Forbidden extends Schema.TaggedError<Forbidden>()("PidgeonForbidden
   }
 }
 /**
- * Pidgeon refused a send as a whole, and nothing was sent: the address's send policy
- * (`not_permitted`), a rule (`blocked`), or text a key read in another conversation
- * (`exfiltration_blocked`), which can only go back as a reply in that conversation.
+ * The email carries text a key read in another conversation, which can only go back as a reply in
+ * that conversation, so Pidgeon sent nothing. Pidgeon's own explanation names that conversation,
+ * which may not be the connection's, so it never leaves Patchy.
  */
-export class Refused extends Schema.TaggedError<Refused>()("PidgeonRefused", {
-  details: Schema.Struct({
-    reason: Schema.Literals(["not_permitted", "blocked", "exfiltration_blocked"]),
-    message: Explanation
-  })
-}) {
+export class ExfiltrationBlocked extends Schema.TaggedError<ExfiltrationBlocked>()(
+  "PidgeonExfiltrationBlocked",
+  {}
+) {
   readonly code = "access_denied" as const;
   readonly status = 403;
+  readonly details = { reason: "exfiltration_blocked" } as const;
   override get message() {
-    return `Pidgeon refused the send and sent nothing: ${this.details.message}`;
+    return "This email carries text read in another conversation, which can only go back as a reply in that conversation, so Pidgeon sent nothing.";
   }
 }
 /**
- * Pidgeon Firewall holds this message for a person: no key reads, replies to or forwards it until
- * someone in the company releases it in Pidgeon.
+ * Pidgeon Firewall holds this message for a person: no key reads it until someone releases it.
+ * Its refusal says nothing about which inbox it's in, so the operations answer `not_found`.
  */
 export class Held extends Schema.TaggedError<Held>()("PidgeonHeld", {}) {
-  readonly code = "access_denied" as const;
-  readonly status = 403;
-  readonly details = { reason: "held" } as const;
+  readonly code = "not_found" as const;
+  readonly status = 404;
   override get message() {
-    return "Pidgeon Firewall is holding this message for a person, so it can't be read or answered until someone releases it in Pidgeon.";
+    return "Pidgeon Firewall is holding this message for a person.";
   }
 }
-/** Nothing by that id that this key reaches; Pidgeon answers a missing id and another's alike. */
+/** Nothing by that id that Patchy can show is the connection's inbox's. */
 export class NotFound extends Schema.TaggedError<NotFound>()("PidgeonNotFound", {}) {
   readonly code = "not_found" as const;
   readonly status = 404;
   override get message() {
-    return "Pidgeon has nothing by that id that this key reaches.";
+    return "This Pidgeon inbox has nothing by that id.";
   }
 }
-/** It conflicts with what is there, such as a taken address. */
+/** It conflicts with what is there, such as a draft that is no longer a draft. */
 export class Conflict extends Schema.TaggedError<Conflict>()("PidgeonConflict", {
   details: Schema.Struct({ field: Schema.optionalKey(Schema.String), message: Explanation })
 }) {
@@ -113,44 +115,13 @@ const wait = (seconds: number | undefined) =>
       : `in ${Math.ceil(seconds / 60)} minutes`;
 
 /**
- * Pidgeon took this write's Idempotency-Key with a different request, or from a different key,
- * within its 24 hours; this attempt did nothing.
- */
-export class IdempotencyMismatch extends Schema.TaggedError<IdempotencyMismatch>()(
-  "PidgeonIdempotencyMismatch",
-  {}
-) {
-  readonly code = "idempotency_conflict" as const;
-  readonly status = 409;
-  readonly details = { reason: "mismatch" } as const;
-  override get message() {
-    return "Pidgeon already took this Idempotency-Key with a different request or from a different key, so this attempt did nothing.";
-  }
-}
-/**
- * Pidgeon is still running the first request with this Idempotency-Key; this attempt did nothing.
- * The same request sent again after `retryAfterSeconds` gets the first one's answer.
- */
-export class IdempotencyInProgress extends Schema.TaggedError<IdempotencyInProgress>()(
-  "PidgeonIdempotencyInProgress",
-  { retryAfterSeconds: Schema.Int }
-) {
-  readonly code = "idempotency_conflict" as const;
-  readonly status = 409;
-  readonly details = { reason: "in_progress" } as const;
-  override get message() {
-    return `Pidgeon is still running the first request with this Idempotency-Key, so this attempt did nothing. Send the same request again ${wait(this.retryAfterSeconds)} for the first one's answer.`;
-  }
-}
-
-/**
- * Pidgeon's limits said no, and nothing changed; Patchy never retries. `requests` and
- * `recipient_cooldown` are 429s: the account's own rate, or a new message (not a reply) to
- * someone the address wrote to within its cooldown, which Pidgeon's message names. `plan` is 402.
+ * Pidgeon's limits said no, and nothing changed; Patchy never retries. `requests` is a 429: the
+ * key's own rate, or the account's sending limit. `plan` is 402: the month's free emails are used
+ * and usage billing is off.
  */
 export class RateLimited extends Schema.TaggedError<RateLimited>()("PidgeonRateLimited", {
-  limit: Schema.Literals(["requests", "recipient_cooldown", "plan"]),
-  /** Pidgeon's Retry-After, which every 429 carries. */
+  limit: Schema.Literals(["requests", "plan"]),
+  /** Pidgeon's Retry-After, where it gives one. */
   retryAfterSeconds: Schema.optionalKey(Schema.Int),
   details: Schema.Struct({ message: Explanation })
 }) {
@@ -160,11 +131,27 @@ export class RateLimited extends Schema.TaggedError<RateLimited>()("PidgeonRateL
     switch (this.limit) {
       case "plan":
         return `Pidgeon's plan for this account doesn't allow that: ${this.details.message}`;
-      case "recipient_cooldown":
-        return `Pidgeon holds new messages to someone this address just wrote to: ${this.details.message}`;
       case "requests":
         return `Pidgeon is limiting this account for now. Try again ${wait(this.retryAfterSeconds)}.`;
     }
+  }
+}
+/**
+ * Pidgeon said, in its own words, that the mail couldn't go: the mail service refused it
+ * (`send_failed`), was busy (`unavailable`), or the account's storage is full (`storage_full`).
+ * Nothing was sent.
+ */
+export class MailRefused extends Schema.TaggedError<MailRefused>()("PidgeonMailRefused", {
+  reason: Schema.Literals(["send_failed", "unavailable", "storage_full"]),
+  explanation: Explanation
+}) {
+  readonly code = "source_unavailable" as const;
+  readonly status = 503;
+  get details() {
+    return { reason: this.reason, message: this.explanation };
+  }
+  override get message() {
+    return `Pidgeon couldn't take the mail, and nothing was sent: ${this.explanation}`;
   }
 }
 /** Pidgeon couldn't be reached, redirected, or answered in a way Patchy doesn't read. */
@@ -203,7 +190,7 @@ export class TooLarge extends Schema.TaggedError<TooLarge>()("PidgeonTooLarge", 
     return { maxBytes: this.maxBytes };
   }
 }
-/** Patchy's own gate for the address stayed full until the call's deadline; nothing was sent. */
+/** Patchy's own gate for the inbox stayed full until the call's deadline; nothing was sent. */
 export class Busy extends Schema.TaggedError<Busy>()("PidgeonBusy", {}) {
   readonly code = "busy" as const;
   readonly status = 503;
@@ -211,7 +198,7 @@ export class Busy extends Schema.TaggedError<Busy>()("PidgeonBusy", {}) {
   readonly scope = registry["pidgeon.calls.concurrent"].scope;
   readonly value = registry["pidgeon.calls.concurrent"].default;
   override get message() {
-    return `This address already has ${this.value} calls to Pidgeon running from Patchy. Try again shortly.`;
+    return `This inbox already has ${this.value} calls to Pidgeon running from Patchy. Try again shortly.`;
   }
 }
 
@@ -219,63 +206,47 @@ export class Busy extends Schema.TaggedError<Busy>()("PidgeonBusy", {}) {
 export type CallError =
   | KeyRejected
   | Forbidden
-  | Refused
+  | ExfiltrationBlocked
   | Held
   | NotFound
   | Conflict
-  | IdempotencyMismatch
-  | IdempotencyInProgress
   | Invalid
   | RateLimited
+  | MailRefused
   | Unavailable
   | Timeout
   | TooLarge;
 
 /**
- * Whether a refusal proves Pidgeon changed nothing. Anything else may have run: an answer lost on
- * the way back, a timeout, or a server error.
+ * Whether Pidgeon answered in its own words, so the request is known to have been decided. A call
+ * whose answer was lost, timed out or couldn't be read may have run.
  */
-export const isRefusal = (error: CallError): boolean =>
+export const isDecided = (error: CallError): boolean =>
   error._tag !== "PidgeonUnavailable" &&
   error._tag !== "PidgeonTimeout" &&
   error._tag !== "PidgeonTooLarge";
 
-/** A Pidgeon secret: `pgn_live_…` for live keys, `pgn_test_…` for test-mode ones. */
-export const Token = Schema.String.check(
-  Schema.isPattern(/^pgn_(?:live|test)_[A-Za-z0-9_-]{4,250}$/)
-);
+/**
+ * A Pidgeon API key: `pgn_` and 32 characters, `pgn_test_` and 32 for a test key, whose mail never
+ * leaves Pidgeon. Keys from before the new API, `pgn_live_…`, still sign in.
+ */
+export const Token = Schema.String.check(Schema.isPattern(/^pgn_[A-Za-z0-9_-]{16,250}$/));
 export const isToken = Schema.is(Token);
+/** Whether a key is a test key, by its prefix. */
+export const isTestToken = (token: string) => token.startsWith("pgn_test_");
 
-/** One Pidgeon key: its id, which it can revoke itself by, and its secret. */
-export const Key = Schema.Struct({ id: Schema.String, token: Token });
-export type Key = typeof Key.Type;
-/** What the ciphertext holds: the address key Patchy minted, and old ones not yet revoked. */
-export const Credentials = Schema.Struct({
-  identityId: Schema.String,
-  key: Key,
-  /**
-   * Keys Patchy replaced and hasn't revoked yet, saved with their replacement; each revokes itself
-   * when Patchy tries again.
-   */
-  retired: Schema.optionalKey(Schema.Array(Key))
-});
+/** What the ciphertext holds: the key the admin pasted, and the one inbox it serves here. */
+export const Credentials = Schema.Struct({ inboxId: Schema.String, key: Token });
 export type Credentials = typeof Credentials.Type;
 
-const Instant = Schema.String;
-/** Safe to show: the address, Patchy's key by name, and keys it hasn't revoked yet. */
+/** Safe to show: the inbox, what patches may do with it, and the key's mode. */
 export const Display = Schema.Struct({
   email: Schema.String,
-  identityId: Schema.String,
-  /** Who the address may write to, as Pidgeon says: reply_only, open or list. */
-  sendPolicy: Schema.String,
+  inboxId: Schema.String,
+  /** Patchy's own setting: what patches may do, whatever more the key could. */
   access: Schema.Literals(["read", "send"]),
-  /** Connected with a test key: its mail stays in Pidgeon, and a test address it made lasts a day. */
-  test: Schema.Boolean,
-  key: Schema.Struct({ id: Schema.String, name: Schema.String, madeAt: Instant }),
-  /** Keys Patchy replaced and hasn't revoked yet, named until they are. */
-  retired: Schema.optionalKey(
-    Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.String }))
-  )
+  /** The stored key is a test key: mail the inbox sends through Patchy stays in Pidgeon. */
+  test: Schema.Boolean
 });
 export type Display = typeof Display.Type;
 
@@ -306,33 +277,19 @@ export const parseCredentials = Effect.fn("Pidgeon.parseCredentials")(function* 
   );
 });
 
-/** One call to Pidgeon's REST API, by its path under `/api/v1`. */
+/** One call to Pidgeon's REST API, by its path under `/v1`. */
 export interface Request {
   readonly method: "GET" | "POST" | "PATCH" | "DELETE";
   /** Starts with `/`; ids in it are already encoded with `encodeURIComponent`. */
   readonly path: string;
   readonly query?: Readonly<Record<string, string | number | boolean | undefined>>;
   readonly body?: unknown;
-  /**
-   * Sent as `Idempotency-Key`: a repeat of the same request answers the first result and does
-   * nothing twice, so a write whose answer was lost can be sent again with the same key.
-   */
-  readonly idempotencyKey?: string;
-  /**
-   * What `call` does while Pidgeon is still running the first request with this key: wait as
-   * Pidgeon asks and send it again (the default), or fail with `IdempotencyInProgress`.
-   */
-  readonly inProgress?: "wait" | "fail";
 }
-/** A success: Pidgeon's whole envelope, and whether it replayed an earlier answer. */
+/** A success: Pidgeon's answer, and its status. */
 export interface Answer {
+  readonly status: number;
   readonly body: unknown;
-  readonly replayed: boolean;
 }
-
-/** The `data` of Pidgeon's `{ data }` envelope, or nothing when the answer has none. */
-export const data = (body: unknown): unknown =>
-  Predicate.isObject(body) && "data" in body ? body.data : undefined;
 
 const ErrorBody = Schema.Struct({
   error: Schema.Struct({
@@ -354,67 +311,67 @@ const retryAfter = (value: string | undefined): number | undefined => {
 
 /**
  * Pidgeon's statuses as Patchy's refusals, from an answer already read under the cap. Pidgeon
- * says `{ error: { code, message, field? } }`; a refusal that isn't one of its own is unavailable,
- * test mode's dropped answer (504 `test_dropped`) included.
+ * says `{ error: { code, message, field? } }`, and a refusal is its own word only in that shape:
+ * a 5xx also needs the code its docs give it. A status it doesn't document, such as a 422, or an
+ * answer in any other shape, such as a proxy's page, is unavailable, since Patchy can't tell
+ * whether the request ran. A 204 has no body.
  */
 export const classify = (
   status: number,
   headers: Readonly<Record<string, string | undefined>>,
   text: string
 ): Effect.Effect<Answer, CallError> => {
+  if (status === 204) return Effect.succeed({ status, body: null });
   if (status >= 200 && status < 300)
     return Option.match(decodeJson(text), {
       onNone: () => Effect.fail(new Unavailable({ stage: "response" })),
-      onSome: (body) => Effect.succeed({ body, replayed: headers["idempotent-replay"] === "true" })
+      onSome: (body) => Effect.succeed({ status, body })
     });
   const error = Option.getOrUndefined(decodeErrorBody(text))?.error;
   const message = explanation(error?.message, "Pidgeon refused the request.");
   const field = error?.field === undefined ? {} : { field: error.field.slice(0, 64) };
   if (status === 401) return Effect.fail(new KeyRejected({}));
-  if (status === 402) return Effect.fail(new RateLimited({ limit: "plan", details: { message } }));
-  if (status === 403)
+  if (status === 402 && error !== undefined)
+    return Effect.fail(new RateLimited({ limit: "plan", details: { message } }));
+  if (status === 403 && error !== undefined)
     return Effect.fail(
-      error?.code === "not_permitted" ||
-        error?.code === "blocked" ||
-        error?.code === "exfiltration_blocked"
-        ? new Refused({ details: { reason: error.code, message } })
-        : error?.code === "held"
+      error.code === "exfiltration_blocked"
+        ? new ExfiltrationBlocked({})
+        : error.code === "held"
           ? new Held({})
           : new Forbidden({ details: { message } })
     );
-  if (status === 404) return Effect.fail(new NotFound({}));
-  if (status === 409)
-    return Effect.fail(
-      error?.code === "idempotency_in_progress"
-        ? new IdempotencyInProgress({ retryAfterSeconds: retryAfter(headers["retry-after"]) ?? 1 })
-        : error?.code === "idempotency_mismatch"
-          ? new IdempotencyMismatch({})
-          : new Conflict({ details: { ...field, message } })
-    );
-  if ((status === 400 || status === 422) && error !== undefined)
+  if (status === 404 && error !== undefined) return Effect.fail(new NotFound({}));
+  if (status === 409 && error !== undefined)
+    return Effect.fail(new Conflict({ details: { ...field, message } }));
+  if (status === 400 && error !== undefined)
     return Effect.fail(new Invalid({ details: { ...field, message } }));
-  if (status === 429) {
+  if (status === 429 && error !== undefined) {
     const seconds = retryAfter(headers["retry-after"]);
     return Effect.fail(
       new RateLimited({
-        limit: error?.code === "recipient_cooldown" ? "recipient_cooldown" : "requests",
+        limit: "requests",
         ...(seconds === undefined ? {} : { retryAfterSeconds: seconds }),
         details: { message }
       })
     );
   }
+  if (
+    (status === 502 && error?.code === "send_failed") ||
+    (status === 503 && error?.code === "unavailable") ||
+    (status === 507 && error?.code === "storage_full")
+  )
+    return Effect.fail(new MailRefused({ reason: error.code, explanation: message }));
   return Effect.fail(new Unavailable({ stage: "status", upstreamStatus: status }));
 };
 
-/** One gate per address in this process, shared by its connections and every caller. */
+/** One gate per inbox in this process, shared by its connections and every caller. */
 export class Source extends Context.Service<
   Source,
   {
     /**
      * Sends one request with `token`, bounded by `deadline` (epoch milliseconds) and the answer
-     * cap. Pidgeon's refusals come back classified; a success is its envelope. While Pidgeon is
-     * still answering an earlier request with the same Idempotency-Key, it waits as Pidgeon asks
-     * and sends it again, unless the request asks to fail instead.
+     * cap. Pidgeon's refusals come back classified; a success is its answer. Nothing is sent twice.
      */
     readonly call: (
       token: Redacted.Redacted<string>,
@@ -422,12 +379,12 @@ export class Source extends Context.Service<
       deadline: number
     ) => Effect.Effect<Answer, CallError>;
     /**
-     * Runs `effect` holding one of the address's slots. Waiting keeps a one-second reserve before
+     * Runs `effect` holding one of the inbox's slots. Waiting keeps a one-second reserve before
      * `deadline`, then refuses `busy` with nothing sent. The slot is released however `effect`
      * ends, including interruption.
      */
     readonly withSlot: (
-      identityId: string,
+      inboxId: string,
       deadline: number
     ) => <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E | Busy, R>;
   }
@@ -467,7 +424,7 @@ const collect = (response: HttpClientResponse.HttpClientResponse, maxBytes: numb
     return decoder.decode(body);
   });
 
-/** The request's URL on Pidgeon's host, or nothing when its path would leave `/api/v1`. */
+/** The request's URL on Pidgeon's host, or nothing when its path would leave `/v1`. */
 const target = (request: Request): URL | undefined => {
   if (!request.path.startsWith("/")) return undefined;
   const url = new URL(`.${request.path}`, base);
@@ -480,11 +437,11 @@ const target = (request: Request): URL | undefined => {
 export const make = Effect.gen(function* () {
   const client = yield* HttpClient.HttpClient;
   const gates = new Map<string, Semaphore.Semaphore>();
-  const gate = (identityId: string) => {
-    let found = gates.get(identityId);
+  const gate = (inboxId: string) => {
+    let found = gates.get(inboxId);
     if (found === undefined) {
       found = Semaphore.makeUnsafe(registry["pidgeon.calls.concurrent"].default);
-      gates.set(identityId, found);
+      gates.set(inboxId, found);
     }
     return found;
   };
@@ -497,10 +454,7 @@ export const make = Effect.gen(function* () {
     if (url === undefined) return yield* new Unavailable({ stage: "request" });
     const prepared = HttpClientRequest.make(request.method)(url.href).pipe(
       HttpClientRequest.bearerToken(Redacted.value(token)),
-      HttpClientRequest.acceptJson,
-      request.idempotencyKey === undefined
-        ? (value) => value
-        : HttpClientRequest.setHeader("idempotency-key", request.idempotencyKey)
+      HttpClientRequest.acceptJson
     );
     const response = yield* client
       .execute(
@@ -519,13 +473,18 @@ export const make = Effect.gen(function* () {
       );
     if (response.status >= 300 && response.status < 400)
       return yield* new Unavailable({ stage: "redirect", upstreamStatus: response.status });
-    const text = yield* collect(response, MAX_BYTES);
+    // A 204, as a delete answers, has no body to read.
+    const text = response.status === 204 ? "" : yield* collect(response, MAX_BYTES);
     return yield* classify(response.status, response.headers, text);
   });
 
-  const once = (token: Redacted.Redacted<string>, request: Request, deadline: number) =>
+  const call = (
+    token: Redacted.Redacted<string>,
+    request: Request,
+    deadline: number
+  ): Effect.Effect<Answer, CallError> =>
     Effect.flatMap(Clock.currentTimeMillis, (now) => {
-      // Past the deadline nothing is sent: a retry then can't run after its caller gave up.
+      // Past the deadline nothing is sent: a call then can't run after its caller gave up.
       if (deadline <= now) return Effect.fail(new Timeout({ milliseconds: 0 }));
       const milliseconds = Math.min(deadline - now, registry["integration.deadline"].default);
       return send(token, request).pipe(
@@ -535,29 +494,11 @@ export const make = Effect.gen(function* () {
         })
       );
     });
-  const call = (
-    token: Redacted.Redacted<string>,
-    request: Request,
-    deadline: number
-  ): Effect.Effect<Answer, CallError> =>
-    once(token, request, deadline).pipe(
-      Effect.catchTags({
-        PidgeonIdempotencyInProgress: (busy) =>
-          request.inProgress === "fail"
-            ? Effect.fail(busy)
-            : Effect.flatMap(Clock.currentTimeMillis, (now) => {
-                const wait = busy.retryAfterSeconds * 1_000;
-                return now + wait >= deadline
-                  ? Effect.fail(new Timeout({ milliseconds: Math.max(1, deadline - now) }))
-                  : Effect.andThen(Effect.sleep(wait), call(token, request, deadline));
-              })
-      })
-    );
 
   const withSlot =
-    (identityId: string, deadline: number) =>
+    (inboxId: string, deadline: number) =>
     <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | Busy, R> => {
-      const semaphore = gate(identityId);
+      const semaphore = gate(inboxId);
       return Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
           if (!(yield* semaphore.takeIfAvailable(1))) {

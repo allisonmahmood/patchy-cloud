@@ -1023,7 +1023,7 @@ export class DevReadsGroup extends HttpApiGroup.make("devReads", { topLevel: tru
         "`patchy dev` reads a connection whose integration reads live in development, as the " +
           "bearer: PostHog's `posthog.query`, Pidgeon's `pidgeon.read`, Attio's six reads, IMAP's six and GitHub's twelve. The machine token is " +
           "the only authority: its person, company and machine are read from the token on every " +
-          "call and again after any wait for one of the project's, address's, workspace's, mailbox's or installation's slots, which " +
+          "call and again after any wait for one of the project's, inbox's, workspace's, mailbox's or installation's slots, which " +
           "answers 401 when the token stopped working meanwhile. `connection` only selects: it " +
           "must name a connected connection of the operation's integration in the token's " +
           "company, which any active member reads through. Other operations, including every " +
@@ -1035,7 +1035,7 @@ export class DevReadsGroup extends HttpApiGroup.make("devReads", { topLevel: tru
           "`runtime.pidgeon.bytes`, `runtime.attio.bytes`, `runtime.imap.bytes`, `runtime.github.bytes`); each call has the 15-second `integration.deadline` " +
           "(`timeout`, 504), results keep the operation's own bounds and `runtime.result.bytes`, " +
           "and published patches share the process's slots per PostHog project, per Pidgeon " +
-          "address, per Attio workspace, per IMAP mailbox and per GitHub installation (`busy`), and IMAP's pool of sessions. A Pidgeon read checks what comes back against the address and " +
+          "inbox, per Attio workspace, per IMAP mailbox and per GitHub installation (`busy`), and IMAP's pool of sessions. A Pidgeon read checks what comes back against the inbox and " +
           "keeps held mail empty, as a published read does. An Attio read's `connection.revision` names the " +
           "snapshot the repo was generated from: the instance decodes by that snapshot of that connection, " +
           "and a revision it doesn't have answers 403 as an unknown connection does. Calls are limited to " +
@@ -1155,19 +1155,28 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
           "logged before execution, including denials and failures with trusted attribution; " +
           "only query logs SQL text (up to 8 KiB), never parameters. " +
           "`pidgeon.read { connection, operation, input }` and `pidgeon.write { connection, operation, input }` " +
-          "run the operations Patchy writes for one declared Pidgeon address, which Patchy fills in: " +
-          "reads `threads.list`, `threads.get`, `messages.get`, `messages.search`, `labels.list` and " +
-          "`attachments.text`; writes `messages.reply`, `messages.send`, `threads.update`, " +
-          "`threads.label` and `threads.unlabel`, which a connection whose key only reads refuses " +
-          "(`access_denied`). Each result encodes through its operation's schema, so no other field " +
-          "leaves the host. A send's `idempotencyKey` names one email: Pidgeon's Idempotency-Key is a " +
-          "hash of the connection, the patch and it. Pidgeon's 409 fails `idempotency_conflict` with " +
-          "`details.reason` `mismatch` or `in_progress` (with `retryAfter`), sending nothing; held " +
-          "mail and send refusals fail `access_denied` with `details.reason`; the daily send budget " +
-          "and Pidgeon's own limits fail `source_rate_limited` with `details.limit`: `budget`, " +
-          "`requests` or `plan`, or `recipient_cooldown` when Pidgeon holds back a new message to someone " +
-          "the address just wrote to, which a reply in their conversation avoids; Pidgeon's own carry its " +
-          "explanation in `details.message`. Arguments are " +
+          "run the operations Patchy writes for one declared Pidgeon inbox, which Patchy fills in: " +
+          "reads `threads.list`, `threads.get`, `messages.get`, `messages.search` and `labels.list`; " +
+          "writes `messages.reply`, `messages.send`, `threads.update`, `threads.label` and " +
+          "`threads.unlabel`, which a `read` connection refuses (`access_denied`). The stored key " +
+          "reaches the whole Pidgeon account, so Patchy keeps every call to the connection's inbox: " +
+          "lists and search name it and refuse an answer carrying another inbox's row, a thread or " +
+          "message is shown only when it says it's the inbox's, triage reads the thread first and " +
+          "checks a label against the inbox's own, and a held message read or answered by id, which " +
+          "can't be shown to be the inbox's, answers `not_found` as an unknown id does. Each result " +
+          "encodes through its operation's schema, so no other field leaves the host. A send's " +
+          "`idempotencyKey` names one email: Patchy writes it as a Pidgeon draft in the inbox, records " +
+          "it under a hash of the connection, the patch and the key, and sends each draft at most once. " +
+          "The same key again answers what became of it (`replayed: true`); `idempotency_conflict` " +
+          "sends nothing more, with `details.reason` `in_progress` (another call holds it, with " +
+          "`retryAfter`), `mismatch` (the key went with a different email) or `unconfirmed` (Pidgeon " +
+          "hasn't said whether it left; the same key asks again). A send answers `status` `sent` or " +
+          "`held`, kept for a member of the Pidgeon account to approve. Text read in another " +
+          "conversation fails `access_denied` with `details.reason` `exfiltration_blocked`; the daily " +
+          "email budget and Pidgeon's own limits fail `source_rate_limited` with `details.limit` " +
+          "`budget`, `requests` or `plan`, Pidgeon's own carrying its explanation in `details.message`; " +
+          "mail Pidgeon couldn't take fails `source_unavailable` with `details.reason` `send_failed`, " +
+          "`unavailable` or `storage_full`, sending nothing. Arguments are " +
           "bounded by `runtime.pidgeon.bytes`. Recent calls name each call's ids, a send's subject " +
           "and recipients and a reply's CC, never a body or search text. " +
           "`attio.listRecords { connection, object, eq?, contains?, range?, orderBy?, limit?, cursor? }`, " +

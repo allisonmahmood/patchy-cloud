@@ -8,10 +8,18 @@ import * as Source from "./Source.js";
 
 const metadata = {
   schema: PidgeonSnapshot,
+  /**
+   * A snapshot read with the credentials alone, at Read. What patches may do is the connection's
+   * own setting, which the store's paths pass instead.
+   */
   discover: Effect.fn("Pidgeon.metadata.discover")(function* (credentials: Source.Credentials) {
-    const reach = yield* Keys.test(credentials, credentials.identityId);
-    const access = reach.me.key?.access === "send" ? "send" : "read";
-    return (yield* Keys.inspect(credentials, credentials.identityId, access)).snapshot;
+    const display: Source.Display = {
+      email: credentials.inboxId,
+      inboxId: credentials.inboxId,
+      access: "read",
+      test: Source.isTestToken(credentials.key)
+    };
+    return (yield* Keys.inspect(credentials, display, "read")).snapshot;
   })
 };
 
@@ -31,7 +39,7 @@ export const pidgeon: {
   metadata,
   operations,
   generate,
-  // Mail a builder's agent invents never resembles a company's: dev reads the real address. Its
+  // Mail a builder's agent invents never resembles a company's: dev reads the real inbox. Its
   // writes never run live in dev; `patchy dev` simulates them.
   live: ["read"]
 });

@@ -6,7 +6,7 @@ Built and live at [cloud.patchyhq.com](https://cloud.patchyhq.com): tier 1 pages
 
 Signed-in members find company patches at `/` and open their cards at `/patches/<name>`. Owners manage descriptions, sharing, served versions and the lifecycle from the portal or CLI. Patches stay live or retired indefinitely; deletion starts a 30-day recovery window. Off addresses show colleagues an actor-stamped notice and a route to restore. Admins can manage and reassign every company patch in the portal, but opening its content takes being in its audience, and publishing takes becoming its owner. An owner who can no longer open their own patch sees that and how to recover; admins see the patch under Needs attention and can reassign it to an active person who can open it. Deactivation and reactivation offer patch selections with dependant and source warnings, committed together with the user's access change.
 
-Agents discover company tools and data sources through `patchy list` and its patch, primitive and connection drill-downs. Description edits pull back into the repo at refresh, a new dev start and publish; a running dev session takes them with refresh. Clerk sign-in, create-or-join, company administration, company/public sharing and machine login, logout and revocation are built. Postgres connections have browser administration, immutable schema snapshots and generated relation clients; PostHog connections read one PostHog Cloud project through named, shaped HogQL queries. Pidgeon connections hold a key Patchy mints for one email address, which patches read and, with a send key, reply, send and triage from. Attio connections hold a read-only workspace key, through which patches read the workspace's records, list entries and members with a client typed from its snapshot. Signed-in pages share one sidebar shell and component set. Each person can pin pages and tools from their patch menus. Their pins show together in that sidebar, as many as they like; one whose patch is off, or that they can no longer open, stays hidden until it is back.
+Agents discover company tools and data sources through `patchy list` and its patch, primitive and connection drill-downs. Description edits pull back into the repo at refresh, a new dev start and publish; a running dev session takes them with refresh. Clerk sign-in, create-or-join, company administration, company/public sharing and machine login, logout and revocation are built. Postgres connections have browser administration, immutable schema snapshots and generated relation clients; PostHog connections read one PostHog Cloud project through named, shaped HogQL queries. Pidgeon connections hold a key an admin made in Pidgeon's dashboard and one inbox it reaches, which Patchy keeps patches to; patches read it and, at Read and send, reply, send and triage from it. Attio connections hold a read-only workspace key, through which patches read the workspace's records, list entries and members with a client typed from its snapshot. Signed-in pages share one sidebar shell and component set. Each person can pin pages and tools from their patch menus. Their pins show together in that sidebar, as many as they like; one whose patch is off, or that they can no longer open, stays hidden until it is back.
 
 Tier 2 repos publish an HTML artifact and an inspected server artifact. The local dev loop runs the hosted handler engine and callback path, with live server rebinding and a non-admin colleague mount. The fleet controller and ECS Fargate provider are built, including spare claims, stopping and drain, crash metering and the patch breaker. Production admission requires `EXECUTION_PROVIDER=ecs`; a local executor is refused. Narrower sharing, other integrations, billing, source recovery and the remaining company lifecycle remain future work.
 
@@ -323,7 +323,7 @@ A published patch is shared with everyone in the company by default. Tier 1 may 
 
 A person finds a patch in the portal or through its shared address. A patch's identity is its **id**, while its **name** is unique within the company. Two sales dashboards need different names, but renaming one never changes which patch it is. See [Addresses](#addresses).
 
-**The portal is built.** Signed out, `/` shows the login door, which also gives the setup line as a copy line in its foot, since an agent told only the instance's address reads that page first. Signed in, `/` is **Home**, in the order people come for. **Needs attention** leads, only when something is wrong: the person's own tools that failed in the last 24 hours, each with View log, and, for admins, the company's connections that need one (an Attio key found writable, a mailbox whose server refused the password, a Pidgeon key Patchy couldn't revoke or a test key live patches use, or a connection disconnected while live patches declare it), each with its fix, and the person's own apps and computers whose access ended on its own in the last 30 days, each with Reconnect to Connect an app or Add a computer. **Your usual** holds up to four live patches the person opened most in the last 30 days; with nothing opened yet it is "Popular at" the company. **New** lists up to three of colleagues' patches made in the last week that the person hasn't opened, never a public page. Both are left out below eight live patches. A blue dot after a patch's name, like unread mail, marks a colleague's live patch the person has never opened, wherever All patches lists it and in Home's New, From colleagues and Shared with you, until they open it; never their own, never in Your usual or the switcher. **Yours** is a table of the person's own live patches, A–Z, with who can open each, the call summary for tools and Share on every row, which opens the Share dialog over Home; **From colleagues** is everyone else's, A–Z, with owner and when it changed, the first twelve and See all. The sidebar's search covers every patch's name, title, description and owner and shows what it finds in All patches, and `/?q=` redirects there; a search that matches no live patch offers the line `Build us a Patchy tool for <query>` to hand an agent. A patch's title opens the patch itself everywhere it is listed, except a retired or deleted one's, which leads to its card; each row's menu holds Open in a new tab, Copy link and About this patch, with **Share…** for a live patch the person manages. Other companies' patches shared with the person follow under **Shared with you**, with who shared each, each opening the patch, or saying why its guests can't open it now, with **Remove…** in its menu, which asks first; it stays when the company has nothing live. **All patches** at `/patches` is the table of every patch the person can open, A–Z, 50 to a page, filtered to All, Tools, Pages or Yours, with Needs attention and Retired and deleted while they hold something, each filter its own address; the sidebar's search shows there as a chip that clears it, and so does `?owner=<user id>`, People's See their patches, which narrows it to one person's own. A row opens its patch from anywhere on it, the person's own live patches carry **Share**, and each row's other acts are in its menu; Needs attention lists a patch only to its owner and admins. For the tier 2 patches a person manages, All patches shows the last 24 hours' calls in a Failures (24 h) column, None, No calls yet, or how many failed linked to the log, never that a tool is healthy, and lists any that failed under Needs attention, and Home's Needs attention names an owner's own failing tools, each linked to its log filtered to Failed. Until a person has a live machine token, the **Final step** dialog sits over Home at each sign-in for their first week or their first three sign-ins that reach Home, whichever lasts longer, whatever the company has published: connecting an agent is the last step between a person and Patchy. Home stays itself behind it, inert. The dialog has no close button and Escape doesn't close it; **Later** hides it for the rest of that sign-in. It has two steps, giving your agent the copyable line `Set up Patchy using <instance>/llms.txt` and confirming the code the agent sends. It follows along on Patchy's own records, re-reading them every few seconds while the tab is visible and never through the device lookup's budget: its setup link says when their agent opened the line, when a login is waiting and how it ended, with **Get a new line** when it can't finish; a live machine token, the one the line made when there is one, marks the person connected, the dialog says "You're set" and lets go, and Home shows the first publication after that without a reload. On a phone it is a bottom sheet that says the step happens on their computer and sends them the address, and Later reads "Look around <company> first". Once it is put off, or its window has passed, Home offers **Connect your agent** in one line until they connect, unless a computer of theirs whose access ended is offering Reconnect, leading to the same steps as a page at `/guide`; with a live token `/guide` sends them Home. **New patch**, from the sidebar, opens over Home at `/?new`: connected, a starter line to give their agent and the computer it builds on; not yet, the same two steps. A sign-in is a session; the sign-ins that reached Home are kept for everyone's first four and for any in their first week, so someone who connected and later revoked every key never sees the panel again unasked. One line, "<title> is live", with Open and Copy link, sits at the top of Home for a day after the first patch was made. An owner whose patches are all off sees that nothing is live and a link to them. The title leads, or the name when the patch has no distinct title, in lists, tiles, search results, menus, dialogs, the switcher and the card's heading, less a trailing company name the patch's own HTML gives it (" · Brightline Studio"); search matches either. Your usual adds only whether it is a tool or a page and whose, since the person already knows those patches; Home's tables and All patches add the description's first clause. The card's heading is the title, with its kind and address beneath it and Copy. Ownership reads "You" in an Owner column, not as a tag. The card at `/patches/<name>` has one header on every tab: Share for a manager and Open, or Restore for a manager while an off patch can come back (asking first when its sources are off), and a menu of Open in a new tab, Copy link and, for a manager, Retire… and Delete…; a status line says who retired or deleted it, when, and when it is reclaimed, how many calls failed in the last 24 hours (on Overview, for its owner and admins), and, to admins, that its owner is deactivated. Overview shows the description, owner and deactivation status, who can open it (with Change for a manager), current version and publisher, its opens, the first three patches that read its shared tables or stores, and for the owner and admins the last three log entries under Recent activity; beside a live tool whose version has agent tools, **Your agent can, as you** lists them. Versions at `/patches/<name>/versions` lists every version, the served one marked Serving, and for managers each other one's Serve this version… asks in a dialog at `/patches/<name>/rollback?version=<n>`. The owner and admins also get Log at `/patches/<name>/log`, filtered by chips whose choices are links and grouped by day, and Settings at `/patches/<name>/settings`: the description, the owner with Reassign for admins, who can open it with Change (the Share dialog), and Take it down with Retire and Delete. **Share** and **Share…** open the Share dialog over the page they were chosen on, Home, All patches or the card (over Overview from Log), which `?share=<name>` asks for: an email field to invite a guest, suggesting the people the company has shared with before, the people with access, its owner and its guests with their company and Remove, and why its guests can't open it while they can't, then general access, People at the company or Anyone on the internet, and Copy link, Close and Save. Save submits audience edits from the dialog footer; Close dismisses without submitting those edits. Owners and other authorized sharers see the saved Company/Public audience or all granted team names alongside the owner and named guests. Each add, remove or change posts and comes back to the same page with the dialog open and a receipt in it; a refusal shows under the field with the email kept. Saving Anyone on the internet asks in the dialog, saying anyone with the link can open it without signing in, and Make public applies it, rechecking everything the save checks. A tier 2 patch can't be public, so its only choice is the company, with why; while a patch is public its guests stay listed, keeping their access for its way back, and inviting waits. On a phone the dialog is a bottom sheet. Retired and deleted cards remain at their names until reclamation. Retire, Delete, off-source Restore and admin-only Reassign ask in a dialog over the card's tab, each at its own URL under the card's. An inline restore that discovers off sources answers 409 with the restore confirmation and does nothing until acknowledged. `/<company>/<patch>` stays the patch itself. The portal uses Patches' discovery query, limited to the viewer's company, including its public patches.
+**The portal is built.** Signed out, `/` shows the login door, which also gives the setup line as a copy line in its foot, since an agent told only the instance's address reads that page first. Signed in, `/` is **Home**, in the order people come for. **Needs attention** leads, only when something is wrong: the person's own tools that failed in the last 24 hours, each with View log, and, for admins, the company's connections that need one (an Attio key found writable, a mailbox whose server refused the password, a Pidgeon test key live patches use, or a connection disconnected while live patches declare it), each with its fix, and the person's own apps and computers whose access ended on its own in the last 30 days, each with Reconnect to Connect an app or Add a computer. **Your usual** holds up to four live patches the person opened most in the last 30 days; with nothing opened yet it is "Popular at" the company. **New** lists up to three of colleagues' patches made in the last week that the person hasn't opened, never a public page. Both are left out below eight live patches. A blue dot after a patch's name, like unread mail, marks a colleague's live patch the person has never opened, wherever All patches lists it and in Home's New, From colleagues and Shared with you, until they open it; never their own, never in Your usual or the switcher. **Yours** is a table of the person's own live patches, A–Z, with who can open each, the call summary for tools and Share on every row, which opens the Share dialog over Home; **From colleagues** is everyone else's, A–Z, with owner and when it changed, the first twelve and See all. The sidebar's search covers every patch's name, title, description and owner and shows what it finds in All patches, and `/?q=` redirects there; a search that matches no live patch offers the line `Build us a Patchy tool for <query>` to hand an agent. A patch's title opens the patch itself everywhere it is listed, except a retired or deleted one's, which leads to its card; each row's menu holds Open in a new tab, Copy link and About this patch, with **Share…** for a live patch the person manages. Other companies' patches shared with the person follow under **Shared with you**, with who shared each, each opening the patch, or saying why its guests can't open it now, with **Remove…** in its menu, which asks first; it stays when the company has nothing live. **All patches** at `/patches` is the table of every patch the person can open, A–Z, 50 to a page, filtered to All, Tools, Pages or Yours, with Needs attention and Retired and deleted while they hold something, each filter its own address; the sidebar's search shows there as a chip that clears it, and so does `?owner=<user id>`, People's See their patches, which narrows it to one person's own. A row opens its patch from anywhere on it, the person's own live patches carry **Share**, and each row's other acts are in its menu; Needs attention lists a patch only to its owner and admins. For the tier 2 patches a person manages, All patches shows the last 24 hours' calls in a Failures (24 h) column, None, No calls yet, or how many failed linked to the log, never that a tool is healthy, and lists any that failed under Needs attention, and Home's Needs attention names an owner's own failing tools, each linked to its log filtered to Failed. Until a person has a live machine token, the **Final step** dialog sits over Home at each sign-in for their first week or their first three sign-ins that reach Home, whichever lasts longer, whatever the company has published: connecting an agent is the last step between a person and Patchy. Home stays itself behind it, inert. The dialog has no close button and Escape doesn't close it; **Later** hides it for the rest of that sign-in. It has two steps, giving your agent the copyable line `Set up Patchy using <instance>/llms.txt` and confirming the code the agent sends. It follows along on Patchy's own records, re-reading them every few seconds while the tab is visible and never through the device lookup's budget: its setup link says when their agent opened the line, when a login is waiting and how it ended, with **Get a new line** when it can't finish; a live machine token, the one the line made when there is one, marks the person connected, the dialog says "You're set" and lets go, and Home shows the first publication after that without a reload. On a phone it is a bottom sheet that says the step happens on their computer and sends them the address, and Later reads "Look around <company> first". Once it is put off, or its window has passed, Home offers **Connect your agent** in one line until they connect, unless a computer of theirs whose access ended is offering Reconnect, leading to the same steps as a page at `/guide`; with a live token `/guide` sends them Home. **New patch**, from the sidebar, opens over Home at `/?new`: connected, a starter line to give their agent and the computer it builds on; not yet, the same two steps. A sign-in is a session; the sign-ins that reached Home are kept for everyone's first four and for any in their first week, so someone who connected and later revoked every key never sees the panel again unasked. One line, "<title> is live", with Open and Copy link, sits at the top of Home for a day after the first patch was made. An owner whose patches are all off sees that nothing is live and a link to them. The title leads, or the name when the patch has no distinct title, in lists, tiles, search results, menus, dialogs, the switcher and the card's heading, less a trailing company name the patch's own HTML gives it (" · Brightline Studio"); search matches either. Your usual adds only whether it is a tool or a page and whose, since the person already knows those patches; Home's tables and All patches add the description's first clause. The card's heading is the title, with its kind and address beneath it and Copy. Ownership reads "You" in an Owner column, not as a tag. The card at `/patches/<name>` has one header on every tab: Share for a manager and Open, or Restore for a manager while an off patch can come back (asking first when its sources are off), and a menu of Open in a new tab, Copy link and, for a manager, Retire… and Delete…; a status line says who retired or deleted it, when, and when it is reclaimed, how many calls failed in the last 24 hours (on Overview, for its owner and admins), and, to admins, that its owner is deactivated. Overview shows the description, owner and deactivation status, who can open it (with Change for a manager), current version and publisher, its opens, the first three patches that read its shared tables or stores, and for the owner and admins the last three log entries under Recent activity; beside a live tool whose version has agent tools, **Your agent can, as you** lists them. Versions at `/patches/<name>/versions` lists every version, the served one marked Serving, and for managers each other one's Serve this version… asks in a dialog at `/patches/<name>/rollback?version=<n>`. The owner and admins also get Log at `/patches/<name>/log`, filtered by chips whose choices are links and grouped by day, and Settings at `/patches/<name>/settings`: the description, the owner with Reassign for admins, who can open it with Change (the Share dialog), and Take it down with Retire and Delete. **Share** and **Share…** open the Share dialog over the page they were chosen on, Home, All patches or the card (over Overview from Log), which `?share=<name>` asks for: an email field to invite a guest, suggesting the people the company has shared with before, the people with access, its owner and its guests with their company and Remove, and why its guests can't open it while they can't, then general access, People at the company or Anyone on the internet, and Copy link, Close and Save. Save submits audience edits from the dialog footer; Close dismisses without submitting those edits. Owners and other authorized sharers see the saved Company/Public audience or all granted team names alongside the owner and named guests. Each add, remove or change posts and comes back to the same page with the dialog open and a receipt in it; a refusal shows under the field with the email kept. Saving Anyone on the internet asks in the dialog, saying anyone with the link can open it without signing in, and Make public applies it, rechecking everything the save checks. A tier 2 patch can't be public, so its only choice is the company, with why; while a patch is public its guests stay listed, keeping their access for its way back, and inviting waits. On a phone the dialog is a bottom sheet. Retired and deleted cards remain at their names until reclamation. Retire, Delete, off-source Restore and admin-only Reassign ask in a dialog over the card's tab, each at its own URL under the card's. An inline restore that discovers off sources answers 409 with the restore confirmation and does nothing until acknowledged. `/<company>/<patch>` stays the patch itself. The portal uses Patches' discovery query, limited to the viewer's company, including its public patches.
 
 Signed-in pages share one sidebar of places: **Home**, **All patches**, **Your agents** (`/agents`) and **Settings**, the company's management, which opens on **People** (`/settings/people`) and, while one of its pages is open, shows it under Settings beside **Teams** (`/settings/company/teams`), **Integrations** (`/settings/integrations`) and **Agent access** (`/settings/agent-access`). Patches, the person's and their colleagues', live in Home and All patches, never under Settings. ⌘⇧K's switcher lists the same places. Their old addresses, `/machines` and `/company/…`, keep working for good, since released skills and CLIs carry them: a GET redirects permanently to the new address with its query, `/machines?agent=<app>` to `/agents/connect?app=<app>`, and a form posted to an old address is answered as at the new one. Every role sees the same places; what a member can't change is read-only on its page. The company's name heads the sidebar as the link Home, with the patch search and **New patch** under it; New patch opens Home at `/?new`. The place a page belongs to is lit, and its `<title>` reads "Heading – Place – Company", naming the place once. Below 1024px the sidebar folds into a top bar of the company's name, the search and Menu, which opens New patch, the same places and the foot, without script. The sidebar's foot holds **What's new**, **Tell Patchy** and the account menu, with the person's name, email, Your agents, the single-key shortcuts switch and Sign out. A form that changes something leaves a **receipt**, one line naming what it did ("Revoked Studio Mac mini"), shown once at the top of the page it lands on. **What's new** opens up to five headlines of the changes released since the person last looked, or the latest once they are caught up, each with its kind (New, Improved or Fixed) and linking to that change, then See all changes; a dot shows while there are any, and opening it clears the dot. The changelog has a page per month, such as `/whats-new/2026-11`, and `/whats-new` shows the newest: its days newest first, each change one line that opens in place to its detail and its permalink, `#change-<release>-<n>`, which opens it; the changes new to the person are open and marked, and each day's unnoticeable work is folded into one behind-the-scenes line. Opening the newest month clears the dot as well; an older month leaves it. A link out of the panel or a month carries the marker it was drawn with as `?since=`, so the month it opens still marks what was new to them. Entries ship with the server, written in plain words by the agent that deploys from the PRs merged since the last release, so production lists exactly what it runs. Anyone, signed in or not, can read the New and Improved changes at `/whats-new.json`, which patchyhq.com's own What's new page reads; Fixed changes, behind-the-scenes lines and PR numbers stay out of it. Each person's place is kept on their account, so it follows them across devices; a new member starts caught up. First-party pages compose one component set (buttons, fields, notices, badges, rows, tables, menus, dialogs, steps, copy lines and marks) and five page templates, Index, Detail, Settings, Flow and Door, and carry no styles of their own: the build fails a page that styles itself or draws a component by hand. Every first-party page outside the app shell is a **door**, one card on the grid canvas drawn from one template: a kicker, the title, its body, one primary action and at most a quiet second, and a foot that names who is signed in with the way out. Sign-in, create-or-join, beta links, device login and consent and each of their outcomes, deactivated and refused pages, error pages, the dev persona picker and Serving's 404, stopping and needs-rebuild notices are doors. A retired or deleted patch's address is an app page, not a door. Portal not-found pages keep the app shell.
 
@@ -732,8 +732,8 @@ integration's mark, then its state, the live patches that use it and, for admins
 the newest its Calls tab would show them, and a menu. A connection is **Connected**, a quiet dot; **Paused**, a badge, when an admin
 paused it; or **Needs attention**, a badge, when Patchy stopped it or something about it waits
 on an admin, in its integration's own words with its fix: an Attio key a check found writable,
-an IMAP login its mail server refused (its login pause), a Pidgeon key Patchy replaced but
-couldn't revoke, a Pidgeon test address, or a GitHub App uninstalled, its permissions changed or
+an IMAP login its mail server refused (its login pause), a Pidgeon test key, or a GitHub App
+uninstalled, its permissions changed or
 a repository gone from its installation. A GitHub connection whose account suspended the App
 shows "Suspended on GitHub, last checked …" in its place, a state of its own rather than a pause. From nine connections the page adds search over names and descriptions and the
 views All, Needs attention and Paused while any are, and for admins Unused, then the
@@ -1180,8 +1180,8 @@ A shared table or store is read as the initiating viewer: each read and each liv
 Company Postgres connections, discovery, publish binding and constrained runtime
 reads are built, with generated relation clients and local fixtures. Company
 PostHog connections read one PostHog Cloud project through named HogQL queries.
-Company Pidgeon connections connect one email address with a key Patchy mints for
-it, and patches read and send from it. Company Attio connections read one CRM
+Company Pidgeon connections connect one inbox with a key an admin made in
+Pidgeon, which Patchy keeps patches to, and patches read and send from it. Company Attio connections read one CRM
 workspace through a read-only key: its records, list entries and members.
 Company Email (IMAP) connections log in to one mailbox with its password, and
 patches read its folders and messages without ever changing it. Company GitHub
@@ -1200,8 +1200,8 @@ Today every integration supports **company** connections only: an admin connects
 a source and decides who may build with it, and anyone who can open a tier 2 patch
 whose handlers declare it uses it through them; a page below tier 2 reaches no connection. There is no per-patch grant. “As the viewer” means Patchy
 checks company access and records the user; the source sees the shared role from
-the connection string, the admin's PostHog key, the key Patchy minted for a
-Pidgeon address, the admin's read-only Attio workspace key, a mailbox's IMAP
+the connection string, the admin's PostHog key, the admin's Pidgeon key for an
+inbox, the admin's read-only Attio workspace key, a mailbox's IMAP
 login, or a token Patchy mints through its GitHub App, not a separate identity
 for each person.
 
@@ -1226,7 +1226,7 @@ A connection is open to build with for the company, as every existing connection
 Every integration connects through one page, the same frame drawn from what the
 integration says: 1 what to make in the other system first, which nothing marks
 done; 2 the credential's fields, secrets masked with Show; any sections a check
-unlocks (Pidgeon's address and what patches may do); Name it, behind the fixed
+unlocks (GitHub's repositories, once signed in); Name it, behind the fixed
 `kind/` prefix; Once connected, what it can and can't do, which the frame writes
 the same way for every integration, with at most one caveat; then Test and
 connect and Cancel. A refusal about a field reads under it, any other right above
@@ -1326,140 +1326,121 @@ text, never its values or rows, appear in the connection's recent calls.
 
 ### Connecting Pidgeon
 
-[Pidgeon](https://pidgeon.ai) gives software real email addresses. One Pidgeon
-connection is one address, company-wide: `pidgeon/support` is `support@…`, and
-Patchy fills in the address on every call, so a patch can't read or send as
-another. The credentialed server makes every call, only to
-`https://pidgeon.ai/api/v1`, never following a redirect, with answers, refusals
-included, read under the 8 MiB cap before they're decoded.
+[Pidgeon](https://pidgeon.ai) gives software real email inboxes. One Pidgeon
+connection is one inbox, company-wide: `pidgeon/support` is `support@…`. The
+key a connection holds is one an admin made in Pidgeon's dashboard, and such a
+key reaches the whole Pidgeon account: Pidgeon makes no key for one inbox. So
+Patchy keeps the boundary itself, on every call (**Operations** below). The
+credentialed server makes every call, only to `https://pidgeon.ai/v1`, never
+following a redirect, with answers, refusals included, read under the 8 MiB cap
+before they're decoded.
 
-**Connect.** The connect page is the shared frame, in one form. An admin pastes a Pidgeon admin key
-over the whole account, live or test, and presses Find addresses: the page's
-script posts the key in the body of that one request, and Patchy answers with the
-addresses it reaches in its own mode. The admin picks one, or creates one on
-Pidgeon's shared `pidgeon.email` or a domain the workspace has, with a display
-name and a send policy, then chooses what patches may do, **Read** or **Read and
-send**, and names it. The page needs its script, because the server never writes
-the admin key back into a page; a refused submit keeps everything typed except
-the key. The address, what patches may do and the name stay locked until Find
-addresses has checked the key, and a key changed after that locks them again. The
-page says where to make the key, that Patchy never stores it, who reads the mail,
-that builders' agents read it while they build and what they send there goes
-nowhere, and that revoking the admin key in Pidgeon later disconnects the
-addresses connected with it.
+**Connect.** The connect page is the shared frame, as for Attio and a mailbox, in
+one submit. An admin makes a key in Pidgeon's dashboard, Send if patches will
+reply and send or Read if they only read, pastes it, types the inbox's address,
+chooses what patches may do, **Read** or **Read and send**, and names it. The page
+says every member reads the inbox's mail through patches that use it, that with
+Read and send they reply and send from it as the person using the patch, that
+builders' agents read it while they build and what they send there goes nowhere,
+that patches can't reach the account's other inboxes, and that the key reaches
+the whole Pidgeon account, so cutting Patchy off means revoking it in Pidgeon.
 
-Patchy then, in order: reads `/me` and refuses a key that isn't admin or doesn't
-reach the whole account; finds the address, refusing one without an inbox or in
-the other mode, or creates it with an inbox, which a test key makes a test
-address, under an `Idempotency-Key` from the page's attempt, so a connect retried
-within the day Pidgeon keeps that key makes no second address; mints a key for that
-address alone at `read` or `send`, named `Patchy <handle> <attempt>`; and checks
-the new key, whose `/me` must show the chosen access, the admin key's mode and no
-reach over the whole account, and whose `/identities` must list exactly the
-address. It then reads the snapshot with it. Only that key is saved, encrypted
-under the keyring, and only after all of that; the admin key is used for the
-request and never stored, logged or shown.
+Test and connect then checks, in this order, changing nothing in Pidgeon, and
+shows each refusal under the field it's about: the key is shaped like a Pidgeon
+key and Pidgeon accepts it (under Key); one inbox the key reaches has the address
+typed, compared trimmed and ignoring case, and keeps mail, which an `events` inbox
+doesn't (under Inbox, naming none of the account's other inboxes); and for Read
+and send, the key can send, which Patchy asks by sending a draft that doesn't
+exist (403 below `send`, 404 from it up; under Patches may). Nothing is saved
+unless every check passes. Patchy reads the snapshot with the key and saves the
+key with the inbox's id, encrypted under the keyring; the key is never logged,
+shown or written back into the page, so a refused submit keeps everything typed
+except the key. **Access** is Patchy's own setting, enforced before Pidgeon sees
+anything: Change access lowers it locally, and raises it to send only once the
+stored key is shown to send.
 
-Every write Patchy sends carries an `Idempotency-Key`, so one whose answer was
-lost is sent again with the same key, admin key and request, and Pidgeon answers
-with the first result, doing nothing twice; while that first request is still
-running, Patchy waits as long as Pidgeon asks. A lost mint answer comes back that
-way naming the key it made but, as Pidgeon shows a secret once, without its
-secret: Patchy revokes that key with the admin key and mints once more. Anything
-that fails before the save revokes the minted key with its own secret. If the
-save's own outcome is unknown, nothing is revoked and the page says to check the
-connections list. A key Patchy couldn't revoke, or couldn't tell it made by the
-deadline, is named, so an admin can revoke it in Pidgeon.
+**Test mode.** A test key's mail never leaves Pidgeon: sends are stored as sent
+and reach only the account's own inboxes. The connection shows "Test key, mail
+stays in Pidgeon" beside its name wherever it's listed, its page says how to
+replace it with a live key of the same account, and its snapshot, `patchy list
+connections` (`test: true` in its JSON) and generated context say so.
 
-**Test mode.** A test admin key connects test addresses: their mail stays in
-Pidgeon, sends are stored as sent and reach only that Pidgeon account, and
-Pidgeon deletes a test address a day after it's made, when the connection says
-the address is gone. The connection keeps its mode, shows "Test, mail stays in
-Pidgeon" beside its name wherever it's listed, and its snapshot, `patchy list
-connections` (`test: true` in its JSON) and generated context say so; Replace key and Change access take an admin key in the
-same mode.
+**The snapshot** keeps the inbox's address and display name, what patches may
+do, whether the key is a test key and the inbox's labels, never mail. It is
+immutable, with the same revisions, `stale_generated` and deletion protection as
+Postgres; the connection is bound to Pidgeon's inbox id. Refresh labels takes a
+new one with the stored key.
 
-**The snapshot** keeps the address, its display name and send policy, the key's
-access, whether it's a test address, the address's labels and the account's plan,
-never mail. It is immutable, with the same revisions, `stale_generated` and
-deletion protection as Postgres; the connection is bound to Pidgeon's address id.
-Refresh labels takes a new one with the stored key.
+**Replace key** asks for the new key only, checked to reach the same inbox and do
+what patches may, saved with a fresh snapshot; there's no retarget, since another
+inbox is another connection. The old key isn't revoked: Patchy can't, so the
+admin revokes it in Pidgeon. A stored key Pidgeon refuses, or whose inbox is gone,
+is named on Test connection and Resume. **Pause and Resume** keep the key, so
+resuming only checks it still works. **Disconnect** is refused while a stored
+version declares the connection, as for every integration; it forgets the key and
+tells the admin to revoke it in Pidgeon, and when emails the connection sent are
+still waiting on a member's approval or Pidgeon's word, its confirmation says
+they may still go out. The inbox and its mail stay in Pidgeon.
 
-**Send policy.** Pidgeon's own: an address may be `reply_only`, answering only
-people who wrote first and never starting a conversation with a stranger, `open`,
-or limited to an allow-list. Addresses Patchy creates start reply-only unless the
-admin picks Anyone; existing addresses keep theirs, and the connection page shows
-it.
-
-**Change access and Replace key** take an admin key, and are the one way to give
-a connection a new key. Holding the connection's lock, Patchy mints a new key for
-the same address, checks it, takes a fresh snapshot and saves both, keeping the
-old key as retired in the same save; then the old key revokes itself, a 401
-counting as already done. A failure before the save leaves the connection as it
-was. An old key that won't revoke, or whose save's answer was lost, stays retired
-and named on the page until a later Test connection or Delete revokes it.
-Replace key is for a key that stopped working, for example because its admin key
-was revoked: revoking an admin key revokes every key minted from it, while
-rotating it in Pidgeon leaves them working. A key whose address was deleted in
-Pidgeon still signs in but reaches nothing, so the page says the address is gone;
-Replace key can't bring it back. There's no retarget: a different address is a
-new connection. Pidgeon's 429 changed nothing, and the page says when to try
-again from its `Retry-After`.
-
-**Pause and Resume** keep the key, so resuming needs no admin key, only a check
-that it still works. **Disconnect** is refused while a stored version declares the
-connection, as for every integration; once the row is gone, the stored key
-and any retired ones revoke themselves, even if the request was interrupted or
-the COMMIT's answer lost, and one that won't is named. The address and its mail stay in
-Pidgeon.
-
-**Calls** reach an address through one gate per server process: at most four at
-once per address, shared by `patchy dev` and published patches, an excess call
+**Calls** reach an inbox through one gate per server process: at most four at
+once per inbox, shared by `patchy dev` and published patches, an excess call
 waiting within its deadline, keeping a second's reserve, then failing `busy` with
 nothing sent. A call that waited checks its caller and connection again and loads
 the key as it stands before it sends. Pidgeon's 429 and 402 fail
 `source_rate_limited`, with `retryAfter` when Pidgeon sent one, and Patchy never
-retries a call Pidgeon might have run without its Idempotency-Key.
+retries a call Pidgeon might have run.
 
 A Pidgeon declaration carries `{ kind: "pidgeon", handle, id, revision }`, and
-`patchy add pidgeon/<handle>` writes it with the address's client, context and
-`patchy-pidgeon` skill. There is no fixture: `patchy dev` reads the real address
+`patchy add pidgeon/<handle>` writes it with the inbox's client, context and
+`patchy-pidgeon` skill. There is no fixture: `patchy dev` reads the real inbox
 and simulates every write ([Development](#development)).
 
 **Operations.** Patch code calls operations Patchy writes, never a path, an
-address id or a key, and Patchy fills in the address on every call: a thread,
-message or attachment on another address answers `not_found`. Reads travel as
-`pidgeon.read`: `threads.list`, `threads.get` (the thread, its labels and a page
-of its messages, oldest first, with `nextCursor`), `messages.get`,
-`messages.search`, `labels.list` and `attachments.text`. A message is its
+inbox id or a key, and Patchy fills in the inbox on every call. Nothing is
+returned or changed unless Patchy has shown it's the inbox's, and anything it
+can't show answers `not_found`, as an unknown id does: lists and search name the
+inbox and refuse an answer carrying another's row; a thread or message read by
+id is shown only when it says it's the inbox's; a held message read or answered
+by id, whose refusal names no inbox, answers `not_found`; triage reads the
+thread first and checks a label against the inbox's own list. Reads travel as
+`pidgeon.read`: `threads.list` (by status, folder or label), `threads.get` (the
+thread, its labels and a page of its messages, oldest first, with `nextCursor`),
+`messages.get`, `messages.search` (by words) and `labels.list`. A message is its
 parties, subject, time, `test` marker, Pidgeon's firewall-cleaned plain text with
-the verdict and the kinds it found, its attachments' metadata and, for mail it
-sent, its delivery state; a message the firewall holds for a person has none of
-its content and can't be read or answered until someone releases it in Pidgeon.
-No raw headers, HTML or source leave the host. With a `send` key,
-`pidgeon.write` carries `messages.reply`, `messages.send`, `threads.update`,
-`threads.label` and `threads.unlabel`; a `read` connection's client has none,
-and Patchy refuses one forced past its types, whatever Pidgeon's key would allow.
+the verdict and the kinds it found, and its attachments' metadata; a held message
+shows in its conversation with none of its content. No raw headers, HTML, source
+or attachment contents leave the host. With send access, `pidgeon.write` carries
+`messages.reply`, `messages.send`, `threads.update`, `threads.label` and
+`threads.unlabel`; a `read` connection's client has none, and Patchy refuses one
+forced past its types, whatever the key would allow.
 
-**A draft is one email.** Every send and reply takes an `idempotencyKey` the
-patch keeps for that email; Pidgeon's Idempotency-Key is a hash of the
-connection, the patch and that key, so the same draft within Pidgeon's 24 hours
-is one email, answering the first send's result with `replayed: true`. Pidgeon's
-409 fails `idempotency_conflict`, sending nothing: `mismatch` when the key went
-with other mail or from another Pidgeon key, as after Replace key, and
-`in_progress`, with `retryAfter`, while the first send runs. A send answers
-`status`: `sent`, with the recipients the provider `rejected`, or
-`pending_approval`, when Pidgeon holds it as a draft for a person to approve and
-nothing was sent. The send policy, a rule, or text read from another
-conversation refuse a whole send `access_denied` with that `reason`.
+**A draft key is one email.** Every send and reply takes an `idempotencyKey` the
+patch keeps for that email. Pidgeon doesn't dedupe, so Patchy keeps a ledger, by
+a hash of the connection, the patch and that key: it writes the email as a draft
+in the inbox (a reply reads its target first, for its recipients and subject),
+records the draft, records `sending` before it issues the draft's one send, and
+never sends a draft twice. The same key again answers what became of it, with
+`replayed: true`, looking in Pidgeon for an email it held or one whose answer was
+lost. `idempotency_conflict` sends nothing more: `in_progress` while another call
+holds the email, `mismatch` when the key went with another email, and
+`unconfirmed` when Pidgeon hasn't said whether it left, when the same key asks
+again. A send answers `status` `sent`, or `held` when Pidgeon keeps it for a
+member of the account to approve. A send Pidgeon refused in its own words frees
+the key for the corrected email; a 429 or a status it doesn't document, in any
+other shape, is a send in doubt. A send refused for its key frees the key too:
+that draft is never sent, and after Replace key the next attempt writes a new
+one. Text read in another conversation is refused
+`access_denied` with `reason` `exfiltration_blocked`, in Patchy's words, since
+Pidgeon's name that conversation. A sent email's key is forgotten a day after it
+went; one in doubt or held is kept until it resolves or the connection goes.
 
-**Send budget.** Each connection makes at most `pidgeon.sends.daily` sends and
-replies a UTC day, counted durably by one atomic upsert before Pidgeon sees each,
-retries, refusals and held sends included. Past it a send fails
-`source_rate_limited` with `limit: "budget"`, and nothing is sent. The
-connection page shows today's count. Recent calls name each send's subject and
-recipients, each reply's message and CC, each triage's status or label and each
-read's ids, never a body or search text.
+**Send budget.** Each connection writes at most `pidgeon.sends.daily` emails a
+UTC day, each counted durably once, in the transaction that records its draft key,
+before Pidgeon sees it; a replay, a look and a retry count nothing. Past it a new
+email fails `source_rate_limited` with `limit: "budget"`, and nothing is sent.
+The connection page shows today's count. Recent calls name each send's subject
+and recipients, each reply's message and CC, each triage's status or label and
+each read's ids, never a body or search text.
 
 ### Connecting Notion
 
@@ -2123,7 +2104,7 @@ address's or workspace's slots, which dev and published patches share. The repo'
 only routes the call: it must name a connected connection of the token's company.
 Only reads the integration opts into run this way, under the runtime's argument
 and result bounds, its deadline, draining and a per-person rate limit across
-integrations. A Pidgeon dev read checks what comes back against the address and
+integrations. A Pidgeon dev read checks what comes back against the inbox and
 keeps held mail empty, as a published read does. An Attio dev read carries the
 revision the repo was generated from, and the instance decodes by that snapshot of
 that connection, so a client generated before a Refresh reads as generated; a
@@ -2138,13 +2119,12 @@ privately and stays out of generated files, logs and workerd; after
 **Pidgeon's simulated writes.** In dev, sends, replies and triage never reach the
 instance or Pidgeon. Dev checks each call's arguments and the connection's access
 as the host would, then answers with a well-formed result: a send or reply is
-`sent`, with ids starting `dev_` and `test: true`, and a triage returns the thread
-or labels as far as dev knows them. Dev's output names each one, with a send's
-recipients and subject. Nothing changes, so the next read doesn't show it, and
-reading a `dev_` id answers `not_found`. Dev doesn't check the send policy, since
-the snapshot can't tell who the address has written with, and keeps no daily send
-budget. A test-mode key wouldn't do instead: its replies and triage land in the
-real conversations the team reads.
+`sent`, with ids starting `dev_`, and a triage returns the thread or labels as far
+as dev knows them. Dev's output names each one, with a send's recipients and
+subject. Nothing changes, so the next read doesn't show it, and reading a `dev_` id
+answers `not_found`. Dev keeps no ledger of draft keys and no daily send budget. A
+test-mode key wouldn't do instead: its replies and triage land in the real
+conversations the team reads.
 
 The Postgres **dev binding** supplies the same Postgres execution dependency without
 loading the keyring or runtime log. One PGlite database per connection under

@@ -57,9 +57,8 @@ const githubStop = (
 /**
  * What a connection's provider did that only an admin can undo, as its page's notice says it, and
  * the fix that notice leads with: an Attio key a check found writable, an IMAP login the mail server
- * refused, a Pidgeon key Patchy replaced but couldn't revoke, or a GitHub App uninstalled, its
- * permissions changed, suspended on its account or a repository gone from it. Nothing for any
- * other connection.
+ * refused, or a GitHub App uninstalled, its permissions changed, suspended on its account or a
+ * repository gone from it. Nothing for any other connection.
  */
 const providerStop = (
   connection: ConnectionStore.Connection
@@ -74,14 +73,9 @@ const providerStop = (
           problem: "Paused: the mail server refused the password",
           fix: { label: "Replace password…", href: connectionPath(connection.id, "rotate") }
         }
-      : connection.integration === "pidgeon" && (connection.display.retired?.length ?? 0) > 0
-        ? {
-            problem: "The old key is still active in Pidgeon",
-            fix: { label: "Test again…", href: connectionPath(connection.id) }
-          }
-        : connection.integration === "github"
-          ? githubStop(connection)
-          : undefined;
+      : connection.integration === "github"
+        ? githubStop(connection)
+        : undefined;
 
 /** Whether patches that declare it can't read it now. */
 const stops = (connection: ConnectionStore.Connection) =>
