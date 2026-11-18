@@ -63,7 +63,7 @@ export function createClient(connection: string, call: Call): Client {
 `,
     context: `# Notion connection ${declaration.handle}
 
-Use the data source's \`key\` in a Tier 2 action via \`ctx.connections.<alias>\`. Its \`list\` returns rows and a cursor. Read \`.agents/skills/patchy-notion/SKILL.md\` before building with this connection.
+Use the data source's \`key\` in a Tier 2 action via \`ctx.connections.<alias>\`. Use \`list\` for a page of rows and \`get(id)\` for one row. The connection also exposes \`pages.markdown(id)\`, \`search\` and \`people.list\`. Read \`.agents/skills/patchy-notion/SKILL.md\` before building with this connection.
 
 Schema and access from snapshot revision ${declaration.revision}. After an admin refreshes the connection, run \`patchy refresh\` to pick up new schema.
 

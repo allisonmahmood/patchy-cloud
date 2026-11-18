@@ -62,6 +62,13 @@ const github = <const Name extends keyof typeof githubReads>(name: Name) =>
     args: githubReads[name].input
   });
 
+const notion = <const Name extends keyof typeof notionReads>(name: Name) =>
+  Schema.Struct({
+    op: Schema.Literal(`notion.${name}`),
+    connection: DevReadConnection,
+    args: notionReads[name].input
+  });
+
 /** Every operation an integration lets dev read live, with its exact arguments. Never a write. */
 export const DevRead = Schema.Union([
   Schema.Struct({
@@ -74,11 +81,11 @@ export const DevRead = Schema.Union([
     connection: DevReadConnection,
     args: PidgeonDevRead
   }),
-  Schema.Struct({
-    op: Schema.Literal("notion.listRows"),
-    connection: DevReadConnection,
-    args: notionReads.listRows.input
-  }),
+  notion("listRows"),
+  notion("getRow"),
+  notion("markdown"),
+  notion("search"),
+  notion("listPeople"),
   attio("listRecords"),
   attio("getRecord"),
   attio("getManyRecords"),

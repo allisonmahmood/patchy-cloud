@@ -1,11 +1,11 @@
 import { assert, it } from "@effect/vitest";
 import { NodeCryptography } from "@patchy/core";
-import type { NotionListInput, NotionSnapshot } from "@patchy/api";
+import { notionPropertyTypes, type NotionListInput, type NotionSnapshot } from "@patchy/api";
 import { ContractLimits } from "@patchy/limits";
 import * as Effect from "effect/Effect";
 import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as UrlParams from "effect/http/UrlParams";
-import { planList } from "./Reads.js";
+import { planGet, planList, planMarkdown, planPeople, planSearch } from "./Reads.js";
 import { Refusal } from "./Source.js";
 
 const id = (last: string) => `00000000-0000-4000-8000-0000000000${last}`;
@@ -209,11 +209,99 @@ it.effect("refuses a first page marked incomplete before returning rows or a cur
   })
 );
 
+it.effect("normalizes the supported Notion property types and empty values", () =>
+  Effect.gen(function* () {
+    const user = { id: userId, name: "Probe", email: "omit@example.test" };
+    const date = { start: "2026-01-01", end: null };
+    const choices = [{ name: "A", color: "blue" }, { name: "B" }];
+    const normalized = { id: userId, name: "Probe" };
+    const unnamed = { id: userId, name: null };
+    const types = {
+      title: [[{ plain_text: "Task" }], "Task", [], null],
+      rich_text: [[{ plain_text: "Two " }, { plain_text: "parts" }], "Two parts", [], null],
+      number: [0, 0, null, null],
+      checkbox: [true, true, false, false],
+      select: [choices[0], "A", null, null],
+      status: [choices[1], "B", null, null],
+      multi_select: [choices, ["A", "B"], [], []],
+      date: [{ ...date, time_zone: "drop" }, date, null, null],
+      url: ["https://example.test", "https://example.test", null, null],
+      email: ["person@example.test", "person@example.test", null, null],
+      phone_number: ["+15555550100", "+15555550100", null, null],
+      people: [[user], [normalized], [], []],
+      relation: [[{ id: otherId, discard: true }], [otherId], [], []],
+      files: [[{ name: "file.txt", file: { url: "drop" } }], ["file.txt"], [], []],
+      created_time: [time, time, time, time],
+      last_edited_time: [time, time, time, time],
+      created_by: [user, normalized, { id: userId }, unnamed],
+      last_edited_by: [user, normalized, { id: userId }, unnamed],
+      unique_id: [{ prefix: "TSK", number: 1 }, "TSK-1", { prefix: null, number: 2 }, "2"]
+    } satisfies Record<
+      keyof typeof notionPropertyTypes,
+      readonly [unknown, unknown, unknown, unknown]
+    >;
+    const entries = Object.entries(types);
+    const properties = entries.map(([type]) => ({ id: type, name: type, type }));
+    const providerRow = (raw: 0 | 2) =>
+      row(
+        Object.fromEntries(
+          entries.map(([type, values]) => [type, property(type, type, values[raw])])
+        )
+      );
+    const mock = response(({ method }) =>
+      method === "GET" ? schemaBody(properties) : page([providerRow(0), providerRow(2)])
+    );
+    const result = yield* (yield* list({ source: "Tasks" }, snapshot(properties)))(mock.send);
+    for (const [index, expected] of ([1, 3] as const).entries()) {
+      const expectedProperties: Record<string, unknown> = Object.fromEntries(
+        entries.map(([type, values]) => [type, values[expected]])
+      );
+      assert.deepEqual({ ...result.rows[index]?.properties }, expectedProperties);
+    }
+  })
+);
+
+it.effect("reads people and page mentions through their property endpoint at the inline cut", () =>
+  Effect.gen(function* () {
+    const mention = { plain_text: "Page", mention: { type: "page", page: { id: rowId } } };
+    const user = { id: userId, name: "Assignee" };
+    const mentions = Array.from({ length: 26 }, () => mention);
+    const people = Array.from({ length: 26 }, (_, i) => ({
+      ...user,
+      id: id(i.toString(16).padStart(2, "0"))
+    }));
+    const mock = response(({ method, url }) => {
+      if (url.endsWith("/properties/title"))
+        return page(mentions.map((title) => ({ type: "title", title })));
+      if (url.endsWith("/properties/who"))
+        return page(people.map((person) => ({ type: "people", people: person })));
+      if (method === "GET") return schemaBody();
+      return page([
+        row({
+          Name: property("title", "title", mentions.slice(0, 25)),
+          Assignee: property("who", "people", people.slice(0, 25))
+        })
+      ]);
+    });
+    const output = yield* (yield* list({ source: "Tasks", select: ["Name", "Assignee"] }))(
+      mock.send
+    );
+    assert.deepEqual(
+      { ...output.rows[0]?.properties },
+      { Name: "Page".repeat(26), Assignee: people }
+    );
+    assert.deepEqual(
+      mock.requests.slice(2).map(({ url }) => url),
+      [`/pages/${rowId}/properties/title`, `/pages/${rowId}/properties/who`]
+    );
+  })
+);
+
 it.effect(
   "checks a relation target once and finishes its paginated property within the bound",
   () =>
     Effect.gen(function* () {
-      const related = { id: "project", name: "Project", type: "relation", relationTarget: otherId };
+      const related = { id: "p%3Fid", name: "Project", type: "relation", relationTarget: otherId };
       const saved = snapshot([...schema, related]);
       const mock = response((request) => {
         if (request.url.includes("/properties/"))
@@ -221,7 +309,7 @@ it.effect(
             ? page([{ type: "relation", relation: { id: rowId, discard: true } }], "second")
             : page([{ type: "relation", relation: { id: otherId } }]);
         if (request.method === "POST")
-          return page([row({ Project: property("project", "relation", [], { has_more: true }) })]);
+          return page([row({ Project: property(related.id, "relation", [], { has_more: true }) })]);
         return request.url.endsWith(otherId)
           ? { id: otherId, properties: {} }
           : {
@@ -237,14 +325,151 @@ it.effect(
       );
       assert.deepEqual(output.rows[0]?.properties.Project, [rowId, otherId]);
       assert.equal(mock.requests.filter(({ url }) => url.endsWith(otherId)).length, 1);
+      assert.equal(
+        mock.requests.filter(({ url }) => url.endsWith(`/properties/${related.id}`)).length,
+        2
+      );
       const missing = yield* (yield* list({ source: "Tasks", select: ["Project"] }, saved))(() =>
         Effect.fail(new Refusal({ code: "not_found" }))
       ).pipe(Effect.flip);
       assert.equal(missing.code, "not_found");
+      assert.equal(missing.dataSource, otherId);
       const bounded = yield* list({ source: "Tasks", select: ["Project"] }, saved).pipe(
         Effect.provideService(ContractLimits.overrides, { "notion.read.propertyItems": 1 })
       );
       const overflow = yield* bounded(mock.send).pipe(Effect.flip);
       assert.equal(overflow.code, "too_large");
     })
+);
+
+const titledRow = row({
+  Name: property("title", "title", [{ plain_text: "Task" }]),
+  Status: property("stat", "status", { name: "To do" }),
+  Assignee: property("who", "people", []),
+  Done: property("flag", "checkbox", false)
+});
+
+it.effect("gets and normalizes a row only from the requested data source", () =>
+  Effect.gen(function* () {
+    const input = { source: "Tasks", id: rowId };
+    const get = yield* planGet(snapshot(), input);
+    const matching = response(({ url }) => (url.endsWith(rowId) ? titledRow : schemaBody()));
+    const result = yield* get(matching.send);
+    assert.deepEqual(
+      { ...result?.properties },
+      { Name: "Task", Status: "To do", Assignee: [], Done: false }
+    );
+    assert.deepEqual(
+      matching.requests.map(({ url }) => url),
+      [`/pages/${rowId}`, `/data_sources/${sourceId}`]
+    );
+
+    const foreign = response(() => ({
+      ...titledRow,
+      parent: { type: "data_source_id", data_source_id: otherId }
+    }));
+    assert.isNull(yield* get(foreign.send));
+    assert.equal(foreign.requests.length, 1);
+    assert.isNull(yield* get(() => Effect.fail(new Refusal({ code: "not_found" }))));
+  })
+);
+
+it.effect("returns native Markdown and its truncation flag without exposing provider details", () =>
+  Effect.gen(function* () {
+    const get = yield* planMarkdown(snapshot(), { id: rowId });
+    const mock = response(({ url }) =>
+      url.endsWith("/markdown")
+        ? {
+            object: "page_markdown",
+            id: rowId,
+            markdown: "# A page\n",
+            truncated: true,
+            unknown_block_ids: [otherId]
+          }
+        : titledRow
+    );
+    assert.deepEqual(yield* get(mock.send), {
+      id: rowId,
+      title: "Task",
+      url: titledRow.url,
+      markdown: "# A page\n",
+      truncated: true
+    });
+    assert.deepEqual(
+      mock.requests.map(({ method, url }) => [method, url]),
+      [
+        ["GET", `/pages/${rowId}`],
+        ["GET", `/pages/${rowId}/markdown`]
+      ]
+    );
+    assert.isNull(yield* get(() => Effect.fail(new Refusal({ code: "not_found" }))));
+  })
+);
+
+it.effect("searches by title, returns a row's source, and resolves a new source's URL", () =>
+  Effect.gen(function* () {
+    const databaseId = id("05");
+    const sourceInfo = {
+      object: "data_source",
+      id: otherId,
+      title: [{ plain_text: "Task archive" }],
+      last_edited_time: time,
+      parent: { type: "database_id", database_id: databaseId }
+    };
+    const dbUrl = "https://notion.so/archive";
+    const mock = response(({ method }) =>
+      method === "POST"
+        ? page([titledRow, sourceInfo], "upstream-search")
+        : { object: "database", id: databaseId, url: dbUrl }
+    );
+    const search = yield* planSearch(snapshot(), { text: "task", limit: 2 }, binding);
+    const result = yield* search(mock.send);
+    assert.deepEqual(body(mock.requests[0]!), {
+      query: "task",
+      page_size: 2,
+      sort: { timestamp: "last_edited_time", direction: "descending" }
+    });
+    assert.equal(mock.requests[1]?.url, `/databases/${databaseId}`);
+    assert.deepEqual(result.results, [
+      {
+        kind: "page",
+        id: rowId,
+        title: "Task",
+        url: titledRow.url,
+        lastEditedTime: time,
+        dataSource: "Tasks"
+      },
+      { kind: "data_source", id: otherId, title: "Task archive", url: dbUrl, lastEditedTime: time }
+    ]);
+    const invalid = yield* planPeople(snapshot(), { cursor: result.cursor! }, binding).pipe(
+      Effect.flip
+    );
+    assert.equal(invalid.code, "invalid_cursor");
+  }).pipe(Effect.provide(NodeCryptography.layer))
+);
+
+it.effect("paginates workspace people and retains only the directory fields", () =>
+  Effect.gen(function* () {
+    const mock = response(({ urlParams }) =>
+      UrlParams.getAll(urlParams, "start_cursor").length === 0
+        ? page(
+            [{ id: userId, name: "Probe", type: "person", person: { email: "omit@example.test" } }],
+            "upstream-people"
+          )
+        : page([{ id: otherId, type: "bot", bot: { owner: "omit" } }])
+    );
+    const first = yield* (yield* planPeople(snapshot(), { limit: 1 }, binding))(mock.send);
+    const second = yield* (yield* planPeople(
+      snapshot(),
+      { limit: 1, cursor: first.cursor! },
+      binding
+    ))(mock.send);
+    assert.deepEqual(first.people, [{ id: userId, name: "Probe", type: "person" }]);
+    assert.deepEqual(second, { people: [{ id: otherId, name: null, type: "bot" }], cursor: null });
+    assert.equal(mock.requests[0]?.url, "/users");
+    assert.deepEqual(UrlParams.getAll(mock.requests[0]!.urlParams, "page_size"), ["1"]);
+    assert.deepEqual(UrlParams.getAll(mock.requests[1]!.urlParams, "start_cursor"), [
+      "upstream-people"
+    ]);
+  }).pipe(Effect.provide(NodeCryptography.layer))
 );

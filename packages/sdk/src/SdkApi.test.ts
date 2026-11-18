@@ -1064,8 +1064,11 @@ it.layer(layer)("SDK company generation", (it) => {
       const output = yield* decodeGenerated(yield* response.json);
       assert.deepStrictEqual(output.uses, [{ alias: "probe", id: "sdk-notion", revision: 1 }]);
       const file = (path: string) => output.files.find((item) => item.path === path)?.contents;
-      assert.include(file("patchy/_generated/context/probe.md")!, "Notion Probe");
-      assert.include(file("patchy/_generated/context/probe.md")!, "To do");
+      const context = file("patchy/_generated/context/probe.md")!;
+      assert.include(context, "Notion Probe");
+      assert.include(context, "To do");
+      for (const read of ["get(id)", "pages.markdown(id)", "search", "people.list"])
+        assert.include(context, read);
       const generated = file("patchy/_generated/uses/probe.ts")!;
       assert.include(generated, 'readonly "Tasks":');
       assert.include(generated, 'readonly "Status": string | null;');

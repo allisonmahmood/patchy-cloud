@@ -45,22 +45,102 @@ export const NotionRow = Schema.Struct({
 });
 export type NotionRow = typeof NotionRow.Type;
 
+const pagination = {
+  limit: Schema.optionalKey(NotionLimit),
+  cursor: Schema.optionalKey(NotionCursor)
+};
+const cursor = Schema.NullOr(NotionCursor);
+const SearchKind = Schema.Literals(["page", "data_source"]);
 export const notionReads = {
   listRows: {
     input: Schema.Struct(listFields),
-    output: Schema.Struct({ rows: Schema.Array(NotionRow), cursor: Schema.NullOr(NotionCursor) })
+    output: Schema.Struct({ rows: Schema.Array(NotionRow), cursor })
+  },
+  getRow: {
+    input: Schema.Struct({ source: Name, id: NotionId }),
+    output: Schema.NullOr(NotionRow)
+  },
+  markdown: {
+    input: Schema.Struct({ id: NotionId }),
+    output: Schema.NullOr(
+      Schema.Struct({
+        id: NotionId,
+        title: Schema.String,
+        url: Schema.String,
+        markdown: Schema.String,
+        truncated: Schema.Boolean
+      })
+    )
+  },
+  search: {
+    input: Schema.Struct({
+      text: Schema.optionalKey(Text),
+      kind: Schema.optionalKey(SearchKind),
+      ...pagination
+    }),
+    output: Schema.Struct({
+      results: Schema.Array(
+        Schema.Struct({
+          kind: SearchKind,
+          id: NotionId,
+          title: Schema.String,
+          url: Schema.String,
+          lastEditedTime: Schema.String,
+          dataSource: Schema.optionalKey(Name)
+        })
+      ),
+      cursor
+    })
+  },
+  listPeople: {
+    input: Schema.Struct(pagination),
+    output: Schema.Struct({
+      people: Schema.Array(
+        Schema.Struct({
+          id: NotionId,
+          name: Schema.NullOr(Schema.String),
+          type: Schema.Literals(["person", "bot"])
+        })
+      ),
+      cursor
+    })
   }
 } as const;
+export type NotionRead = keyof typeof notionReads;
 export type NotionListInput = typeof notionReads.listRows.input.Type;
 export type NotionListOutput = typeof notionReads.listRows.output.Type;
-export const NotionListRows = Schema.Struct({ connection: DefinitionName, ...listFields });
+export type NotionGetInput = typeof notionReads.getRow.input.Type;
+export type NotionGetOutput = typeof notionReads.getRow.output.Type;
+export type NotionMarkdownInput = typeof notionReads.markdown.input.Type;
+export type NotionMarkdownOutput = typeof notionReads.markdown.output.Type;
+export type NotionSearchInput = typeof notionReads.search.input.Type;
+export type NotionSearchOutput = typeof notionReads.search.output.Type;
+export type NotionPeopleInput = typeof notionReads.listPeople.input.Type;
+export type NotionPeopleOutput = typeof notionReads.listPeople.output.Type;
+const withAlias = <F extends Schema.Struct.Fields>(input: Schema.Struct<F>) =>
+  Schema.Struct({ connection: DefinitionName, ...input.fields });
+export const NotionListRows = withAlias(notionReads.listRows.input);
+export const NotionGetRow = withAlias(notionReads.getRow.input);
+export const NotionMarkdown = withAlias(notionReads.markdown.input);
+export const NotionSearch = withAlias(notionReads.search.input);
+export const NotionListPeople = withAlias(notionReads.listPeople.input);
 
-export const notionOperations = {
-  "notion.listRows": {
-    request: Schema.Struct({ op: Schema.Literal("notion.listRows"), args: NotionListRows }),
-    response: notionReads.listRows.output,
+const operation = <const N extends NotionRead, I extends Schema.Top, O extends Schema.Top>(
+  name: N,
+  input: I,
+  response: O
+) =>
+  ({
+    request: Schema.Struct({ op: Schema.Literal(`notion.${name}`), args: input }),
+    response,
     kind: "integration"
-  }
+  }) as const;
+export const notionOperations = {
+  "notion.listRows": operation("listRows", NotionListRows, notionReads.listRows.output),
+  "notion.getRow": operation("getRow", NotionGetRow, notionReads.getRow.output),
+  "notion.markdown": operation("markdown", NotionMarkdown, notionReads.markdown.output),
+  "notion.search": operation("search", NotionSearch, notionReads.search.output),
+  "notion.listPeople": operation("listPeople", NotionListPeople, notionReads.listPeople.output)
 } as const;
 
 interface PropertyType {

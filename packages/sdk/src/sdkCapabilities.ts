@@ -222,7 +222,7 @@ export const sdkCapabilities: readonly SdkCapability[] = [
     entrypoints: ["patchy/_generated/server.ts: ctx.connections"],
     runs: "Tier 2 actions. patchy dev reads Notion through the instance as the machine key's person",
     limits:
-      "Declare a connected Notion workspace. List data source rows with typed filters and a cursor, up to 100 per page. Property names and option hints come from the generated snapshot. Patchy checks current access on each call."
+      "Declare a connected Notion workspace. List data source rows with typed filters, retrieve one row, read page Markdown, search shared titles and list workspace people. Lists page up to 100 items. Property names and option hints come from the generated snapshot. Patchy checks current access on each call."
   },
   {
     id: "integrations.imap",

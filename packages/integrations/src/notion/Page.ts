@@ -69,7 +69,7 @@ export const connect: ConnectFrame.ConnectSpec = {
   paste: { title: "Paste the token", fields: [token] },
   name: { example: "probe", describe: "Tasks and team pages", fields: [accessField] },
   once: {
-    reads: "rows in data sources shared with this connection through Tier 2 actions",
+    reads: "shared rows and pages and the workspace’s people through Tier 2 actions",
     devReads: true,
     cannot: ["Change Notion content"],
     caveat: "Individual Notion permissions don't carry over."

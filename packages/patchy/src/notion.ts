@@ -50,43 +50,100 @@ interface NotionSourceClient<Source extends SourceDescription> {
   list<Name extends keyof Source["values"] & string = keyof Source["values"] & string>(
     options?: NotionListOptions<Source, Name>
   ): Promise<NotionPage<NotionRow<Pick<Source["values"], Name>>>>;
+  get(id: string): Promise<NotionRow<Source["values"]> | null>;
+}
+
+export interface NotionMarkdown {
+  readonly id: string;
+  readonly title: string;
+  readonly url: string;
+  readonly markdown: string;
+  readonly truncated: boolean;
+}
+
+interface NotionPageOptions {
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+export interface NotionSearchOptions extends NotionPageOptions {
+  readonly text?: string;
+  readonly kind?: "page" | "data_source";
+}
+
+export interface NotionSearchResult<DataSource extends string = string> {
+  readonly kind: "page" | "data_source";
+  readonly id: string;
+  readonly title: string;
+  readonly url: string;
+  readonly lastEditedTime: string;
+  readonly dataSource?: DataSource;
+}
+
+export interface NotionPerson {
+  readonly id: string;
+  readonly name: string | null;
+  readonly type: "person" | "bot";
 }
 
 export type NotionClient<Sources extends NotionSources> = {
   readonly [Name in keyof Sources]: NotionSourceClient<Sources[Name]>;
+} & {
+  readonly pages: { markdown(id: string): Promise<NotionMarkdown | null> };
+  search(options?: NotionSearchOptions): Promise<{
+    readonly results: readonly NotionSearchResult<keyof Sources & string>[];
+    readonly cursor: string | null;
+  }>;
+  readonly people: {
+    list(options?: NotionPageOptions): Promise<{
+      readonly people: readonly NotionPerson[];
+      readonly cursor: string | null;
+    }>;
+  };
 };
 
-type Call = (op: "notion.listRows", args: Readonly<Record<string, unknown>>) => Promise<unknown>;
+type Operation = `notion.${"listRows" | "getRow" | "markdown" | "search" | "listPeople"}`;
+type Call = (op: Operation, args: Readonly<Record<string, unknown>>) => Promise<unknown>;
 
 /** The host validates each request against the declaration and encodes its result. */
 export function createNotionClient<Sources extends NotionSources>(
   connection: string,
   call: Call
 ): NotionClient<Sources> {
-  const sources = new Map<string, unknown>();
-  return new Proxy(Object.create(null) as NotionClient<Sources>, {
-    get(_target, source) {
+  const invoke = async (op: Operation, input: object) => {
+    const args = Object.fromEntries(
+      Object.entries(input).filter(([, value]) => value !== undefined)
+    );
+    let value: unknown;
+    try {
+      value = await call(op, { ...args, connection });
+    } catch (error) {
+      throw decodeError(error, op) ?? error;
+    }
+    const refusal = decodeError(value, op);
+    if (refusal) throw refusal;
+    return value;
+  };
+  const methods = {
+    pages: { markdown: (id: string) => invoke("notion.markdown", { id }) },
+    search: (options: object = {}) => invoke("notion.search", options),
+    people: { list: (options: object = {}) => invoke("notion.listPeople", options) }
+  };
+  const sourceClient = (source: string) => ({
+    list: (options: object = {}) => invoke("notion.listRows", { ...options, source }),
+    get: (id: string) => invoke("notion.getRow", { source, id })
+  });
+  const sources = new Map<string, ReturnType<typeof sourceClient>>();
+  return new Proxy(Object.assign(Object.create(null), methods) as NotionClient<Sources>, {
+    get(target, source) {
       if (typeof source !== "string") return undefined;
-      if (!sources.has(source)) {
-        sources.set(source, {
-          async list(options: object = {}) {
-            const op = "notion.listRows";
-            const args = Object.fromEntries(
-              Object.entries(options).filter(([, value]) => value !== undefined)
-            );
-            let value: unknown;
-            try {
-              value = await call(op, { ...args, connection, source });
-            } catch (error) {
-              throw decodeError(error, op) ?? error;
-            }
-            const refusal = decodeError(value, op);
-            if (refusal) throw refusal;
-            return value;
-          }
-        });
+      if (Object.hasOwn(target, source)) return Reflect.get(target, source);
+      let client = sources.get(source);
+      if (client === undefined) {
+        client = sourceClient(source);
+        sources.set(source, client);
       }
-      return sources.get(source);
+      return client;
     }
   });
 }

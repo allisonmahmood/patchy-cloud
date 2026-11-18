@@ -8,6 +8,7 @@ import * as Source from "../notion/Source.js";
 export const internalToken = "notion-test-internal";
 export const personalToken = "notion-test-pat";
 export const requestOwnerId = "30000000-0000-4000-8000-000000000001";
+export const handbookId = "40000000-0000-4000-8000-000000000001";
 export const firstRequestId = "20000000-0000-4000-8000-000000000001";
 
 const workspaceId = "58fe1df4-672b-418f-865e-b3ff941242ef";
@@ -121,6 +122,20 @@ const tasksRows = [
   task("20000000-0000-4000-8000-000000000003", "Send the brief", "todo", teammate),
   task("20000000-0000-4000-8000-000000000004", "Approve artwork", "done", owner)
 ];
+const handbook = {
+  ...page(handbookId, { type: "workspace", workspace: true }),
+  properties: { title: { id: "title", type: "title", title: title("Requests handbook") } }
+};
+const handbookMarkdown =
+  '# Requests handbook\n\nFile requests with Sam Rivera.\n\n<unknown type="embed"/>';
+
+const offsetOf = (name: string, raw: string | null) =>
+  raw === null ? 0 : Number(raw.startsWith(`${name}:`) ? raw.slice(name.length + 1) : NaN);
+const paginate = <T>(name: string, rows: readonly T[], offset: number, size: number) => {
+  const next = offset + size;
+  return list(rows.slice(offset, next), next < rows.length ? `${name}:${next}` : null);
+};
+
 const taskFilter = Schema.Union([
   Schema.Struct({
     property: Schema.Literal("STs"),
@@ -151,11 +166,20 @@ const list = <T>(results: readonly T[], next: string | null = null) => ({
 const decodeSearch = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({
-      filter: Schema.Struct({
-        property: Schema.Literal("object"),
-        value: Schema.Literal("data_source")
-      }),
-      page_size: Schema.Number,
+      filter: Schema.optionalKey(
+        Schema.Struct({
+          property: Schema.Literal("object"),
+          value: Schema.Literals(["page", "data_source"])
+        })
+      ),
+      query: Schema.optionalKey(Schema.String),
+      sort: Schema.optionalKey(
+        Schema.Struct({
+          timestamp: Schema.Literal("last_edited_time"),
+          direction: Schema.Literal("descending")
+        })
+      ),
+      page_size: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
       start_cursor: Schema.optionalKey(Schema.String)
     })
   )
@@ -198,11 +222,49 @@ const client = HttpClient.make((request, url) =>
       request.body._tag === "Uint8Array"
     ) {
       const search = decodeSearch(decoder.decode(request.body.body));
-      if (search._tag === "Some" && search.value.start_cursor === undefined)
-        return respond({ object: "list", results: [tasks], has_more: true, next_cursor: cursor });
-      if (search._tag === "Some" && search.value.start_cursor === cursor)
-        return respond({ object: "list", results: [projects], has_more: false, next_cursor: null });
+      if (search._tag === "None") return refuse(400, "validation_error");
+      const { query, sort, filter, page_size, start_cursor } = search.value;
+      if (query !== undefined || sort !== undefined) {
+        const offset = offsetOf("search", start_cursor ?? null);
+        if (!Number.isSafeInteger(offset)) return refuse(400, "validation_error");
+        const text = query?.toLowerCase() ?? "";
+        const includes = (parts: ReturnType<typeof title>) =>
+          parts.some(({ plain_text }) => plain_text.toLowerCase().includes(text));
+        const documents =
+          filter?.value === "data_source"
+            ? []
+            : [
+                ...(includes(handbook.properties.title.title) ? [handbook] : []),
+                ...tasksRows.filter(({ properties }) => includes(properties.Name.title))
+              ];
+        const sources = filter?.value === "page" ? [] : [tasks, projects];
+        const matches = [...documents, ...sources.filter((source) => includes(source.title))];
+        return respond(paginate("search", matches, offset, page_size));
+      }
+      if (filter?.value === "data_source" && start_cursor === undefined)
+        return respond(list([tasks], cursor));
+      if (filter?.value === "data_source" && start_cursor === cursor)
+        return respond(list([projects]));
       return refuse(400, "validation_error");
+    }
+    if (request.method === "GET" && url.pathname === "/v1/users") {
+      const offset = offsetOf("people", url.searchParams.get("start_cursor"));
+      const size = Number(url.searchParams.get("page_size") ?? 100);
+      if (!Number.isSafeInteger(offset) || !Number.isSafeInteger(size) || size < 1 || size > 100)
+        return refuse(400, "validation_error");
+      return respond(paginate("people", [owner, teammate], offset, size));
+    }
+    if (request.method === "GET" && url.pathname === `/v1/pages/${handbookId}/markdown`)
+      return respond({
+        object: "page_markdown",
+        id: handbookId,
+        markdown: handbookMarkdown,
+        truncated: false
+      });
+    if (request.method === "GET" && url.pathname.startsWith("/v1/pages/")) {
+      const id = url.pathname.slice("/v1/pages/".length);
+      const found = id === handbookId ? handbook : tasksRows.find((row) => row.id === id);
+      return found ? respond(found) : refuse(404, "object_not_found");
     }
     if (request.method === "GET" && url.pathname === `/v1/data_sources/${tasksId}`)
       return respond(tasks);

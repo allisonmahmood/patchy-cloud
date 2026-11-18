@@ -109,8 +109,7 @@ A repo's **tier** is where its code runs, set by `tier` in `patchy.config.ts`:
   such as a total that several people change at once, needs. Handlers also
   reach outside the patch: other patches' shared tables and stores and the
   member directory, all read-only, and company connections (Postgres, PostHog,
-  Attio, an IMAP mailbox and GitHub repositories' CI runs, job logs and pull
-  requests, each read-only, and Pidgeon, which reads email and, when its key
+  Attio, IMAP, Notion and GitHub, each read-only, and Pidgeon, which reads email and, when its key
   allows, sends it). Tools in `agent/` are what people's own
   agents call, as them, through Patchy MCP; tier 1 has no agent tools. It
   cannot be shared public.
@@ -238,9 +237,8 @@ survive release changes. `--foreground` stays attached with logs.
 `dev.log` records viewer, handler, outcome, milliseconds, `ctx.log` and each
 thrown error's message and stack. Starting with `--json` records full wide events and invocation
 JSON; `dev logs --json` returns `{ ok, log, text }`. No local runtime log rows
-are written. PostHog, Pidgeon, Attio, IMAP and GitHub have no fixture: dev reads the real
-project, address, workspace, mailbox or repositories through the instance as the key's person, and the
-instance logs each read as a Dev call. Pidgeon's sends, replies and triage are simulated in dev and never
+are written. PostHog, Pidgeon, Attio, IMAP, GitHub and Notion reads go through
+the instance as the machine key's person. The instance logs each read as a Dev call. Pidgeon's sends, replies and triage are simulated in dev and never
 sent; `dev.log` names each one.
 Use invented local fixture inserts. On tier 1, every row of the patch's own
 tables is available to whoever can open it; it has no outbound access or client
@@ -528,7 +526,7 @@ browser sign-out is a separate control, **Sign out** in the account menu.
   rerun it to upgrade the CLI, then retry. Inside a patch repo, use `pnpm patchy refresh`.
   File mode synthesises a tier 1 manifest with no resources. Repo mode admits
   tiers 1 and 2 with tables and stores; only tier 2 declares shared tables,
-  shared stores, members and Postgres, PostHog, Pidgeon, Attio, IMAP and GitHub connections.
+  shared stores, members and Postgres, PostHog, Pidgeon, Attio, IMAP, GitHub and Notion connections.
   Tier 2 publishes both HTML and server artifacts. Hosted execution uses the
   fleet in production and the local executor in dev and tests. Tier 2 is company-only.
   If the instance returns `has_primitives`, publish from the patch's repo, not a

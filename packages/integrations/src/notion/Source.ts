@@ -79,6 +79,7 @@ export class Refusal extends Schema.TaggedError<Refusal>()("NotionRefusal", {
   cause: Schema.optionalKey(SecretCause),
   retryAfterSeconds: Schema.optionalKey(Schema.Number),
   bound: Schema.optionalKey(Bound),
+  dataSource: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(512))),
   missing: Schema.optionalKey(
     Schema.Struct({ kind: Schema.Literals(["property", "option"]), name: Schema.String })
   )
@@ -96,6 +97,8 @@ export class Refusal extends Schema.TaggedError<Refusal>()("NotionRefusal", {
       return `Notion discovery exceeded the Patchy limit for ${this.bound.name} (${this.bound.limit}). Nothing was saved.`;
     if (this.code === "shape_mismatch" && this.missing !== undefined)
       return `Notion could not find ${this.missing.kind} “${this.missing.name}”. Refresh the connection and try again.`;
+    if (this.code === "not_found" && this.dataSource !== undefined)
+      return `Notion no longer shares “${this.dataSource}” with this connection, or the data source is gone.`;
     return refusals[this.code][1];
   }
 }
