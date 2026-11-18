@@ -1060,10 +1060,6 @@ const connect = Effect.fn("ConnectionPage.connect")(function* (
   if (form === null) return yield* refused(unreadable);
   return yield* Effect.gen(function* () {
     const fields = yield* decodeConnect(form);
-    const notionAccess =
-      integration === "notion" && NotionPage.isAccess(form.access) ? form.access : undefined;
-    if (integration === "notion" && notionAccess === undefined)
-      return yield* refused(NotionPage.invalidAccess);
     const credentials = page.credentials(
       integration === "github" ? withTicks(submitted, form) : submitted
     );
@@ -1075,8 +1071,7 @@ const connect = Effect.fn("ConnectionPage.connect")(function* (
         userId: viewer.user.id,
         handle: fields.handle,
         description: fields.description,
-        credentials,
-        ...(notionAccess === undefined ? {} : { notionAccess })
+        credentials
       },
       yield* reporter(viewer, "connection.connected")
     );
@@ -1090,10 +1085,14 @@ const connect = Effect.fn("ConnectionPage.connect")(function* (
       refused(
         error._tag === "SchemaError"
           ? incomplete
-          : error._tag === "NotionRefusal" &&
-              error.code === "source_unavailable" &&
-              error.upstreamStatus === 401
-            ? { ...refusal(error), field: "key" }
+          : error._tag === "NotionRefusal"
+            ? // Notion's refusals are worded for any call: a connect adds that nothing was saved,
+              // and a token Notion refused belongs at its field.
+              {
+                ...refusal(error),
+                message: `${error.message} Nothing was saved.`,
+                ...(error.upstreamStatus === 401 ? { field: "key" } : {})
+              }
             : refusal(error)
       )
     )
@@ -1163,19 +1162,14 @@ const act = Effect.fn("ConnectionPage.act")(function* (
     let integration: Integration | undefined;
     if (kind === "rotate" || kind === "retarget" || kind === "access") {
       const current = yield* store.get(viewer.company.id, id);
-      if (kind === "access" && current.integration === "notion") {
-        if (!NotionPage.isAccess(form.access)) return yield* refused(NotionPage.invalidAccess);
-        yield* store.changeNotionAccess({ ...input, access: form.access });
-      } else {
-        // Replacing credentials keeps where they point; pointing elsewhere names it anew.
-        const credentials = pages[current.integration].credentials(
-          current.integration === "github" ? withTicks(submitted, form) : submitted,
-          kind === "retarget" ? undefined : current
-        );
-        if (!Redacted.isRedacted(credentials)) return yield* refused(credentials);
-        if (kind === "retarget") yield* store.retarget({ ...input, credentials });
-        else yield* store.rotate({ ...input, credentials });
-      }
+      // Replacing credentials keeps where they point; pointing elsewhere names it anew.
+      const credentials = pages[current.integration].credentials(
+        current.integration === "github" ? withTicks(submitted, form) : submitted,
+        kind === "retarget" ? undefined : current
+      );
+      if (!Redacted.isRedacted(credentials)) return yield* refused(credentials);
+      if (kind === "retarget") yield* store.retarget({ ...input, credentials });
+      else yield* store.rotate({ ...input, credentials });
     } else if (kind === "audience") {
       const audience: ConnectionStore.Audience | undefined =
         chosen.kind === "company"
@@ -1229,10 +1223,9 @@ const act = Effect.fn("ConnectionPage.act")(function* (
               }
             : error._tag === "SqlError"
               ? { message: "Company service unavailable.", code: "source_unavailable", status: 503 }
-              : error._tag === "NotionRefusal" &&
-                  error.code === "source_unavailable" &&
-                  error.upstreamStatus === 401
-                ? kind === "rotate"
+              : error._tag === "NotionRefusal" && error.upstreamStatus === 401
+                ? // A token Notion stopped accepting: at the field where one was typed, else replace it.
+                  kind === "rotate"
                   ? { ...refusal(error), field: "key" }
                   : {
                       ...refusal(error),

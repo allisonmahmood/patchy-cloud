@@ -15,6 +15,7 @@ import * as CredentialKeys from "./CredentialKeys.js";
 import { Snapshot } from "@patchy/api/postgres-snapshot";
 import * as Source from "./postgres/Source.js";
 import * as SourceClient from "./postgres/SourceClient.js";
+import * as NotionSource from "./notion/Source.js";
 import * as NotionDouble from "./test/notion.js";
 import * as PostHogDouble from "./test/posthog.js";
 import * as PidgeonSource from "./pidgeon/Source.js";
@@ -107,13 +108,12 @@ it.layer(fixture)("ConnectionStore", (it) => {
         ...who,
         integration: "notion" as const,
         handle: "notion-probe",
-        description: "Probe workspace",
-        notionAccess: "read" as const
+        description: "Probe workspace"
       };
-      const connect = (token: string) =>
+      const connect = (key: string) =>
         store.connect({
           ...request,
-          credentials: Redacted.make(token)
+          credentials: NotionSource.connectSecret({ key, access: "read" })
         });
       const refused = yield* connect(NotionDouble.personalToken).pipe(Effect.flip);
       assert.equal(refused.code, "notion_not_workspace_key");
@@ -127,22 +127,19 @@ it.layer(fixture)("ConnectionStore", (it) => {
       if (first.integration !== "notion") return assert.fail("Expected a Notion snapshot");
       assert.equal(first.snapshot.dataSources.length, 2);
 
-      const failedReplacement = yield* store
-        .rotate({
-          ...target,
-          credentials: Redacted.make(NotionDouble.personalToken)
-        })
-        .pipe(Effect.flip);
+      // Replace token and Change access submit what changes, as their dialogs do.
+      const change = (value: Parameters<typeof NotionSource.changeSecret>[0]) =>
+        store.rotate({ ...target, credentials: NotionSource.changeSecret(value) });
+      const failedReplacement = yield* change({ key: NotionDouble.personalToken }).pipe(
+        Effect.flip
+      );
       assert.equal(failedReplacement.code, "notion_not_workspace_key");
       assert.equal((yield* store.refresh(target)).metadataRevision, 2);
-      assert.equal(
-        (yield* store.changeNotionAccess({ ...target, access: "write" })).metadataRevision,
-        3
-      );
-      assert.equal(
-        (yield* store.changeNotionAccess({ ...target, access: "read" })).metadataRevision,
-        4
-      );
+      const writable = yield* change({ access: "write" });
+      assert.equal(writable.metadataRevision, 3);
+      const latest = yield* store.snapshot(who.companyId, connection.id, 3);
+      assert.equal(latest.integration === "notion" && latest.snapshot.access, "write");
+      assert.equal((yield* change({ access: "read" })).metadataRevision, 4);
       assert.deepStrictEqual(yield* store.snapshot(who.companyId, connection.id, 1), first);
       assert.equal((yield* store.disconnect(target)).status, "disconnected");
       assert.equal((yield* store.refresh(target).pipe(Effect.flip))._tag, "ConnectionNotConnected");

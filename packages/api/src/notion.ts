@@ -7,9 +7,14 @@ const Numeric = Schema.Number.check(Schema.isFinite());
 const Bound = Schema.Union([Numeric, Text]);
 const Value = Schema.Union([Bound, Schema.Boolean, Schema.Null]);
 export const NotionLimit = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }));
-export const NotionCursor = Schema.String.check(Schema.isBetweenLength(1, 4096));
+/** Notion's own `next_cursor`, handed back as it came. */
+export const NotionCursor = Schema.NonEmptyString;
 export const NotionId = Schema.String.check(
   Schema.isPattern(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
+);
+/** A date, or a date and time with its offset, as Notion's date filters and values take it. */
+export const NotionDate = Schema.String.check(
+  Schema.isPattern(/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2}))?$/)
 );
 
 export const NotionRow = Schema.Struct({

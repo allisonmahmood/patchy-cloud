@@ -7,6 +7,7 @@ import {
   PostHogSource,
   PidgeonSource,
   AttioSource,
+  NotionSource,
   ImapNetwork,
   ImapSource,
   SqlConnectionStore
@@ -73,6 +74,7 @@ const services = Layer.mergeAll(
   PostHogSource.layer,
   PidgeonSource.layer,
   AttioSource.layer,
+  NotionSource.layer,
   ImapSource.layer.pipe(Layer.provide(ImapNetwork.layer))
 ).pipe(Layer.provideMerge(NodeCryptography.layer));
 

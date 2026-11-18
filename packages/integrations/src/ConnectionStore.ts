@@ -6,7 +6,6 @@ import {
   GithubSnapshot,
   ImapSnapshot,
   type Integration,
-  type NotionAccess,
   NotionSnapshot,
   PidgeonSnapshot,
   PostHogSnapshot
@@ -278,7 +277,6 @@ export class ConnectionStorageFailed extends Schema.TaggedError<ConnectionStorag
       "test",
       "rotate",
       "refresh",
-      "changeNotionAccess",
       "retarget",
       "disconnect",
       "reconnect",
@@ -411,7 +409,6 @@ export interface ConnectInput {
   readonly handle: string;
   readonly description: string;
   readonly credentials: Redacted.Redacted<string>;
-  readonly notionAccess?: NotionAccess;
 }
 export interface CredentialsInput extends Identity {
   readonly credentials: Redacted.Redacted<string>;
@@ -503,9 +500,6 @@ export class ConnectionStore extends Context.Service<
     readonly rotate: (input: CredentialsInput) => Effect.Effect<Connection, ConnectionError>;
     readonly retarget: (input: CredentialsInput) => Effect.Effect<Connection, ConnectionError>;
     readonly refresh: (input: Identity) => Effect.Effect<Connection, ConnectionError>;
-    readonly changeNotionAccess: (
-      input: Identity & { readonly access: NotionAccess }
-    ) => Effect.Effect<Connection, ConnectionError>;
     readonly disconnect: (input: Identity) => Effect.Effect<Connection, ConnectionError>;
     readonly reconnect: (input: Identity) => Effect.Effect<Connection, ConnectionError>;
     readonly describe: (

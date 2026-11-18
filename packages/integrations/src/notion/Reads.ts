@@ -1,7 +1,8 @@
 import {
+  NotionDate,
   NotionId,
   notionPropertyType,
-  notionPropertyTypes,
+  type notionPropertyTypes,
   type NotionGetInput,
   type NotionGetOutput,
   type NotionListInput,
@@ -14,113 +15,67 @@ import {
   type NotionSearchOutput,
   type NotionSnapshot
 } from "@patchy/api";
-import { canonicalArgs } from "@patchy/api/canonical-args";
-import { Cryptography } from "@patchy/core";
-import { ContractLimits } from "@patchy/limits";
+import { Runtime } from "@patchy/runtime/core";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
-import { Refusal } from "./Source.js";
+import { Refusal, shape } from "./Source.js";
+
+/**
+ * Each read is planned against the version's snapshot, where its arguments are checked and
+ * nothing is sent, and the plan is then run with a sender holding the token. Property names
+ * resolve to Notion's property ids, so a rename in Notion keeps reading; a selected property that
+ * is gone or retyped fails `shape_mismatch` naming it. Notion's cursors pass through as they are.
+ */
 
 type Json = Schema.Json;
 type DataSource = NotionSnapshot["dataSources"][number];
 type Property = DataSource["properties"][number];
 type Row = NotionListOutput["rows"][number];
-interface Binding {
-  readonly id: string;
-  readonly revision: number;
-}
-type Send = (request: HttpClientRequest.HttpClientRequest) => Effect.Effect<unknown, Refusal>;
+/** One request with the call's token, within its byte budget. */
+export type Send = (
+  request: HttpClientRequest.HttpClientRequest
+) => Effect.Effect<unknown, Refusal>;
+/** A read checked against its snapshot, ready to send. */
+export type Plan<I, A> = (
+  snapshot: NotionSnapshot,
+  input: I
+) => Effect.Effect<(send: Send) => Effect.Effect<A, Refusal>, Runtime.InvalidRequest>;
 
-const Name = Schema.String;
-const Id = Schema.String.check(Schema.isBetweenLength(1, 128));
 const WebUrl = Schema.String.check(Schema.isPattern(/^https:\/\//));
-const RawReference = Schema.Struct({ id: NotionId });
-const RawUser = Schema.Struct({ id: NotionId, name: Schema.optionalKey(Schema.NullOr(Name)) });
+const RawUser = Schema.Struct({
+  id: NotionId,
+  name: Schema.optionalKey(Schema.NullOr(Schema.String))
+});
 const RichText = Schema.Array(
   Schema.Struct({
     plain_text: Schema.String,
     mention: Schema.optionalKey(Schema.Struct({ type: Schema.String }))
   })
 );
-const liveOptions = Schema.decodeUnknownOption(
-  Schema.Struct({ options: Schema.Array(Schema.Struct({ id: Id })) })
-);
-const RawSchemaProperty = Schema.StructWithRest(
+const RawProperty = Schema.StructWithRest(
   Schema.Struct({
-    id: Id,
+    id: Schema.String,
     type: Schema.String,
-    relation: Schema.optionalKey(Schema.Struct({ data_source_id: Schema.optionalKey(Id) }))
+    has_more: Schema.optionalKey(Schema.Boolean)
   }),
   [Schema.Record(Schema.String, Schema.Unknown)]
 );
-const RawSource = Schema.Struct({
-  id: Id,
-  properties: Schema.Record(Name, RawSchemaProperty)
-});
-const RawProperty = Schema.StructWithRest(
-  Schema.Struct({ id: Id, type: Schema.String, has_more: Schema.optionalKey(Schema.Boolean) }),
-  [Schema.Record(Schema.String, Schema.Unknown)]
-);
-export const RowParent = Schema.Struct({
-  type: Schema.String,
-  data_source_id: Schema.optionalKey(NotionId)
-});
 const PageInfo = Schema.Struct({
   object: Schema.Literal("page"),
   id: NotionId,
   url: WebUrl,
   last_edited_time: Schema.String,
-  parent: RowParent,
-  properties: Schema.Record(Name, Schema.Unknown)
+  parent: Schema.Struct({ data_source_id: Schema.optionalKey(Schema.String) }),
+  properties: Schema.Record(Schema.String, Schema.Unknown)
 });
-export const belongsToSource = (parent: typeof RowParent.Type, sourceId: string) =>
-  parent.type === "data_source_id" && parent.data_source_id === sourceId;
 const RawRow = Schema.Struct({
   ...PageInfo.fields,
   created_time: Schema.String,
   in_trash: Schema.Boolean,
-  properties: Schema.Record(Name, RawProperty)
+  properties: Schema.Record(Schema.String, RawProperty)
 });
-const page = <S extends Schema.Top>(item: S) =>
-  Schema.Struct({
-    results: Schema.Array(item),
-    has_more: Schema.Boolean,
-    next_cursor: Schema.NullOr(Schema.String),
-    request_status: Schema.optionalKey(Schema.Struct({ type: Schema.String }))
-  });
-
-const shapeMismatch = (property?: Property) =>
-  new Refusal({
-    code: "shape_mismatch",
-    ...(property && { missing: { kind: "property" as const, name: property.name } })
-  });
-
-const decode = <A>(schema: Schema.Decoder<A>) => {
-  const read = Schema.decodeUnknownEffect(schema);
-  return (body: unknown, property?: Property) =>
-    read(body).pipe(Effect.mapError(() => shapeMismatch(property)));
-};
-
-const readSource = decode(RawSource);
-const readRow = decode(RawRow);
-const readPage = decode(page(Schema.Unknown));
-const readPageInfo = decode(PageInfo);
-const readTitle = Schema.decodeUnknownOption(
-  Schema.Struct({
-    type: Schema.Literal("title"),
-    title: RichText
-  })
-);
-const readMarkdown = decode(
-  Schema.Struct({
-    object: Schema.Literal("page_markdown"),
-    id: NotionId,
-    markdown: Schema.String,
-    truncated: Schema.Boolean
-  })
-);
 const SourceInfo = Schema.Struct({
   object: Schema.Literal("data_source"),
   id: NotionId,
@@ -128,49 +83,61 @@ const SourceInfo = Schema.Struct({
   last_edited_time: Schema.String,
   parent: Schema.Struct({ database_id: NotionId })
 });
-const readSearch = decode(page(Schema.Union([PageInfo, SourceInfo])));
-const readDatabase = decode(
+const list = <S extends Schema.Top>(item: S) =>
   Schema.Struct({
-    object: Schema.Literal("database"),
-    id: NotionId,
-    url: WebUrl
-  })
-);
+    results: Schema.Array(item),
+    has_more: Schema.Boolean,
+    next_cursor: Schema.NullOr(Schema.String),
+    request_status: Schema.optionalKey(Schema.Struct({ type: Schema.String }))
+  });
+
+const decode = <A>(schema: Schema.Decoder<A>) => {
+  const read = Schema.decodeUnknownEffect(schema);
+  return (body: unknown) => read(body).pipe(Effect.mapError(shape));
+};
+const readRows = decode(list(Schema.Unknown));
+const readRow = decode(RawRow);
+const RawItems = list(Schema.Record(Schema.String, Schema.Unknown));
+const readItems = decode(RawItems);
+const readPageInfo = decode(PageInfo);
+const readMarkdown = decode(Schema.Struct({ markdown: Schema.String, truncated: Schema.Boolean }));
+const readSearch = decode(list(Schema.Union([PageInfo, SourceInfo])));
+const readDatabase = decode(Schema.Struct({ url: WebUrl }));
 const readPeople = decode(
-  page(
-    Schema.Struct({
-      ...RawUser.fields,
-      type: Schema.Literals(["person", "bot"])
-    })
-  )
+  list(Schema.Struct({ ...RawUser.fields, type: Schema.Literals(["person", "bot"]) }))
 );
-const RawItemsPage = page(Schema.Record(Schema.String, Schema.Unknown));
-const readItems = decode(RawItemsPage);
+const readTitle = Schema.decodeUnknownOption(
+  Schema.Struct({ type: Schema.Literal("title"), title: RichText })
+);
 const readRichText = Schema.decodeUnknownOption(RichText);
 const readArray = Schema.decodeUnknownOption(Schema.Array(Schema.Unknown));
 
+/** A property's value as the wire carries it, or undefined when Notion's doesn't decode. */
 const reader = <A>(schema: Schema.Decoder<A>, map: (value: A) => Json) => {
-  const decode = Schema.decodeUnknownOption(schema);
-  return (raw: unknown) => Option.match(decode(raw), { onNone: () => undefined, onSome: map });
+  const read = Schema.decodeUnknownOption(schema);
+  return (raw: unknown) => Option.match(read(raw), { onNone: () => undefined, onSome: map });
 };
 const plain = reader(RichText, (value) => value.map((part) => part.plain_text).join("") || null);
 const string = reader(Schema.NullOr(Schema.String), (value) => value);
-const number = reader(Schema.NullOr(Schema.Number.check(Schema.isFinite())), (value) => value);
-const checkbox = reader(Schema.Boolean, (value) => value);
 const timestamp = reader(Schema.String, (value) => value);
-const option = reader(Schema.NullOr(Schema.Struct({ name: Name })), (value) => value?.name ?? null);
+const option = reader(
+  Schema.NullOr(Schema.Struct({ name: Schema.String })),
+  (value) => value?.name ?? null
+);
+const names = reader(Schema.Array(Schema.Struct({ name: Schema.String })), (items) =>
+  items.map(({ name }) => name)
+);
 const person = ({ id, name }: typeof RawUser.Type) => ({ id, name: name ?? null });
+const actor = reader(RawUser, person);
 
 const values = {
   title: plain,
   rich_text: plain,
-  number,
-  checkbox,
+  number: reader(Schema.NullOr(Schema.Number.check(Schema.isFinite())), (value) => value),
+  checkbox: reader(Schema.Boolean, (value) => value),
   select: option,
   status: option,
-  multi_select: reader(Schema.Array(Schema.Struct({ name: Name })), (options) =>
-    options.map(({ name }) => name)
-  ),
+  multi_select: names,
   date: reader(
     Schema.NullOr(Schema.Struct({ start: Schema.String, end: Schema.NullOr(Schema.String) })),
     (value) => value
@@ -179,17 +146,17 @@ const values = {
   email: string,
   phone_number: string,
   people: reader(Schema.Array(RawUser), (users) => users.map(person)),
-  relation: reader(Schema.Array(RawReference), (refs) => refs.map(({ id }) => id)),
-  files: reader(Schema.Array(Schema.Struct({ name: Name })), (files) =>
-    files.map(({ name }) => name)
+  relation: reader(Schema.Array(Schema.Struct({ id: NotionId })), (refs) =>
+    refs.map(({ id }) => id)
   ),
+  files: names,
   created_time: timestamp,
   last_edited_time: timestamp,
-  created_by: reader(RawUser, person),
-  last_edited_by: reader(RawUser, person),
+  created_by: actor,
+  last_edited_by: actor,
   unique_id: reader(
     Schema.NullOr(
-      Schema.Struct({ prefix: Schema.NullOr(Name), number: Schema.NullOr(Schema.Int) })
+      Schema.Struct({ prefix: Schema.NullOr(Schema.String), number: Schema.NullOr(Schema.Int) })
     ),
     (value) =>
       value?.number == null
@@ -201,204 +168,82 @@ const values = {
 } satisfies Record<keyof typeof notionPropertyTypes, (value: unknown) => Json | undefined>;
 const isKnownType = (type: string): type is keyof typeof values => Object.hasOwn(values, type);
 
-const CursorJson = Schema.fromJsonString(
-  Schema.Struct({
-    v: Schema.Literal(1),
-    binding: Schema.String,
-    next: Schema.String.check(Schema.isBetweenLength(1, 1024))
-  })
-);
-const decodeCursor = Schema.decodeUnknownEffect(CursorJson, { onExcessProperty: "error" });
-const encodeCursor = Schema.encodeSync(CursorJson);
-const readCursor = Effect.fnUntraced(function* (cursor: string | undefined, binding: string) {
-  if (cursor === undefined) return undefined;
-  if (cursor.length > 1800 || !/^[A-Za-z0-9_-]+$/.test(cursor))
-    return yield* new Refusal({ code: "invalid_cursor" });
-  const value = yield* decodeCursor(Buffer.from(cursor, "base64url").toString("utf8")).pipe(
-    Effect.mapError(() => new Refusal({ code: "invalid_cursor" }))
+const invalid = () => new Runtime.InvalidRequest({});
+const mismatch = (property: Property) =>
+  new Refusal({ code: "shape_mismatch", property: property.name });
+const isId = Schema.is(NotionId);
+const isDate = Schema.is(NotionDate);
+const nextCursor = (answer: { readonly has_more: boolean; readonly next_cursor: string | null }) =>
+  answer.has_more ? answer.next_cursor : null;
+/** A page that is missing or no longer shared reads as null. */
+const orNull = (sent: Effect.Effect<unknown, Refusal>) =>
+  sent.pipe(
+    Effect.catchTags({
+      NotionRefusal: (error) =>
+        error.code === "not_found" ? Effect.succeed(null) : Effect.fail(error)
+    })
   );
-  if (value.binding !== binding) return yield* new Refusal({ code: "invalid_cursor" });
-  return value.next;
-});
 
-const nextPage = (answer: { readonly has_more: boolean; readonly next_cursor: string | null }) =>
-  answer.has_more &&
-  (answer.next_cursor === null ||
-    answer.next_cursor.length === 0 ||
-    answer.next_cursor.length > 1024)
-    ? Effect.fail(new Refusal({ code: "shape_mismatch" }))
-    : Effect.succeed(answer.has_more ? answer.next_cursor : null);
-
-const paging = Effect.fnUntraced(function* (
-  binding: Binding,
-  op: string,
-  args: Json,
-  cursor: string | undefined
-) {
-  const crypto = yield* Cryptography.Cryptography;
-  const digest = yield* crypto.sha256(canonicalArgs([op, binding.id, binding.revision, args]));
-  const start = yield* readCursor(cursor, digest);
-  const finish = Effect.fnUntraced(function* (answer: {
-    readonly has_more: boolean;
-    readonly next_cursor: string | null;
-  }) {
-    const next = yield* nextPage(answer);
-    if (next === null) return null;
-    if (next === start) return yield* shapeMismatch();
-    return Buffer.from(encodeCursor({ v: 1, binding: digest, next }), "utf8").toString("base64url");
-  });
-  return { start, finish };
-});
-
-const sourcePath = (id: string) => `/data_sources/${encodeURIComponent(id)}`;
-export const pagePath = (id: string) => `/pages/${encodeURIComponent(id)}`;
-const propertySegment = (id: string) => {
-  try {
-    return encodeURIComponent(decodeURIComponent(id));
-  } catch {
-    return encodeURIComponent(id);
-  }
-};
-const propertyPath = (rowId: string, propertyId: string) =>
-  `${pagePath(rowId)}/properties/${propertySegment(propertyId)}`;
-export const sourceOf = (snapshot: NotionSnapshot, key: string) => {
-  const dataSource = snapshot.dataSources.find((candidate) => candidate.key === key);
-  return dataSource === undefined
-    ? Effect.fail(new Refusal({ code: "invalid_request" }))
-    : Effect.succeed(dataSource);
+const sourceOf = (snapshot: NotionSnapshot, key: string) => {
+  const found = snapshot.dataSources.find((source) => source.key === key);
+  return found === undefined ? Effect.fail(invalid()) : Effect.succeed(found);
 };
 
-const nameSource = (read: Effect.Effect<unknown, Refusal>, dataSource: string) =>
-  read.pipe(
-    Effect.mapError((error) =>
-      error.code === "not_found"
-        ? new Refusal({ code: "not_found", dataSource: dataSource.slice(0, 512) })
-        : error
-    )
+/**
+ * Notion's page object holds at most 25 people, relation references and mentions in one value;
+ * one at that cut is read whole through the property endpoint.
+ */
+const isCut = (value: typeof RawProperty.Type) => {
+  if (value.type === "relation") return value.has_more === true;
+  if (value.type === "people")
+    return (Option.getOrUndefined(readArray(value.people))?.length ?? 0) >= 25;
+  if (value.type !== "title" && value.type !== "rich_text") return false;
+  const mentions = Option.getOrUndefined(readRichText(value[value.type]))?.filter(
+    ({ mention }) => mention?.type === "page" || mention?.type === "user"
   );
-
-export const checkSource = Effect.fnUntraced(function* (
-  send: Send,
-  snapshot: NotionSnapshot,
-  source: DataSource,
-  selected: readonly Property[],
-  writtenOptions?: ReadonlyMap<Property, readonly string[]>
-) {
-  const targets = new Set(
-    selected.flatMap(({ relationTarget }) => (relationTarget ? [relationTarget] : []))
-  );
-  for (const id of targets) {
-    if (id === source.id) continue;
-    const target = snapshot.dataSources.find((item) => item.id === id);
-    yield* nameSource(send(HttpClientRequest.get(sourcePath(id))), target?.title ?? id);
-  }
-  const live = yield* readSource(
-    yield* nameSource(send(HttpClientRequest.get(sourcePath(source.id))), source.title)
-  );
-  if (live.id !== source.id) return yield* shapeMismatch();
-  const byId = new Map(Object.values(live.properties).map((property) => [property.id, property]));
-  for (const property of selected) {
-    const current = byId.get(property.id);
-    if (
-      current?.type !== property.type ||
-      (property.type === "relation" && current.relation?.data_source_id !== property.relationTarget)
-    )
-      return yield* shapeMismatch(property);
-    const chosen = writtenOptions?.get(property);
-    if (
-      chosen?.length &&
-      (current.type === "select" || current.type === "status" || current.type === "multi_select")
-    ) {
-      const options = Option.getOrUndefined(liveOptions(current[current.type]))?.options;
-      if (chosen.some((id) => !options?.some((option) => option.id === id)))
-        return yield* shapeMismatch(property);
-    }
-  }
-});
-
-const potentiallyCut = (property: typeof RawProperty.Type) => {
-  if (property.type === "relation") return property.has_more === true;
-  if (property.type === "people")
-    return (Option.getOrUndefined(readArray(property.people))?.length ?? 0) >= 25;
-  if (property.type !== "title" && property.type !== "rich_text") return false;
-  const rich = Option.getOrUndefined(readRichText(property[property.type]));
-  return (
-    (rich?.filter((item) => item.mention?.type === "page" || item.mention?.type === "user")
-      .length ?? 0) >= 25
-  );
+  return (mentions?.length ?? 0) >= 25;
 };
 
-const readComplete = Effect.fnUntraced(function* (
-  send: Send,
-  rowId: string,
-  property: Property,
-  budget: { remaining: number; limit: number }
-) {
-  let cursor: string | null = null;
-  const seen = new Set<string>();
+/** Every item of one property of one row, page after page; the call's byte budget bounds it. */
+const readWhole = Effect.fnUntraced(function* (send: Send, rowId: string, property: Property) {
   const items: unknown[] = [];
-  const route = propertyPath(rowId, property.id);
+  let cursor: string | null = null;
   do {
-    if (budget.remaining <= 0)
-      return yield* new Refusal({
-        code: "too_large",
-        bound: { name: "property items", limit: budget.limit }
-      });
-    const request = HttpClientRequest.get(route).pipe(
-      HttpClientRequest.appendUrlParam("page_size", "100")
-    );
-    const answer: typeof RawItemsPage.Type = yield* readItems(
+    const answer: typeof RawItems.Type = yield* readItems(
       yield* send(
-        cursor === null
-          ? request
-          : request.pipe(HttpClientRequest.appendUrlParam("start_cursor", cursor))
-      ),
-      property
+        // Notion's property ids come URL-encoded, so they go in the path as they are.
+        HttpClientRequest.get(`/pages/${rowId}/properties/${property.id}`).pipe(
+          HttpClientRequest.appendUrlParams({
+            page_size: "100",
+            ...(cursor === null ? {} : { start_cursor: cursor })
+          })
+        )
+      )
     );
-    budget.remaining -= Math.max(1, answer.results.length);
-    if (budget.remaining < 0)
-      return yield* new Refusal({
-        code: "too_large",
-        bound: { name: "property items", limit: budget.limit }
-      });
-    for (const item of answer.results) {
-      if (item.type !== property.type || !Object.hasOwn(item, property.type))
-        return yield* shapeMismatch(property);
-      items.push(item[property.type]);
-    }
-    cursor = yield* nextPage(answer);
-    if (cursor !== null) {
-      if (seen.has(cursor)) return yield* shapeMismatch(property);
-      seen.add(cursor);
-    }
+    for (const item of answer.results) items.push(item[property.type]);
+    cursor = nextCursor(answer);
   } while (cursor !== null);
   return items;
 });
 
+/** A row with the selected properties by the snapshot's names, matched by property id. */
 const row = Effect.fnUntraced(function* (
   send: Send,
-  source: DataSource,
   raw: typeof RawRow.Type,
-  selected: readonly Property[],
-  budget: { remaining: number; limit: number }
+  selected: readonly Property[]
 ) {
-  if (!belongsToSource(raw.parent, source.id)) return yield* shapeMismatch();
-  const byId = new Map(Object.values(raw.properties).map((property) => [property.id, property]));
-  const output: Record<string, Json> = Object.create(null);
+  const byId = new Map(Object.values(raw.properties).map((value) => [value.id, value]));
+  // A property may be named __proto__.
+  const properties: Record<string, Json> = Object.create(null);
   for (const property of selected) {
     const value = byId.get(property.id);
-    if (
-      value?.type !== property.type ||
-      !isKnownType(property.type) ||
-      !Object.hasOwn(value, value.type)
-    )
-      return yield* shapeMismatch(property);
-    const rawValue = potentiallyCut(value)
-      ? yield* readComplete(send, raw.id, property, budget)
-      : value[value.type];
-    const read = values[property.type](rawValue);
-    if (read === undefined) return yield* shapeMismatch(property);
-    output[property.name] = read;
+    if (value?.type !== property.type || !isKnownType(property.type))
+      return yield* mismatch(property);
+    const read = values[property.type](
+      isCut(value) ? yield* readWhole(send, raw.id, property) : value[value.type]
+    );
+    if (read === undefined) return yield* mismatch(property);
+    properties[property.name] = read;
   }
   return {
     id: raw.id,
@@ -406,186 +251,137 @@ const row = Effect.fnUntraced(function* (
     createdTime: raw.created_time,
     lastEditedTime: raw.last_edited_time,
     inTrash: raw.in_trash,
-    properties: output
+    properties
   } satisfies Row;
 });
 
-const timestamps = { createdTime: "created_time", lastEditedTime: "last_edited_time" } as const;
-const timeType = (type: string) => type === "created_time" || type === "last_edited_time";
-const timeValue = /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2}))?$/;
-const isId = Schema.is(NotionId);
-const directions = { asc: "ascending", desc: "descending" } as const;
-const numberRange = {
-  gt: "greater_than",
-  gte: "greater_than_or_equal_to",
-  lt: "less_than",
-  lte: "less_than_or_equal_to"
-} as const;
-const dateRange = { gt: "after", gte: "on_or_after", lt: "before", lte: "on_or_before" } as const;
-
-const filter = (property: Property, criterion: Json) =>
-  timeType(property.type)
+/** Created and edited time, for range and order when no property takes their names. */
+const times: Readonly<Record<string, Property>> = {
+  createdTime: { id: "createdTime", name: "createdTime", type: "created_time" },
+  lastEditedTime: { id: "lastEditedTime", name: "lastEditedTime", type: "last_edited_time" }
+};
+const isTime = (property: Property) =>
+  property.type === "created_time" || property.type === "last_edited_time";
+const on = (property: Property, criterion: Json) =>
+  isTime(property)
     ? { timestamp: property.type, [property.type]: criterion }
     : { property: property.id, [property.type]: criterion };
+const comparisons = {
+  number: {
+    gt: "greater_than",
+    gte: "greater_than_or_equal_to",
+    lt: "less_than",
+    lte: "less_than_or_equal_to"
+  },
+  string: { gt: "after", gte: "on_or_after", lt: "before", lte: "on_or_before" }
+} as const;
 
-const plan = Effect.fnUntraced(function* (source: DataSource, args: NotionListInput) {
-  const properties = new Map(source.properties.map((property) => [property.name, property]));
+/** A data source's rows: its filters, order and selection, resolved by property id. */
+export const planList = Effect.fnUntraced(function* (
+  snapshot: NotionSnapshot,
+  input: NotionListInput
+) {
+  const source = yield* sourceOf(snapshot, input.source);
+  const byName = new Map(source.properties.map((property) => [property.name, property]));
   const field = (name: string) =>
-    properties.get(name) ??
-    (name === "createdTime" || name === "lastEditedTime"
-      ? { id: name, name, type: timestamps[name] }
-      : undefined);
-  const invalid = () => new Refusal({ code: "invalid_request" });
+    byName.get(name) ?? (Object.hasOwn(times, name) ? times[name] : undefined);
 
-  const selected: Property[] = args.select === undefined ? [...source.properties] : [];
-  if (args.select !== undefined) {
-    for (const name of new Set(args.select)) {
-      const property = properties.get(name);
-      if (property === undefined) return yield* invalid();
-      selected.push(property);
-    }
+  const selected: Property[] = [];
+  for (const name of new Set(input.select ?? byName.keys())) {
+    const property = byName.get(name);
+    if (property === undefined) return yield* invalid();
+    selected.push(property);
   }
 
-  // Include fields that affect the query even if they aren't returned.
-  const used = new Set(selected);
   const filters: Json[] = [];
-  for (const [name, value] of Object.entries(args.eq ?? {})) {
-    const property = properties.get(name);
+  for (const [name, value] of Object.entries(input.eq ?? {})) {
+    const property = byName.get(name);
     const eq = property && notionPropertyType(property.type)?.eq;
     if (
       !property ||
       !eq ||
       (value === null ? eq === "boolean" : typeof value !== eq) ||
-      (property.type === "date" && typeof value === "string" && !timeValue.test(value))
+      (property.type === "date" && value !== null && !isDate(value))
     )
       return yield* invalid();
-    used.add(property);
-    filters.push(filter(property, value === null ? { is_empty: true } : { equals: value }));
+    filters.push(on(property, value === null ? { is_empty: true } : { equals: value }));
   }
-  for (const [name, value] of Object.entries(args.contains ?? {})) {
-    const property = properties.get(name);
+  for (const [name, value] of Object.entries(input.contains ?? {})) {
+    const property = byName.get(name);
     if (
       !property ||
       !notionPropertyType(property.type)?.contains ||
       ((property.type === "people" || property.type === "relation") && !isId(value))
     )
       return yield* invalid();
-    used.add(property);
-    filters.push(filter(property, { contains: value }));
+    filters.push(on(property, { contains: value }));
   }
-  if (args.range !== undefined) {
-    const { property: name, ...limits } = args.range;
-    const property = field(name);
-    const range = property && notionPropertyType(property.type)?.range;
-    const entries = Object.entries(limits);
-    if (!property || !range || entries.length === 0) return yield* invalid();
-    if (properties.has(name)) used.add(property);
-    for (const [operator, value] of entries) {
-      if (
-        !(operator === "gt" || operator === "gte" || operator === "lt" || operator === "lte") ||
-        (range === "number"
-          ? typeof value !== "number"
-          : typeof value !== "string" || !timeValue.test(value))
-      )
-        return yield* invalid();
-      const comparison = range === "number" ? numberRange[operator] : dateRange[operator];
-      filters.push(filter(property, { [comparison]: value }));
+  if (input.range !== undefined) {
+    const property = field(input.range.property);
+    const kind = property && notionPropertyType(property.type)?.range;
+    if (!property || !kind) return yield* invalid();
+    for (const operator of ["gt", "gte", "lt", "lte"] as const) {
+      const value = input.range[operator];
+      if (value === undefined) continue;
+      if (kind === "number" ? typeof value !== "number" : !isDate(value)) return yield* invalid();
+      filters.push(on(property, { [comparisons[kind][operator]]: value }));
     }
   }
-  const order = args.orderBy;
   let sort: Json | undefined;
-  if (order !== undefined) {
-    const property = field(order.property);
+  if (input.orderBy !== undefined) {
+    const property = field(input.orderBy.property);
     if (!property) return yield* invalid();
-    if (properties.has(order.property)) used.add(property);
     sort = {
-      ...(timeType(property.type) ? { timestamp: property.type } : { property: property.id }),
-      direction: directions[order.direction ?? "asc"]
+      ...(isTime(property) ? { timestamp: property.type } : { property: property.id }),
+      direction: input.orderBy.direction === "desc" ? "descending" : "ascending"
     };
   }
-  const body = {
-    result_type: "page",
-    page_size: args.limit ?? 100,
-    ...(filters.length > 0 ? { filter: filters.length === 1 ? filters[0] : { and: filters } } : {}),
-    ...(sort === undefined ? {} : { sorts: [sort] })
-  } satisfies Json;
-  return { selected, used: [...used], body };
-});
 
-/** Checks user arguments against the pinned snapshot before an upstream request can run. */
-export const planList = Effect.fnUntraced(function* (
-  snapshot: NotionSnapshot,
-  input: NotionListInput,
-  binding: Binding
-) {
-  const source = yield* sourceOf(snapshot, input.source);
-  const { selected, used, body } = yield* plan(source, input);
-  const cursor = yield* paging(
-    binding,
-    "notion.listRows",
-    [
-      source.id,
-      input.eq ?? null,
-      input.contains ?? null,
-      input.range ?? null,
-      input.orderBy ?? null,
-      input.select ?? null
-    ],
-    input.cursor
+  const request = HttpClientRequest.post(
+    `/data_sources/${encodeURIComponent(source.id)}/query`
+  ).pipe(
+    HttpClientRequest.appendUrlParams(
+      input.select === undefined ? [] : selected.map(({ id }) => ["filter_properties", id] as const)
+    ),
+    HttpClientRequest.bodyJsonUnsafe({
+      result_type: "page",
+      page_size: input.limit ?? 100,
+      ...(filters.length === 0
+        ? {}
+        : { filter: filters.length === 1 ? filters[0] : { and: filters } }),
+      ...(sort === undefined ? {} : { sorts: [sort] }),
+      ...(input.cursor === undefined ? {} : { start_cursor: input.cursor })
+    })
   );
-  const payload = {
-    ...body,
-    ...(cursor.start === undefined ? {} : { start_cursor: cursor.start })
-  };
-  if (new TextEncoder().encode(canonicalArgs(payload)).byteLength > 500_000)
-    return yield* new Refusal({ code: "invalid_request" });
-  const propertyLimit = yield* ContractLimits.get("notion.read.propertyItems");
-  const checksRelations = used.some(({ type }) => type === "relation");
-  return Effect.fnUntraced(function* (send: Send) {
-    if (checksRelations) yield* checkSource(send, snapshot, source, used);
-    const request = HttpClientRequest.post(`${sourcePath(source.id)}/query`).pipe(
-      HttpClientRequest.appendUrlParams(
-        input.select === undefined
-          ? []
-          : selected.map(({ id }) => ["filter_properties", id] as const)
-      ),
-      HttpClientRequest.bodyJsonUnsafe(payload)
-    );
-    const answer = yield* readPage(
-      yield* nameSource(send(request), source.title).pipe(
-        Effect.catchTags({
-          NotionRefusal: (error) =>
-            !checksRelations &&
-            used.length > 0 &&
-            (error.code === "invalid_query" ||
-              (error.code === "shape_mismatch" && error.missing?.kind === "property"))
-              ? checkSource(send, snapshot, source, used).pipe(Effect.andThen(Effect.fail(error)))
-              : Effect.fail(error)
-        })
+  return Effect.fnUntraced(function* (send: Send): Effect.fn.Return<NotionListOutput, Refusal> {
+    const answer = yield* readRows(
+      yield* send(request).pipe(
+        Effect.mapError((error) =>
+          error.code === "not_found"
+            ? new Refusal({ code: "not_found", dataSource: source.key })
+            : error
+        )
       )
     );
+    // Notion marks every page of a query past its 10,000th row, and pages no further.
     if (answer.request_status?.type === "incomplete")
       return yield* new Refusal({ code: "offset_exhausted" });
-    if (answer.results.length > body.page_size) return yield* shapeMismatch();
-    const next = yield* cursor.finish(answer);
-    // No row to decode means no evidence the fields still match the snapshot.
-    if (!checksRelations && answer.results.length === 0 && used.length > 0)
-      yield* checkSource(send, snapshot, source, used);
-    const budget = { remaining: propertyLimit, limit: propertyLimit };
     const rows: Row[] = [];
-    for (const result of answer.results) {
-      const raw = yield* readRow(result);
-      rows.push(yield* row(send, source, raw, selected, budget));
-    }
-    return { rows, cursor: next } satisfies NotionListOutput;
+    for (const result of answer.results)
+      rows.push(yield* row(send, yield* readRow(result), selected));
+    return { rows, cursor: nextCursor(answer) };
   });
 });
 
-const getPage = (send: Send, path: string) =>
-  send(HttpClientRequest.get(path)).pipe(
-    Effect.catchTags({
-      NotionRefusal: (error) =>
-        error.code === "not_found" ? Effect.succeed(null) : Effect.fail(error)
+/** One row, or null when it is missing, unshared or another data source's. */
+export const planGet: Plan<NotionGetInput, NotionGetOutput> = (snapshot, input) =>
+  Effect.map(sourceOf(snapshot, input.source), (source) =>
+    Effect.fnUntraced(function* (send: Send) {
+      const answer = yield* orNull(send(HttpClientRequest.get(`/pages/${input.id}`)));
+      if (answer === null) return null;
+      const raw = yield* readRow(answer);
+      if (raw.parent.data_source_id !== source.id) return null;
+      return yield* row(send, raw, source.properties);
     })
   );
 
@@ -597,136 +393,95 @@ const pageTitle = (page: typeof PageInfo.Type) => {
   return "";
 };
 
-export const planGet = Effect.fnUntraced(function* (
-  snapshot: NotionSnapshot,
-  input: NotionGetInput
-) {
-  const source = yield* sourceOf(snapshot, input.source);
-  const propertyLimit = yield* ContractLimits.get("notion.read.propertyItems");
-  const id = input.id.toLowerCase();
-  return Effect.fnUntraced(function* (send: Send): Effect.fn.Return<NotionGetOutput, Refusal> {
-    const answer = yield* getPage(send, pagePath(id));
-    if (answer === null) return null;
-    const raw = yield* readRow(answer);
-    if (raw.id !== id) return yield* shapeMismatch();
-    if (!belongsToSource(raw.parent, source.id)) return null;
-    yield* checkSource(send, snapshot, source, source.properties);
-    return yield* row(send, source, raw, source.properties, {
-      remaining: propertyLimit,
-      limit: propertyLimit
-    });
-  });
-});
-
-export const planMarkdown = (_snapshot: NotionSnapshot, input: NotionMarkdownInput) =>
+/** A page's Markdown as Notion renders it, `<unknown>` tags and its truncation mark kept. */
+export const planMarkdown: Plan<NotionMarkdownInput, NotionMarkdownOutput> = (_snapshot, input) =>
   Effect.succeed(
-    Effect.fnUntraced(function* (send: Send): Effect.fn.Return<NotionMarkdownOutput, Refusal> {
-      const id = input.id.toLowerCase();
-      const route = pagePath(id);
-      const metadata = yield* getPage(send, route);
+    Effect.fnUntraced(function* (send: Send) {
+      const metadata = yield* orNull(send(HttpClientRequest.get(`/pages/${input.id}`)));
       if (metadata === null) return null;
       const page = yield* readPageInfo(metadata);
-      if (page.id !== id) return yield* shapeMismatch();
-      const contents = yield* getPage(send, `${route}/markdown`);
+      const contents = yield* orNull(send(HttpClientRequest.get(`/pages/${input.id}/markdown`)));
       if (contents === null) return null;
-      const markdown = yield* readMarkdown(contents);
-      if (markdown.id !== id) return yield* shapeMismatch();
+      const { markdown, truncated } = yield* readMarkdown(contents);
+      return { id: page.id, title: pageTitle(page), url: page.url, markdown, truncated };
+    })
+  );
+
+/** Shared pages and data sources by title, newest edited first. */
+export const planSearch: Plan<NotionSearchInput, NotionSearchOutput> = (snapshot, input) =>
+  Effect.succeed(
+    Effect.fnUntraced(function* (send: Send) {
+      const answer = yield* readSearch(
+        yield* send(
+          HttpClientRequest.post("/search").pipe(
+            HttpClientRequest.bodyJsonUnsafe({
+              page_size: input.limit ?? 100,
+              sort: { timestamp: "last_edited_time", direction: "descending" },
+              ...(input.text === undefined ? {} : { query: input.text }),
+              ...(input.kind === undefined
+                ? {}
+                : { filter: { property: "object", value: input.kind } }),
+              ...(input.cursor === undefined ? {} : { start_cursor: input.cursor })
+            })
+          )
+        )
+      );
+      const discovered = new Map(snapshot.dataSources.map((source) => [source.id, source]));
+      // A data source has no URL of its own: it's its database's.
+      const databaseUrls = new Map<string, string>();
+      const results: Array<NotionSearchOutput["results"][number]> = [];
+      for (const item of answer.results) {
+        if (item.object === "page") {
+          const dataSource =
+            item.parent.data_source_id === undefined
+              ? undefined
+              : discovered.get(item.parent.data_source_id);
+          results.push({
+            kind: "page",
+            id: item.id,
+            title: pageTitle(item),
+            url: item.url,
+            lastEditedTime: item.last_edited_time,
+            ...(dataSource === undefined ? {} : { dataSource: dataSource.key })
+          });
+          continue;
+        }
+        const database = item.parent.database_id;
+        let url = discovered.get(item.id)?.url ?? databaseUrls.get(database);
+        if (url === undefined) {
+          url = (yield* readDatabase(yield* send(HttpClientRequest.get(`/databases/${database}`))))
+            .url;
+          databaseUrls.set(database, url);
+        }
+        results.push({
+          kind: "data_source",
+          id: item.id,
+          title: item.title.map((part) => part.plain_text).join(""),
+          url,
+          lastEditedTime: item.last_edited_time
+        });
+      }
+      return { results, cursor: nextCursor(answer) };
+    })
+  );
+
+/** The workspace's people and bots, without their email addresses. */
+export const planPeople: Plan<NotionPeopleInput, NotionPeopleOutput> = (_snapshot, input) =>
+  Effect.succeed(
+    Effect.fnUntraced(function* (send: Send) {
+      const answer = yield* readPeople(
+        yield* send(
+          HttpClientRequest.get("/users").pipe(
+            HttpClientRequest.appendUrlParams({
+              page_size: String(input.limit ?? 100),
+              ...(input.cursor === undefined ? {} : { start_cursor: input.cursor })
+            })
+          )
+        )
+      );
       return {
-        id: page.id,
-        title: pageTitle(page),
-        url: page.url,
-        markdown: markdown.markdown,
-        truncated: markdown.truncated
+        people: answer.results.map((item) => ({ ...person(item), type: item.type })),
+        cursor: nextCursor(answer)
       };
     })
   );
-
-export const planSearch = Effect.fnUntraced(function* (
-  snapshot: NotionSnapshot,
-  input: NotionSearchInput,
-  binding: Binding
-) {
-  const limit = input.limit ?? 100;
-  const cursor = yield* paging(
-    binding,
-    "notion.search",
-    [input.text ?? null, input.kind ?? null],
-    input.cursor
-  );
-  const request = HttpClientRequest.post("/search").pipe(
-    HttpClientRequest.bodyJsonUnsafe({
-      page_size: limit,
-      sort: { timestamp: "last_edited_time", direction: "descending" },
-      ...(input.text === undefined ? {} : { query: input.text }),
-      ...(input.kind === undefined ? {} : { filter: { property: "object", value: input.kind } }),
-      ...(cursor.start === undefined ? {} : { start_cursor: cursor.start })
-    })
-  );
-  return Effect.fnUntraced(function* (send: Send): Effect.fn.Return<NotionSearchOutput, Refusal> {
-    const answer = yield* readSearch(yield* send(request));
-    if (answer.results.length > limit) return yield* shapeMismatch();
-    const next = yield* cursor.finish(answer);
-    const sourceById = new Map(snapshot.dataSources.map((source) => [source.id, source]));
-    const databaseUrls = new Map<string, string>();
-    const results: Array<NotionSearchOutput["results"][number]> = [];
-    for (const item of answer.results) {
-      if (input.kind !== undefined && item.object !== input.kind) return yield* shapeMismatch();
-      if (item.object === "page") {
-        const dataSource =
-          item.parent.type === "data_source_id" && item.parent.data_source_id !== undefined
-            ? sourceById.get(item.parent.data_source_id)
-            : undefined;
-        results.push({
-          kind: "page",
-          id: item.id,
-          title: pageTitle(item),
-          url: item.url,
-          lastEditedTime: item.last_edited_time,
-          ...(dataSource === undefined ? {} : { dataSource: dataSource.key })
-        });
-        continue;
-      }
-      const parent = item.parent.database_id;
-      let url = sourceById.get(item.id)?.url ?? databaseUrls.get(parent);
-      if (url === undefined) {
-        const database = yield* readDatabase(
-          yield* send(HttpClientRequest.get(`/databases/${encodeURIComponent(parent)}`))
-        );
-        if (database.id !== parent) return yield* shapeMismatch();
-        url = database.url;
-        databaseUrls.set(parent, url);
-      }
-      results.push({
-        kind: "data_source",
-        id: item.id,
-        title: item.title.map((part) => part.plain_text).join(""),
-        url,
-        lastEditedTime: item.last_edited_time
-      });
-    }
-    return { results, cursor: next };
-  });
-});
-
-export const planPeople = Effect.fnUntraced(function* (
-  _snapshot: NotionSnapshot,
-  input: NotionPeopleInput,
-  binding: Binding
-) {
-  const limit = input.limit ?? 100;
-  const cursor = yield* paging(binding, "notion.listPeople", null, input.cursor);
-  const request = HttpClientRequest.get("/users").pipe(
-    HttpClientRequest.appendUrlParams({
-      page_size: String(limit),
-      ...(cursor.start === undefined ? {} : { start_cursor: cursor.start })
-    })
-  );
-  return Effect.fnUntraced(function* (send: Send): Effect.fn.Return<NotionPeopleOutput, Refusal> {
-    const answer = yield* readPeople(yield* send(request));
-    if (answer.results.length > limit) return yield* shapeMismatch();
-    return {
-      people: answer.results.map((item) => ({ ...person(item), type: item.type })),
-      cursor: yield* cursor.finish(answer)
-    };
-  });
-});

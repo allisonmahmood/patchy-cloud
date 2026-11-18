@@ -11,6 +11,7 @@ import * as Redacted from "effect/Redacted";
 import * as ConnectionStore from "../src/ConnectionStore.js";
 import * as CredentialKeys from "../src/CredentialKeys.js";
 import * as AttioSource from "../src/attio/Source.js";
+import * as NotionSource from "../src/notion/Source.js";
 import * as Access from "../src/github/Access.js";
 import * as Github from "../src/github/index.js";
 import * as Operations from "../src/github/Operations.js";
@@ -60,6 +61,7 @@ const services = Layer.mergeAll(
   PostHogSource.layer,
   PidgeonSource.layer,
   AttioSource.layer,
+  NotionSource.layer,
   ImapTest.offline,
   // Production's GitHub, configured from the host settings this run was given.
   Github.layer.pipe(Layer.provide(keys))
