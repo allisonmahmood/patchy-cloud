@@ -21,7 +21,7 @@ The integrations Patchy offers a company, each with its mark, a line on what it 
 _Avoid_: marketplace, app directory
 
 **Connect frame**:
-The one page every integration connects through, drawn from what the integration says, its connect spec: what to make in the other system first, the credential's fields, any sections a check of the credential unlocks (Pidgeon's address and access), its example name, and what it reads, never does and one caveat. The frame owns the order, the Name section, the access list's platform facts, the actions and where refusals read, so a new integration adds data, never a layout.
+The one page every integration connects through, drawn from what the integration says, its connect spec: what to make in the other system first, the credential's fields, any sections a sign-in unlocks (GitHub's repositories), its example name, and what it reads, never does and one caveat. The frame owns the order, the Name section, the access list's platform facts, the actions and where refusals read, so a new integration adds data, never a layout.
 _Avoid_: walkthrough, wizard, connector setup
 
 **Pause / Resume**:
@@ -29,7 +29,7 @@ An admin's reversible stop of a connection, stored as disconnected: patches that
 _Avoid_: disconnect (what ending a connection is called), suspend, disable
 
 **Disconnect**:
-Ending a connection: Patchy forgets its credentials and frees its handle, keeping the snapshots patches were published against; stored as a delete. Refused while any stored version declares it, naming the live patches to remove it from and every other patch whose stored versions declare it; a Pidgeon one revokes its key in Pidgeon.
+Ending a connection: Patchy forgets its credentials and frees its handle, keeping the snapshots patches were published against; stored as a delete. Refused while any stored version declares it, naming the live patches to remove it from and every other patch whose stored versions declare it. A Pidgeon one forgets its key, which stays valid in Pidgeon: Patchy can't revoke it, so the admin does, in Pidgeon.
 _Avoid_: delete, revoke, remove
 
 **Replace key**:
@@ -37,7 +37,7 @@ Giving a connection new credentials for the same target, keeping its identity an
 _Avoid_: rotate, reconnect
 
 **Needs attention**:
-A connection Patchy stopped, or whose state waits on an admin, for its integration's own reason, shown with its fix: an Attio key a check found writable (paused by Patchy, fixed by Resume or Replace key), an IMAP **login pause** (fixed by Replace password or Test), a Pidgeon key Patchy replaced but couldn't revoke (fixed by Test), a Pidgeon test address (fixed by connecting a live one), and a GitHub App uninstalled (paused by Patchy, fixed by Reconnect), its permissions changed (paused by Patchy, fixed by Resume) or a repository **left** its installation (fixed by Refresh, Resume or Change repositories). A GitHub connection **suspended on GitHub** shows that in place of Connected instead. Distinct from Paused, which an admin chose; Postgres and PostHog have no reason of their own.
+A connection Patchy stopped, or whose state waits on an admin, for its integration's own reason, shown with its fix: an Attio key a check found writable (paused by Patchy, fixed by Resume or Replace key), an IMAP **login pause** (fixed by Replace password or Test), a Pidgeon test key (fixed by Replace key with a live one), and a GitHub App uninstalled (paused by Patchy, fixed by Reconnect), its permissions changed (paused by Patchy, fixed by Resume) or a repository **left** its installation (fixed by Refresh, Resume or Change repositories). A GitHub connection **suspended on GitHub** shows that in place of Connected instead. Distinct from Paused, which an admin chose; Postgres and PostHog have no reason of their own.
 _Avoid_: broken, error, unhealthy
 
 **Unused**:
@@ -77,7 +77,7 @@ An immutable list of a PostHog project's event definitions and event and person 
 _Avoid_: event catalogue, schema (PostHog has none to snapshot)
 
 **Address snapshot**:
-An immutable description of one Pidgeon address: its email, display name and send policy, what Patchy's key for it may do, whether it's a test address, its labels and the account's plan, never mail. Refresh labels takes a new one with the stored key.
+An immutable description of one Pidgeon inbox: its address and display name, what patches may do with it, whether the stored key is a test key, and its labels, never mail. Refresh labels takes a new one with the stored key.
 _Avoid_: mailbox, inbox snapshot
 
 **Workspace snapshot**:
@@ -115,20 +115,20 @@ _Avoid_: lockout, disabled (the mail host's words for what the pause prevents), 
 Where IMAP sessions resolve hosts, which addresses they may dial, where a checked address is dialled and which certificate authorities are trusted. The launcher provides it: production's admits public addresses and the system's authorities only; the loopback one, which only the dev runner and tests provide, adds named mail servers on this machine with their own CA. No setting turns loopback on.
 _Avoid_: proxy, egress
 
-**Admin key**:
-The Pidgeon key over the whole account an admin pastes to connect, change access or replace a key, live or test. It travels only in the bodies of that admin's own requests and is never stored, logged or shown; Patchy uses it to find or create the address and mint an address key, both in its mode. Revoking it revokes every key minted from it.
-_Avoid_: master key, account key, root key
+**Inbox**:
+Pidgeon's word for an address that keeps mail; one Pidgeon connection is one inbox, by its id. An `events` inbox keeps no mail and can't be connected. Patchy's own word stays **address**.
+_Avoid_: mailbox (IMAP's)
 
-**Address key**:
-The Pidgeon key Patchy mints for one address, at `read` or `send`, and the only Pidgeon secret it keeps. It is named `Patchy <handle> <attempt>`, checked to reach exactly its address before it is saved, and revokes itself when replaced or deleted; a replaced one stays retired, saved with its replacement, until it has. Replace key and Change access are the only ways to a new one.
-_Avoid_: scoped key, API key (Pidgeon's word for every kind)
+**Pidgeon key**:
+The key an admin made in Pidgeon's dashboard and pasted to connect or Replace key, Read or Send, and the one Pidgeon secret Patchy keeps, encrypted with the inbox's id. It reaches the whole Pidgeon account, since Pidgeon makes none for one inbox; the **inbox boundary** keeps every call to the connection's inbox. Patchy can't revoke it: Replace key and Delete tell the admin to.
+_Avoid_: address key, scoped key (Patchy no longer mints one)
 
-**Send policy**:
-Pidgeon's rule for who an address may write to: `reply_only`, answering only people who wrote first, `open`, or an allow-list. Addresses Patchy creates start reply-only.
-_Avoid_: permission, access (what the key may do)
+**Inbox boundary**:
+What keeps a Pidgeon connection's calls to its one inbox, since its key reaches every inbox of the account: nothing is returned or changed unless Patchy has shown it's the inbox's, and anything it can't show answers `not_found`, as an unknown id does. Lists and search name the inbox and refuse an answer carrying another's row; a thread or message by id must say it's the inbox's; a held message by id can't, so it isn't there; triage reads the thread first and checks a label against the inbox's own.
+_Avoid_: scope, sandbox
 
 **Test-mode connection**:
-A Pidgeon connection made with a test admin key, to a test address: its mail stays in Pidgeon, and Pidgeon deletes the address a day after it's made. It shows "Test, mail stays in Pidgeon" wherever it's listed, and needs attention: real mail needs a live address. Distinct from Test connection, the action that checks a connection's credentials still work.
+A Pidgeon connection whose key is a test key, `pgn_test_…`: the mail it sends stays in Pidgeon and reaches only the account's own inboxes. It shows "Test key, mail stays in Pidgeon" wherever it's listed, and needs attention while live patches use it: real mail needs a live key. Distinct from Test connection, the action that checks a connection's credentials still work.
 _Avoid_: sandbox, demo connection
 
 **Revision**:
@@ -156,7 +156,7 @@ PostHog's one operation: a named, read-only query in PostHog's ClickHouse-flavou
 _Avoid_: event export, insight (PostHog's saved chart)
 
 **Pidgeon operation**:
-One of the calls Patchy writes for a Pidgeon address: reads (`threads.list`, `threads.get`, `messages.get`, `messages.search`, `labels.list`, `attachments.text`) travel as `pidgeon.read`; replies, sends and triage as `pidgeon.write`, which only a connection whose key sends may make. Patchy fills in the address, so patch code never names a path, an address id or a key.
+One of the calls Patchy writes for a Pidgeon inbox: reads (`threads.list`, `threads.get`, `messages.get`, `messages.search`, `labels.list`) travel as `pidgeon.read`; replies, sends and triage as `pidgeon.write`, which only a connection that may send makes. Patchy fills in the inbox and keeps the **inbox boundary**, so patch code never names a path, an inbox id or a key.
 _Avoid_: email API, inbox call
 
 **Attio operation**:
@@ -196,27 +196,27 @@ The read each Attio call makes of its object's or list's current attributes besi
 _Avoid_: validation, schema refresh (an admin's Refresh takes a new snapshot)
 
 **Draft key**:
-The `idempotencyKey` a patch makes for one email when the person starts it and keeps until a send answers. Patchy sends Pidgeon a hash of the connection, the patch and the draft key as its Idempotency-Key, so the same draft within Pidgeon's 24 hours is one email.
+The `idempotencyKey` a patch makes for one email when the person starts it and keeps until a send answers. Patchy sends each draft key's email at most once, by the **send ledger**; the draft key itself never leaves Patchy.
 _Avoid_: request id, nonce
 
+**Send ledger**:
+Patchy's record of each email a Pidgeon connection writes, one row per hash of the connection, the patch and the **draft key**: the Pidgeon draft that is the email, how far it got (`writing`, `drafted`, `sending`, `sent`, `held` or `refused`), and the claim of the worker sending it. A draft's one send is issued only after `sending` is recorded, and a draft found `sending` or `held` is looked at, never sent; when Pidgeon hasn't said whether it left, the answer is `unconfirmed`. Pidgeon doesn't dedupe, so this is what makes a draft key one email.
+_Avoid_: outbox, queue
+
 **Held send**:
-A send or reply Pidgeon answers `pending_approval`: nothing was sent, and it waits as a draft for a person to approve in Pidgeon. Distinct from **held mail**, a message that arrived and that Pidgeon Firewall holds for a person, unreadable and unanswerable until someone releases it.
+A send Pidgeon answers `held`: the account is flagged, and the email waits for a member of the account to approve it in Pidgeon; no key can. Asking again with the same draft key looks again. Distinct from **held mail**, a message that arrived and that Pidgeon Firewall holds for a person, unreadable by id and unanswerable until someone releases it.
 _Avoid_: queued send, scheduled send
 
 **Send budget**:
-The sends and replies one Pidgeon connection makes per UTC day, every attempt counted durably before Pidgeon sees it. Past it, a send is refused `source_rate_limited` with `limit: "budget"` and nothing is sent.
+The emails one Pidgeon connection writes per UTC day, each counted durably once, when the **send ledger** records its draft key, before Pidgeon sees it. Past it, a new email is refused `source_rate_limited` with `limit: "budget"` and nothing is sent; replays and asking again count nothing.
 _Avoid_: quota, sending allowance (Pidgeon's own)
-
-**Recipient cooldown**:
-Pidgeon's window, 10 minutes by default, in which an address may send someone only a few new messages after writing to them. Past it, `messages.send` is refused `source_rate_limited` with `limit: "recipient_cooldown"` and Pidgeon's explanation naming them: nothing was sent and no draft is kept, unlike a **held send**. Replies always go.
-_Avoid_: held, throttled (the account's request rate is `limit: "requests"`)
 
 **Project slots**:
 The queries one server process lets run at once against one PostHog region and project, shared by every connection to it. A call that can't get one before its deadline is refused busy, having sent nothing.
 _Avoid_: pool (a Postgres word for reusable sessions), rate limit (PostHog's own)
 
 **Address slots**:
-The calls one server process lets run at once against one Pidgeon address, shared by `patchy dev` and published patches. A call that can't get one before its deadline is refused busy, having sent nothing; one that waited checks its caller and connection again and loads the key as it stands.
+The calls one server process lets run at once against one Pidgeon inbox, shared by `patchy dev` and published patches. A call that can't get one before its deadline is refused busy, having sent nothing; one that waited checks its caller and connection again and loads the key as it stands.
 _Avoid_: pool, rate limit (Pidgeon's own)
 
 **Typed client**:
@@ -236,7 +236,7 @@ One live dev binding call: the instance runs a read the integration opts into on
 _Avoid_: Dev proxy, impersonated read
 
 **Simulated write**:
-A Pidgeon send, reply or triage in `patchy dev`, which never reaches the instance or Pidgeon. Dev checks its arguments and the connection's access as the host would, answers it with new ids starting `dev_` and `test: true`, and prints it in dev's output; nothing changes, so the next dev read doesn't show it. It doesn't check the send policy.
+A Pidgeon send, reply or triage in `patchy dev`, which never reaches the instance or Pidgeon. Dev checks its arguments and the connection's access as the host would, answers it with new ids starting `dev_`, and prints it in dev's output; nothing changes, so the next dev read doesn't show it. It keeps no **send ledger**.
 _Avoid_: dry run, fake send, test send (a test-mode key's send, which does land in Pidgeon)
 
 **Fixture**:
