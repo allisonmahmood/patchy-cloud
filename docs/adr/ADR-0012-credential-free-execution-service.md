@@ -881,21 +881,34 @@ including exact decimal-string formatting, `DateTimeFormat`, `PluralRules`,
 `RelativeTimeFormat`, `ListFormat`, `Collator`, `DisplayNames` and `Segmenter`;
 Web Crypto `randomUUID`, `getRandomValues` and `subtle`; `TextEncoder`,
 `TextDecoder`, `structuredClone`, `URL`, `URLSearchParams`, `atob`, `btoa` and
-`BigInt`. Fetch and sockets, Node globals and built-in imports, `eval` and
-`new Function` are refused deliberately. Everything else, including Temporal if
-present, is incidental and unsupported rather than forbidden.
+`BigInt`. Fetch and sockets, Node globals, `eval` and `new Function` are refused
+deliberately, and Node's built-in modules are unavailable. Everything else,
+including Temporal if present, is incidental and unsupported rather than
+forbidden.
 
 The engine explicitly disables both `nodejs_compat` and `nodejs_compat_v2`; the
-pinned compatibility date would otherwise enable them by default. This is not
-alone an import boundary: workerd still exposes a minimal `node:process` module.
-Before loading either a bound or inspected guest, the loader scans the artifact
-for imports, re-exports and dynamic imports to give an early closed-module error.
-This lexer is not a containment boundary. In particular, JavaScript's ambiguous
+pinned compatibility date would otherwise enable them by default. With them off,
+the engine itself offers a guest no Node built-in except workerd's minimal
+`node:process` stub. The stub is present and unsupported: its environment is
+empty, its `getBuiltinModule` reaches no other Node built-in, and its `exit` ends
+only the guest's own call. The engine's own `cloudflare:workers`,
+`cloudflare:sockets`, `cloudflare:node`, `cloudflare:ai`, `cloudflare:br`,
+`cloudflare:vectorize`, `cloudflare:workflows` and `cloudflare:pipelines` modules
+load too, and are unsupported. `cloudflare:workers` sees only the guest's empty
+environment and its own exports; the others are classes, constants and clients
+that need a binding the guest lacks or the network it is refused. Before loading
+either a bound or inspected guest, the loader scans the artifact for imports,
+re-exports and dynamic imports to give an early closed-module error. This lexer
+is not a containment boundary. In particular, JavaScript's ambiguous
 division/regular-expression syntax can hide an import from it. Loaded Workers
 receive no ambient network capability regardless of that result. Regressions
 execute an unparenthesized `function(){} / import("cloudflare:sockets") / 1`
 bypass against real TCP, fetch and WebSocket listeners while preserving trusted
-callback RPC.
+callback RPC. The same bypass imports every Node built-in, and the other module
+names workerd's registry holds for a JavaScript Worker, from a bound and an
+inspected guest, and release tests pin the engine's answer. A list notices only
+the names it holds, so an engine move includes checking the new release's module
+registry against the release tests' list.
 
 Workers for Platforms is closed: it is not Patchy's backend, has one account as
 the blast radius, and had no credits. Self-hosting means Patchy supplies the
