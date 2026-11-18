@@ -1,0 +1,130 @@
+{
+  "company": { "name": "Juniper Works", "handle": "juniper" },
+  "people": [
+    {
+      "key": "allison",
+      "name": "Allison Mahmood",
+      "email": "allison@juniperworks.example",
+      "role": "admin"
+    },
+    { "key": "sam", "name": "Sam Ortega", "email": "sam@juniperworks.example", "role": "member" }
+  ],
+  "publisher": "allison",
+  "connections": [
+    {
+      "integration": "openai",
+      "handle": "main",
+      "description": "Juniper's model provider account, with the company's own key.",
+      "state": "connected"
+    },
+    {
+      "integration": "models",
+      "handle": "decisions",
+      "description": "Routes and scores incoming requests: answers fixed questions with probabilities.",
+      "state": "connected",
+      "kind": "decision",
+      "provider": "main",
+      "model": "fake-decide-delay-150"
+    },
+    {
+      "integration": "models",
+      "handle": "writer",
+      "description": "Fast writing: short drafts and summaries.",
+      "state": "connected",
+      "kind": "text",
+      "provider": "main",
+      "model": "fake-text-delay-300"
+    },
+    {
+      "integration": "models",
+      "handle": "thinker",
+      "description": "Slow, careful writing for long or hard requests.",
+      "state": "connected",
+      "kind": "text",
+      "provider": "main",
+      "model": "fake-text-delay-20000"
+    },
+    {
+      "integration": "models",
+      "handle": "stuck",
+      "description": "Failure mode: the model never answers.",
+      "state": "connected",
+      "kind": "text",
+      "provider": "main",
+      "model": "fake-text-hang"
+    },
+    {
+      "integration": "models",
+      "handle": "limited",
+      "description": "Failure mode: the provider is rate limiting.",
+      "state": "connected",
+      "kind": "text",
+      "provider": "main",
+      "model": "fake-text-rate-limited"
+    },
+    {
+      "integration": "models",
+      "handle": "refuser",
+      "description": "Failure mode: the model refuses to write.",
+      "state": "connected",
+      "kind": "text",
+      "provider": "main",
+      "model": "fake-text-refuse"
+    },
+    {
+      "integration": "models",
+      "handle": "picky",
+      "description": "Failure mode: the model refuses one decision question.",
+      "state": "connected",
+      "kind": "decision",
+      "provider": "main",
+      "model": "fake-decide-refuse"
+    },
+    {
+      "integration": "models",
+      "handle": "sloppy",
+      "description": "Failure mode: typed output that doesn't match its shape.",
+      "state": "connected",
+      "kind": "text",
+      "provider": "main",
+      "model": "fake-text-invalid"
+    },
+    {
+      "integration": "models",
+      "handle": "rambler",
+      "description": "Failure mode: the model runs past the output cap.",
+      "state": "connected",
+      "kind": "text",
+      "provider": "main",
+      "model": "fake-text-truncated"
+    },
+    {
+      "integration": "models",
+      "handle": "offline",
+      "description": "Failure mode: the provider can't be reached.",
+      "state": "connected",
+      "kind": "text",
+      "provider": "main",
+      "model": "fake-text-unreachable"
+    }
+  ],
+  "patches": [
+    {
+      "repo": "request-triage",
+      "tier": 2,
+      "connections": [
+        "models/decisions",
+        "models/writer",
+        "models/thinker",
+        "models/stuck",
+        "models/limited",
+        "models/refuser",
+        "models/picky",
+        "models/sloppy",
+        "models/rambler",
+        "models/offline"
+      ],
+      "description": "Paste a request: a decision role routes it to a team, scores its urgency and spots spam, and a text role drafts a short formal reply. Buttons run each model failure and show what the page received."
+    }
+  ]
+}
