@@ -2,7 +2,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
-import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Source from "../notion/Source.js";
 
@@ -227,144 +226,169 @@ interface Workspace {
   nextRow: number;
 }
 
-/** Exercises the live adapter against a disposable workspace without a network request. */
-const serve = (workspace: Workspace, request: HttpClientRequest.HttpClientRequest, url: URL) =>
-  Effect.sync(() => {
-    const { tasksRows } = workspace;
-    const respond = (body: unknown, status = 200) =>
-      HttpClientResponse.fromWeb(request, Response.json(body, { status }));
-    const refuse = (status: number, code: string) =>
-      respond({ object: "error", status, code }, status);
-    const authorization = request.headers.authorization;
-    const isPersonal = authorization === `Bearer ${personalToken}`;
-    if (authorization !== `Bearer ${internalToken}` && !isPersonal)
-      return refuse(401, "unauthorized");
-    if (
-      url.origin !== "https://api.notion.com" ||
-      request.headers["notion-version"] !== "2026-03-11"
-    )
-      return refuse(400, "invalid_request");
-    if (request.method === "GET" && url.pathname === "/v1/users/me")
-      return respond({
-        object: "user",
-        type: "bot",
-        id: isPersonal
-          ? "43a8babc-b582-4a97-b5ec-3274552f6ac7"
-          : "a0955069-c85c-4497-bd27-978f5519b4b0",
-        bot: {
-          owner: { type: isPersonal ? "user" : "workspace" },
-          workspace_id: workspaceId,
-          workspace_name: isPersonal ? null : "Notion Probe"
-        }
-      });
-    if (isPersonal) return refuse(403, "restricted_resource");
-    const row = tasksRows.get(url.pathname.slice("/v1/pages/".length));
-    const create = request.method === "POST" && url.pathname === "/v1/pages";
-    const update = request.method === "PATCH" && url.pathname.startsWith("/v1/pages/");
-    if ((create || update) && request.body._tag === "Uint8Array") {
-      if (update && !row) return refuse(404, "object_not_found");
-      const write = decodeWrite(decoder.decode(request.body.body));
-      if (write._tag === "None") return refuse(400, "validation_error");
-      const { parent, properties, in_trash } = write.value;
-      if (create && (parent?.data_source_id !== tasksId || properties?.title === undefined))
-        return refuse(400, "validation_error");
-      const id =
-        row?.id ?? `20000000-0000-4000-8000-${String(workspace.nextRow++).padStart(12, "0")}`;
-      const name =
-        properties?.title?.title.map(({ text }) => text.content).join("") ??
-        row?.properties.Name.title.map(({ plain_text }) => plain_text).join("") ??
-        "";
-      const status = properties?.STs?.status.id ?? row?.properties.Status.status.id ?? "todo";
-      const next = task(id, name, status, owner);
-      const assignee =
-        properties?.who?.people.map(({ id }) => (id === teammate.id ? teammate : owner)) ??
-        row?.properties.Assignee.people ??
-        [];
-      next.properties.Assignee.people = assignee;
-      next.in_trash = in_trash ?? row?.in_trash ?? false;
-      tasksRows.set(id, next);
-      return respond(next);
-    }
-    if (request.method === "GET" && url.pathname.startsWith("/v1/pages/") && row)
-      return respond(row);
-    if (
-      request.method === "POST" &&
-      url.pathname === "/v1/search" &&
-      request.body._tag === "Uint8Array"
-    ) {
-      const search = decodeSearch(decoder.decode(request.body.body));
-      if (search._tag === "None") return refuse(400, "validation_error");
-      const { query, sort, filter, page_size, start_cursor } = search.value;
-      if (query !== undefined || sort !== undefined) {
-        const offset = offsetOf("search", start_cursor ?? null);
-        if (!Number.isSafeInteger(offset)) return refuse(400, "validation_error");
-        const text = query?.toLowerCase() ?? "";
-        const includes = (parts: ReturnType<typeof title>) =>
-          parts.some(({ plain_text }) => plain_text.toLowerCase().includes(text));
-        const pages =
-          filter?.value === "data_source"
-            ? []
-            : [handbook, ...tasksRows.values()].filter(({ properties }) =>
-                includes("Name" in properties ? properties.Name.title : properties.title.title)
-              );
-        const dataSources =
-          filter?.value === "page" ? [] : sources.filter(({ title }) => includes(title));
-        const matches = [...pages, ...dataSources];
-        return respond(paginate("search", matches, offset, page_size));
+/** An offline Notion response, used by integration tests and the dev scenario. */
+const reply = (
+  workspace: Workspace,
+  url: URL,
+  method: string,
+  headers: Headers,
+  requestBody: string | undefined
+) => {
+  const { tasksRows } = workspace;
+  const respond = (body: unknown, status = 200) => Response.json(body, { status });
+  const refuse = (status: number, code: string) =>
+    respond({ object: "error", status, code }, status);
+  const authorization = headers.get("authorization");
+  const isPersonal = authorization === `Bearer ${personalToken}`;
+  if (authorization !== `Bearer ${internalToken}` && !isPersonal)
+    return refuse(401, "unauthorized");
+  if (url.origin !== "https://api.notion.com" || headers.get("notion-version") !== "2026-03-11")
+    return refuse(400, "invalid_request");
+  if (method === "GET" && url.pathname === "/v1/users/me")
+    return respond({
+      object: "user",
+      type: "bot",
+      id: isPersonal
+        ? "43a8babc-b582-4a97-b5ec-3274552f6ac7"
+        : "a0955069-c85c-4497-bd27-978f5519b4b0",
+      bot: {
+        owner: { type: isPersonal ? "user" : "workspace" },
+        workspace_id: workspaceId,
+        workspace_name: isPersonal ? null : "Notion Probe"
       }
-      if (filter?.value === "data_source" && start_cursor === undefined)
-        return respond(list([tasks], cursor));
-      if (filter?.value === "data_source" && start_cursor === cursor)
-        return respond(list([projects]));
+    });
+  if (isPersonal) return refuse(403, "restricted_resource");
+  const row = tasksRows.get(url.pathname.slice("/v1/pages/".length));
+  const create = method === "POST" && url.pathname === "/v1/pages";
+  const update = method === "PATCH" && url.pathname.startsWith("/v1/pages/");
+  if ((create || update) && requestBody !== undefined) {
+    if (update && !row) return refuse(404, "object_not_found");
+    const write = decodeWrite(requestBody);
+    if (write._tag === "None") return refuse(400, "validation_error");
+    const { parent, properties, in_trash } = write.value;
+    if (create && (parent?.data_source_id !== tasksId || properties?.title === undefined))
       return refuse(400, "validation_error");
-    }
-    if (request.method === "GET" && url.pathname === "/v1/users") {
-      const offset = offsetOf("people", url.searchParams.get("start_cursor"));
-      const size = Number(url.searchParams.get("page_size") ?? 100);
-      if (!Number.isSafeInteger(offset) || !Number.isSafeInteger(size) || size < 1 || size > 100)
-        return refuse(400, "validation_error");
-      return respond(paginate("people", [owner, teammate], offset, size));
-    }
-    if (request.method === "GET" && reads.has(url.pathname))
-      return respond(reads.get(url.pathname));
-    if (
-      request.method === "POST" &&
-      request.body._tag === "Uint8Array" &&
-      url.pathname === `/v1/data_sources/${tasksId}/query`
-    ) {
-      const input = decodeQuery(decoder.decode(request.body.body));
-      if (input._tag === "None") return refuse(400, "validation_error");
-      const { filter, page_size, start_cursor } = input.value;
-      const offset = offsetOf("tasks", start_cursor ?? null);
+    const id =
+      row?.id ?? `20000000-0000-4000-8000-${String(workspace.nextRow++).padStart(12, "0")}`;
+    const name =
+      properties?.title?.title.map(({ text }) => text.content).join("") ??
+      row?.properties.Name.title.map(({ plain_text }) => plain_text).join("") ??
+      "";
+    const status = properties?.STs?.status.id ?? row?.properties.Status.status.id ?? "todo";
+    const next = task(id, name, status, owner);
+    const assignee =
+      properties?.who?.people.map(({ id }) => (id === teammate.id ? teammate : owner)) ??
+      row?.properties.Assignee.people ??
+      [];
+    next.properties.Assignee.people = assignee;
+    next.in_trash = in_trash ?? row?.in_trash ?? false;
+    tasksRows.set(id, next);
+    return respond(next);
+  }
+  if (method === "GET" && url.pathname.startsWith("/v1/pages/") && row) return respond(row);
+  if (method === "POST" && url.pathname === "/v1/search" && requestBody !== undefined) {
+    const search = decodeSearch(requestBody);
+    if (search._tag === "None") return refuse(400, "validation_error");
+    const { query, sort, filter, page_size, start_cursor } = search.value;
+    if (query !== undefined || sort !== undefined) {
+      const offset = offsetOf("search", start_cursor ?? null);
       if (!Number.isSafeInteger(offset)) return refuse(400, "validation_error");
-      const filters = filter === undefined ? [] : "and" in filter ? filter.and : [filter];
-      const matching = [...tasksRows.values()].filter(
-        ({ properties, in_trash }) =>
-          !in_trash &&
-          filters.every((f) => {
-            if (f.property === "who")
-              return properties.Assignee.people.some(({ id }) => id === f.people.contains);
-            const { id, name } = properties.Status.status;
-            return f.status.equals === name || f.status.equals === id;
-          })
-      );
-      const projection = url.searchParams.getAll("filter_properties");
-      const result = paginate("tasks", matching, offset, page_size);
-      if (projection.length === 0) return respond(result);
-      const results = result.results.map((row) => ({
-        ...row,
-        properties: Object.fromEntries(
-          Object.entries(row.properties).filter(([, value]) => projection.includes(value.id))
-        )
-      }));
-      return respond({ ...result, results });
+      const text = query?.toLowerCase() ?? "";
+      const includes = (parts: ReturnType<typeof title>) =>
+        parts.some(({ plain_text }) => plain_text.toLowerCase().includes(text));
+      const pages =
+        filter?.value === "data_source"
+          ? []
+          : [handbook, ...tasksRows.values()].filter(({ properties }) =>
+              includes("Name" in properties ? properties.Name.title : properties.title.title)
+            );
+      const dataSources =
+        filter?.value === "page" ? [] : sources.filter(({ title }) => includes(title));
+      const matches = [...pages, ...dataSources];
+      return respond(paginate("search", matches, offset, page_size));
     }
-    return refuse(404, "object_not_found");
-  });
+    if (filter?.value === "data_source" && start_cursor === undefined)
+      return respond(list([tasks], cursor));
+    if (filter?.value === "data_source" && start_cursor === cursor)
+      return respond(list([projects]));
+    return refuse(400, "validation_error");
+  }
+  if (method === "GET" && url.pathname === "/v1/users") {
+    const offset = offsetOf("people", url.searchParams.get("start_cursor"));
+    const size = Number(url.searchParams.get("page_size") ?? 100);
+    if (!Number.isSafeInteger(offset) || !Number.isSafeInteger(size) || size < 1 || size > 100)
+      return refuse(400, "validation_error");
+    return respond(paginate("people", [owner, teammate], offset, size));
+  }
+  if (method === "GET" && reads.has(url.pathname)) return respond(reads.get(url.pathname));
+  if (
+    method === "POST" &&
+    requestBody !== undefined &&
+    url.pathname === `/v1/data_sources/${tasksId}/query`
+  ) {
+    const input = decodeQuery(requestBody);
+    if (input._tag === "None") return refuse(400, "validation_error");
+    const { filter, page_size, start_cursor } = input.value;
+    const offset = offsetOf("tasks", start_cursor ?? null);
+    if (!Number.isSafeInteger(offset)) return refuse(400, "validation_error");
+    const filters = filter === undefined ? [] : "and" in filter ? filter.and : [filter];
+    const matching = [...tasksRows.values()].filter(
+      ({ properties, in_trash }) =>
+        !in_trash &&
+        filters.every((f) => {
+          if (f.property === "who")
+            return properties.Assignee.people.some(({ id }) => id === f.people.contains);
+          const { id, name } = properties.Status.status;
+          return f.status.equals === name || f.status.equals === id;
+        })
+    );
+    const projection = url.searchParams.getAll("filter_properties");
+    const result = paginate("tasks", matching, offset, page_size);
+    if (projection.length === 0) return respond(result);
+    const results = result.results.map((row) => ({
+      ...row,
+      properties: Object.fromEntries(
+        Object.entries(row.properties).filter(([, value]) => projection.includes(value.id))
+      )
+    }));
+    return respond({ ...result, results });
+  }
+  return refuse(404, "object_not_found");
+};
 
 const makeClient = () => {
   const workspace = { tasksRows: new Map(initialRows.map((row) => [row.id, row])), nextRow: 5 };
-  return HttpClient.make((request, url) => serve(workspace, request, url));
+  return HttpClient.make((request, url) =>
+    Effect.sync(() =>
+      HttpClientResponse.fromWeb(
+        request,
+        reply(
+          workspace,
+          url,
+          request.method,
+          new Headers(request.headers),
+          request.body._tag === "Uint8Array" ? decoder.decode(request.body.body) : undefined
+        )
+      )
+    )
+  );
+};
+
+/** In the disposable dev server, only Notion requests are intercepted. */
+export const makeFetch = (fallback: typeof fetch): typeof fetch => {
+  const workspace = { tasksRows: new Map(initialRows.map((row) => [row.id, row])), nextRow: 5 };
+  return async (input, init) => {
+    const url = URL.parse(input instanceof Request ? input.url : input);
+    if (url?.origin !== "https://api.notion.com") return fallback(input, init);
+    const request = new Request(input, init);
+    return reply(
+      workspace,
+      url,
+      request.method,
+      request.headers,
+      request.body === null ? undefined : await request.text()
+    );
+  };
 };
 
 export const layer = Layer.effect(Source.Source, Source.make).pipe(

@@ -297,13 +297,11 @@ export const checkSource = Effect.fnUntraced(function* (
   );
   if (live.id !== source.id) return yield* shapeMismatch();
   const byId = new Map(Object.values(live.properties).map((property) => [property.id, property]));
-  for (const property of writtenOptions ? selected : source.properties) {
+  for (const property of selected) {
     const current = byId.get(property.id);
     if (
       current?.type !== property.type ||
-      (property.type === "relation" &&
-        selected.includes(property) &&
-        current.relation?.data_source_id !== property.relationTarget)
+      (property.type === "relation" && current.relation?.data_source_id !== property.relationTarget)
     )
       return yield* shapeMismatch(property);
     const chosen = writtenOptions?.get(property);
@@ -448,6 +446,8 @@ const plan = Effect.fnUntraced(function* (source: DataSource, args: NotionListIn
     }
   }
 
+  // Include fields that affect the query even if they aren't returned.
+  const used = new Set(selected);
   const filters: Json[] = [];
   for (const [name, value] of Object.entries(args.eq ?? {})) {
     const property = properties.get(name);
@@ -459,6 +459,7 @@ const plan = Effect.fnUntraced(function* (source: DataSource, args: NotionListIn
       (property.type === "date" && typeof value === "string" && !timeValue.test(value))
     )
       return yield* invalid();
+    used.add(property);
     filters.push(filter(property, value === null ? { is_empty: true } : { equals: value }));
   }
   for (const [name, value] of Object.entries(args.contains ?? {})) {
@@ -469,6 +470,7 @@ const plan = Effect.fnUntraced(function* (source: DataSource, args: NotionListIn
       ((property.type === "people" || property.type === "relation") && !isId(value))
     )
       return yield* invalid();
+    used.add(property);
     filters.push(filter(property, { contains: value }));
   }
   if (args.range !== undefined) {
@@ -477,6 +479,7 @@ const plan = Effect.fnUntraced(function* (source: DataSource, args: NotionListIn
     const range = property && notionPropertyType(property.type)?.range;
     const entries = Object.entries(limits);
     if (!property || !range || entries.length === 0) return yield* invalid();
+    if (properties.has(name)) used.add(property);
     for (const [operator, value] of entries) {
       if (
         !(operator === "gt" || operator === "gte" || operator === "lt" || operator === "lte") ||
@@ -494,6 +497,7 @@ const plan = Effect.fnUntraced(function* (source: DataSource, args: NotionListIn
   if (order !== undefined) {
     const property = field(order.property);
     if (!property) return yield* invalid();
+    if (properties.has(order.property)) used.add(property);
     sort = {
       ...(timeType(property.type) ? { timestamp: property.type } : { property: property.id }),
       direction: directions[order.direction ?? "asc"]
@@ -505,7 +509,7 @@ const plan = Effect.fnUntraced(function* (source: DataSource, args: NotionListIn
     ...(filters.length > 0 ? { filter: filters.length === 1 ? filters[0] : { and: filters } } : {}),
     ...(sort === undefined ? {} : { sorts: [sort] })
   } satisfies Json;
-  return { selected, body };
+  return { selected, used: [...used], body };
 });
 
 /** Checks user arguments against the pinned snapshot before an upstream request can run. */
@@ -515,7 +519,7 @@ export const planList = Effect.fnUntraced(function* (
   binding: Binding
 ) {
   const source = yield* sourceOf(snapshot, input.source);
-  const { selected, body } = yield* plan(source, input);
+  const { selected, used, body } = yield* plan(source, input);
   const cursor = yield* paging(
     binding,
     "notion.listRows",
@@ -536,8 +540,9 @@ export const planList = Effect.fnUntraced(function* (
   if (new TextEncoder().encode(canonicalArgs(payload)).byteLength > 500_000)
     return yield* new Refusal({ code: "invalid_request" });
   const propertyLimit = yield* ContractLimits.get("notion.read.propertyItems");
+  const checksRelations = used.some(({ type }) => type === "relation");
   return Effect.fnUntraced(function* (send: Send) {
-    yield* checkSource(send, snapshot, source, selected);
+    if (checksRelations) yield* checkSource(send, snapshot, source, used);
     const request = HttpClientRequest.post(`${sourcePath(source.id)}/query`).pipe(
       HttpClientRequest.appendUrlParams(
         input.select === undefined
@@ -546,11 +551,26 @@ export const planList = Effect.fnUntraced(function* (
       ),
       HttpClientRequest.bodyJsonUnsafe(payload)
     );
-    const answer = yield* readPage(yield* nameSource(send(request), source.title));
+    const answer = yield* readPage(
+      yield* nameSource(send(request), source.title).pipe(
+        Effect.catchTags({
+          NotionRefusal: (error) =>
+            !checksRelations &&
+            used.length > 0 &&
+            (error.code === "invalid_query" ||
+              (error.code === "shape_mismatch" && error.missing?.kind === "property"))
+              ? checkSource(send, snapshot, source, used).pipe(Effect.andThen(Effect.fail(error)))
+              : Effect.fail(error)
+        })
+      )
+    );
     if (answer.request_status?.type === "incomplete")
       return yield* new Refusal({ code: "offset_exhausted" });
     if (answer.results.length > body.page_size) return yield* shapeMismatch();
     const next = yield* cursor.finish(answer);
+    // No row to decode means no evidence the fields still match the snapshot.
+    if (!checksRelations && answer.results.length === 0 && used.length > 0)
+      yield* checkSource(send, snapshot, source, used);
     const budget = { remaining: propertyLimit, limit: propertyLimit };
     const rows: Row[] = [];
     for (const result of answer.results) {

@@ -2476,12 +2476,10 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
 
 export const make = Effect.suspend(() => knowing(integrations));
 
-export const layerWithoutNotion = Layer.effect(
+export const layer = Layer.effect(
   ConnectionStore.ConnectionStore,
   Effect.suspend(() => storeKnowing(integrations))
 );
-
-export const layer = Layer.effect(ConnectionStore.ConnectionStore, make);
 
 /** Every connection whose audience names teams, with those teams. */
 export const teamConnections = Effect.fn("ConnectionStore.teamConnections")(function* (

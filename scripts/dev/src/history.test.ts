@@ -16,6 +16,7 @@ import {
   CredentialKeys,
   ImapNetwork,
   ImapSource,
+  NotionSource,
   PidgeonSource,
   PostgresSource,
   PostHogSource,
@@ -36,6 +37,7 @@ const sources = Layer.mergeAll(
   PostHogSource.layer,
   PidgeonSource.layer,
   AttioSource.layer,
+  NotionSource.layer,
   ImapSource.layer.pipe(Layer.provide(ImapNetwork.layer)),
   Github.layer
 );
