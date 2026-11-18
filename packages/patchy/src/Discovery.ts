@@ -77,7 +77,7 @@ const connectionLines = (result: typeof Connections.Type) => {
   const lines: string[] = [];
   for (const connection of result.connections) {
     lines.push(
-      `${connection.integration}/${connection.handle}  ${connection.description}  ${connection.status}${connection.test === true ? " · test, mail stays in Pidgeon" : ""}${connection.paused === true ? " · needs attention, its password was refused" : ""}${connection.suspended === true ? " · suspended on GitHub" : ""}`,
+      `${connection.integration}/${connection.handle}  ${connection.description}  ${connection.status}${connection.test === true ? " · test, mail stays in Pidgeon" : ""}${connection.paused === true ? " · needs attention, its password was refused" : ""}${connection.suspended === true ? " · suspended on GitHub" : ""}${connection.kind === undefined ? "" : ` · ${connection.kind} role`}`,
       `  ${connection.hint}`
     );
   }

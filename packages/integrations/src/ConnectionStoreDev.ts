@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
 import * as Layer from "effect/Layer";
 import * as ConnectionStore from "./ConnectionStore.js";
 
@@ -175,6 +176,14 @@ export const layer = (metadata: ReadonlyArray<DevConnection> = []) => {
       readDraft: unavailable,
       unsettledSends: () => Effect.succeed(0),
       sends: () => Effect.succeed(0),
+      // Dev's model calls are counted on the instance, through its dev door.
+      countDevModelCall: () =>
+        Effect.fail(
+          new ConnectionStore.ConnectionStorageFailed({
+            operation: "devModelCalls",
+            cause: Redacted.make(new Error("patchy dev counts model calls on the instance."))
+          })
+        ),
       // Dev reads a real mailbox through the instance's dev door, whose own store pauses it.
       pauseLogin: () => Effect.void
     })

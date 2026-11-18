@@ -299,6 +299,7 @@ export class ConnectionStorageFailed extends Schema.TaggedError<ConnectionStorag
       "poolCredentials",
       "drafts",
       "sends",
+      "devModelCalls",
       "pauseLogin"
     ]),
     cause: Schema.Redacted(Schema.Defect())
@@ -581,6 +582,17 @@ export class ConnectionStore extends Context.Service<
       companyId: string,
       id: string
     ) => Effect.Effect<number, ConnectionStorageFailed>;
+    /**
+     * PROTOTYPE: counts one `patchy dev` model call for a person on `day` (UTC, `YYYY-MM-DD`)
+     * unless they already made `budget`: the count after, or `undefined` when it's spent. Held in
+     * the database, so the count holds across processes and restarts.
+     */
+    readonly countDevModelCall: (input: {
+      readonly companyId: string;
+      readonly userId: string;
+      readonly day: string;
+      readonly budget: number;
+    }) => Effect.Effect<number | undefined, ConnectionStorageFailed>;
     /** How many sends and replies a Pidgeon connection has counted on `day` (UTC). */
     readonly sends: (
       companyId: string,

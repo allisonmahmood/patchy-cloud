@@ -8,8 +8,9 @@ import * as Source from "./Source.js";
 /**
  * Model roles. A role is a connection of this integration, mapped to a provider connection
  * (`openai`) and a model; patches declare roles. A role's snapshot is only its kind: where it
- * points lives on the connection, so a remap needs no republish. PROTOTYPE: roles are seeded, so
- * nothing discovers one.
+ * points lives on the connection, so a remap needs no republish. `patchy dev` calls a role for real
+ * through the instance's dev door (ADR-0013): a fake model would never answer like the company's.
+ * PROTOTYPE: roles are seeded, so nothing discovers one.
  */
 const metadata = {
   schema: ModelsSnapshot,
@@ -30,11 +31,13 @@ export const models: {
   };
   readonly operations: typeof operations;
   readonly generate: typeof generate;
+  readonly live?: ReadonlyArray<keyof typeof operations>;
 } = defineIntegration({
   name: "models",
   modes: ["company"],
   credentials: Source.RoleCredentials,
   metadata,
   operations,
-  generate
+  generate,
+  live: ["decide", "generate"]
 });

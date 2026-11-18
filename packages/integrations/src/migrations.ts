@@ -167,5 +167,16 @@ export const migrations: Migrations = {
       PRIMARY KEY (connection_id, draft),
       CHECK ((owner IS NULL) = (claimed_until IS NULL))
     )`
+  ),
+  // PROTOTYPE: each person's `patchy dev` model calls per UTC day, counted before the provider
+  // sees one, so the daily allowance holds across processes and restarts.
+  "0045_model_dev_calls": ddl(
+    `CREATE TABLE model_dev_calls (
+      company_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      day DATE NOT NULL,
+      calls INTEGER NOT NULL CHECK (calls > 0),
+      PRIMARY KEY (company_id, user_id, day)
+    )`
   )
 };

@@ -2292,6 +2292,36 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       companyId,
       id
     ) => ledger(PidgeonLedger.unsettled(companyId, id));
+    const countDevModelCall = Effect.fn("ConnectionStore.countDevModelCall")(
+      function* (input: {
+        readonly companyId: string;
+        readonly userId: string;
+        readonly day: string;
+        readonly budget: number;
+      }) {
+        // Earlier days can no longer matter.
+        yield* sql`DELETE FROM model_dev_calls
+          WHERE company_id = ${input.companyId} AND user_id = ${input.userId}
+            AND day < ${input.day}::date`;
+        const rows = yield* sql<{
+          readonly calls: number;
+        }>`INSERT INTO model_dev_calls (company_id, user_id, day, calls)
+          SELECT ${input.companyId}, ${input.userId}, ${input.day}::date, 1 WHERE ${input.budget} > 0
+          ON CONFLICT (company_id, user_id, day) DO UPDATE SET calls = model_dev_calls.calls + 1
+            WHERE model_dev_calls.calls < ${input.budget}
+          RETURNING calls`;
+        return rows[0]?.calls;
+      },
+      Effect.catchTags({
+        SqlError: (cause) =>
+          Effect.fail(
+            new ConnectionStorageFailed({
+              operation: "devModelCalls",
+              cause: Redacted.make(cause)
+            })
+          )
+      })
+    );
     const sends = Effect.fn("ConnectionStore.sends")(
       function* (companyId: string, id: string, day: string) {
         const rows = yield* sql<{ readonly sends: number }>`SELECT s.sends FROM pidgeon_sends s
@@ -2332,6 +2362,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       resolve,
       poolCredentials,
       claimDraft,
+      countDevModelCall,
       recordDraft,
       releaseDraft,
       readDraft,

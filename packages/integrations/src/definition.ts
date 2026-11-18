@@ -17,6 +17,8 @@ export interface Target<E = never> {
   readonly deadline: number;
   /** The caller, checked again once the call holds a slot and before anything is sent. */
   readonly recheck: Effect.Effect<void, E>;
+  /** Who the call is made as, for an operation that takes turns or counts per person. */
+  readonly person?: string;
 }
 
 /** How a door's recheck of its viewer refuses a call; any other failure leaves it unanswered. */

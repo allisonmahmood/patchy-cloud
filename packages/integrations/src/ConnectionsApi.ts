@@ -96,6 +96,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =
                     : {}),
                   ...(paused ? { paused: true as const } : {}),
                   ...(suspended ? { suspended: true as const } : {}),
+                  ...(row.integration === "models" ? { kind: row.display.kind } : {}),
                   ...(row.status !== "connected"
                     ? {
                         reason: "not_connected" as const,
@@ -112,7 +113,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =
                         : row.integration === "models"
                           ? {
                               // PROTOTYPE: a role says what it does, so an agent picks the right one.
-                              hint: `patchy add models/${row.handle} · a ${row.display.kind} role: ${row.display.kind === "decision" ? "decide" : "generate"} in actions`
+                              hint: `patchy add models/${row.handle} · a ${row.display.kind} role: ${row.display.kind === "decision" ? "decide, which answers fixed questions with probabilities" : "generate, which writes text or a typed value"}, in actions`
                             }
                           : row.integration === "openai"
                             ? {

@@ -65,7 +65,9 @@ const integrations: Readonly<Record<DevRead["op"] | DevAttachment["op"], string>
   "github.listPulls": "GitHub",
   "github.getPull": "GitHub",
   "github.listPullFiles": "GitHub",
-  "github.listPullReviews": "GitHub"
+  "github.listPullReviews": "GitHub",
+  "models.decide": "a model role",
+  "models.generate": "a model role"
 };
 
 /** The instance couldn't be reached, or answered with something other than its wire. */
@@ -99,7 +101,9 @@ export class InstanceUnavailable extends Schema.TaggedError<InstanceUnavailable>
       "github.listPulls",
       "github.getPull",
       "github.listPullFiles",
-      "github.listPullReviews"
+      "github.listPullReviews",
+      "models.decide",
+      "models.generate"
     ]),
     instance: Schema.String,
     cause: Schema.optionalKey(Schema.Redacted(Schema.Defect()))
@@ -108,7 +112,7 @@ export class InstanceUnavailable extends Schema.TaggedError<InstanceUnavailable>
   readonly code = "source_unavailable" as const;
   readonly status = 503;
   override get message() {
-    return `patchy dev couldn't read ${integrations[this.op]} through ${this.instance}: it can't be reached or answered unexpectedly. Other dev work keeps going.`;
+    return `patchy dev couldn't ${this.op.startsWith("models.") ? "call" : "read"} ${integrations[this.op]} through ${this.instance}: it can't be reached or answered unexpectedly. Other dev work keeps going.`;
   }
 }
 
@@ -202,7 +206,11 @@ export interface Instance {
 export const read = Effect.fn("DevDoor.read")(function* <A>(
   instance: Instance,
   /** The arguments are the instance's to check; `decode` holds the answer to the wire. */
-  payload: Pick<DevRead, "op" | "connection"> & { readonly args: unknown },
+  payload: Pick<DevRead, "op" | "connection"> & {
+    readonly args: unknown;
+    /** A model call's remaining action time, which the instance holds the call to. */
+    readonly deadlineMs?: number;
+  },
   decode: (value: unknown) => Option.Option<A>
 ) {
   const http = yield* HttpClient.HttpClient;

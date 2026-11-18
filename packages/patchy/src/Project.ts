@@ -1034,7 +1034,11 @@ export const add = Effect.fn("Project.add")(function* (
       });
     if (connections.length > 1)
       return yield* new LocalError({
-        message: `Choose a ${label} connection from patchy list connections:\n${connections.map((connection) => `  patchy add ${kind}/${connection.handle} · ${connection.description}`).join("\n")}`
+        message:
+          kind === "models"
+            ? // PROTOTYPE: a role's kind decides its one call, so the choice says it.
+              `Choose a model role. A decision role answers fixed questions with probabilities (decide); a text role writes text or a typed value (generate):\n${connections.map((connection) => `  patchy add models/${connection.handle} · ${connection.kind ?? "unknown"} role · ${connection.description}`).join("\n")}`
+            : `Choose a ${label} connection from patchy list connections:\n${connections.map((connection) => `  patchy add ${kind}/${connection.handle} · ${connection.description}`).join("\n")}`
       });
     const chosen = connections[0]!.handle;
     declaration = { kind, handle: chosen };

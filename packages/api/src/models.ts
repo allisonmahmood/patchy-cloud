@@ -48,26 +48,42 @@ const Tokens = Schema.Int.check(
   Schema.isLessThanOrEqualTo(16000)
 );
 
-/** `models.decide`: the input and its questions, at most 20, for the role the alias declares. */
-export const ModelsDecide = Schema.Struct({
-  connection: DefinitionName,
+/** `models.decide`'s arguments without the alias: the input and its questions, at most 20. */
+export const ModelsDecideArgs = Schema.Struct({
   input: Schema.Json,
   questions: Schema.Record(Name, ModelQuestion).check(
     Schema.makeFilter((questions) => between(1, 20)(Object.keys(questions).length))
   )
+});
+/** `models.decide`: the input and its questions, for the role the alias declares. */
+export const ModelsDecide = Schema.Struct({
+  connection: DefinitionName,
+  ...ModelsDecideArgs.fields
 });
 
 /**
  * `models.generate`: instructions and input in, text out, or a value of `output`'s shape. The cap
  * on output length is required; a typed output takes a small subset of handler descriptors.
  */
-export const ModelsGenerate = Schema.Struct({
-  connection: DefinitionName,
+export const ModelsGenerateArgs = Schema.Struct({
   instructions: Schema.optionalKey(Instructions),
   input: Schema.Json,
   maxOutputTokens: Tokens,
   output: Schema.optionalKey(HandlerSchema)
 });
+export const ModelsGenerate = Schema.Struct({
+  connection: DefinitionName,
+  ...ModelsGenerateArgs.fields
+});
+
+/**
+ * How long a `patchy dev` model call may take: what's left of its local action, which the
+ * instance holds the call to as a published action's call is held (the 60-second action deadline).
+ */
+export const ModelsDevDeadline = Schema.Int.check(
+  Schema.isGreaterThanOrEqualTo(1),
+  Schema.isLessThanOrEqualTo(60_000)
+);
 
 /** What the provider counted, when it said. */
 export const ModelUsage = Schema.Struct({

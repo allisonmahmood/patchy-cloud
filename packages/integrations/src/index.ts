@@ -36,5 +36,6 @@ export * as GithubOperations from "./github/Operations.js";
 export * as Models from "./models/index.js";
 export * as ModelsSource from "./models/Source.js";
 export * as ModelsOperations from "./models/Operations.js";
+export * as ModelsAdmission from "./models/Admission.js";
 export { migrations } from "./migrations.js";
 export * as PatchVisibility from "./PatchVisibility.js";

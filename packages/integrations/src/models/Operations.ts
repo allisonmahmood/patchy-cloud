@@ -6,12 +6,19 @@
  * the handler hears why. Calls to one provider connection pass a fair gate (CallGate): a call past
  * its limits waits its turn until that cut-off, then rechecks its viewer and reloads the key. Each
  * call adds an entry to the request's wide event: role, model, gate wait, duration, tokens and
- * outcome, never the prompt or the answer. PROTOTYPE.
+ * outcome, never the prompt or the answer.
+ *
+ * `patchy dev` makes the same calls for real through the instance's dev door (`devReads`,
+ * ADR-0013), as the machine token's person, through the same gate, with its local action's
+ * remaining time, each counted against that person's daily allowance before the provider hears
+ * it. PROTOTYPE.
  */
 import {
   ModelsDecide,
+  ModelsDecideArgs,
   ModelsDecided,
   ModelsGenerate,
+  ModelsGenerateArgs,
   ModelsGenerated,
   type ModelUsage
 } from "@patchy/api";
@@ -19,32 +26,28 @@ import * as WideEvents from "@patchy/analytics/wide-events";
 import { Binding, Runtime } from "@patchy/runtime/core";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
-import * as Config from "effect/Config";
 import * as Schema from "effect/Schema";
 import * as CallGate from "../CallGate.js";
 import * as ConnectionStore from "../ConnectionStore.js";
-import { operation, ownerCheck, viewerRecheck, ViewerRefusal } from "../definition.js";
+import {
+  type DevRead,
+  operation,
+  ownerCheck,
+  viewerRecheck,
+  ViewerRefusal
+} from "../definition.js";
+import * as Admission from "./Admission.js";
 import * as Errors from "./Errors.js";
 import * as Source from "./Source.js";
 
-export class ConnectionNotDeclared extends Schema.TaggedError<ConnectionNotDeclared>()(
-  "ModelsConnectionNotDeclared",
-  {}
-) {
-  readonly code = "connection_not_declared" as const;
-  readonly status = 400;
-  override get message() {
-    return "This model role is not declared by this version.";
-  }
-}
-
 export const ModelErrors = Schema.Union([
-  ConnectionNotDeclared,
+  Errors.ConnectionNotDeclared,
   Errors.Timeout,
   Errors.Busy,
   Errors.RateLimited,
@@ -53,6 +56,7 @@ export const ModelErrors = Schema.Union([
   Errors.ShapeMismatch,
   Errors.OutputTruncated,
   Errors.Refused,
+  Errors.DevDailySpent,
   Runtime.InvalidRequest,
   ...ViewerRefusal.members
 ]);
@@ -60,43 +64,11 @@ export const ModelErrors = Schema.Union([
 /** How much of the action's time a model call leaves its handler to hear why it stopped. */
 export const RESERVE_MS = 1_000;
 const FALLBACK_MS = 60_000;
-
-/**
- * The gate's starting numbers, per provider connection in each replica. 16 running keeps one
- * company's calls a small share of a process's outbound requests while leaving a provider's usual
- * request rate far off (16 calls of 20 s are under 50 a minute); 4 per person lets a page's few
- * calls run together and stops one agent's burst taking the connection; 32 waiting, 8 of them a
- * person's, bounds a queue whose tail would mostly wait out its cut-off anyway.
- */
-export const GATE: CallGate.Limits = {
-  concurrent: 16,
-  perPerson: 4,
-  waiting: 32,
-  perPersonWaiting: 8
-};
-
-export class GateConfigRefused extends Schema.TaggedError<GateConfigRefused>()(
-  "ModelsGateConfigRefused",
-  { value: Schema.String }
-) {
-  override get message() {
-    return `PATCHY_DEV_MODEL_GATE=${this.value} is honoured only with NODE_ENV=development or test, as names concurrent, perPerson, waiting and perPersonWaiting with whole numbers.`;
-  }
-}
-
-/** The gate's limits: the starting numbers, or a dev instance's `PATCHY_DEV_MODEL_GATE` for a load test. */
-const gateLimits = Effect.gen(function* () {
-  const override = yield* Config.option(Config.String("PATCHY_DEV_MODEL_GATE"));
-  if (Option.isNone(override)) return GATE;
-  const environment = yield* Config.String("NODE_ENV").pipe(Config.withDefault("production"));
-  const parsed = CallGate.parseLimits(override.value, GATE);
-  if ((environment !== "development" && environment !== "test") || parsed === undefined)
-    return yield* new GateConfigRefused({ value: override.value });
-  return parsed;
-});
+const DAY_MS = 86_400_000;
 
 const isUnavailable = Schema.is(Errors.Unavailable);
 const isBusy = Schema.is(Errors.Busy);
+const isRefused = Schema.is(CallGate.Refused);
 const isAbsent = Schema.is(
   Schema.Union([ConnectionStore.ConnectionNotFound, ConnectionStore.ConnectionNotConnected])
 );
@@ -154,44 +126,35 @@ const provider = Effect.fn("ModelsOperations.provider")(function* (companyId: st
   return { connection: found satisfies Provider, key: Redacted.make(credentials.apiKey) };
 });
 
+type Send<A> = (
+  target: { readonly key: Redacted.Redacted<string>; readonly model: string },
+  source: Source.Source["Service"]
+) => Effect.Effect<A, Errors.CallError>;
+
+/** One call a door admitted: who makes it, to which role as loaded now, and until when. */
+interface Call<E> {
+  readonly companyId: string;
+  readonly person: string;
+  readonly role: Role;
+  readonly started: number;
+  /** When the caller stops waiting, in epoch milliseconds; the call is cut off a second before. */
+  readonly deadline: number;
+  /** Once the gate lets the call through, with how long it waited, before anything is sent. */
+  readonly admitted: (waitedMs: number) => Effect.Effect<void, E, ConnectionStore.ConnectionStore>;
+}
+
 /**
- * One call as a loaded version's door admitted it: the declared role, its viewer and the patch's
- * owner, who must be able to build with the role. A role of the other kind refuses before the
- * provider sees anything.
+ * The call itself, for either door: the role's kind, the gate, the door's own check once through,
+ * the key as it is then, the provider request under the cut-off, and the wide-event entry.
  */
-const perform = Effect.fn("ModelsOperations.perform")(function* <
-  A extends { readonly usage: ModelUsage }
->(
-  gate: CallGate.Gate,
-  alias: string,
-  op: "decide" | "generate",
-  send: (
-    target: { readonly key: Redacted.Redacted<string>; readonly model: string },
-    source: Source.Source["Service"]
-  ) => Effect.Effect<A, Errors.CallError>
-) {
-  const binding = yield* Binding.Binding;
-  const declaration = binding.manifest.uses[alias];
-  if (!Object.hasOwn(binding.manifest.uses, alias) || declaration?.kind !== "models")
-    return yield* new ConnectionNotDeclared({});
-  const { identity, principal, companyId } = binding;
-  if (
-    binding.scope === "public" ||
-    identity === null ||
-    principal === null ||
-    identity.company.id !== companyId ||
-    identity.user.id !== principal.userId
-  )
-    return yield* new Runtime.AccessDenied({});
-  const started = yield* Clock.currentTimeMillis;
-  // The gateway hands a model call its action's remaining time, not the integration deadline.
-  const deadline = binding.deadline ?? started + FALLBACK_MS;
-  yield* ownerCheck(binding, declaration.id);
-  const found = yield* loaded(role(companyId, declaration));
-  const kind = found.display.kind;
+const send = Effect.fn("ModelsOperations.send")(function* <
+  A extends { readonly usage: ModelUsage },
+  E
+>(gate: CallGate.Gate, call: Call<E>, op: "decide" | "generate", request: Send<A>) {
+  const kind = call.role.display.kind;
   if ((op === "decide") !== (kind === "decision"))
     return yield* new Errors.InvalidRequest({ reason: "kind", kind });
-  const model = found.display.model;
+  const model = call.role.display.model;
   const source = yield* Source.Source;
   let admitted: CallGate.Admitted | undefined;
   const record = (exit: Exit.Exit<A, unknown>) =>
@@ -217,10 +180,10 @@ const perform = Effect.fn("ModelsOperations.perform")(function* <
             : {};
       yield* WideEvents.modelCall({
         op,
-        role: declaration.handle,
+        role: call.role.handle,
         model,
         ...gated,
-        durationMs: ended - started,
+        durationMs: ended - call.started,
         inputTokens: usage?.inputTokens ?? null,
         outputTokens: usage?.outputTokens ?? null,
         outcome: Exit.isSuccess(exit)
@@ -230,17 +193,16 @@ const perform = Effect.fn("ModelsOperations.perform")(function* <
             : "interrupted"
       });
     });
-  const until = deadline - RESERVE_MS;
+  const until = call.deadline - RESERVE_MS;
   const work = gate
-    .run({ connection: found.display.provider, person: identity.user.id }, until, (through) =>
+    .run({ connection: call.role.display.provider, person: call.person }, until, (through) =>
       Effect.gen(function* () {
         admitted = through;
-        // A call that waited asks again whether its viewer may still call, as other gates do.
-        if (through.waitedMs > 0) yield* viewerRecheck(binding);
+        yield* call.admitted(through.waitedMs);
         // The key as it is now, after any wait.
-        const target = yield* loaded(provider(companyId, found.display.provider));
+        const target = yield* loaded(provider(call.companyId, call.role.display.provider));
         const cutoff = Math.max(1, until - (yield* Clock.currentTimeMillis));
-        return yield* send({ key: target.key, model }, source).pipe(
+        return yield* request({ key: target.key, model }, source).pipe(
           // Interrupting the request aborts its fetch, which closes the provider's connection.
           Effect.timeoutOrElse({
             duration: cutoff,
@@ -250,18 +212,59 @@ const perform = Effect.fn("ModelsOperations.perform")(function* <
       })
     )
     .pipe(
-      Effect.catchTags({
-        CallGateRefused: (refused) =>
-          Effect.fail(
-            new Errors.Busy({
-              limit: refused.limit,
-              value: refused.value,
-              waitedMs: Math.round(refused.waitedMs)
+      Effect.mapError((error) =>
+        isRefused(error)
+          ? new Errors.Busy({
+              limit: error.limit,
+              value: error.value,
+              waitedMs: Math.round(error.waitedMs)
             })
-          )
-      })
+          : error
+      )
     );
   return yield* Effect.onExit(work, record);
+});
+
+/**
+ * One call as a loaded version's door admitted it: the declared role, its viewer and the patch's
+ * owner, who must be able to build with the role. A role of the other kind refuses before the
+ * provider sees anything.
+ */
+const perform = Effect.fn("ModelsOperations.perform")(function* <
+  A extends { readonly usage: ModelUsage }
+>(gate: CallGate.Gate, alias: string, op: "decide" | "generate", request: Send<A>) {
+  const binding = yield* Binding.Binding;
+  const declaration = binding.manifest.uses[alias];
+  if (!Object.hasOwn(binding.manifest.uses, alias) || declaration?.kind !== "models")
+    return yield* new Errors.ConnectionNotDeclared({});
+  const { identity, principal, companyId } = binding;
+  if (
+    binding.scope === "public" ||
+    identity === null ||
+    principal === null ||
+    identity.company.id !== companyId ||
+    identity.user.id !== principal.userId
+  )
+    return yield* new Runtime.AccessDenied({});
+  const started = yield* Clock.currentTimeMillis;
+  // The gateway hands a model call its action's remaining time, not the integration deadline.
+  const deadline = binding.deadline ?? started + FALLBACK_MS;
+  yield* ownerCheck(binding, declaration.id);
+  const found = yield* loaded(role(companyId, declaration));
+  return yield* send(
+    gate,
+    {
+      companyId,
+      person: identity.user.id,
+      role: found,
+      started,
+      deadline,
+      // A call that waited asks again whether its viewer may still call, as other gates do.
+      admitted: (waitedMs) => (waitedMs > 0 ? viewerRecheck(binding) : Effect.void)
+    },
+    op,
+    request
+  );
 });
 
 const operationsWith = (gate: CallGate.Gate) => ({
@@ -286,7 +289,7 @@ const operationsWith = (gate: CallGate.Gate) => ({
 });
 
 /** The operations' shapes, for the integration's definition; the handlers below run them. */
-export const operations = operationsWith(CallGate.make(GATE));
+export const operations = operationsWith(CallGate.make(Admission.GATE));
 
 /** The role a call names, for recent calls; never its input or questions. */
 const connectionId = (args: unknown, binding: Binding.Binding["Service"]): string | null => {
@@ -304,8 +307,8 @@ const connectionId = (args: unknown, binding: Binding.Binding["Service"]): strin
 export const makeHandlers = Effect.gen(function* () {
   const source = yield* Source.Source;
   const connections = yield* ConnectionStore.ConnectionStore;
-  // One gate for this server process: every model call to a provider connection passes it.
-  const { decide, generate } = operationsWith(CallGate.make(yield* gateLimits));
+  // The process's gate: published calls and the dev door's pass the same one.
+  const { decide, generate } = operationsWith((yield* Admission.Admission).gate);
   const provide = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
       Effect.provideService(Source.Source, source),
@@ -328,3 +331,120 @@ export const makeHandlers = Effect.gen(function* () {
     }
   };
 });
+
+// ---------- patchy dev, through the instance's dev door ----------
+
+/** A role gone or paused comes back as it is, for the door to say; anything else is unavailable. */
+const devLoaded = <A, E, R>(
+  effect: Effect.Effect<A, E, R>
+): Effect.Effect<
+  A,
+  | ConnectionStore.ConnectionNotFound
+  | ConnectionStore.ConnectionNotConnected
+  | Runtime.SourceUnavailable,
+  R
+> =>
+  effect.pipe(
+    Effect.catch((error) =>
+      Effect.fail(isAbsent(error) ? error : new Runtime.SourceUnavailable({ cause: error }))
+    )
+  );
+
+/**
+ * Counts the call against the person's `patchy dev` allowance for the UTC day, or refuses it
+ * before the provider hears anything.
+ */
+const countDev = Effect.fn("ModelsOperations.countDev")(function* (
+  companyId: string,
+  person: string,
+  budget: number
+) {
+  const now = yield* Clock.currentTimeMillis;
+  const counted = yield* (yield* ConnectionStore.ConnectionStore)
+    .countDevModelCall({
+      companyId,
+      userId: person,
+      day: DateTime.formatIsoDateUtc(DateTime.makeUnsafe(now)),
+      budget
+    })
+    .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
+  if (counted === undefined)
+    return yield* new Errors.DevDailySpent({
+      budget,
+      retryAfterSeconds: Math.ceil((DAY_MS - (now % DAY_MS)) / 1_000)
+    });
+});
+
+const decodeDecide = Schema.decodeUnknownEffect(ModelsDecideArgs);
+const decodeGenerate = Schema.decodeUnknownEffect(ModelsGenerateArgs);
+
+/**
+ * A dev door call: the role the repo's manifest routed to, in the token's company, as the token's
+ * person once the gate lets them through, counted before the provider hears it.
+ */
+const devCall =
+  <Args, A extends { readonly usage: ModelUsage }>(
+    op: "decide" | "generate",
+    decode: (args: unknown) => Effect.Effect<Args, Schema.SchemaError>,
+    request: (args: Args) => Send<A>
+  ): DevRead<Source.Source | Admission.Admission>["run"] =>
+  (target, args) =>
+    Effect.gen(function* () {
+      const decoded = yield* decode(args).pipe(
+        Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
+      );
+      if (target.person === undefined) return yield* new Runtime.AccessDenied({});
+      const person = target.person;
+      const admission = yield* Admission.Admission;
+      const started = yield* Clock.currentTimeMillis;
+      const found = yield* devLoaded(role(target.companyId, target.connection));
+      return yield* send(
+        admission.gate,
+        {
+          companyId: target.companyId,
+          person,
+          role: found,
+          started,
+          deadline: target.deadline,
+          // The door's check of the token's person and their access, then the day's count.
+          admitted: () =>
+            target.recheck.pipe(
+              Effect.andThen(countDev(target.companyId, person, admission.devDaily))
+            )
+        },
+        op,
+        request(decoded)
+      );
+    });
+
+/**
+ * Both calls as the instance's dev door runs them (ADR-0013). Real calls on the company's
+ * provider, through the process's gate, given the local action's remaining time.
+ */
+export const devReads: {
+  readonly [Op in "models.decide" | "models.generate"]: DevRead<
+    Source.Source | Admission.Admission
+  >;
+} = {
+  "models.decide": {
+    resource: () => null,
+    rowCount: () => null,
+    run: devCall(
+      "decide",
+      decodeDecide,
+      ({ input, questions }) =>
+        (target, source) =>
+          source.decide({ key: target.key, model: target.model, input, questions })
+    )
+  },
+  "models.generate": {
+    resource: () => null,
+    rowCount: () => null,
+    run: devCall(
+      "generate",
+      decodeGenerate,
+      (args) => (target, source) =>
+        source.generate({ key: target.key, model: target.model, ...args })
+    )
+  }
+};

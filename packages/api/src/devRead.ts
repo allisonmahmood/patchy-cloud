@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import { attioReads } from "./attio.js";
 import { githubReads } from "./github.js";
 import { imapReads, imapStageAttachment } from "./imap.js";
+import { ModelsDecideArgs, ModelsDevDeadline, ModelsGenerateArgs } from "./models.js";
 import { FileContentType } from "./schemas.js";
 import { PidgeonDevRead } from "./pidgeon.js";
 import { PostHogDevQuery } from "./posthog.js";
@@ -33,7 +34,9 @@ const DevReadConnection = Schema.Struct({
 export const DevReadEnvelope = Schema.Struct({
   op: Schema.String.check(Schema.isPattern(/^[a-z][a-z0-9]{0,31}\.[A-Za-z]{1,32}$/)),
   connection: DevReadConnection,
-  args: Schema.Unknown
+  args: Schema.Unknown,
+  /** A model call's remaining action time, in milliseconds; every other read has 15 seconds. */
+  deadlineMs: Schema.optionalKey(Schema.Int)
 }).annotate({ identifier: "DevReadEnvelope" });
 export type DevReadEnvelope = typeof DevReadEnvelope.Type;
 
@@ -59,6 +62,21 @@ const github = <const Name extends keyof typeof githubReads>(name: Name) =>
     op: Schema.Literal(`github.${name}`),
     connection: DevReadConnection,
     args: githubReads[name].input
+  });
+
+/**
+ * A model call (PROTOTYPE): a real call on the company's provider as the token's person, given
+ * what's left of the local action rather than the 15-second integration deadline.
+ */
+const models = <const Name extends "decide" | "generate", Args extends Schema.Struct.Fields>(
+  name: Name,
+  args: Schema.Struct<Args>
+) =>
+  Schema.Struct({
+    op: Schema.Literal(`models.${name}`),
+    connection: DevReadConnection,
+    args,
+    deadlineMs: ModelsDevDeadline
   });
 
 /** Every operation an integration lets dev read live, with its exact arguments. Never a write. */
@@ -96,7 +114,9 @@ export const DevRead = Schema.Union([
   github("listPulls"),
   github("getPull"),
   github("listPullFiles"),
-  github("listPullReviews")
+  github("listPullReviews"),
+  models("decide", ModelsDecideArgs),
+  models("generate", ModelsGenerateArgs)
 ]).annotate({ identifier: "DevRead" });
 export type DevRead = typeof DevRead.Type;
 

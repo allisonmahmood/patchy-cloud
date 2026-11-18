@@ -16,6 +16,18 @@ const Usage = Schema.optionalKey(
   })
 );
 
+/** The alias names no model role this version declares. */
+export class ConnectionNotDeclared extends Schema.TaggedError<ConnectionNotDeclared>()(
+  "ModelsConnectionNotDeclared",
+  {}
+) {
+  readonly code = "connection_not_declared" as const;
+  readonly status = 400;
+  override get message() {
+    return "This model role is not declared by this version.";
+  }
+}
+
 /** The call reached its cut-off, its action's deadline less a second; the request was cancelled. */
 export class Timeout extends Schema.TaggedError<Timeout>()("ModelsTimeout", {
   milliseconds: Schema.Int
@@ -177,6 +189,30 @@ export class Busy extends Schema.TaggedError<Busy>()("ModelsBusy", {
     return this.waitedMs === 0
       ? "Too many model calls are already waiting on this provider connection, so Patchy sent nothing. Try again shortly."
       : `This provider connection stayed busy for the ${Math.round(this.waitedMs / 1_000)} s this call could wait, so Patchy sent nothing.`;
+  }
+}
+
+/**
+ * The developer made the model calls `patchy dev` allows a person in a UTC day; nothing was sent.
+ * Published patches aren't counted, and the count starts again at 00:00 UTC.
+ */
+export class DevDailySpent extends Schema.TaggedError<DevDailySpent>()("ModelsDevDailySpent", {
+  budget: Schema.Int,
+  /** Until the UTC day ends. */
+  retryAfterSeconds: Schema.Int
+}) {
+  readonly code = "rate_limited" as const;
+  readonly status = 429;
+  readonly limitId = "models.dev.calls.daily" as const;
+  readonly scope = "viewer" as const;
+  get value() {
+    return this.budget;
+  }
+  get details() {
+    return { limit: "devDaily" };
+  }
+  override get message() {
+    return `You've made the ${this.budget} model calls patchy dev allows you each UTC day (models.dev.calls.daily), so Patchy sent nothing. Your count starts again at 00:00 UTC; published patches aren't counted.`;
   }
 }
 

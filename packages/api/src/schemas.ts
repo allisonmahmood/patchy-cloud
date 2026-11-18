@@ -16,7 +16,7 @@ import { PidgeonSnapshot } from "./pidgeonSnapshot.js";
 import { AttioSnapshot } from "./attioSnapshot.js";
 import { ImapSnapshot } from "./imapSnapshot.js";
 import { GithubSnapshot } from "./githubSnapshot.js";
-import { ModelsSnapshot, OpenAiSnapshot } from "./modelsSnapshot.js";
+import { ModelRoleKind, ModelsSnapshot, OpenAiSnapshot } from "./modelsSnapshot.js";
 import { RepoKind, RepoSnapshot, RepoSummary } from "./repo.js";
 import {
   HandlerDescriptors,
@@ -848,7 +848,12 @@ export const ConnectionSummary = Schema.Struct({
    * A GitHub connection whose account suspended the App on GitHub, as Patchy last saw it: calls
    * are refused until it's unsuspended there, and nothing needs doing in Patchy. Absent otherwise.
    */
-  suspended: Schema.optionalKey(Schema.Literal(true))
+  suspended: Schema.optionalKey(Schema.Literal(true)),
+  /**
+   * PROTOTYPE: a model role's kind. A decision role answers fixed questions with probabilities
+   * (`decide`); a text role writes (`generate`). Absent on every other connection.
+   */
+  kind: Schema.optionalKey(ModelRoleKind)
 });
 
 export const Connections = Schema.Struct({
