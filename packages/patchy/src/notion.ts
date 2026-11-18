@@ -20,6 +20,7 @@ interface SourceDescription {
   readonly contains: Readonly<Record<string, string>>;
   readonly range: Readonly<Record<string, string | number>>;
   readonly order: string;
+  /** With write access, each writable property's value as a write sets it. */
   readonly writable?: Readonly<Record<string, unknown>>;
 }
 
@@ -87,24 +88,22 @@ export interface NotionPerson {
   readonly type: "person" | "bot";
 }
 
-type NotionAccess = "read" | "write";
-type WritableProperties<Source extends SourceDescription> = Source extends {
-  readonly writable: infer Properties;
-}
-  ? Partial<Properties>
-  : never;
-interface NotionWriteClient<Source extends SourceDescription> {
-  create(
-    properties: WritableProperties<Source>
-  ): Promise<{ readonly id: string; readonly url: string }>;
-  update(id: string, properties: WritableProperties<Source>): Promise<{ readonly id: string }>;
+type Writable<Source extends SourceDescription> = Partial<NonNullable<Source["writable"]>>;
+/** A data source's writes, each property set whole and the rest left as they are. */
+interface NotionSourceWriter<Source extends SourceDescription> {
+  create(properties: Writable<Source>): Promise<{ readonly id: string; readonly url: string }>;
+  update(id: string, properties: Writable<Source>): Promise<{ readonly id: string }>;
   trash(id: string): Promise<{ readonly id: string; readonly inTrash: boolean }>;
   restore(id: string): Promise<{ readonly id: string; readonly inTrash: boolean }>;
 }
 
-export type NotionClient<Sources extends NotionSources, Access extends NotionAccess = "read"> = {
+/** A read connection's client has no write methods, and the host refuses one forced past them. */
+export type NotionClient<
+  Sources extends NotionSources,
+  Access extends "read" | "write" = "read"
+> = {
   readonly [Name in keyof Sources]: NotionSourceClient<Sources[Name]> &
-    (Access extends "write" ? NotionWriteClient<Sources[Name]> : object);
+    (Access extends "write" ? NotionSourceWriter<Sources[Name]> : unknown);
 } & {
   readonly pages: { markdown(id: string): Promise<NotionMarkdown | null> };
   search(options?: NotionSearchOptions): Promise<{
@@ -126,8 +125,8 @@ type Call = (op: NotionOperation, args: Readonly<Record<string, unknown>>) => Pr
 /** The host validates each request against the declaration and encodes its result. */
 export function createNotionClient<
   Sources extends NotionSources,
-  Access extends NotionAccess = "read"
->(connection: string, call: Call, access?: Access): NotionClient<Sources, Access> {
+  Access extends "read" | "write" = "read"
+>(connection: string, call: Call): NotionClient<Sources, Access> {
   const invoke = async (op: NotionOperation, input: object) => {
     const args = Object.fromEntries(
       Object.entries(input).filter(([, value]) => value !== undefined)
@@ -150,15 +149,10 @@ export function createNotionClient<
   const sourceClient = (source: string) => ({
     list: (options: object = {}) => invoke("notion.listRows", { ...options, source }),
     get: (id: string) => invoke("notion.getRow", { source, id }),
-    ...(access === "write"
-      ? {
-          create: (properties: object) => invoke("notion.create", { source, properties }),
-          update: (id: string, properties: object) =>
-            invoke("notion.update", { source, id, properties }),
-          trash: (id: string) => invoke("notion.trash", { source, id }),
-          restore: (id: string) => invoke("notion.restore", { source, id })
-        }
-      : {})
+    create: (properties: object) => invoke("notion.create", { source, properties }),
+    update: (id: string, properties: object) => invoke("notion.update", { source, id, properties }),
+    trash: (id: string) => invoke("notion.trash", { source, id }),
+    restore: (id: string) => invoke("notion.restore", { source, id })
   });
   const sources = new Map<string, ReturnType<typeof sourceClient>>();
   return new Proxy(Object.assign(Object.create(null), methods) as NotionClient<Sources, Access>, {

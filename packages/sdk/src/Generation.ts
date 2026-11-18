@@ -456,7 +456,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
         });
         skills.add("patchy-imap");
       } else if (stored.integration === "notion") {
-        const declared = { kind: "notion" as const, ...resolved, access: stored.snapshot.access };
+        const declared = { kind: "notion" as const, ...resolved };
         metadata.notion[alias] = { declaration: declared, snapshot: stored.snapshot };
         const output = Notion.generate(declared, stored.snapshot);
         files.set(client, output.client);

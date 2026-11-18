@@ -21,8 +21,7 @@ const decodeAliases = Schema.decodeUnknownSync(
       attio: Schema.Array(Schema.String),
       imap: Schema.Array(Schema.String),
       github: Schema.Array(Schema.String),
-      notion: Schema.Array(Schema.String),
-      notionWrites: Schema.optionalKey(Schema.Array(Schema.String))
+      notion: Schema.Array(Schema.String)
     })
   )
 );

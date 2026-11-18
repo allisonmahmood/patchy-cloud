@@ -9,6 +9,7 @@ const object = (fields: readonly (readonly [string, string])[], indent: string):
     : `{\n${fields.map(([name, type]) => `${indent}  readonly ${quote(name)}: ${type};`).join("\n")}\n${indent}}`;
 
 type DataSource = NotionSnapshot["dataSources"][number];
+/** What a write takes for each writable type; options come from the snapshot. */
 const writeTypes: Readonly<Record<string, string>> = {
   title: "string",
   rich_text: "string",
@@ -90,14 +91,20 @@ export type Sources = ${object(
 export type Client = NotionClient<Sources, "${access}">;
 
 export function createClient(connection: string, call: Call): Client {
-  return createNotionClient<Sources, "${access}">(connection, call, "${access}");
+  return createNotionClient<Sources, "${access}">(connection, call);
 }
 `,
     context: `# Notion connection ${declaration.handle}
 
 Use the data source's \`key\` in a Tier 2 action via \`ctx.connections.<alias>\`. Use \`list\` for a page of rows and \`get(id)\` for one row. The connection also exposes \`pages.markdown(id)\`, \`search\` and \`people.list\`. Read \`.agents/skills/patchy-notion/SKILL.md\` before building with this connection.
 
-${access === "write" ? "Use `create`, `update`, `trash`, or `restore` on a data source in a Tier 2 action. Writes replace each named property. Use existing option names. Setting a status to null may reset it to Notion's default. `patchy dev` simulates writes, so later live reads won't show them.\n\n" : ""}Schema and access from snapshot revision ${declaration.revision}. After an admin refreshes the connection, run \`patchy refresh\` to pick up new schema.
+${
+  access === "write"
+    ? "Read and write: each data source also has `create(properties)`, `update(id, properties)`, `trash(id)` and `restore(id)`, typed by its `writable` properties. A write sets each property it names whole. Select, multi-select and status take only the options below; a status set to null may go back to its default. Writes notify people and run automations as an edit in Notion does. `patchy dev` simulates them, so later reads don't show them."
+    : "Read only: the client has no write methods, and Patchy refuses one forced past its types."
+}
+
+Schema and access from snapshot revision ${declaration.revision}. After an admin refreshes the connection, run \`patchy refresh\` to pick up new schema.
 
 \`\`\`json
 ${json({ workspace, access, dataSources, exclusions })}
