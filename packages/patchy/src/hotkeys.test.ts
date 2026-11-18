@@ -1,3 +1,4 @@
+import { matchesKeyboardEvent, type HotkeyChord } from "@tanstack/preact-hotkeys";
 import { afterEach, expect, it, vi } from "vitest";
 import { typecheck } from "../../../test/typescript.js";
 import { formatHotkey, hotkeyKeys } from "./hotkeys.js";
@@ -100,6 +101,30 @@ HotkeySheet({ hotkey: "Ctrl+/" });
     `consumer.ts(2,15): error TS2322: Type '"Ctrl+/"' is not assignable to type '"'Ctrl+/' isn't a chord: write 'Mod+/', which is ⌘ on a Mac and Ctrl elsewhere"'.`
   ]);
 });
+
+// patchy/hotkeys leaves composing keys to the input method through TanStack's matching wherever
+// `fieldKeeps` can't see the field, such as one inside a closed shadow root. Safari sends the
+// keydown that commits a composition after compositionend, marked only by keyCode 229.
+it.each<[HotkeyChord, Partial<KeyboardEvent>]>([
+  ["Escape", { key: "Escape", code: "Escape", keyCode: 27 }],
+  ["Enter", { key: "Enter", code: "Enter", keyCode: 13 }],
+  ["ArrowDown", { key: "ArrowDown", code: "ArrowDown", keyCode: 40 }],
+  ["Mod+Enter", { key: "Enter", code: "Enter", keyCode: 13, ctrlKey: true }],
+  ["K", { key: "k", code: "KeyK", keyCode: 75 }]
+])(
+  "matches no %s while an input method composes, nor Safari's keydown that commits",
+  (hotkey, fields) => {
+    const matches = (more: Partial<KeyboardEvent>) =>
+      matchesKeyboardEvent(
+        { isComposing: false, getModifierState: () => false, ...fields, ...more } as KeyboardEvent,
+        hotkey,
+        "linux"
+      );
+    expect(matches({})).toBe(true);
+    expect(matches({ isComposing: true })).toBe(false);
+    expect(matches({ keyCode: 229 })).toBe(false);
+  }
+);
 
 it("shows Enter, Space, Backspace, Delete and Tab as words off a Mac, and as symbols on one", () => {
   for (const platform of ["Win32", "Linux x86_64"]) {
