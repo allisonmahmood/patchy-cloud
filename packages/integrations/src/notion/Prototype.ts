@@ -207,17 +207,32 @@ type Probe = {
   error: string;
 };
 
+function pageId(value: string) {
+  let candidate = value.trim();
+  if (candidate.startsWith("https://")) {
+    if (!URL.canParse(candidate)) return "";
+    const url = new URL(candidate);
+    if (!/(^|\.)(notion\.so|notion\.com|notion\.site)$/.test(url.hostname)) return "";
+    candidate = url.pathname.split("/").at(-1) ?? "";
+  }
+  return (
+    candidate.match(/(?:^|-)([a-f\d]{32}|[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12})$/i)?.[1] ?? ""
+  );
+}
+
 /** Single prototype adapter: maps fixed task/page operations to provider requests. */
 const call = Effect.fn("NotionPrototype.call")(function* (probe: Probe, form: Form) {
   const id = form.id || probe.task;
-  const page = form.page || probe.page;
+  const page = probe.fake ? form.page || probe.page : pageId(form.page || probe.page);
   const op = form.op ?? "";
   if (["list", "get", "create", "update", "trash", "restore"].includes(op) && !probe.source)
     return yield* Effect.fail("Share the Tasks database with the connection and connect again.");
   if (["get", "update", "trash", "restore"].includes(op) && !id)
     return yield* Effect.fail("Enter a Notion task ID or create a task first.");
-  if (["read", "edit", "child"].includes(op) && !page)
-    return yield* Effect.fail("Enter the Notion page ID from the probe page link.");
+  if (["read", "edit", "child", "unshare", "reshare"].includes(op) && !page)
+    return yield* Effect.fail(
+      "Paste the Notion page link or its 32-character page ID here. The API token belongs on the connect screen."
+    );
   const properties = {
     ...(form.title ? { Name: { title: text(form.title) } } : {}),
     ...(form.status ? { Status: { status: { name: form.status } } } : {}),
@@ -275,10 +290,10 @@ const call = Effect.fn("NotionPrototype.call")(function* (probe: Probe, form: Fo
     default:
       return yield* Effect.fail("Choose a prototype operation.");
   }
+  if (page) probe.page = page;
   probe.request = { operation: form.op, method, route, body };
   const result = yield* probe.send(route, method, body);
   if (form.op === "create" && typeof result.id === "string") probe.task = result.id;
-  if (form.page) probe.page = form.page;
   return result;
 });
 
@@ -308,17 +323,19 @@ function workspace(probe: Probe) {
         : "") +
       section({
         title: "Pages and wiki",
-        body: `<form method="post" action="${work}">${entry("page", "Page ID", probe.page)}${entry("childTitle", "Child page title", "Prototype child")}${field({ id: "markdown", label: "Markdown", control: (aria) => textarea(aria, { name: "markdown", value: initialMarkdown + "\n\n**Prototype edit**" }) })}<div class="cluster">${actions(["read", "edit", "child", "unshare", "reshare"])}</div></form>`
+        body: `<form method="post" action="${work}">${entry("page", "Notion page link or ID", probe.page)}${entry("childTitle", "Child page title", "Prototype child")}${field({ id: "markdown", label: "Markdown", control: (aria) => textarea(aria, { name: "markdown", value: initialMarkdown + "\n\n**Prototype edit**" }) })}<div class="cluster">${actions(probe.fake ? ["read", "edit", "child", "unshare", "reshare"] : ["read", "edit", "child"])}</div></form>`
       }),
     aside:
-      section({
-        title: "Walkthroughs",
-        body: `<form method="post" action="${work}"><div class="cluster">${Object.keys(walks)
-          .map((name) => button(name, { name: "walk", value: name }))
-          .join(
-            " "
-          )}</div>${probe.walk ? `<p>${escapeHtml(probe.walk)}: ${probe.step} / ${walks[probe.walk]?.length ?? 0} steps</p>${probe.step < (walks[probe.walk]?.length ?? 0) ? button("Run next step", { name: "next", value: "yes", kind: "primary" }) : "<p>Walkthrough complete.</p>"}` : "<p>Choose a walkthrough to reset the local fake.</p>"}</form>`
-      }) +
+      (probe.fake
+        ? section({
+            title: "Walkthroughs",
+            body: `<form method="post" action="${work}"><div class="cluster">${Object.keys(walks)
+              .map((name) => button(name, { name: "walk", value: name }))
+              .join(
+                " "
+              )}</div>${probe.walk ? `<p>${escapeHtml(probe.walk)}: ${probe.step} / ${walks[probe.walk]?.length ?? 0} steps</p>${probe.step < (walks[probe.walk]?.length ?? 0) ? button("Run next step", { name: "next", value: "yes", kind: "primary" }) : "<p>Walkthrough complete.</p>"}` : "<p>Choose a walkthrough to reset the local fake.</p>"}</form>`
+          })
+        : "") +
       section({
         title: "Current state",
         body:
@@ -403,6 +420,7 @@ export const layer: Layer.Layer<
             if (form.next) probe.step++;
             if (form.id) probe.task = form.id;
             probe.error = "";
+            probe.request = null;
             probe.last = yield* call(probe, action);
           }
         }).pipe(Effect.result);
