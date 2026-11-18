@@ -124,7 +124,6 @@ export const serve = Effect.fn("Dev.serve")(function* (
         }),
     observe: (event) => DevLog.invocation(event, record.logJson ?? false),
     simulated: (write) => DevLog.simulated(write, record.logJson ?? false),
-    simulatedNotion: (write) => DevLog.simulated(write, record.logJson ?? false, "Notion"),
     instance: { apiUrl: record.instance, token }
   }).pipe(
     Effect.provideContext(events),

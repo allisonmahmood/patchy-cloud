@@ -186,10 +186,7 @@ export interface Options extends DevExecution.Options {
   /** How dev reaches integrations that read the real connection: the instance, with this key. */
   readonly instance: DevDoor.Instance;
   /** Shows a write dev simulated instead of sending, such as a Pidgeon reply; text by default. */
-  readonly simulated?: (write: PidgeonDev.Simulated) => Effect.Effect<void>;
-  readonly simulatedNotion?: (
-    write: Pick<PidgeonDev.Simulated, "viewerId" | "connection" | "summary">
-  ) => Effect.Effect<void>;
+  readonly simulated?: (write: PidgeonDev.Simulated | NotionDev.Simulated) => Effect.Effect<void>;
 }
 
 const make = Effect.fn("DevResources.make")(function* (
@@ -302,28 +299,22 @@ const make = Effect.fn("DevResources.make")(function* (
     }
   }
   const postgres = yield* PostgresOperations.makeHandlers;
+  const simulated = options.simulated ?? ((write) => DevLog.simulated(write, false));
   const handlers = {
     me,
     ...(yield* TableOperations.make),
     ...(yield* Members.make),
     ...fileHandlers,
     ...postgres,
-    // PostHog, Pidgeon, Attio, IMAP and GitHub have no fixture: their reads go to the real connection,
-    // through the instance, and Pidgeon's writes are simulated here, reaching neither.
+    // PostHog, Pidgeon, Attio, IMAP, GitHub and Notion have no fixture: their reads go to the real
+    // connection, through the instance, and Pidgeon's and Notion's writes are simulated here,
+    // reaching neither.
     ...(yield* PostHogDev.handlers(options.instance)),
     ...(yield* AttioDev.handlers(options.instance)),
-    ...(yield* NotionDev.handlers(
-      options.instance,
-      prepared.metadata.notion,
-      options.simulatedNotion ?? ((write) => DevLog.simulated(write, false, "Notion"))
-    )),
+    ...(yield* NotionDev.handlers(options.instance, prepared.metadata.notion, simulated)),
     ...(yield* ImapDev.handlers(options.instance, yield* Files.makeStagingLocal)),
     ...(yield* GithubDev.handlers(options.instance)),
-    ...(yield* PidgeonDev.handlers(
-      options.instance,
-      prepared.metadata.pidgeon,
-      options.simulated ?? ((write) => DevLog.simulated(write, false))
-    ))
+    ...(yield* PidgeonDev.handlers(options.instance, prepared.metadata.pidgeon, simulated))
   };
   if (state.changed || state.initialize) yield* fs.writeFileString(state.stampPath, state.stamp);
   return { handlers, version: state.version };

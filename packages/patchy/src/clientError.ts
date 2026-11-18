@@ -191,12 +191,19 @@ type GithubDetails<C extends ErrorCode> = C extends "not_found"
         readonly reason?: string;
       }
     : Readonly<Record<string, unknown>>;
-/** Notion's refusals name the property or data source they are about. */
+/**
+ * Notion's refusals name the property or data source they are about, an option a write named
+ * that the version doesn't know, and the row a write Notion may have saved went to.
+ */
 type NotionDetails<C extends ErrorCode> = C extends "shape_mismatch"
   ? { readonly property?: string }
   : C extends "not_found"
     ? { readonly dataSource?: string }
-    : Readonly<Record<string, unknown>>;
+    : C extends "invalid_request"
+      ? { readonly property?: string; readonly knownOptions?: readonly string[] }
+      : C extends "unknown_outcome"
+        ? { readonly rowId?: string }
+        : Readonly<Record<string, unknown>>;
 export type ErrorDetails<C extends ErrorCode, O extends string = string> = O extends ImapOperation
   ? ImapDetails<C>
   : O extends GithubOperation

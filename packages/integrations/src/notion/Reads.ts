@@ -37,11 +37,14 @@ type Row = NotionListOutput["rows"][number];
 export type Send = (
   request: HttpClientRequest.HttpClientRequest
 ) => Effect.Effect<unknown, Refusal>;
-/** A read checked against its snapshot, ready to send. */
-export type Plan<I, A> = (
+/**
+ * A call checked against its snapshot, ready to send. A read's bad arguments are
+ * `invalid_request`; a write's may also name what they got wrong.
+ */
+export type Plan<I, A, E = Runtime.InvalidRequest> = (
   snapshot: NotionSnapshot,
   input: I
-) => Effect.Effect<(send: Send) => Effect.Effect<A, Refusal>, Runtime.InvalidRequest>;
+) => Effect.Effect<(send: Send) => Effect.Effect<A, Refusal>, E>;
 
 const WebUrl = Schema.String.check(Schema.isPattern(/^https:\/\//));
 const RawUser = Schema.Struct({
@@ -184,7 +187,8 @@ const orNull = (sent: Effect.Effect<unknown, Refusal>) =>
     })
   );
 
-const sourceOf = (snapshot: NotionSnapshot, key: string) => {
+/** The data source a call names by its generated key. */
+export const sourceOf = (snapshot: NotionSnapshot, key: string) => {
   const found = snapshot.dataSources.find((source) => source.key === key);
   return found === undefined ? Effect.fail(invalid()) : Effect.succeed(found);
 };
