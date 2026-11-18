@@ -15,7 +15,7 @@ export const actions: View.Actions = {
   rotate: "Replace token",
   access: "Change access"
 };
-export const logged = "Recent reads show the operation, data source, and property names.";
+export const logged = "Recent calls show the operation, data source, and property names.";
 export const results = {
   connect: "Notion connected and its data sources discovered.",
   rotate: "Token replaced and the workspace discovered again.",
@@ -49,6 +49,7 @@ const accessField: Fields.Spec = {
   name: "access",
   field: "access",
   label: "Access",
+  hint: "Published writes can notify people and trigger Notion automations and webhooks.",
   initial: "read",
   choices: [
     { value: "read", label: "Read" },
@@ -71,7 +72,8 @@ export const connect: ConnectFrame.ConnectSpec = {
   once: {
     reads: "shared rows and pages and the workspace’s people through Tier 2 actions",
     devReads: true,
-    cannot: ["Change Notion content"],
+    also: ["With Read and write, published Tier 2 actions can create, update, trash and restore rows"],
+    cannot: [],
     caveat: "Individual Notion permissions don't carry over."
   }
 };
