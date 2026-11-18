@@ -37,6 +37,6 @@
     "@effect/vitest": "catalog:",
     "@patchy/company-database": "workspace:*",
     "@patchy/primitives": "workspace:*",
-    "vitest": "^5.0.5"
+    "vitest": "^5.1.0"
   }
 }
