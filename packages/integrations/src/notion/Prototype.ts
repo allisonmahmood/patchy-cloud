@@ -27,6 +27,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as ConnectFrame from "../ConnectFrame.js";
+import type { Row } from "../ConnectionsView.js";
 
 const path = "/settings/integrations/connect/notion-prototype";
 const work = "/settings/integrations/notion-prototype";
@@ -82,6 +83,7 @@ class Refusal extends Schema.TaggedError<Refusal>()("NotionPrototypeRefusal", {
   }
 }
 type Probe = {
+  handle: string;
   send: (
     route: string,
     method?: "GET" | "POST" | "PATCH",
@@ -109,6 +111,30 @@ type Probe = {
   last: unknown;
   error: string;
   history: string[];
+};
+// Shared only by the local prototype route and its Integrations listing.
+const probes = new Map<string, Probe>();
+export const connectionFor = (company: string): Row | undefined => {
+  const probe = probes.get(company);
+  return probe
+    ? {
+        id: "notion-prototype",
+        integration: { key: "notion", label: "Notion", mark: "N" },
+        handle: probe.handle,
+        description: "Tasks and pages",
+        source: "Patchy prototype test",
+        status: "connected",
+        tag: "Prototype",
+        href: work,
+        usedBy: [],
+        olderVersions: 0,
+        retired: 0,
+        deleted: 0,
+        disabled: 0,
+        declaredBy: [],
+        declared: false
+      }
+    : undefined;
 };
 const isRefusal = Schema.is(Refusal);
 const connect: ConnectFrame.ConnectSpec = {
@@ -308,7 +334,9 @@ function workspace(p: Probe) {
     parent: { label: "Integrations", href: "/settings/integrations" },
     mark: "N",
     meta: ["Try real Tasks, wiki editing and access removal together."],
-    actions: linkButton("Connect again", path),
+    actions:
+      linkButton("Connect again", path) +
+      `<form method="post" action="${work}">${button("Disconnect", { name: "disconnect", value: "yes" })}</form>`,
     main:
       section({
         title: "Walkthroughs",
@@ -399,7 +427,6 @@ export const layer: Layer.Layer<
   Effect.gen(function* () {
     const http = yield* HttpClient.HttpClient;
     const gate = yield* Semaphore.make(1);
-    const probes = new Map<string, Probe>();
     const serve = Effect.gen(function* () {
       const viewer = yield* RequireSession.Viewer;
       const session = yield* Session.Session;
@@ -412,10 +439,15 @@ export const layer: Layer.Layer<
       let error = "";
       if (request.method === "POST") {
         const form = yield* HttpServerRequest.schemaBodyUrlParams(Form);
+        if (form.disconnect === "yes") {
+          probes.delete(viewer.company.id);
+          return HttpServerResponse.redirect("/settings/integrations", { status: 303 });
+        }
         const outcome = yield* Effect.gen(function* () {
           if (request.url.split("?")[0] === path) {
             const token = form.key?.trim() ?? "";
             const probe: Probe = {
+              handle: form.handle || "probe",
               send: () => Effect.fail("Connect first."),
               root: "",
               source: "",

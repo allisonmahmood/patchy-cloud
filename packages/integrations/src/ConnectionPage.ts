@@ -25,6 +25,7 @@ import * as ImapPage from "./imap/Page.js";
 import * as GithubFlows from "./github/Flows.js";
 import * as GithubPage from "./github/Page.js";
 import * as GithubSource from "./github/Source.js";
+import * as NotionPrototype from "./notion/Prototype.js";
 
 /** A page to read. */
 export type Target =
@@ -329,9 +330,12 @@ const prototypeOffers = Effect.fn("ConnectionPage.prototypeOffers")(function* (
     (yield* DevPersonas.enabled.pipe(Effect.catch(() => Effect.succeed(false))))
     ? [
         {
-          integration: { key: "notion-prototype", label: "Notion prototype", mark: "N" },
-          line: "Real Tasks and pages in the test workspace",
-          href: "/settings/integrations/notion-prototype"
+          integration: { key: "notion", label: "Notion", mark: "N" },
+          line: "Tasks and pages · Prototype",
+          href: NotionPrototype.connectionFor(viewer.company.id)
+            ? "/settings/integrations/notion-prototype"
+            : "/settings/integrations/connect/notion-prototype",
+          buttonLabel: NotionPrototype.connectionFor(viewer.company.id) ? "Open" : "Connect"
         }
       ]
     : [];
@@ -386,14 +390,21 @@ const index = Effect.fn("ConnectionPage.index")(function* (
     : undefined;
   const known = yield* directory(viewer);
   const people = known?.people ?? new Map<string, string>();
+  const prototypes = yield* prototypeOffers(viewer);
+  const prototype = prototypes.length
+    ? NotionPrototype.connectionFor(viewer.company.id)
+    : undefined;
   return {
     title: "Integrations",
     ...View.renderIndex({
       admin,
       admins: known?.admins ?? [],
-      rows: connections.map((connection) => row(connection, usage, people, now)),
+      rows: [
+        ...connections.map((connection) => row(connection, usage, people, now)),
+        ...(prototype ? [prototype] : [])
+      ],
       lastCalls,
-      offers: [...offersOf(yield* offered), ...(yield* prototypeOffers(viewer))],
+      offers: [...offersOf(yield* offered), ...prototypes],
       rotate: rotateLabel,
       filters: filters(query),
       now,
@@ -414,13 +425,20 @@ const catalogue = Effect.fn("ConnectionPage.catalogue")(function* (
   );
   const now = yield* Clock.currentTimeMillis;
   const admins = viewer.role === "admin" ? [] : ((yield* directory(viewer))?.admins ?? []);
+  const prototypes = yield* prototypeOffers(viewer);
+  const prototype = prototypes.length
+    ? NotionPrototype.connectionFor(viewer.company.id)
+    : undefined;
   return {
     title: "Connect an integration",
     ...View.renderCatalogue({
       admin: viewer.role === "admin",
       admins,
-      rows: connections.map((connection) => row(connection, new Map(), new Map(), now)),
-      offers: [...offersOf(yield* offered), ...(yield* prototypeOffers(viewer))]
+      rows: [
+        ...connections.map((connection) => row(connection, new Map(), new Map(), now)),
+        ...(prototype ? [prototype] : [])
+      ],
+      offers: [...offersOf(yield* offered), ...prototypes]
     })
   } satisfies Page;
 });
