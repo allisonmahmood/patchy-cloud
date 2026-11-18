@@ -280,7 +280,7 @@ try {
         (name) => id === name || id.startsWith(`${name}/`)
       ),
     // This bundles existing declarations; it loads no compiler API.
-    plugins: [dts({ dtsInput: true, tsconfig: false, generator: "oxc" })]
+    plugins: [dts({ dtsOnly: true, tsconfig: false, generator: "oxc" })]
   });
   try {
     const { output } = await declarations.write({
