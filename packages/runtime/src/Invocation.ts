@@ -389,12 +389,7 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
               });
         if (actionLimits !== undefined && admitted !== undefined) {
           for (const [used, limit, limitId, limitScope] of [
-            [
-              admitted.used.company,
-              actionLimits.company.value,
-              "tier2.actions.company",
-              "company"
-            ],
+            [admitted.used.company, actionLimits.company.value, "tier2.actions.company", "company"],
             [admitted.used.viewer, actionLimits.viewer.value, "tier2.actions.viewer", "viewer"]
           ] as const) {
             const effective = limitScope === "company" ? actionLimits.company : actionLimits.viewer;

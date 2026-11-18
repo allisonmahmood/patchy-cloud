@@ -7,7 +7,8 @@ import * as ActionSlots from "./ActionSlots.js";
 const limits = { company: 1, viewer: 1 };
 const settle = Effect.repeat(Effect.yieldNow, { times: 20 });
 const slotOf = (admission: ActionSlots.Admission) => {
-  if (admission.result.refused !== undefined) throw new Error(`refused: ${admission.result.refused}`);
+  if (admission.result.refused !== undefined)
+    throw new Error(`refused: ${admission.result.refused}`);
   return admission.result.slot;
 };
 

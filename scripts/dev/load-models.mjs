@@ -16,7 +16,15 @@
 // serves browsers over HTTP/2, where the page's own bound (`frame.outstanding`, 32) is what applies.
 import { chromium } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { closeSync, mkdirSync, openSync, readFileSync, readSync, statSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readSync,
+  statSync,
+  writeFileSync
+} from "node:fs";
 import path from "node:path";
 
 const args = process.argv.slice(2);
@@ -53,16 +61,27 @@ const scenarios = {
   // One 1 s call, then `--writes` inserts, to time the work S4 does after its answer.
   one: () => [{ person: 0, at: 0, ...generate(1_000, { writes }) }],
   // Ten people each start one 45 s model call within a second.
-  S1: () => Array.from({ length: 10 }, (_, i) => ({ person: i, at: Math.random() * 1000, ...generate(45_000) })),
+  S1: () =>
+    Array.from({ length: 10 }, (_, i) => ({
+      person: i,
+      at: Math.random() * 1000,
+      ...generate(45_000)
+    })),
   // One person fires twenty 20 s model calls at once.
   S2: () => Array.from({ length: 20 }, () => ({ person: 0, at: 0, ...generate(20_000) })),
   // The same twenty, 100 ms apart.
-  S2s: () => Array.from({ length: 20 }, (_, i) => ({ person: 0, at: i * 100, ...generate(20_000) })),
+  S2s: () =>
+    Array.from({ length: 20 }, (_, i) => ({ person: 0, at: i * 100, ...generate(20_000) })),
   // Eight people park 30 s calls; five others run a quick action every second for 20 s.
   S3: () => [
     ...Array.from({ length: 8 }, (_, i) => ({ person: i, at: i * 100, ...generate(30_000) })),
     ...Array.from({ length: 5 }, (_, p) =>
-      Array.from({ length: 20 }, (_, k) => ({ person: 8 + p, at: 2_000 + k * 1_000 + p * 50, op: "quick", args: {} }))
+      Array.from({ length: 20 }, (_, k) => ({
+        person: 8 + p,
+        at: 2_000 + k * 1_000 + p * 50,
+        op: "quick",
+        args: {}
+      }))
     ).flat()
   ],
   // Thirty calls parked on a model that answers them all at one instant, then ~200 ms of writes.
@@ -85,7 +104,11 @@ const scenarios = {
   park: (start) => {
     const answerAt = start + count * 20 + 20_000;
     return [
-      ...Array.from({ length: count }, (_, i) => ({ person: i % 15, at: i * 20, ...generate(0, { at: answerAt }) })),
+      ...Array.from({ length: count }, (_, i) => ({
+        person: i % 15,
+        at: i * 20,
+        ...generate(0, { at: answerAt })
+      })),
       ...Array.from({ length: Math.ceil((answerAt - start + 10_000) / 500) }, (_, k) => ({
         person: 15,
         at: k * 500,
@@ -95,7 +118,8 @@ const scenarios = {
     ];
   }
 };
-if (!(scenario in scenarios)) throw new Error(`scenario is one of ${Object.keys(scenarios).join(", ")}`);
+if (!(scenario in scenarios))
+  throw new Error(`scenario is one of ${Object.keys(scenarios).join(", ")}`);
 
 // ---------- the host's memory ----------
 
@@ -115,21 +139,28 @@ const memory = () => {
     descendants += rss.get(pid) ?? 0;
     stack.push(...(children.get(pid) ?? []));
   }
-  return { server: Math.round((rss.get(serverPid) ?? 0) / 1024), children: Math.round(descendants / 1024) };
+  return {
+    server: Math.round((rss.get(serverPid) ?? 0) / 1024),
+    children: Math.round(descendants / 1024)
+  };
 };
 
 // ---------- the pages ----------
 
 const browser = await chromium.launch();
-const needed = [...new Set(scenarios[scenario](Date.now()).map((call) => call.person))].sort((a, b) => a - b);
-if (needed.at(-1) >= people.length) throw new Error(`the scenario needs ${needed.at(-1) + 1} people`);
+const needed = [...new Set(scenarios[scenario](Date.now()).map((call) => call.person))].sort(
+  (a, b) => a - b
+);
+if (needed.at(-1) >= people.length)
+  throw new Error(`the scenario needs ${needed.at(-1) + 1} people`);
 const frames = new Map();
 const callers = new Map();
 /** The page's own request for `load.quick`, replayed for any `load.*` call from Node. */
 const replay = async (context, frame) => {
   const captured = new Promise((resolve) => {
     const listener = async (request) => {
-      if (request.method() !== "POST" || !new URL(request.url()).pathname.endsWith("/runtime/call")) return;
+      if (request.method() !== "POST" || !new URL(request.url()).pathname.endsWith("/runtime/call"))
+        return;
       const body = request.postDataJSON();
       if (body?.args?.handler !== "load.quick") return;
       context.off("request", listener);
@@ -140,7 +171,9 @@ const replay = async (context, frame) => {
   await frame.evaluate(() => globalThis.patchyLoad.quick());
   const template = await captured;
   const headers = Object.fromEntries(
-    Object.entries(template.headers).filter(([name]) => !["content-length", "host"].includes(name) && !name.startsWith(":"))
+    Object.entries(template.headers).filter(
+      ([name]) => !["content-length", "host"].includes(name) && !name.startsWith(":")
+    )
   );
   return async (op, input) => {
     const started = performance.now();
@@ -208,8 +241,15 @@ const results = await Promise.all(
             const seen = await (
               via === "http"
                 ? callers.get(call.person)(call.op, call.args)
-                : frame.evaluate(([op, input]) => globalThis.patchyLoad[op](input), [call.op, call.args])
-            ).catch((error) => ({ ms: Date.now() - firedAt, code: "driver", message: String(error) }));
+                : frame.evaluate(
+                    ([op, input]) => globalThis.patchyLoad[op](input),
+                    [call.op, call.args]
+                  )
+            ).catch((error) => ({
+              ms: Date.now() - firedAt,
+              code: "driver",
+              message: String(error)
+            }));
             resolve({ index, person: call.person, op: call.op, firedAt: firedAt - start, ...seen });
           },
           Math.max(0, start + call.at - Date.now())
@@ -239,19 +279,33 @@ for (const line of lines) {
   if (server !== null) {
     try {
       const event = JSON.parse(server[1]);
-      if (event.type === "request" && typeof event.handler === "string" && event.handler.startsWith("load."))
+      if (
+        event.type === "request" &&
+        typeof event.handler === "string" &&
+        event.handler.startsWith("load.")
+      )
         events.push(event);
-      else if (event.level === "ERROR" || event.level === "FATAL") problems.push(line.slice(0, 400));
+      else if (event.level === "ERROR" || event.level === "FATAL")
+        problems.push(line.slice(0, 400));
     } catch {}
     continue;
   }
-  const model = /^(\S+) \[models\] \S+ model=\S*load\S* status=(\S+) durationMs=(\d+) closedEarly=(\w+)/.exec(line);
+  const model =
+    /^(\S+) \[models\] \S+ model=\S*load\S* status=(\S+) durationMs=(\d+) closedEarly=(\w+)/.exec(
+      line
+    );
   if (model !== null) {
     const closed = Date.parse(model[1]);
-    fake.push({ opened: closed - Number(model[3]), closed, status: model[2], closedEarly: model[4] === "true" });
+    fake.push({
+      opened: closed - Number(model[3]),
+      closed,
+      status: model[2],
+      closedEarly: model[4] === "true"
+    });
     continue;
   }
-  if (/\[server\]/.test(line) && /error|fatal|defect|exception/i.test(line)) problems.push(line.slice(0, 400));
+  if (/\[server\]/.test(line) && /error|fatal|defect|exception/i.test(line))
+    problems.push(line.slice(0, 400));
 }
 const sweep = (intervals) => {
   const edges = intervals.flatMap(({ opened, closed }) => [
@@ -308,18 +362,49 @@ for (const op of [...new Set(results.map((result) => result.op))]) {
       .filter(([kind]) => kind.startsWith("other:"))
       .map(([kind, n]) => `${kind.slice(6)}×${n}`)
       .join(" "),
-    p50: percentile(mine.map((result) => result.ms), 50),
-    p95: percentile(mine.map((result) => result.ms), 95),
-    okP50: percentile(mine.filter((result) => result.code === "ok").map((result) => result.ms), 50),
-    okP95: percentile(mine.filter((result) => result.code === "ok").map((result) => result.ms), 95),
+    p50: percentile(
+      mine.map((result) => result.ms),
+      50
+    ),
+    p95: percentile(
+      mine.map((result) => result.ms),
+      95
+    ),
+    okP50: percentile(
+      mine.filter((result) => result.code === "ok").map((result) => result.ms),
+      50
+    ),
+    okP95: percentile(
+      mine.filter((result) => result.code === "ok").map((result) => result.ms),
+      95
+    ),
     peakRunning: max(events.map((event) => event.slots?.running ?? 0)),
     peakParked: max(events.map((event) => event.slots?.parked ?? 0)),
     peakHeld: max(events.map((event) => event.slots?.held ?? 0)),
-    resumeWaitP95: percentile(slots.map((slot) => slot.resumeWaitMs), 95),
+    resumeWaitP95: percentile(
+      slots.map((slot) => slot.resumeWaitMs),
+      95
+    ),
     resumeWaitMax: Math.round(max(slots.map((slot) => slot.resumeWaitMs))),
     // The action's time neither parked nor held: its own work, writes included.
-    workP50: percentile(slots.map((slot, i) => (mineEvents.filter((event) => event.slots)[i].durationMs ?? 0) - slot.parkedMs - slot.resumeWaitMs), 50),
-    workP95: percentile(slots.map((slot, i) => (mineEvents.filter((event) => event.slots)[i].durationMs ?? 0) - slot.parkedMs - slot.resumeWaitMs), 95),
+    workP50: percentile(
+      slots.map(
+        (slot, i) =>
+          (mineEvents.filter((event) => event.slots)[i].durationMs ?? 0) -
+          slot.parkedMs -
+          slot.resumeWaitMs
+      ),
+      50
+    ),
+    workP95: percentile(
+      slots.map(
+        (slot, i) =>
+          (mineEvents.filter((event) => event.slots)[i].durationMs ?? 0) -
+          slot.parkedMs -
+          slot.resumeWaitMs
+      ),
+      95
+    ),
     gateWaitMax: Math.round(max(gate.map((call) => call.gateWaitMs ?? 0))),
     gateWaitingPeak: max(gate.map((call) => call.gateWaiting ?? 0)),
     events: mineEvents.length
@@ -382,11 +467,17 @@ const table = [
 ].join("\n");
 console.log(table);
 
-const out = path.join(outRoot, `${label}-${scenario}-${new Date().toISOString().replace(/[:.]/g, "-")}`);
+const out = path.join(
+  outRoot,
+  `${label}-${scenario}-${new Date().toISOString().replace(/[:.]/g, "-")}`
+);
 mkdirSync(out, { recursive: true });
 writeFileSync(path.join(out, "table.md"), `${table}\n`);
 writeFileSync(path.join(out, "summary.json"), JSON.stringify(summary, null, 2));
 writeFileSync(path.join(out, "results.json"), JSON.stringify(results, null, 2));
-writeFileSync(path.join(out, "events.jsonl"), events.map((event) => JSON.stringify(event)).join("\n"));
+writeFileSync(
+  path.join(out, "events.jsonl"),
+  events.map((event) => JSON.stringify(event)).join("\n")
+);
 writeFileSync(path.join(out, "memory.json"), JSON.stringify(samples));
 console.log(`results: ${out}`);

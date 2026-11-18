@@ -68,7 +68,12 @@ const FALLBACK_MS = 60_000;
  * calls run together and stops one agent's burst taking the connection; 32 waiting, 8 of them a
  * person's, bounds a queue whose tail would mostly wait out its cut-off anyway.
  */
-export const GATE: CallGate.Limits = { concurrent: 16, perPerson: 4, waiting: 32, perPersonWaiting: 8 };
+export const GATE: CallGate.Limits = {
+  concurrent: 16,
+  perPerson: 4,
+  waiting: 32,
+  perPersonWaiting: 8
+};
 
 export class GateConfigRefused extends Schema.TaggedError<GateConfigRefused>()(
   "ModelsGateConfigRefused",

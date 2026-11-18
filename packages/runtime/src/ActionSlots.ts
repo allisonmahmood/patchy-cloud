@@ -110,7 +110,7 @@ export const make = (mode: Mode) => {
    */
   const grant = () => {
     const woken: Array<Held> = [];
-    for (let index = 0; index < held.length; ) {
+    for (let index = 0; index < held.length;) {
       const next = held[index]!;
       if (!room(next.state)) {
         index++;

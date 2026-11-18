@@ -16,10 +16,13 @@ export default defineConfig({
         by: t.text()
       }
     ),
-    loadRuns: table("Rows the load test's model action writes after its call: who, and which write.", {
-      by: t.text(),
-      note: t.text()
-    })
+    loadRuns: table(
+      "Rows the load test's model action writes after its call: who, and which write.",
+      {
+        by: t.text(),
+        note: t.text()
+      }
+    )
   },
   files: {},
   uses: {

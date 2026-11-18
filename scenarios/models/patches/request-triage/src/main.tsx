@@ -14,7 +14,11 @@ const timed = async (call: () => Promise<unknown>) => {
   } catch (error) {
     const ms = performance.now() - started;
     if (!isPatchyError(error))
-      return { ms, code: "thrown", message: error instanceof Error ? error.message : String(error) };
+      return {
+        ms,
+        code: "thrown",
+        message: error instanceof Error ? error.message : String(error)
+      };
     return {
       ms,
       code: error.code,
