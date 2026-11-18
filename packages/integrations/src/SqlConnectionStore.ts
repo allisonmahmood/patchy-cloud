@@ -251,11 +251,14 @@ const Lookup = Schema.Struct({
 const detached = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.flatMap(Effect.forkDetach(effect), Fiber.join);
 
+/** Every integration this release ships; `knowing` makes a store of an earlier release's. */
+export const make = Effect.suspend(() => knowing(integrations));
+
 /**
  * A store that reads only `known` integrations' rows, as the release that shipped them did. Rows of
  * integrations a later release added stay hidden, so a rollback lists and shows the rest.
  */
-const storeKnowing = (known: ReadonlyArray<Integration>) =>
+export const knowing = (known: ReadonlyArray<Integration>) =>
   Effect.gen(function* () {
     const teamService = yield* Teams.Teams;
     const cryptography = yield* Cryptography.Cryptography;
@@ -2470,16 +2473,6 @@ const storeKnowing = (known: ReadonlyArray<Integration>) =>
       pauseLogin
     });
   });
-
-export const knowing = (known: ReadonlyArray<Integration>) =>
-  storeKnowing(known).pipe(Effect.provide(NotionSource.layer));
-
-export const make = Effect.suspend(() => knowing(integrations));
-
-export const layerWithoutNotion = Layer.effect(
-  ConnectionStore.ConnectionStore,
-  Effect.suspend(() => storeKnowing(integrations))
-);
 
 export const layer = Layer.effect(ConnectionStore.ConnectionStore, make);
 

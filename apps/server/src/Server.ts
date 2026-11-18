@@ -427,17 +427,18 @@ const services = Layer.mergeAll(
       Looks.layer,
       identity
     ).pipe(
-      // One PostHog, Pidgeon, Attio, IMAP and GitHub source each, so connection administration and
-      // patches share each project's, address's, workspace's, mailbox's and installation's slots,
-      // and one pool of IMAP sessions that published patches and the dev door share. GitHub's
-      // App comes from the host's settings: empty, GitHub isn't offered; partly filled, the
-      // server refuses to start.
+      // One PostHog, Pidgeon, Attio, Notion, IMAP and GitHub source each, so connection
+      // administration and patches share each project's, address's, workspace's, connection's,
+      // mailbox's and installation's slots, and one pool of IMAP sessions that published patches
+      // and the dev door share. GitHub's App comes from the host's settings: empty, GitHub isn't
+      // offered; partly filled, the server refuses to start.
       Layer.provideMerge(
-        SqlConnectionStore.layerWithoutNotion.pipe(
+        SqlConnectionStore.layer.pipe(
           Layer.provide([CredentialKeys.layer, PostgresSource.layer, Teams.layer]),
           Layer.provideMerge(PostHogSource.layer),
           Layer.provideMerge(PidgeonSource.layer),
           Layer.provideMerge(AttioSource.layer),
+          Layer.provideMerge(NotionSource.layer),
           Layer.provideMerge(ImapSessions.layer.pipe(Layer.provideMerge(ImapSource.layer))),
           Layer.provideMerge(Github.layer.pipe(Layer.provide(CredentialKeys.layer)))
         )
@@ -578,7 +579,7 @@ const app = Layer.mergeAll(
  * The server: serving the app, sweeping, and closing both with the scope. Its runtime and guest
  * grants are the ones a test drives besides the socket.
  */
-const withoutNotion = Layer.mergeAll(
+export const layer = Layer.mergeAll(
   HttpRouter.serve(app, { disableLogger: true, disableListenLog: true }).pipe(
     Layer.provide([ownedPatches, companyGuests, teamReach, PortalPages.navigation])
   ),
@@ -587,8 +588,3 @@ const withoutNotion = Layer.mergeAll(
     Effect.context<Runtime.Runtime | RuntimeStream.RuntimeStream | GuestGrants.GuestGrants>()
   )
 ).pipe(Layer.provide(services));
-
-export const withNotion = <E>(notion: Layer.Layer<NotionSource.Source, E>) =>
-  withoutNotion.pipe(Layer.provide(notion));
-
-export const layer = withNotion(NotionSource.layer);

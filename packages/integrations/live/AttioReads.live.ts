@@ -13,6 +13,7 @@ import * as Redacted from "effect/Redacted";
 import * as ConnectionStore from "../src/ConnectionStore.js";
 import * as CredentialKeys from "../src/CredentialKeys.js";
 import * as PidgeonSource from "../src/pidgeon/Source.js";
+import * as NotionSource from "../src/notion/Source.js";
 import * as ImapTest from "../src/test/imap.js";
 import * as GithubTest from "../src/test/github.js";
 import * as PostgresSource from "../src/postgres/Source.js";
@@ -47,6 +48,7 @@ const services = Layer.mergeAll(
   ),
   PostHogSource.layer,
   PidgeonSource.layer,
+  NotionSource.layer,
   ImapTest.offline,
   GithubTest.unconfigured,
   Live.layer

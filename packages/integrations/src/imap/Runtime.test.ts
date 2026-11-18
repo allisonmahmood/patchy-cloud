@@ -31,6 +31,7 @@ import * as MutationTransaction from "../../../primitives/src/MutationTransactio
 import * as QuerySnapshot from "../../../primitives/src/QuerySnapshot.js";
 import * as TestWakes from "../../../primitives/src/test/wakes.js";
 import * as AttioSource from "../attio/Source.js";
+import * as NotionSource from "../notion/Source.js";
 import * as ConnectionStore from "../ConnectionStore.js";
 import * as CredentialKeys from "../CredentialKeys.js";
 import * as PidgeonSource from "../pidgeon/Source.js";
@@ -127,6 +128,7 @@ const credentials = Layer.mergeAll(
   PostHogSource.layer,
   PidgeonSource.layer,
   AttioSource.layer,
+  NotionSource.layer,
   GithubTest.unconfigured,
   // No IMAP source here: layers memoize by reference, so an outer one would stand in for the
   // scripted mailbox's.

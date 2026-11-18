@@ -12,6 +12,7 @@ import { Companies, Users, Teams } from "@patchy/companies";
 import { NodeCryptography } from "@patchy/core";
 import {
   AttioSource,
+  NotionSource,
   ConnectionStore,
   CredentialKeys,
   ImapNetwork,
@@ -36,6 +37,7 @@ const sources = Layer.mergeAll(
   PostHogSource.layer,
   PidgeonSource.layer,
   AttioSource.layer,
+  NotionSource.layer,
   ImapSource.layer.pipe(Layer.provide(ImapNetwork.layer)),
   Github.layer
 );

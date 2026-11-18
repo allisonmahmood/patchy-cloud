@@ -9,6 +9,7 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import { inject } from "vitest";
 import * as AttioSource from "../src/attio/Source.js";
+import * as NotionSource from "../src/notion/Source.js";
 import type * as ConnectionStore from "../src/ConnectionStore.js";
 import * as CredentialKeys from "../src/CredentialKeys.js";
 import * as ImapNetwork from "../src/imap/Network.js";
@@ -55,6 +56,7 @@ const services = Layer.mergeAll(
   PostHogSource.layer,
   PidgeonSource.layer,
   AttioSource.layer,
+  NotionSource.layer,
   Source.layer.pipe(Layer.provide(network))
 ).pipe(Layer.provideMerge(Testing.layer()), Layer.provideMerge(NodeCryptography.layer));
 

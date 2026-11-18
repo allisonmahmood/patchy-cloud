@@ -14,8 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { ImapNetwork, NotionSource } from "@patchy/integrations";
-import * as NotionTest from "../../../packages/integrations/src/test/notion.js";
+import { ImapNetwork } from "@patchy/integrations";
 import { launch } from "@patchy/server/launch";
 
 const decode = Schema.decodeUnknownOption(
@@ -33,11 +32,6 @@ launch(
   Layer.unwrap(
     Effect.map(Config.option(Config.String("PATCHY_DEV_MAILBOXES")), (file) =>
       ImapNetwork.loopback(Option.isSome(file) ? listed(file.value) : () => [])
-    )
-  ),
-  Layer.unwrap(
-    Effect.map(Config.Boolean("PATCHY_DEV_NOTION_FAKE").pipe(Config.withDefault(false)), (fake) =>
-      fake ? NotionTest.layer : NotionSource.layer
     )
   )
 );
