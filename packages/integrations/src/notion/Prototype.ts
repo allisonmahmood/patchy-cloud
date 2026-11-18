@@ -45,7 +45,15 @@ type Item = {
   name?: string;
   properties?: Record<string, { title?: { plain_text: string }[] }>;
 };
-type Step = { op: string; label: string; denied?: boolean };
+type Action =
+  | { op: "list" }
+  | { op: "get" | "trash" | "restore"; task: string }
+  | { op: "create"; title: string }
+  | { op: "update"; task: string; title: string; status: string; assignee: string }
+  | { op: "read"; page: string }
+  | { op: "edit"; page: string; markdown: string }
+  | { op: "child"; markdown: string };
+type Step = { op: Action["op"] | "pause" | "wiki-ready"; label: string; denied?: boolean };
 const walks: Record<string, Step[]> = {
   Tasks: [
     { op: "list", label: "List tasks" },
@@ -103,6 +111,8 @@ type Probe = {
   assignee: string;
   walk: string;
   step: number;
+  walkTask: string;
+  walkMarkdown?: string;
   before: string;
   loaded: string;
   draft: string;
@@ -137,6 +147,8 @@ export const connectionFor = (company: string): Row | undefined => {
     : undefined;
 };
 const isRefusal = Schema.is(Refusal);
+const refusalMessage = (failure: Refusal | string) =>
+  typeof failure === "string" ? failure : failure.message;
 const connect: ConnectFrame.ConnectSpec = {
   getIt: {
     title: "Share the test page",
@@ -235,55 +247,90 @@ const prepare = Effect.fn("NotionPrototype.prepare")(function* (p: Probe) {
   p.url = `https://www.notion.so/${p.root.replaceAll("-", "")}`;
 });
 
-/** Targets come from fixtures under the test root, never browser-supplied IDs. */
-const call = Effect.fn("NotionPrototype.call")(function* (p: Probe, form: Form) {
-  const title = form.title || "Prototype reviewed";
-  const status = form.status || p.statuses[1] || p.statuses[0]!;
-  if (!p.statuses.includes(status)) return yield* Effect.fail("Choose a discovered status.");
-  if (form.assignee !== undefined) p.assignee = form.assignee;
-  if (p.assignee && !p.people.some((person) => person.id === p.assignee))
-    return yield* Effect.fail("Choose a discovered person.");
+/** Form fields can choose free-play fixtures. Guided steps own their targets and draft. */
+function actionFor(p: Probe, form: Form, step?: Step): Action | string {
+  const op = step ? step.op : form.op;
+  const task = step ? p.walkTask : p.task;
+  switch (op) {
+    case "list":
+      return { op };
+    case "get":
+    case "trash":
+    case "restore":
+      return { op, task };
+    case "create":
+      return { op, title: (!step && form.title) || "Prototype follow-up" };
+    case "update": {
+      const status = (!step && form.status) || p.statuses[1] || p.statuses[0]!;
+      const assignee = form.assignee ?? p.assignee;
+      if (!p.statuses.includes(status)) return "Choose a discovered status.";
+      if (assignee && !p.people.some((person) => person.id === assignee))
+        return "Choose a discovered person.";
+      return { op, task, status, assignee, title: (!step && form.title) || "Prototype reviewed" };
+    }
+    case "read":
+    case "edit": {
+      const page = step ? (p.walk === "Access" ? p.access : p.wiki) : form.target || p.page;
+      if (!step && ![p.wiki, p.access, p.child].includes(page)) return "Choose a fixture page.";
+      if (op === "read") return { op, page };
+      const draft = step ? p.walkMarkdown : p.loaded === page ? p.draft : undefined;
+      if (draft === undefined) return "Read this page before editing its markdown.";
+      return {
+        op,
+        page,
+        markdown:
+          (!step ? form.markdown : undefined) ?? draft + "\n\n**Edited through Brightline.**"
+      };
+    }
+    case "child":
+      return { op, markdown: form.markdown || markdown };
+    default:
+      return "Choose a prototype action.";
+  }
+}
+
+const call = Effect.fn("NotionPrototype.call")(function* (p: Probe, action: Action) {
   let result: Result;
-  switch (form.op) {
+  switch (action.op) {
     case "list":
       result = yield* p.send(`data_sources/${p.source}/query`, "POST", { page_size: 100 });
       break;
     case "get":
-      result = yield* p.send(`pages/${p.task}`);
+      result = yield* p.send(`pages/${action.task}`);
       break;
     case "create":
       result = yield* p.send("pages", "POST", {
         parent: { data_source_id: p.source },
-        properties: { Name: { title: text(form.title || "Prototype follow-up") } }
+        properties: { Name: { title: text(action.title) } }
       });
       p.task = String(result.id);
       break;
     case "update":
-      result = yield* p.send(`pages/${p.task}`, "PATCH", {
+      result = yield* p.send(`pages/${action.task}`, "PATCH", {
         properties: {
-          Name: { title: text(title) },
-          Status: { status: { name: status } },
-          Assignee: { people: p.assignee ? [{ id: p.assignee }] : [] }
+          Name: { title: text(action.title) },
+          Status: { status: { name: action.status } },
+          Assignee: { people: action.assignee ? [{ id: action.assignee }] : [] }
         }
       });
+      p.assignee = action.assignee;
       break;
     case "trash":
     case "restore":
-      result = yield* p.send(`pages/${p.task}`, "PATCH", { in_trash: form.op === "trash" });
+      result = yield* p.send(`pages/${action.task}`, "PATCH", { in_trash: action.op === "trash" });
       break;
     case "read":
-      result = yield* p.send(`pages/${p.page}/markdown`);
-      p.loaded = p.page;
+      result = yield* p.send(`pages/${action.page}/markdown`);
+      if (p.loaded !== action.page) p.before = "";
+      p.loaded = action.page;
       p.draft = String(result.markdown);
       if (!p.before) p.before = p.draft;
       break;
     case "edit":
-      if (p.loaded !== p.page)
-        return yield* Effect.fail("Read this page before editing its markdown.");
-      result = yield* p.send(`pages/${p.page}/markdown`, "PATCH", {
+      result = yield* p.send(`pages/${action.page}/markdown`, "PATCH", {
         type: "replace_content",
         replace_content: {
-          new_str: form.markdown ?? p.draft + "\n\n**Edited through Brightline.**"
+          new_str: action.markdown
         }
       });
       break;
@@ -291,14 +338,12 @@ const call = Effect.fn("NotionPrototype.call")(function* (p: Probe, form: Form) 
       result = yield* p.send("pages", "POST", {
         parent: { page_id: p.root },
         properties: { title: { title: text("Prototype child") } },
-        markdown: form.markdown || markdown
+        markdown: action.markdown
       });
       p.child = p.page = String(result.id);
       p.loaded = "";
       p.before = "";
       break;
-    default:
-      return yield* Effect.fail("Choose a prototype action.");
   }
   p.url =
     typeof result.url === "string"
@@ -344,7 +389,7 @@ function workspace(p: Probe) {
           .map((walk) => button(walk, { name: "walk", value: walk }))
           .join(
             " "
-          )}</form>${p.walk ? `<p>${escapeHtml(p.walk)} · ${p.step} / ${walks[p.walk]!.length}</p>` : ""}${p.walk === "Wiki" ? `<p>Open Handbook in Notion and use ••• → More → Turn into wiki before continuing. The API cannot do this step.</p>${linkButton("Open Handbook", `https://www.notion.so/${p.wiki.replaceAll("-", "")}`)}` : ""}${step ? `<form method="post" action="${work}">${p.walk === "Tasks" ? person("walk-assignee") : ""}${step.op === "pause" ? `<p>Remove Testtoken from Access probe in Notion. Access inherited from its parent must also be removed; the page must be inaccessible to the connection.</p>${linkButton("Open Access probe", `https://www.notion.so/${p.access.replaceAll("-", "")}`)}` : ""}${button(step.op === "pause" ? "I removed access — continue" : step.label, { name: "next", value: "yes", pendingLabel: "Working…" })}</form>` : p.walk ? "<p>Walkthrough complete.</p>" : ""}`
+          )}</form>${p.walk ? `<p>${escapeHtml(p.walk)} · ${p.step} / ${walks[p.walk]!.length}</p>` : ""}${p.walk === "Wiki" ? `<p>Open Handbook in Notion and use ••• → More → Turn into wiki before continuing. The API cannot do this step.</p>${linkButton("Open Handbook", `https://www.notion.so/${p.wiki.replaceAll("-", "")}`)}` : ""}${step ? `<form method="post" action="${work}">${step.op === "update" ? person("walk-assignee") : ""}${step.op === "pause" ? `<p>Remove Testtoken from Access probe in Notion. Access inherited from its parent must also be removed; the page must be inaccessible to the connection.</p>${linkButton("Open Access probe", `https://www.notion.so/${p.access.replaceAll("-", "")}`)}` : ""}${button(step.op === "pause" ? "I removed access — continue" : step.label, { name: "next", value: "yes", pendingLabel: "Working…" })}</form>` : p.walk ? "<p>Walkthrough complete.</p>" : ""}`
       }) +
       section({
         title: "Tasks",
@@ -427,24 +472,18 @@ export const layer: Layer.Layer<
   Effect.gen(function* () {
     const http = yield* HttpClient.HttpClient;
     const gate = yield* Semaphore.make(1);
-    const serve = Effect.gen(function* () {
-      const viewer = yield* RequireSession.Viewer;
-      const session = yield* Session.Session;
-      const request = yield* HttpServerRequest.HttpServerRequest;
-      if (viewer.company.handle !== "brightline" || viewer.role !== "admin")
-        return HttpServerResponse.empty({ status: 403 });
-      let p = probes.get(viewer.company.id);
-      if (!p && request.method === "GET" && request.url.split("?")[0] === work)
-        return HttpServerResponse.redirect(path, { status: 303 });
-      let error = "";
-      if (request.method === "POST") {
-        const form = yield* HttpServerRequest.schemaBodyUrlParams(Form);
-        if (form.disconnect === "yes") {
-          probes.delete(viewer.company.id);
-          return HttpServerResponse.redirect("/settings/integrations", { status: 303 });
-        }
-        const outcome = yield* Effect.gen(function* () {
-          if (request.url.split("?")[0] === path) {
+    const serve = (target: "connect" | "workspace", method: "GET" | "POST") =>
+      Effect.gen(function* () {
+        const viewer = yield* RequireSession.Viewer;
+        const session = yield* Session.Session;
+        if (viewer.company.handle !== "brightline" || viewer.role !== "admin")
+          return HttpServerResponse.empty({ status: 403 });
+        const p = probes.get(viewer.company.id);
+        if (!p && target === "workspace") return HttpServerResponse.redirect(path, { status: 303 });
+        let error = "";
+        if (method === "POST" && target === "connect") {
+          const form = yield* HttpServerRequest.schemaBodyUrlParams(Form);
+          const outcome = yield* Effect.gen(function* () {
             const token = form.key?.trim() ?? "";
             const probe: Probe = {
               handle: form.handle || "probe",
@@ -463,6 +502,7 @@ export const layer: Layer.Layer<
               assignee: "",
               walk: "",
               step: 0,
+              walkTask: "",
               before: "",
               loaded: "",
               draft: "",
@@ -507,96 +547,103 @@ export const layer: Layer.Layer<
             yield* prepare(probe);
             probe.last = { prepared: "Tasks, Handbook and Access probe", root: probe.root };
             probes.set(viewer.company.id, probe);
-            p = probe;
-            return;
+          }).pipe(Effect.result);
+          if (outcome._tag === "Success") return HttpServerResponse.redirect(work, { status: 303 });
+          error = refusalMessage(outcome.failure);
+        }
+        if (method === "POST" && target === "workspace" && p) {
+          const form = yield* HttpServerRequest.schemaBodyUrlParams(Form);
+          if (form.disconnect === "yes") {
+            probes.delete(viewer.company.id);
+            return HttpServerResponse.redirect("/settings/integrations", { status: 303 });
           }
-          if (!p) return yield* Effect.fail("Connect the prototype first.");
           p.error = "";
           p.last = null;
           p.request = null;
-          if (form.walk && walks[form.walk]) {
+          if (form.walk && Object.hasOwn(walks, form.walk)) {
             p.walk = form.walk;
             p.step = 0;
+            p.walkTask = p.seed;
+            delete p.walkMarkdown;
             p.before = "";
             p.loaded = "";
             p.history = [];
             p.task = p.seed;
             p.page = form.walk === "Access" ? p.access : p.wiki;
             p.url = `https://www.notion.so/${p.page.replaceAll("-", "")}`;
-            return;
-          }
-          if (form.target) {
-            if (![p.wiki, p.access, p.child].includes(form.target))
-              return yield* Effect.fail("Choose a fixture page.");
-            if (p.page !== form.target) p.before = "";
-            p.page = form.target;
+            return HttpServerResponse.redirect(work, { status: 303 });
           }
           const step = form.next ? walks[p.walk]?.[p.step] : undefined;
-          if (form.next && !step) return yield* Effect.fail("Choose a walkthrough first.");
           if (step?.op === "pause" || step?.op === "wiki-ready") {
             p.step++;
-            return;
+            return HttpServerResponse.redirect(work, { status: 303 });
           }
-          const action = step ? { ...form, op: step.op } : form;
-          const result = yield* call(p, action).pipe(Effect.result);
-          if (result._tag === "Failure") {
-            p.error = typeof result.failure === "string" ? result.failure : result.failure.message;
-            if (step?.denied && isRefusal(result.failure) && result.failure.status === 404) {
-              p.history.push(`${step.label}: confirmed 404`);
-              p.step++;
-              return;
+          const action =
+            form.next && !step ? "Choose a walkthrough first." : actionFor(p, form, step);
+          if (typeof action === "string") {
+            p.error = action;
+          } else {
+            if ("page" in action) p.page = action.page;
+            if ("task" in action) p.task = action.task;
+            const result = yield* call(p, action).pipe(Effect.result);
+            if (result._tag === "Failure") {
+              p.error = refusalMessage(result.failure);
+              if (step?.denied && isRefusal(result.failure) && result.failure.status === 404) {
+                p.history.push(`${step.label}: confirmed 404`);
+                p.step++;
+              }
+            } else if (step?.denied) {
+              p.error =
+                "The connection still has access. Remove its inherited page access in Notion before continuing.";
+            } else {
+              p.last = result.success;
+              p.history.push(step?.label ?? action.op);
+              if (step) {
+                if (action.op === "create") p.walkTask = p.task;
+                if (action.op === "read") {
+                  p.walkMarkdown ??= p.draft;
+                  p.before = p.walkMarkdown;
+                }
+                p.step++;
+              }
             }
-            return yield* Effect.fail(result.failure);
           }
-          p.last = result.success;
-          if (step?.denied)
-            return yield* Effect.fail(
-              "The connection still has access. Remove its inherited page access in Notion before continuing."
-            );
-          p.history.push(step?.label ?? action.op ?? "Action");
-          if (step) p.step++;
-        }).pipe(Effect.result);
-        if (outcome._tag === "Failure") {
-          error = typeof outcome.failure === "string" ? outcome.failure : outcome.failure.message;
-          if (p) {
-            p.error = error;
-            p.last = null;
-          }
+          return HttpServerResponse.redirect(work, { status: 303 });
         }
-      }
-      const content =
-        p && request.url.split("?")[0] !== path
-          ? workspace(p)
-          : ConnectFrame.render({
-              integration: { key: "notion-prototype", label: "Notion prototype", mark: "N" },
-              spec: connect,
-              submitted: {},
-              back: "/settings/integrations",
-              ...(error
-                ? { notice: { message: error, code: "prototype_refused", status: 422 } }
-                : {})
-            });
-      if (request.method === "POST" && p && (request.url.split("?")[0] !== path || !error))
-        return HttpServerResponse.redirect(work, { status: 303 });
-      return pageResponse(
-        { title: "Notion prototype", ...content, app: { viewer, section: "integrations" } },
-        session
-      );
-    });
-    for (const route of [path, work] as const) {
+        const content =
+          p && target === "workspace"
+            ? workspace(p)
+            : ConnectFrame.render({
+                integration: { key: "notion-prototype", label: "Notion prototype", mark: "N" },
+                spec: connect,
+                submitted: {},
+                back: "/settings/integrations",
+                ...(error
+                  ? { notice: { message: error, code: "prototype_refused", status: 422 } }
+                  : {})
+              });
+        return pageResponse(
+          { title: "Notion prototype", ...content, app: { viewer, section: "integrations" } },
+          session
+        );
+      });
+    for (const [route, target] of [
+      [path, "connect"],
+      [work, "workspace"]
+    ] as const) {
       yield* router.add(
         "GET",
         route,
-        RequireSession.withViewer(serve).pipe(
+        RequireSession.withViewer(serve(target, "GET")).pipe(
           Effect.catch(() => Effect.succeed(HttpServerResponse.empty({ status: 400 })))
         )
       );
       yield* router.add(
         "POST",
         route,
-        RequireSession.sameOrigin(RequireSession.withViewer(gate.withPermits(1)(serve))).pipe(
-          Effect.catch(() => Effect.succeed(HttpServerResponse.empty({ status: 400 })))
-        )
+        RequireSession.sameOrigin(
+          RequireSession.withViewer(gate.withPermits(1)(serve(target, "POST")))
+        ).pipe(Effect.catch(() => Effect.succeed(HttpServerResponse.empty({ status: 400 }))))
       );
     }
   })
