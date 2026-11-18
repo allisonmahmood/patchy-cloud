@@ -66,6 +66,9 @@ export interface Integration {
 /** An integration Patchy offers, as the catalogue lists it. */
 export interface Offer {
   readonly integration: Integration;
+  /** A local prototype can open its workspace directly. */
+  readonly href?: string;
+  readonly buttonLabel?: string;
   /** What connecting one gives patches, in at most eight words. */
   readonly line: string;
 }
@@ -103,6 +106,8 @@ export interface Attention {
 
 /** One connection as the index lists it. */
 export interface Row extends Usage {
+  /** A dev prototype has its own local workspace. */
+  readonly href?: string;
   readonly id: string;
   readonly integration: Integration;
   readonly handle: string;
@@ -279,19 +284,21 @@ const line = (row: Row) =>
 
 /** What an admin does to one connection from its row: test it, replace its key, pause or resume it. */
 const rowMenu = (row: Row, rotate: string) =>
-  menu({
-    id: idFor("connection", row.id),
-    label: name(row),
-    items: [
-      { kind: "post", label: "Test", action: connectionPath(row.id, "test") },
-      { kind: "link", label: `${rotate}…`, href: connectionPath(row.id, "rotate") },
-      { kind: "link", label: "Settings", href: connectionPath(row.id, "settings") },
-      { kind: "rule" },
-      row.status === "connected"
-        ? { kind: "link", label: "Pause…", href: connectionPath(row.id, "disconnect") }
-        : { kind: "post", label: "Resume", action: connectionPath(row.id, "reconnect") }
-    ]
-  });
+  row.href
+    ? linkButton("Open", row.href, { size: "sm" })
+    : menu({
+        id: idFor("connection", row.id),
+        label: name(row),
+        items: [
+          { kind: "post", label: "Test", action: connectionPath(row.id, "test") },
+          { kind: "link", label: `${rotate}…`, href: connectionPath(row.id, "rotate") },
+          { kind: "link", label: "Settings", href: connectionPath(row.id, "settings") },
+          { kind: "rule" },
+          row.status === "connected"
+            ? { kind: "link", label: "Pause…", href: connectionPath(row.id, "disconnect") }
+            : { kind: "post", label: "Resume", action: connectionPath(row.id, "reconnect") }
+        ]
+      });
 
 const connectionsTable = (
   shown: ReadonlyArray<Row>,
@@ -312,10 +319,14 @@ const connectionsTable = (
       ...(input.admin ? [{ label: "Actions", hidden: true, align: "end" as const }] : [])
     ],
     rows: shown.map((item) => [
-      `<div class="cell-name">${productMark(item.integration.mark)}<div class="row-main"><a class="row-link" href="${escapeAttribute(connectionPath(item.id))}">${escapeHtml(name(item))}</a><span class="row-desc">${escapeHtml(line(item))}</span></div></div>`,
+      `<div class="cell-name">${productMark(item.integration.mark)}<div class="row-main"><a class="row-link" href="${escapeAttribute(item.href ?? connectionPath(item.id))}">${escapeHtml(name(item))}</a><span class="row-desc">${escapeHtml(line(item))}</span></div></div>`,
       status(item),
       usedByCell(item),
-      ...(input.lastCalls === undefined ? [] : [lastCallCell(input.lastCalls, item.id, input.now)]),
+      ...(input.lastCalls === undefined
+        ? []
+        : [
+            item.href ? muted("Local prototype") : lastCallCell(input.lastCalls, item.id, input.now)
+          ]),
       ...(input.admin ? [rowMenu(item, input.rotate(item.integration.key))] : [])
     ])
   });
@@ -330,7 +341,7 @@ const catalogue = (offers: ReadonlyArray<Offer>, rows_: ReadonlyArray<Row>, admi
     [
       ...offers.map((offer) => {
         const count = rows_.filter((item) => item.integration.key === offer.integration.key).length;
-        const href = connectPath(offer.integration.key);
+        const href = offer.href ?? connectPath(offer.integration.key);
         return row({
           lead: productMark(offer.integration.mark),
           name: offer.integration.label,
@@ -338,9 +349,9 @@ const catalogue = (offers: ReadonlyArray<Offer>, rows_: ReadonlyArray<Row>, admi
           ...(admin
             ? {
                 href,
-                end: linkButton("Connect", href, {
+                end: linkButton(offer.buttonLabel ?? "Connect", href, {
                   size: "sm",
-                  ariaLabel: `Connect ${offer.integration.label}`
+                  ariaLabel: `${offer.buttonLabel ?? "Connect"} ${offer.integration.label}`
                 })
               }
             : {})

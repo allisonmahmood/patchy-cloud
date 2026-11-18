@@ -7,7 +7,7 @@ import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import { Analytics } from "@patchy/analytics";
 import { Integration, integrations } from "@patchy/api";
-import { type RequireSession, Session } from "@patchy/auth";
+import { DevPersonas, type RequireSession, Session } from "@patchy/auth";
 import { Teams, Users } from "@patchy/companies";
 import { checkbox, choiceGroup, radio } from "@patchy/core";
 import { ContractLimits } from "@patchy/limits";
@@ -25,6 +25,7 @@ import * as ImapPage from "./imap/Page.js";
 import * as GithubFlows from "./github/Flows.js";
 import * as GithubPage from "./github/Page.js";
 import * as GithubSource from "./github/Source.js";
+import * as NotionPrototype from "./notion/Prototype.js";
 
 /** A page to read. */
 export type Target =
@@ -321,6 +322,25 @@ const rotateLabel = (integration: string) =>
 const offersOf = (shown: ReadonlyArray<Integration>) =>
   shown.map((integration) => pages[integration].offer);
 
+const prototypeOffers = Effect.fn("ConnectionPage.prototypeOffers")(function* (
+  viewer: RequireSession.Viewer["Service"]
+) {
+  return viewer.company.handle === "brightline" &&
+    viewer.role === "admin" &&
+    (yield* DevPersonas.enabled.pipe(Effect.catch(() => Effect.succeed(false))))
+    ? [
+        {
+          integration: { key: "notion", label: "Notion", mark: "N" },
+          line: "Tasks and pages · Prototype",
+          href: NotionPrototype.connectionFor(viewer.company.id)
+            ? "/settings/integrations/notion-prototype"
+            : "/settings/integrations/connect/notion-prototype",
+          buttonLabel: NotionPrototype.connectionFor(viewer.company.id) ? "Open" : "Connect"
+        }
+      ]
+    : [];
+});
+
 /**
  * The company's people by id, and its active admins' names for the line that tells members whom
  * to ask. A directory that can't be read leaves the pages and their actions working, without names.
@@ -370,14 +390,21 @@ const index = Effect.fn("ConnectionPage.index")(function* (
     : undefined;
   const known = yield* directory(viewer);
   const people = known?.people ?? new Map<string, string>();
+  const prototypes = yield* prototypeOffers(viewer);
+  const prototype = prototypes.length
+    ? NotionPrototype.connectionFor(viewer.company.id)
+    : undefined;
   return {
     title: "Integrations",
     ...View.renderIndex({
       admin,
       admins: known?.admins ?? [],
-      rows: connections.map((connection) => row(connection, usage, people, now)),
+      rows: [
+        ...connections.map((connection) => row(connection, usage, people, now)),
+        ...(prototype ? [prototype] : [])
+      ],
       lastCalls,
-      offers: offersOf(yield* offered),
+      offers: [...offersOf(yield* offered), ...prototypes],
       rotate: rotateLabel,
       filters: filters(query),
       now,
@@ -398,13 +425,20 @@ const catalogue = Effect.fn("ConnectionPage.catalogue")(function* (
   );
   const now = yield* Clock.currentTimeMillis;
   const admins = viewer.role === "admin" ? [] : ((yield* directory(viewer))?.admins ?? []);
+  const prototypes = yield* prototypeOffers(viewer);
+  const prototype = prototypes.length
+    ? NotionPrototype.connectionFor(viewer.company.id)
+    : undefined;
   return {
     title: "Connect an integration",
     ...View.renderCatalogue({
       admin: viewer.role === "admin",
       admins,
-      rows: connections.map((connection) => row(connection, new Map(), new Map(), now)),
-      offers: offersOf(yield* offered)
+      rows: [
+        ...connections.map((connection) => row(connection, new Map(), new Map(), now)),
+        ...(prototype ? [prototype] : [])
+      ],
+      offers: [...offersOf(yield* offered), ...prototypes]
     })
   } satisfies Page;
 });
