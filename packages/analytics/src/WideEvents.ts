@@ -40,9 +40,25 @@ export const ModelCall = Schema.Struct({
   inputTokens: Schema.NullOr(Schema.Number),
   outputTokens: Schema.NullOr(Schema.Number),
   /** `ok`, or the code it refused with. */
-  outcome: Schema.String
+  outcome: Schema.String,
+  /** How long the call waited at its provider connection's gate before it was sent, or refused. */
+  gateWaitMs: Schema.optionalKey(Schema.Number),
+  /** The connection's calls in flight when this one was let through, and those waiting then. */
+  gateRunning: Schema.optionalKey(Schema.Number),
+  gateWaiting: Schema.optionalKey(Schema.Number)
 });
 export type ModelCall = typeof ModelCall.Type;
+
+/** PROTOTYPE: how a tier 2 action's slots were counted, and its time parked on model calls. */
+export const ActionSlots = Schema.Struct({
+  mode: Schema.Literals(["today", "park-r1", "park-r2"]),
+  parks: Schema.Number,
+  parkedMs: Schema.Number,
+  resumeWaitMs: Schema.Number,
+  running: Schema.Number,
+  parked: Schema.Number,
+  held: Schema.Number
+});
 
 const attribution = {
   companyId: Schema.optionalKey(Schema.String),
@@ -122,7 +138,13 @@ const invocationMetrics = {
    * PROTOTYPE: each model call the request made, in order: the role and the model it mapped to,
    * how long it took, what the provider counted and how it ended. Never the prompt or the answer.
    */
-  modelCalls: Schema.optionalKey(Schema.Array(ModelCall))
+  modelCalls: Schema.optionalKey(Schema.Array(ModelCall)),
+  /**
+   * PROTOTYPE: the slot mode the action ran under; how often and how long it was parked on model
+   * calls; for `park-r2` how long an answer was held for a slot; and the company's running and
+   * parked actions, and held answers, at the highest point the action saw.
+   */
+  slots: Schema.optionalKey(ActionSlots)
 };
 /**
  * How a content URL's document reached its reader: from the host's memory, a read it started,

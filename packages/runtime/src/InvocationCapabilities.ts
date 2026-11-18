@@ -61,6 +61,11 @@ export interface Capability {
     readonly operation?: string;
   }>;
   readonly run?: (args: unknown) => Effect.Effect<ServerCallReply, RuntimeError>;
+  /**
+   * PROTOTYPE: an action's: runs a model call with the action parked, so its slots count only
+   * while it runs (see ActionSlots).
+   */
+  readonly park?: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
   /** Host-observed resource attempts, recorded before callback authorisation. */
   readonly onDependency?: (key: string) => void;
   readonly snapshot: { value?: Resource };
@@ -75,6 +80,7 @@ export interface Issue {
   readonly tree?: TreeBudget;
   readonly counters?: Counters;
   readonly run?: (args: unknown) => Effect.Effect<ServerCallReply, RuntimeError>;
+  readonly park?: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
   readonly onDependency?: (key: string) => void;
 }
 
@@ -326,6 +332,7 @@ export const make = Effect.gen(function* () {
       observe: <A, E, R>(work: Effect.Effect<A, E, R>) =>
         observe(work.pipe(Effect.provideService(DatabaseMeter.current, meter))),
       ...(input.run === undefined ? {} : { run: input.run }),
+      ...(input.park === undefined ? {} : { park: input.park }),
       ...(input.onDependency === undefined ? {} : { onDependency: input.onDependency }),
       counters,
       logs: counters.logs,

@@ -5,6 +5,7 @@ import type { OperatingLimits } from "@patchy/limits";
 import type { InvalidLimit } from "@patchy/limits/deployment-config";
 import { MutationTransaction, QuerySnapshot } from "@patchy/primitives";
 import {
+  ActionSlots,
   CallbackGateway,
   CallbackGatewayApi,
   Executor,
@@ -105,7 +106,12 @@ export const make: (
         Effect.flatMap((local) => local.invoke(request))
       )
   });
-  return yield* Invocation.make({ callbackUrl: listener.url }).pipe(
+  // PROTOTYPE: how action slots count model calls, chosen at start for the load test.
+  const slotMode = yield* Config.Literals(ActionSlots.modes, "PATCHY_DEV_SLOT_MODE").pipe(
+    Config.withDefault("today" as const)
+  );
+  yield* Effect.logInfo(`action slots: ${slotMode}`);
+  return yield* Invocation.make({ callbackUrl: listener.url, slotMode }).pipe(
     Effect.provideService(Executor.Executor, executor)
   );
 });

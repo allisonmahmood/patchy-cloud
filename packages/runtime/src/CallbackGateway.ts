@@ -542,7 +542,13 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
                       : new Runtime.SourceUnavailable({ cause })
                   )
                 )
-          : run;
+          : // PROTOTYPE: a call that may take the action's remaining time, a model call, runs
+            // with the action parked: its slots are free while it waits (see ActionSlots).
+            operation?.kind === "integration" &&
+              operation.deadline === "attempt" &&
+              capability.park !== undefined
+            ? capability.park(run)
+            : run;
     const result = yield* Effect.exit(capabilities.execute(capability, operationRun));
     let reply: GuestProtocol.CallbackReply;
     let status = 200;
