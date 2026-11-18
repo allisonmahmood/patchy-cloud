@@ -51,13 +51,16 @@ export type ModelCall = typeof ModelCall.Type;
 
 /** PROTOTYPE: how a tier 2 action's slots were counted, and its time parked on model calls. */
 export const ActionSlots = Schema.Struct({
-  mode: Schema.Literals(["today", "park-r1", "park-r2"]),
+  mode: Schema.Literals(["today", "park-r1", "park-r2", "pool"]),
   parks: Schema.Number,
   parkedMs: Schema.Number,
   resumeWaitMs: Schema.Number,
   running: Schema.Number,
   parked: Schema.Number,
-  held: Schema.Number
+  held: Schema.Number,
+  pooled: Schema.optionalKey(Schema.Number),
+  poolRefused: Schema.optionalKey(Schema.Number),
+  resumedAt: Schema.optionalKey(Schema.Number)
 });
 
 const attribution = {

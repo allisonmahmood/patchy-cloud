@@ -219,6 +219,8 @@ interface Options {
   readonly dev?: { readonly observe: (settlement: DevSettlement) => Effect.Effect<void> };
   /** PROTOTYPE: how action slots count a model call; `today` unless a dev host chose another. */
   readonly slotMode?: ActionSlots.Mode;
+  /** PROTOTYPE: the `pool` mode's caps; ActionSlots.POOL unless a dev host chose others. */
+  readonly pool?: ActionSlots.PoolLimits;
 }
 
 interface PlatformBehavior {
@@ -265,7 +267,7 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
     fileBytes: ContractLimits.get("tier2.callbacks.fileBytes")
   });
   const codecs = new WeakMap<typeof Manifest.Type, Map<string, CompiledHandler>>();
-  const slots = ActionSlots.make(options.slotMode ?? "today");
+  const slots = ActionSlots.make(options.slotMode ?? "today", options.pool);
 
   const call = Effect.fn("Invocation.call")(function* (
     args: unknown,
@@ -383,7 +385,7 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
         const admitted =
           actionLimits === undefined
             ? undefined
-            : slots.admit(binding.companyId, key, {
+            : slots.admit(binding.companyId, key, canonicalArgs([binding.companyId, viewer.user.id]), {
                 company: actionLimits.company.value,
                 viewer: actionLimits.viewer.value
               });
@@ -1033,6 +1035,7 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
 export const make = Effect.fn("Invocation.makeProduction")(function* (options: {
   readonly callbackUrl: string;
   readonly slotMode?: ActionSlots.Mode;
+  readonly pool?: ActionSlots.PoolLimits;
 }) {
   const operating = yield* OperatingLimits.OperatingLimits;
   const rollups = yield* QueryRollups.make;
