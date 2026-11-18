@@ -72,8 +72,10 @@ ${decision ? decideDoc : generateDoc}
 
 - Patchy makes one request to the provider per call and never retries it.
 - A call may use what's left of its action's 60 seconds, less one second Patchy keeps so the handler hears why it stopped: past that it fails \`timeout\` and the request is cancelled.
-- \`source_rate_limited\`: the provider is refusing for its rate (\`details.limit\` \`"requests"\`, with \`retryAfter\` when it said) or the company's quota (\`"quota"\`). \`source_unavailable\`: it couldn't be reached, refused the company's key or failed. \`access_denied\`: the role is paused or gone, or the patch's owner can't build with it.
+- \`busy\`: Patchy's limits on the company's calls to the provider were full (4 running and 4 waiting per person), so nothing was sent. \`source_rate_limited\`: the provider is refusing for its rate (\`details.limit\` \`"requests"\`, with \`retryAfter\` when it said) or the company's quota (\`"quota"\`). \`source_unavailable\`: it couldn't be reached, refused the company's key or failed. \`access_denied\`: the role is paused or gone, or the patch's owner can't build with it.
+- An action that doesn't catch a refusal fails with it, and the page's call receives the same \`code\` and \`details\`, with \`operation\` \`models.${decision ? "decide" : "generate"}\`.
 - \`usage\` is what the provider counted, \`null\` where it didn't say. Patchy's logs keep the role, the model, the duration and the token counts, never the input or the answer.
+- In \`patchy dev\` calls are real, as you, on the company's provider, and count against your 200 model calls per UTC day in dev; past them they fail \`rate_limited\` with \`limitId\` \`models.dev.calls.daily\`. Published patches aren't counted.
 
 Read \`.agents/skills/patchy-models/SKILL.md\` before building with it.
 `
