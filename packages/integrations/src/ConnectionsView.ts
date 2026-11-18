@@ -80,8 +80,8 @@ export interface Fix {
 
 /**
  * Why a connection needs an admin, in its integration's words, with what fixes it: an Attio key
- * a check found writable, a mailbox whose server refused the password, a Pidgeon key Patchy
- * replaced but couldn't revoke. Each integration has its own reasons; the pages show one.
+ * a check found writable, a mailbox whose server refused the password, a Pidgeon test key. Each
+ * integration has its own reasons; the pages show one.
  */
 export interface Attention {
   readonly tone: "warning" | "danger";

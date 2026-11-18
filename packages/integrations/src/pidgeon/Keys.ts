@@ -5,167 +5,79 @@ import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Source from "./Source.js";
-import { Cryptography } from "@patchy/core";
 
 /**
- * The keys Patchy makes in Pidgeon. An admin pastes an admin key over the whole account, live or
- * test; Patchy uses it for that one request to find or create an address in the key's own mode
- * and mint a key for it alone, checks that key reaches exactly the address at the chosen access,
- * and keeps only it. Every write carries an Idempotency-Key, so an answer lost on the way back is
- * asked for again rather than guessed at, and anything minted before a failure is revoked.
+ * Connecting a Pidgeon inbox with a key an admin made in Pidgeon's dashboard. Such a key reaches
+ * the whole Pidgeon account, and Pidgeon makes no narrower one, so Patchy finds the inbox at the
+ * address the admin typed among those the key reaches, checks the key may do what patches may, and
+ * keeps the key with that inbox's id. What keeps every later call to that one inbox is Patchy's
+ * own checks in the operations. Nothing here makes, changes or sends anything in Pidgeon.
  */
 
+/** What patches may do with a connection: Patchy's own setting, enforced before Pidgeon sees it. */
 export type Access = "read" | "send";
 const Access = Schema.Literals(["read", "send"]);
 
 // ---------- refusals ----------
 
-export class InvalidAdminKey extends Schema.TaggedError<InvalidAdminKey>()(
-  "PidgeonInvalidAdminKey",
-  {}
-) {
+export class InvalidKey extends Schema.TaggedError<InvalidKey>()("PidgeonInvalidKey", {}) {
   readonly code = "invalid_credentials" as const;
   readonly status = 422;
   override get message() {
-    return "Paste a Pidgeon admin key: it starts with pgn_live_ or pgn_test_.";
+    return "Paste a Pidgeon API key: it starts with pgn_.";
   }
 }
-export class AdminKeyRejected extends Schema.TaggedError<AdminKeyRejected>()(
-  "PidgeonAdminKeyRejected",
+/** Connect: Read and send needs a key that can send; this one only reads. */
+export class CantSend extends Schema.TaggedError<CantSend>()("PidgeonCantSend", {}) {
+  readonly code = "pidgeon_key_cant_send" as const;
+  readonly status = 422;
+  override get message() {
+    return "This key can only read. Make a Send key in Pidgeon and paste it, or choose Read.";
+  }
+}
+/** Replace key: patches may send through the connection, and the new key only reads. */
+export class NewKeyCantSend extends Schema.TaggedError<NewKeyCantSend>()(
+  "PidgeonNewKeyCantSend",
   {}
 ) {
-  readonly code = "pidgeon_admin_key_rejected" as const;
+  readonly code = "pidgeon_new_key_cant_send" as const;
   readonly status = 422;
   override get message() {
-    return "Pidgeon didn't accept this admin key. Check it's current: a revoked key stops working at once.";
+    return "This key can only read, and patches may send through this connection. Paste a Send key, or change access to Read first.";
   }
 }
-export class NotAdminKey extends Schema.TaggedError<NotAdminKey>()("PidgeonNotAdminKey", {}) {
-  readonly code = "pidgeon_not_admin" as const;
+/**
+ * No inbox the key reaches has the address typed. The others it reaches are never named: the
+ * admin made the key for one inbox, and the refusal says only that this one isn't there.
+ */
+export class InboxNotFound extends Schema.TaggedError<InboxNotFound>()("PidgeonInboxNotFound", {}) {
+  readonly code = "pidgeon_inbox_not_found" as const;
   readonly status = 422;
   override get message() {
-    return "Patchy needs an admin key to find addresses and make a key for one. In Pidgeon, make a new key with Admin access.";
+    return "No inbox this key reaches has that address. Check it in Pidgeon, or make the inbox there first.";
   }
 }
-export class PartialAdminKey extends Schema.TaggedError<PartialAdminKey>()(
-  "PidgeonPartialAdminKey",
-  {}
-) {
-  readonly code = "pidgeon_partial_admin" as const;
-  readonly status = 422;
-  override get message() {
-    return "Patchy needs an admin key over the whole account. In Pidgeon, make an Admin key that reaches every address.";
-  }
-}
-export class AddressNotFound extends Schema.TaggedError<AddressNotFound>()(
-  "PidgeonAddressNotFound",
-  {}
-) {
-  readonly code = "pidgeon_address_not_found" as const;
-  readonly status = 422;
-  override get message() {
-    return "Pidgeon has no such address that this key reaches. Find addresses again.";
-  }
-}
-/** A test key connects test addresses, and a live key live ones. */
-export class AddressModeMismatch extends Schema.TaggedError<AddressModeMismatch>()(
-  "PidgeonAddressModeMismatch",
-  { email: Schema.String, test: Schema.Boolean }
-) {
-  readonly code = "pidgeon_address_mode" as const;
-  readonly status = 422;
-  override get message() {
-    return this.test
-      ? `${this.email} is a test address. Use a test admin key for it.`
-      : `${this.email} is a live address. Use a live admin key for it.`;
-  }
-}
+/** An `events` inbox keeps no mail and never sends. */
 export class NoInbox extends Schema.TaggedError<NoInbox>()("PidgeonNoInbox", {
   email: Schema.String
 }) {
   readonly code = "pidgeon_no_inbox" as const;
   readonly status = 422;
   override get message() {
-    return `${this.email} keeps no inbox in Pidgeon, so there's nothing for patches to read. Pick an address with an inbox, or create one.`;
+    return `${this.email} only receives events and keeps no mail, so patches would have nothing to read. Use an inbox that keeps mail.`;
   }
 }
-export class AddressTaken extends Schema.TaggedError<AddressTaken>()("PidgeonAddressTaken", {
+/** Replace key: the new key doesn't reach the connection's inbox. */
+export class OtherAccount extends Schema.TaggedError<OtherAccount>()("PidgeonOtherAccount", {
   email: Schema.String
 }) {
-  readonly code = "pidgeon_address_taken" as const;
+  readonly code = "pidgeon_other_account" as const;
   readonly status = 422;
   override get message() {
-    return `${this.email} is taken. Choose another name, or pick it from the list if it's yours.`;
+    return `This key doesn't reach ${this.email}. Paste a key of the Pidgeon account it's in.`;
   }
 }
-/** Pidgeon refused the new address's fields, naming the one at fault when it's one. */
-export class InvalidAddress extends Schema.TaggedError<InvalidAddress>()("PidgeonInvalidAddress", {
-  cause: Source.Invalid
-}) {
-  readonly code = "pidgeon_invalid_address" as const;
-  readonly status = 422;
-  override get message() {
-    return `Pidgeon refused this address: ${this.cause.details.message}`;
-  }
-}
-/** The workspace has no such domain to create an address on. */
-export class UnknownDomain extends Schema.TaggedError<UnknownDomain>()("PidgeonUnknownDomain", {
-  domain: Schema.String
-}) {
-  readonly code = "pidgeon_unknown_domain" as const;
-  readonly status = 422;
-  override get message() {
-    return `This Pidgeon workspace has no domain ${this.domain}. Pick ${SHARED_DOMAIN} or one of your own.`;
-  }
-}
-/** The key Pidgeon minted could do more, or other, than Patchy asked; it was revoked. */
-export class MintedKeyUnexpected extends Schema.TaggedError<MintedKeyUnexpected>()(
-  "PidgeonMintedKeyUnexpected",
-  {
-    /** What was off, for diagnostics: the wrong mode, the wrong access, or the wrong reach. */
-    found: Schema.Literals(["test", "access", "reach"])
-  }
-) {
-  readonly code = "pidgeon_key_unexpected" as const;
-  readonly status = 502;
-  override get message() {
-    return "The key Pidgeon made for this address could do more, or other, than Patchy asked, so Patchy revoked it and saved nothing. Try again.";
-  }
-}
-/** Pidgeon's answers to the mint kept getting lost; Patchy revoked what it made. */
-export class MintUnknown extends Schema.TaggedError<MintUnknown>()("PidgeonMintUnknown", {}) {
-  readonly code = "pidgeon_mint_unknown" as const;
-  readonly status = 503;
-  override get message() {
-    return "Pidgeon's answers kept getting lost while it made the key, so Patchy revoked what it made and saved nothing. Try again.";
-  }
-}
-/**
- * Patchy stopped before saving, and couldn't revoke, or tell whether Pidgeon made, a key. `then`
- * is the refusal that stopped it, such as when to try again.
- */
-export class StrayKey extends Schema.TaggedError<StrayKey>()("PidgeonStrayKey", {
-  key: Schema.String,
-  then: Schema.optionalKey(Schema.String)
-}) {
-  readonly code = "pidgeon_key_left" as const;
-  readonly status = 503;
-  override get message() {
-    return `Patchy stopped before saving anything, and couldn't revoke a key it made, or may have made, in Pidgeon, named ${this.key}. Revoke it in Pidgeon under Developers › API keys.${this.then === undefined ? "" : ` ${this.then}`}`;
-  }
-}
-/** The save's own outcome is unknown, so nothing was revoked. */
-export class SaveUnknown extends Schema.TaggedError<SaveUnknown>()("PidgeonSaveUnknown", {
-  key: Schema.String,
-  name: Schema.String
-}) {
-  readonly code = "pidgeon_save_unknown" as const;
-  readonly status = 503;
-  override get message() {
-    return `Patchy couldn't tell whether ${this.name} was saved. Check the connections list: if it isn't there, revoke the key named ${this.key} in Pidgeon under Developers › API keys.`;
-  }
-}
-/** The stored key no longer works: revoked, for example because its admin key was. */
+/** The stored key no longer works: revoked in Pidgeon. */
 export class StoredKeyRejected extends Schema.TaggedError<StoredKeyRejected>()(
   "PidgeonStoredKeyRejected",
   {}
@@ -173,153 +85,67 @@ export class StoredKeyRejected extends Schema.TaggedError<StoredKeyRejected>()(
   readonly code = "pidgeon_key_stopped" as const;
   readonly status = 409;
   override get message() {
-    return "Pidgeon refused Patchy's key for this address, perhaps because the admin key it was made with was revoked. Patches can't read or send until it's replaced.";
+    return "Pidgeon refused the stored key, so it was probably revoked in Pidgeon. Patches can't read or send until it's replaced.";
   }
 }
-/** The address was deleted in Pidgeon, or the key no longer reaches it. */
-export class AddressGone extends Schema.TaggedError<AddressGone>()("PidgeonAddressGone", {
+/** The inbox was removed in Pidgeon, or the stored key no longer reaches it. */
+export class InboxGone extends Schema.TaggedError<InboxGone>()("PidgeonInboxGone", {
   email: Schema.String
 }) {
-  readonly code = "pidgeon_address_gone" as const;
+  readonly code = "pidgeon_inbox_gone" as const;
   readonly status = 409;
   override get message() {
-    return `${this.email} is gone from Pidgeon, or Patchy's key no longer reaches it. Replacing the key can't bring it back; connect a different address as a new connection.`;
+    return `${this.email} is gone from Pidgeon, or the stored key no longer reaches it. If it's still there, replace the key with one of its account; otherwise connect another inbox as a new connection.`;
+  }
+}
+/** Patches may send, and the stored key can't: Change access or Test found it read-only. */
+export class StoredCantSend extends Schema.TaggedError<StoredCantSend>()(
+  "PidgeonStoredCantSend",
+  {}
+) {
+  readonly code = "pidgeon_stored_key_cant_send" as const;
+  readonly status = 409;
+  override get message() {
+    return "The stored key can only read, so patches can't send through it. Replace it with a Send key first.";
   }
 }
 
-/** What checking an admin key can refuse. */
-export type AdminKeyError =
-  InvalidAdminKey | AdminKeyRejected | NotAdminKey | PartialAdminKey | Source.CallError;
-/** What finding or creating the address can refuse. */
-export type AddressError =
-  AddressNotFound | AddressModeMismatch | NoInbox | AddressTaken | InvalidAddress | UnknownDomain;
-/** What minting and checking the address key can refuse. */
-export type MintError = MintedKeyUnexpected | MintUnknown | StrayKey;
-/** What the stored key's calls can refuse. */
-export type StoredKeyError = StoredKeyRejected | AddressGone;
-export type KeysError =
-  | AdminKeyError
-  | AddressError
-  | MintError
-  | StoredKeyError
-  | SaveUnknown
-  | Source.InvalidCredentials;
+/** What checking a pasted key and its inbox can refuse. */
+export type ConnectError =
+  InvalidKey | CantSend | NewKeyCantSend | InboxNotFound | NoInbox | OtherAccount;
+/** What the stored key's checks can refuse. */
+export type StoredKeyError = StoredKeyRejected | InboxGone | StoredCantSend;
+export type KeysError = ConnectError | StoredKeyError | Source.InvalidCredentials;
 
 // ---------- Pidgeon's shapes ----------
 
-const Me = Schema.Struct({
-  key: Schema.NullOr(
-    Schema.Struct({
-      id: Schema.String,
-      access: Schema.String,
-      reaches_all_addresses: Schema.Boolean,
-      test: Schema.Boolean
-    })
-  ),
-  workspace: Schema.Struct({ plan: Schema.String }),
-  reaches: Schema.Int
-});
-const Identity = Schema.Struct({
+const Inbox = Schema.Struct({
   id: Schema.String,
-  email: Schema.String,
-  display_name: Schema.NullOr(Schema.String),
-  has_inbox: Schema.Boolean,
-  send_policy: Schema.String,
-  test: Schema.Boolean
+  address: Schema.String,
+  kind: Schema.String,
+  display_name: Schema.optionalKey(Schema.NullOr(Schema.String))
 });
-type Identity = typeof Identity.Type;
-const Domain = Schema.Struct({ id: Schema.String, domain: Schema.String });
-const Minted = Schema.Struct({
+type Inbox = typeof Inbox.Type;
+const Label = Schema.Struct({
   id: Schema.String,
+  inbox_id: Schema.String,
   name: Schema.String,
-  /** Null on a replay: Pidgeon shows a secret once. */
-  token: Schema.NullOr(Schema.String),
-  test: Schema.Boolean,
-  created_at: Schema.String
+  colour: Schema.String
 });
-const Label = Schema.Struct({ id: Schema.String, name: Schema.String, colour: Schema.String });
-const Page = <S extends Schema.Top>(item: S) =>
-  Schema.Struct({
-    data: Schema.Array(item),
-    has_more: Schema.Boolean,
-    next_cursor: Schema.NullOr(Schema.String)
-  });
-const decodeMe = Schema.decodeUnknownEffect(Me);
-const decodeIdentity = Schema.decodeUnknownEffect(Identity);
-const decodeMinted = Schema.decodeUnknownEffect(Minted);
-const decodeIdentityPage = Schema.decodeUnknownEffect(Page(Identity));
-const decodeDomainPage = Schema.decodeUnknownEffect(Page(Domain));
-const decodeLabelPage = Schema.decodeUnknownEffect(Page(Label));
+const InboxPage = Schema.Struct({
+  data: Schema.Array(Inbox),
+  has_more: Schema.Boolean,
+  next_cursor: Schema.NullOr(Schema.String)
+});
+const decodeInbox = Schema.decodeUnknownEffect(Inbox);
+const decodeInboxPage = Schema.decodeUnknownEffect(InboxPage);
+const decodeLabels = Schema.decodeUnknownEffect(Schema.Struct({ data: Schema.Array(Label) }));
 
 /** An answer Patchy can't read is Pidgeon answering unexpectedly. */
 const unreadable = (cause: Schema.SchemaError) =>
   new Source.Unavailable({ stage: "response", cause: Redacted.make(cause) });
 
-/** The pages of one list, following Pidgeon's cursor up to `max` items. */
-const listed = Effect.fn("PidgeonKeys.listed")(function* <A>(
-  source: Source.Source["Service"],
-  token: Redacted.Redacted<string>,
-  request: Source.Request,
-  deadline: number,
-  decode: (
-    body: unknown
-  ) => Effect.Effect<
-    { readonly data: ReadonlyArray<A>; readonly next_cursor: string | null },
-    Schema.SchemaError
-  >,
-  max: number
-) {
-  const found: A[] = [];
-  let cursor: string | null = null;
-  do {
-    const answer: Source.Answer = yield* source.call(
-      token,
-      { ...request, query: { ...request.query, ...(cursor === null ? {} : { cursor }) } },
-      deadline
-    );
-    const page: { readonly data: ReadonlyArray<A>; readonly next_cursor: string | null } =
-      yield* decode(answer.body).pipe(Effect.mapError(unreadable));
-    found.push(...page.data);
-    if (found.length > max) return { items: found.slice(0, max), more: true };
-    // A cursor that repeats would never end the list.
-    cursor = page.next_cursor === cursor ? null : page.next_cursor;
-  } while (cursor !== null);
-  return { items: found, more: false };
-});
-
-/** How many times one write is sent while its answer is lost, under the same Idempotency-Key. */
-const WRITE_ATTEMPTS = 3;
-
-/** A send whose answer never came back: Pidgeon may have done the work. One never sent isn't. */
-const answerLost = (error: Source.CallError) =>
-  error._tag === "PidgeonUnavailable" ||
-  (error._tag === "PidgeonTimeout" && error.milliseconds > 0);
-
-/**
- * Sends a write under one Idempotency-Key, again while its answer is lost on the way back: Pidgeon
- * answers a repeat with the first result and does nothing twice. A refusal is final. `seen.lost`
- * says whether any send lost its answer, so a refusal after one leaves the outcome unknown.
- */
-const write = Effect.fn("PidgeonKeys.write")(function* (
-  token: Redacted.Redacted<string>,
-  request: Omit<Source.Request, "idempotencyKey">,
-  until: number,
-  key?: string,
-  seen: { lost: boolean } = { lost: false }
-) {
-  const source = yield* Source.Source;
-  const idempotencyKey = key ?? `patchy-${yield* (yield* Cryptography.Cryptography).randomUUID}`;
-  return yield* source.call(token, { ...request, idempotencyKey }, until).pipe(
-    Effect.tapError((error) =>
-      Effect.sync(() => {
-        if (answerLost(error)) seen.lost = true;
-      })
-    ),
-    Effect.retry({ times: WRITE_ATTEMPTS - 1, while: answerLost })
-  );
-});
-
-// ---------- the admin key ----------
+// ---------- the key ----------
 
 /** One admin request's deadline: every call from checking the key to reading the snapshot. */
 export const deadline = Effect.map(
@@ -328,535 +154,262 @@ export const deadline = Effect.map(
 );
 
 /**
- * The admin key as Pidgeon describes it, refused unless it's an admin key over the whole account.
- * Its mode, live or test, is the mode of every address and key Patchy makes with it.
+ * An id Pidgeon never issues, so the level check below names nothing that exists and changes
+ * nothing: the probes asked Pidgeon with this one.
  */
-export const checkAdmin = Effect.fn("PidgeonKeys.checkAdmin")(function* (
-  adminKey: Redacted.Redacted<string>,
-  until: number
-) {
-  if (!Source.isToken(Redacted.value(adminKey))) return yield* new InvalidAdminKey({});
-  const source = yield* Source.Source;
-  const answer = yield* source
-    .call(adminKey, { method: "GET", path: "/me" }, until)
-    .pipe(Effect.catchTags({ PidgeonKeyRejected: () => Effect.fail(new AdminKeyRejected({})) }));
-  const me = yield* decodeMe(Source.data(answer.body)).pipe(Effect.mapError(unreadable));
-  if (me.key === null) return yield* new AdminKeyRejected({});
-  if (me.key.access !== "admin") return yield* new NotAdminKey({});
-  if (!me.key.reaches_all_addresses) return yield* new PartialAdminKey({});
-  return { test: me.key.test, plan: me.workspace.plan };
-});
-
-/** An address as the connect form lists it. */
-export interface Address {
-  readonly id: string;
-  readonly email: string;
-  readonly displayName: string | null;
-  readonly sendPolicy: string;
-  readonly hasInbox: boolean;
-}
-const address = (identity: Identity): Address => ({
-  id: identity.id,
-  email: identity.email,
-  displayName: identity.display_name,
-  sendPolicy: identity.send_policy,
-  hasInbox: identity.has_inbox
-});
-
-/** Pidgeon's shared domain, which `GET /domains` doesn't list but every workspace may use. */
-export const SHARED_DOMAIN = "pidgeon.email";
+export const NOTHING = "00000000-0000-4000-8000-000000000000";
 
 /**
- * What the connect form offers after the admin key is checked: the addresses it reaches in its own
- * mode, and the domains a new address can use, the shared one first.
+ * Whether a key may send, asked without changing anything: sending a draft that doesn't exist
+ * answers 403 below `send`, and 404 from `send` up.
  */
-export const addresses = Effect.fn("PidgeonKeys.addresses")(function* (
-  adminKey: Redacted.Redacted<string>
-) {
-  const until = yield* deadline;
-  const admin = yield* checkAdmin(adminKey, until);
-  const source = yield* Source.Source;
-  const found = yield* listed(
-    source,
-    adminKey,
-    { method: "GET", path: "/identities", query: { limit: 200 } },
-    until,
-    decodeIdentityPage,
-    registry["pidgeon.addresses.listed"].default
-  );
-  const domains = yield* listed(
-    source,
-    adminKey,
-    { method: "GET", path: "/domains", query: { limit: 200 } },
-    until,
-    decodeDomainPage,
-    registry["pidgeon.addresses.listed"].default
-  );
-  return {
-    test: admin.test,
-    addresses: found.items.filter((item) => item.test === admin.test).map(address),
-    more: found.more,
-    domains: [
-      SHARED_DOMAIN,
-      ...domains.items.map((item) => item.domain).filter((domain) => domain !== SHARED_DOMAIN)
-    ]
-  };
-});
-
-// ---------- what an admin submits ----------
-
-/** One connect page or form's attempt, kept across a refused submit so a retry repeats it. */
-export const Attempt = Schema.String.check(Schema.isPattern(/^[a-z0-9]{12}$/));
-export const isAttempt = Schema.is(Attempt);
-const ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
-export const newAttempt = Cryptography.Cryptography.use((cryptography) =>
-  cryptography.randomString(ALPHABET, 12)
-);
-
-export const LocalPart = Schema.String.check(
-  Schema.isPattern(/^[a-z0-9](?:[a-z0-9._+-]{0,62}[a-z0-9])?$/)
-);
-export const SendPolicy = Schema.Literals(["reply_only", "open"]);
-/** The address the admin picked, or the one Patchy creates with an inbox. */
-export const Choice = Schema.Union([
-  Schema.Struct({ id: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(128)) }),
-  Schema.Struct({
-    create: Schema.Struct({
-      localPart: LocalPart,
-      domain: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(253)),
-      displayName: Schema.NullOr(Schema.String.check(Schema.isMaxLength(120))),
-      sendPolicy: SendPolicy
-    })
-  })
-]);
-export type Choice = typeof Choice.Type;
-
-/** Connect's secret: the admin key travels only inside it, and is never stored. */
-export const ConnectRequest = Schema.Struct({
-  adminKey: Schema.String,
-  attempt: Attempt,
-  address: Choice,
-  access: Access
-});
-export type ConnectRequest = typeof ConnectRequest.Type;
-/** Change access and Replace key: the same address, a new key at `access`. */
-export const ReplaceRequest = Schema.Struct({
-  adminKey: Schema.String,
-  attempt: Attempt,
-  access: Access
-});
-export type ReplaceRequest = typeof ReplaceRequest.Type;
-
-const connectJson = Schema.fromJsonString(ConnectRequest);
-const replaceJson = Schema.fromJsonString(ReplaceRequest);
-const encodeConnect = Schema.encodeSync(connectJson);
-const encodeReplace = Schema.encodeSync(replaceJson);
-export const connectSecret = (value: ConnectRequest) => Redacted.make(encodeConnect(value));
-export const replaceSecret = (value: ReplaceRequest) => Redacted.make(encodeReplace(value));
-export const parseConnect = Effect.fn("PidgeonKeys.parseConnect")(function* (
-  secret: Redacted.Redacted<string>
-) {
-  return yield* Schema.decodeUnknownEffect(connectJson)(Redacted.value(secret)).pipe(
-    Effect.mapError(() => new InvalidAdminKey({}))
-  );
-});
-export const parseReplace = Effect.fn("PidgeonKeys.parseReplace")(function* (
-  secret: Redacted.Redacted<string>
-) {
-  return yield* Schema.decodeUnknownEffect(replaceJson)(Redacted.value(secret)).pipe(
-    Effect.mapError(() => new InvalidAdminKey({}))
-  );
-});
-
-/**
- * Patchy's key for one connection, as Pidgeon lists it, under its 60-character limit: the handle
- * and the page's attempt, so a refusal that names a key Patchy couldn't revoke names one an admin
- * can find in Pidgeon.
- */
-export const keyName = (handle: string, attempt: string) => `Patchy ${handle} ${attempt}`;
-
-// ---------- the address ----------
-
-const idempotencyKey = (scope: string, attempt: string, body: unknown) =>
-  Cryptography.Cryptography.use((cryptography) =>
-    cryptography.sha256(JSON.stringify([scope, attempt, body]))
-  );
-
-/** The address, refused when it has no inbox or isn't in the admin key's mode. */
-const usable = (identity: Identity, test: boolean) =>
-  identity.test !== test
-    ? Effect.fail(new AddressModeMismatch({ email: identity.email, test: identity.test }))
-    : identity.has_inbox
-      ? Effect.succeed(identity)
-      : Effect.fail(new NoInbox({ email: identity.email }));
-
-/**
- * The chosen address, or the new one, created with an inbox in the admin key's mode: a test key
- * makes a test address. Creation's Idempotency-Key comes from the attempt and the address asked
- * for, so a connect retried within the day Pidgeon keeps the key makes no second address.
- */
-const findOrCreate = Effect.fn("PidgeonKeys.findOrCreate")(function* (
-  adminKey: Redacted.Redacted<string>,
-  test: boolean,
-  scope: string,
-  attempt: string,
-  choice: Choice,
+const canSend = Effect.fn("PidgeonKeys.canSend")(function* (
+  token: Redacted.Redacted<string>,
   until: number
 ) {
   const source = yield* Source.Source;
-  if ("id" in choice) {
-    const answer = yield* source
-      .call(
-        adminKey,
-        { method: "GET", path: `/identities/${encodeURIComponent(choice.id)}` },
-        until
-      )
-      .pipe(Effect.catchTags({ PidgeonNotFound: () => Effect.fail(new AddressNotFound({})) }));
-    const identity = yield* decodeIdentity(Source.data(answer.body)).pipe(
+  return yield* source
+    .call(token, { method: "POST", path: `/email/drafts/${NOTHING}/send` }, until)
+    .pipe(
+      Effect.flatMap(() => Effect.fail(new Source.Unavailable({ stage: "response" }))),
+      Effect.catchTags({
+        PidgeonNotFound: () => Effect.succeed(true),
+        PidgeonForbidden: () => Effect.succeed(false)
+      })
+    );
+});
+
+const pasted = (key: Redacted.Redacted<string>) =>
+  Source.isToken(Redacted.value(key)) ? Effect.succeed(key) : Effect.fail(new InvalidKey({}));
+
+/** An address as Patchy compares it: trimmed, ignoring case. */
+const sameAddress = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+/**
+ * The inbox at `email` among those `token` reaches, read page by page up to the registry's count;
+ * none there is `InboxNotFound`. A key Pidgeon refuses fails at the first page.
+ */
+const inboxAt = Effect.fn("PidgeonKeys.inboxAt")(function* (
+  token: Redacted.Redacted<string>,
+  email: string,
+  until: number
+) {
+  const source = yield* Source.Source;
+  const max = registry["pidgeon.addresses.listed"].default;
+  let seen = 0;
+  let cursor: string | null = null;
+  do {
+    const answer: Source.Answer = yield* source.call(
+      token,
+      {
+        method: "GET",
+        path: "/email/inboxes",
+        query: { limit: 100, ...(cursor === null ? {} : { cursor }) }
+      },
+      until
+    );
+    const page: typeof InboxPage.Type = yield* decodeInboxPage(answer.body).pipe(
       Effect.mapError(unreadable)
     );
-    return yield* usable(identity, test);
-  }
-  const body = {
-    local_part: choice.create.localPart,
-    domain: choice.create.domain,
-    display_name: choice.create.displayName,
-    inbox: true,
-    send_policy: choice.create.sendPolicy
-  };
-  const email = `${choice.create.localPart}@${choice.create.domain}`;
-  const answer = yield* write(
-    adminKey,
-    { method: "POST", path: "/identities", body },
-    until,
-    yield* idempotencyKey(scope, attempt, body)
-  ).pipe(
-    Effect.catchTags({
-      PidgeonConflict: (cause) =>
-        cause.details.field === "localPart" || cause.details.field === "local_part"
-          ? Effect.fail(new AddressTaken({ email }))
-          : Effect.fail(cause),
-      PidgeonInvalid: (cause) => Effect.fail(new InvalidAddress({ cause })),
-      PidgeonNotFound: () => Effect.fail(new UnknownDomain({ domain: choice.create.domain }))
-    })
-  );
-  const identity = yield* decodeIdentity(Source.data(answer.body)).pipe(
-    Effect.mapError(unreadable)
-  );
-  return yield* usable(identity, test);
+    const found = page.data.slice(0, max - seen).find((inbox) => sameAddress(inbox.address, email));
+    if (found !== undefined) return found;
+    seen += page.data.length;
+    // A cursor that repeats would never end the list.
+    cursor = page.next_cursor === cursor ? null : page.next_cursor;
+  } while (cursor !== null && seen < max);
+  return yield* new InboxNotFound({});
 });
 
-// ---------- the address key ----------
-
-/** A key Patchy minted and keeps: its id and name, and its secret. */
-export interface Made {
-  readonly id: string;
-  readonly name: string;
-  readonly token: Redacted.Redacted<string>;
-  readonly madeAt: string;
-}
-
-/**
- * Revokes a key with `token`: its own secret (`self`), or the admin key that made it. A key gone
- * some other way answers 404, which counts as done. A key already revoked answers its own secret
- * 401, which counts as done too; the admin key's 401 says only that the admin key stopped, so the
- * key may still work.
- */
-export const revoke = Effect.fn("PidgeonKeys.revoke")(function* (
+/** The inbox by id as `token` reaches it; a 404 is `missing`'s refusal. */
+const inboxOf = Effect.fn("PidgeonKeys.inboxOf")(function* <E>(
   token: Redacted.Redacted<string>,
-  id: string,
-  by: "self" | "admin"
-) {
-  const until = (yield* Clock.currentTimeMillis) + registry["integration.deadline"].default;
-  yield* write(
-    token,
-    { method: "DELETE", path: `/api-keys/${encodeURIComponent(id)}` },
-    until
-  ).pipe(
-    Effect.asVoid,
-    Effect.catchTags({
-      PidgeonKeyRejected: (error) => (by === "self" ? Effect.void : Effect.fail(error)),
-      PidgeonNotFound: () => Effect.void
-    })
-  );
-});
-
-/** What a key reaches and may do, by its own `/me` and `/identities`. */
-const reachOf = Effect.fn("PidgeonKeys.reachOf")(function* (
-  token: Redacted.Redacted<string>,
-  until: number
+  inboxId: string,
+  until: number,
+  missing: () => E
 ) {
   const source = yield* Source.Source;
-  const me = yield* source
-    .call(token, { method: "GET", path: "/me" }, until)
-    .pipe(
-      Effect.flatMap((answer) =>
-        decodeMe(Source.data(answer.body)).pipe(Effect.mapError(unreadable))
-      )
-    );
-  const identities = yield* listed(
-    source,
-    token,
-    { method: "GET", path: "/identities", query: { limit: 2 } },
-    until,
-    decodeIdentityPage,
-    2
-  );
-  return { me, identities: identities.items };
+  const answer = yield* source
+    .call(token, { method: "GET", path: `/email/inboxes/${encodeURIComponent(inboxId)}` }, until)
+    .pipe(Effect.catchTags({ PidgeonNotFound: () => Effect.fail(missing()) }));
+  const inbox = yield* decodeInbox(answer.body).pipe(Effect.mapError(unreadable));
+  if (inbox.id !== inboxId) return yield* new Source.Unavailable({ stage: "response" });
+  return inbox;
 });
 
-/** The address's labels and what the key may do, as an immutable snapshot. */
+/** The inbox's labels and what patches may do, as an immutable snapshot. */
 const snapshotOf = Effect.fn("PidgeonKeys.snapshotOf")(function* (
   token: Redacted.Redacted<string>,
-  identity: Identity,
+  inbox: Inbox,
   access: Access,
-  plan: string,
   until: number
 ) {
   const source = yield* Source.Source;
-  const labels = yield* listed(
-    source,
+  const answer = yield* source.call(
     token,
-    { method: "GET", path: "/labels", query: { identity_id: identity.id } },
-    until,
-    decodeLabelPage,
-    registry["pidgeon.snapshot.labels"].default
+    { method: "GET", path: `/email/inboxes/${encodeURIComponent(inbox.id)}/labels` },
+    until
   );
+  const labels = (yield* decodeLabels(answer.body).pipe(Effect.mapError(unreadable))).data;
+  // A label of another inbox never reaches a snapshot: the answer is refused whole.
+  if (labels.some((label) => label.inbox_id !== inbox.id))
+    return yield* new Source.Unavailable({ stage: "response" });
   const snapshot: PidgeonSnapshot = {
-    version: 1,
+    version: 2,
     address: {
-      email: identity.email.slice(0, 320),
-      displayName: identity.display_name?.slice(0, 200) ?? null,
-      sendPolicy: identity.send_policy.slice(0, 32)
+      email: inbox.address.slice(0, 320),
+      displayName: inbox.display_name?.slice(0, 200) ?? null
     },
     access,
-    test: identity.test,
+    test: Source.isTestToken(Redacted.value(token)),
     // The snapshot's bounds: the first labels Pidgeon lists, each cut to what a snapshot keeps.
-    labels: labels.items.map(({ id, name, colour }) => ({
-      id: id.slice(0, 128),
-      name: name.slice(0, 200),
-      colour: colour.slice(0, 32)
-    })),
-    plan: plan.slice(0, 64)
+    labels: labels.slice(0, registry["pidgeon.snapshot.labels"].default).map((label) => ({
+      id: label.id.slice(0, 128),
+      name: label.name.slice(0, 200),
+      colour: label.colour.slice(0, 32)
+    }))
   };
   return snapshot;
 });
 
-/**
- * Mints a key for `identity` alone at `access`. A lost answer is asked for again with the same
- * admin key, request and Idempotency-Key; Pidgeon then names the key it made but never shows its
- * secret twice, so that key is revoked and one more is minted. A key Patchy can't revoke, or
- * can't tell it made, because the deadline passed or the ask again was refused, is named, so an
- * admin can, with the refusal's own words about when to try again.
- */
-const mint = Effect.fn("PidgeonKeys.mint")(function* (
-  adminKey: Redacted.Redacted<string>,
-  name: string,
-  identity: Identity,
-  access: Access,
-  until: number
-) {
-  const stray = () => new StrayKey({ key: name });
-  for (let round = 0; round < 2; round++) {
-    const seen = { lost: false };
-    const answer = yield* write(
-      adminKey,
-      { method: "POST", path: "/api-keys", body: { name, identity_ids: [identity.id], access } },
-      until,
-      undefined,
-      seen
-    ).pipe(
-      Effect.catch((error): Effect.Effect<never, StrayKey | Source.CallError> =>
-        error._tag === "PidgeonUnavailable" ||
-        error._tag === "PidgeonTimeout" ||
-        error._tag === "PidgeonTooLarge"
-          ? Effect.fail(stray())
-          : // A refusal after a lost answer: the first send may have made the key.
-            seen.lost
-            ? Effect.fail(new StrayKey({ key: name, then: error.message }))
-            : Effect.fail(error)
-      )
-    );
-    const minted = yield* decodeMinted(Source.data(answer.body)).pipe(Effect.mapError(stray));
-    if (minted.token !== null)
-      return {
-        made: {
-          id: minted.id,
-          name: minted.name,
-          token: Redacted.make(minted.token),
-          madeAt: minted.created_at
-        } satisfies Made,
-        test: minted.test
-      };
-    // A replay: the first answer was lost, and the key's secret with it.
-    yield* revoke(adminKey, minted.id, "admin").pipe(Effect.mapError(stray));
-  }
-  return yield* new MintUnknown({});
-});
-
-/** The minted key checked by its own `/me` and `/identities`: this address alone, at `access`. */
-const check = (
-  made: Made,
-  minted: { readonly test: boolean },
-  identity: Identity,
-  access: Access,
-  until: number
-) =>
-  Effect.gen(function* () {
-    if (minted.test !== identity.test) return yield* new MintedKeyUnexpected({ found: "test" });
-    const reach = yield* reachOf(made.token, until);
-    if (reach.me.key === null || reach.me.key.access !== access)
-      return yield* new MintedKeyUnexpected({ found: "access" });
-    if (reach.me.key.test !== identity.test)
-      return yield* new MintedKeyUnexpected({ found: "test" });
-    if (
-      reach.me.key.reaches_all_addresses ||
-      reach.identities.length !== 1 ||
-      reach.identities[0]?.id !== identity.id
-    )
-      return yield* new MintedKeyUnexpected({ found: "reach" });
-    return reach.me.workspace.plan;
-  });
-
-/** Revokes `made` after a failure, or names it when that fails too. */
-export const undo = <E>(made: Made, error: E) =>
-  revoke(made.token, made.id, "self").pipe(
-    Effect.matchEffect({
-      onFailure: () => Effect.fail(new StrayKey({ key: made.name })),
-      onSuccess: () => Effect.fail(error)
-    })
-  );
-
-/** A minted, checked key and the snapshot it read, ready for the store to save. */
-export interface Provisioned {
-  readonly made: Made;
-  readonly identity: Address;
-  readonly test: boolean;
+/** A checked key, the inbox it serves and the snapshot it read, ready for the store to save. */
+export interface Checked {
+  readonly credentials: Source.Credentials;
+  readonly display: Source.Display;
   readonly snapshot: PidgeonSnapshot;
 }
+const checked = (
+  token: Redacted.Redacted<string>,
+  inbox: Inbox,
+  snapshot: PidgeonSnapshot
+): Checked => ({
+  credentials: { inboxId: inbox.id, key: Redacted.value(token) },
+  display: {
+    email: inbox.address,
+    inboxId: inbox.id,
+    access: snapshot.access,
+    test: snapshot.test
+  },
+  snapshot
+});
 
-/** Mints the address's key, checks it and reads the snapshot with it, revoking it on a failure. */
-const provisioned = Effect.fn("PidgeonKeys.provisioned")(function* (
-  adminKey: Redacted.Redacted<string>,
-  name: string,
-  identity: Identity,
-  access: Access,
-  until: number
+// ---------- what an admin submits ----------
+
+/** Connect's secret: the pasted key, the inbox's address as typed and what patches may do. */
+export const ConnectRequest = Schema.Struct({
+  key: Schema.String,
+  email: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(320)),
+  access: Access
+});
+export type ConnectRequest = typeof ConnectRequest.Type;
+/** Replace key's secret: a new key for the same inbox, at the connection's access. */
+export const ReplaceRequest = Schema.Struct({ key: Schema.String });
+/** Change access's: no key, only what patches may do now. */
+export const AccessRequest = Schema.Struct({ access: Access });
+const ChangeRequest = Schema.Union([ReplaceRequest, AccessRequest]);
+export type ChangeRequest = typeof ChangeRequest.Type;
+
+const connectJson = Schema.fromJsonString(ConnectRequest);
+const changeJson = Schema.fromJsonString(ChangeRequest);
+const encodeConnect = Schema.encodeSync(connectJson);
+const encodeChange = Schema.encodeSync(changeJson);
+const decodeConnect = Schema.decodeUnknownEffect(connectJson);
+const decodeChange = Schema.decodeUnknownEffect(changeJson);
+export const connectSecret = (value: ConnectRequest) => Redacted.make(encodeConnect(value));
+export const changeSecret = (value: ChangeRequest) => Redacted.make(encodeChange(value));
+export const parseConnect = Effect.fn("PidgeonKeys.parseConnect")(function* (
+  secret: Redacted.Redacted<string>
 ) {
-  const { made, test } = yield* mint(adminKey, name, identity, access, until);
-  return yield* Effect.gen(function* () {
-    const plan = yield* check(made, { test }, identity, access, until);
-    const snapshot = yield* snapshotOf(made.token, identity, access, plan, until);
-    return {
-      made,
-      identity: address(identity),
-      test: identity.test,
-      snapshot
-    } satisfies Provisioned;
-  }).pipe(Effect.catch((error) => undo(made, error)));
-});
-
-/**
- * Connect's work in Pidgeon, in order: check the admin key, find or create the address, mint its
- * key, check the key, read the snapshot with it. Nothing is saved here; on any failure after the
- * mint the key is revoked again.
- */
-export const provision = Effect.fn("PidgeonKeys.provision")(function* (input: {
-  readonly request: ConnectRequest;
-  readonly handle: string;
-  /** Scopes the address's Idempotency-Key, such as the company. */
-  readonly scope: string;
-}) {
-  const until = yield* deadline;
-  const adminKey = Redacted.make(input.request.adminKey);
-  const admin = yield* checkAdmin(adminKey, until);
-  const identity = yield* findOrCreate(
-    adminKey,
-    admin.test,
-    input.scope,
-    input.request.attempt,
-    input.request.address,
-    until
+  return yield* decodeConnect(Redacted.value(secret)).pipe(
+    Effect.mapError(() => new InvalidKey({}))
   );
-  return yield* provisioned(
-    adminKey,
-    keyName(input.handle, input.request.attempt),
-    identity,
-    input.request.access,
-    until
+});
+export const parseChange = Effect.fn("PidgeonKeys.parseChange")(function* (
+  secret: Redacted.Redacted<string>
+) {
+  return yield* decodeChange(Redacted.value(secret)).pipe(
+    Effect.mapError(() => new InvalidKey({}))
   );
 });
 
 /**
- * Change access and Replace key in Pidgeon: a new key for the same address, checked, with a fresh
- * snapshot. A different address is a new connection, so the admin key must reach this one, in its
- * mode.
+ * Connect's checks, in the order the page shows them: the key is a Pidgeon key Pidgeon accepts,
+ * one inbox it reaches has the address typed and keeps mail, and the key can send when patches
+ * may; then the snapshot, read with it.
  */
-export const replace = Effect.fn("PidgeonKeys.replace")(function* (input: {
-  readonly request: ReplaceRequest;
-  readonly handle: string;
-  readonly identityId: string;
-}) {
+export const connect = Effect.fn("PidgeonKeys.connect")(function* (request: ConnectRequest) {
+  const token = yield* pasted(Redacted.make(request.key));
   const until = yield* deadline;
-  const adminKey = Redacted.make(input.request.adminKey);
-  const admin = yield* checkAdmin(adminKey, until);
-  const identity = yield* findOrCreate(
-    adminKey,
-    admin.test,
-    "",
-    input.request.attempt,
-    { id: input.identityId },
-    until
+  const inbox = yield* inboxAt(token, request.email, until);
+  if (inbox.kind === "events") return yield* new NoInbox({ email: inbox.address });
+  if (request.access === "send" && !(yield* canSend(token, until))) return yield* new CantSend({});
+  return checked(token, inbox, yield* snapshotOf(token, inbox, request.access, until));
+});
+
+/**
+ * Replace key's checks: the new key reaches the connection's inbox and can do what patches may,
+ * with a fresh snapshot read with it. Another inbox is another connection.
+ */
+export const replace = Effect.fn("PidgeonKeys.replace")(function* (
+  key: string,
+  current: Source.Display
+) {
+  const token = yield* pasted(Redacted.make(key));
+  const until = yield* deadline;
+  const inbox = yield* inboxOf(
+    token,
+    current.inboxId,
+    until,
+    () => new OtherAccount({ email: current.email })
   );
-  return yield* provisioned(
-    adminKey,
-    keyName(input.handle, input.request.attempt),
-    identity,
-    input.request.access,
-    until
-  );
+  if (current.access === "send" && !(yield* canSend(token, until)))
+    return yield* new NewKeyCantSend({});
+  return checked(token, inbox, yield* snapshotOf(token, inbox, current.access, until));
 });
 
 // ---------- the stored key ----------
 
-/**
- * The stored key still works and reaches its address: `/me` and `/identities` as the key sees
- * them. A key whose address was deleted, as a test address is a day after it's made, still signs
- * in, reaching nothing.
- */
-export const test = Effect.fn("PidgeonKeys.test")(function* (
+/** The stored key still works, reaches its inbox and, when patches may send, can send. */
+const reach = Effect.fn("PidgeonKeys.reach")(function* (
   credentials: Source.Credentials,
-  email: string
+  display: Source.Display,
+  access: Access,
+  until: number
 ) {
-  const until = (yield* Clock.currentTimeMillis) + registry["integration.deadline"].default;
-  const token = Redacted.make(credentials.key.token);
-  const reach = yield* reachOf(token, until).pipe(
-    Effect.catchTags({ PidgeonKeyRejected: () => Effect.fail(new StoredKeyRejected({})) })
-  );
-  if (reach.me.key === null) return yield* new StoredKeyRejected({});
-  if (!reach.identities.some((identity) => identity.id === credentials.identityId))
-    return yield* new AddressGone({ email });
-  return reach;
+  const token = Redacted.make(credentials.key);
+  const inbox = yield* inboxOf(
+    token,
+    credentials.inboxId,
+    until,
+    () => new InboxGone({ email: display.email })
+  ).pipe(Effect.catchTags({ PidgeonKeyRejected: () => Effect.fail(new StoredKeyRejected({})) }));
+  if (access === "send") {
+    const sends = yield* canSend(token, until).pipe(
+      Effect.catchTags({ PidgeonKeyRejected: () => Effect.fail(new StoredKeyRejected({})) })
+    );
+    if (!sends) return yield* new StoredCantSend({});
+  }
+  return { token, inbox };
 });
 
-/** A fresh snapshot with the stored key, for Refresh labels. */
+/** Test connection and Resume: the stored key's checks at the connection's own access. */
+export const test = Effect.fn("PidgeonKeys.test")(function* (
+  credentials: Source.Credentials,
+  display: Source.Display
+) {
+  const until = (yield* Clock.currentTimeMillis) + registry["integration.deadline"].default;
+  return (yield* reach(credentials, display, display.access, until)).inbox;
+});
+
+/**
+ * Refresh labels and Change access: the stored key's checks at `access`, and a fresh snapshot
+ * read with it. Raising access to send is refused when the stored key can't send.
+ */
 export const inspect = Effect.fn("PidgeonKeys.inspect")(function* (
   credentials: Source.Credentials,
-  email: string,
+  display: Source.Display,
   access: Access
 ) {
   const until = yield* deadline;
-  const reach = yield* test(credentials, email);
-  const identity = reach.identities.find((item) => item.id === credentials.identityId);
-  if (identity === undefined) return yield* new AddressGone({ email });
-  return {
-    identity: address(identity),
-    snapshot: yield* snapshotOf(
-      Redacted.make(credentials.key.token),
-      identity,
-      access,
-      reach.me.workspace.plan,
-      until
-    )
-  };
+  const { token, inbox } = yield* reach(credentials, display, access, until);
+  return checked(token, inbox, yield* snapshotOf(token, inbox, access, until));
 });

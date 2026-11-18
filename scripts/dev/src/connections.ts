@@ -162,8 +162,7 @@ const attribute = (slug: string, title: string, type: Attribute["type"]): Attrib
 const saved = (
   scenario: Scenario,
   connection: OfflineConnection,
-  secret: string,
-  now: number
+  secret: string
 ): {
   readonly target: ConnectionStore.Target;
   readonly credentials: Redacted.Redacted<string>;
@@ -284,52 +283,24 @@ const saved = (
     case "pidgeon": {
       const test = connection.test === true;
       const email = `${handle}@${domain}`;
-      const identityId = `idn_env_${handle}`;
-      const key = {
-        id: `key_env_${handle}`,
-        token: `pgn_${test ? "test" : "live"}_${secret}`
-      };
-      // A key Patchy replaced and couldn't revoke stays named on the page until it does.
-      const retired =
-        connection.state === "needs-attention"
-          ? [{ id: `key_env_${handle}_old`, token: `pgn_live_old${secret}` }]
-          : [];
+      const inboxId = `inb_env_${handle}`;
       return {
-        target: {
-          integration: "pidgeon",
-          display: {
-            email,
-            identityId,
-            sendPolicy: "reply_only",
-            access: "send",
-            test,
-            key: {
-              id: key.id,
-              name: `Patchy ${handle} 7k2m9q`,
-              madeAt: DateTime.formatIso(DateTime.makeUnsafe(now - 6 * HOUR))
-            },
-            ...(retired.length === 0
-              ? {}
-              : { retired: retired.map(({ id }) => ({ id, name: `Patchy ${handle} 3f9a1c` })) })
-          }
-        },
+        target: { integration: "pidgeon", display: { email, inboxId, access: "send", test } },
         credentials: PidgeonSource.credentials({
-          identityId,
-          key,
-          ...(retired.length === 0 ? {} : { retired })
+          inboxId,
+          key: `pgn_${test ? "test_" : ""}${secret}`
         }),
         metadata: {
           integration: "pidgeon",
           snapshot: {
-            version: 1,
-            address: { email, displayName: scenario.company.name, sendPolicy: "reply_only" },
+            version: 2,
+            address: { email, displayName: scenario.company.name },
             access: "send",
             test,
             labels: [
               { id: "lbl-new", name: "New client", colour: "green" },
               { id: "lbl-billing", name: "Billing", colour: "amber" }
-            ],
-            plan: "free"
+            ]
           }
         }
       };
@@ -416,14 +387,12 @@ export const saveConnections = Effect.fn("saveConnections")(
     const cryptography = yield* Cryptography.Cryptography;
     const publisher = scenario.people.find((person) => person.key === scenario.publisher)!;
     const { companyId, userId } = ids(scenario, publisher);
-    const now = DateTime.toEpochMillis(yield* DateTime.now);
     for (const connection of offlineConnections(scenario)) {
       const id = connectionId(scenario, connection);
       const { target, credentials, metadata } = saved(
         scenario,
         connection,
-        yield* cryptography.token(24),
-        now
+        yield* cryptography.token(24)
       );
       const sealed = yield* keys.encrypt(
         { companyId, id, integration: connection.integration },

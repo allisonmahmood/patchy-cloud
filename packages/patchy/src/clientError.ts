@@ -55,29 +55,34 @@ type NotionOperation = `notion.${string}`;
 /** Pidgeon's refusals that carry its own details. */
 type PidgeonDetails<C extends ErrorCode> = C extends "source_rate_limited"
   ? {
-      /**
-       * Which limit: the connection's daily send `budget`, Pidgeon's `requests` rate or `plan`,
-       * or `recipient_cooldown`, a new message to someone the address just wrote to, which a
-       * reply in their conversation isn't held by.
-       */
-      readonly limit: "budget" | "requests" | "plan" | "recipient_cooldown";
+      /** Which limit: the connection's daily send `budget`, Pidgeon's `requests` rate or `plan`. */
+      readonly limit: "budget" | "requests" | "plan";
       /** Pidgeon's own explanation, written to be shown to a person; never on `budget`. */
       readonly message?: string;
     }
   : C extends "access_denied"
     ? {
         /**
-         * Why Pidgeon said no. A whole send, and nothing went: the send policy (`not_permitted`),
-         * a rule (`blocked`), or text read in another conversation (`exfiltration_blocked`). A
-         * message the firewall holds for a person (`held`) can't be read or answered.
+         * `exfiltration_blocked`: the email carries text read in another conversation, which can
+         * only go back as a reply in that conversation, and nothing was sent.
          */
-        readonly reason?: "not_permitted" | "blocked" | "exfiltration_blocked" | "held";
+        readonly reason?: "exfiltration_blocked";
         /** Pidgeon's own explanation, written to be shown to a person. */
         readonly message?: string;
       }
     : C extends "invalid_request"
       ? { readonly field?: string; readonly message?: string }
-      : Readonly<Record<string, unknown>>;
+      : C extends "source_unavailable"
+        ? {
+            /**
+             * Pidgeon said the mail couldn't go, and nothing was sent: the mail service refused it
+             * (`send_failed`), was busy (`unavailable`), or the account's storage is full
+             * (`storage_full`). Absent when Pidgeon couldn't be reached.
+             */
+            readonly reason?: "send_failed" | "unavailable" | "storage_full";
+            readonly message?: string;
+          }
+        : Readonly<Record<string, unknown>>;
 /** The object or list an Attio call read, by slug. */
 type AttioWhere = { readonly object?: string; readonly list?: string };
 /** Attio's refusals that carry its own details: never a value the patch supplied. */
@@ -197,7 +202,7 @@ type ExistingDetails<C extends ErrorCode, O extends string> = O extends ImapOper
   ? ImapDetails<C>
   : O extends GithubOperation
     ? GithubDetails<C>
-    : C extends "source_rate_limited" | "access_denied" | "invalid_request"
+    : C extends "source_rate_limited" | "access_denied" | "invalid_request" | "source_unavailable"
       ? O extends PidgeonOperation
         ? PidgeonDetails<C>
         : O extends AttioOperation
@@ -206,10 +211,11 @@ type ExistingDetails<C extends ErrorCode, O extends string> = O extends ImapOper
       : C extends "idempotency_conflict"
         ? {
             /**
-             * `mismatch`: the draft's key already went with different mail, or from another key.
-             * `in_progress`: the first send is still running; send the same draft after `retryAfter`.
+             * `mismatch`: the draft's key already went with a different email. `in_progress`:
+             * another call is still sending it; send the same draft after `retryAfter`.
+             * `unconfirmed`: Pidgeon hasn't said whether it left; the same draft later asks again.
              */
-            readonly reason: "mismatch" | "in_progress";
+            readonly reason: "mismatch" | "in_progress" | "unconfirmed";
           }
         : C extends "invalid_query"
           ? O extends PostHogOperation

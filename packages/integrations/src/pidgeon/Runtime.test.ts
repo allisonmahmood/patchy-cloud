@@ -41,10 +41,10 @@ import * as RuntimeTest from "../test/runtime.js";
 import * as Operations from "./Operations.js";
 
 /**
- * Pidgeon journeys over answers recorded from Pidgeon: the generated client calling back through
+ * Pidgeon journeys over the scripted double of its API: the generated client calling back through
  * the gateway as a tier 2 action's viewer, and a tier 2 action in real workerd doing the same,
- * both from the packed `patchy` package. The same journeys against Pidgeon's test mode
- * are in the live tier (`packages/integrations/live`).
+ * both from the packed `patchy` package. The same journeys against Pidgeon's test mode are in
+ * the live tier (`packages/integrations/live`).
  */
 
 const who = { companyId: DEV_SEED.companyId, userId: DEV_SEED.userId };
@@ -53,117 +53,58 @@ const SENTINEL = "SENTINEL-7f3a-body-or-search";
 
 const support = { id: "conn_journey_send", handle: "journey-send" };
 const invoices = { id: "conn_journey_read", handle: "journey-read" };
-const address = { email: `${support.handle}@acme.example`, identityId: `idn-${support.id}` };
-const snapshot = <const Access extends "read" | "send">(access: Access, email: string) => ({
-  version: 1 as const,
-  address: { email, displayName: null, sendPolicy: "reply_only" },
+const email = `${support.handle}@acme.example`;
+const invoicesEmail = `${invoices.handle}@acme.example`;
+const snapshot = <const Access extends "read" | "send">(access: Access, address: string) => ({
+  version: 2 as const,
+  address: { email: address, displayName: null },
   access,
   test: true,
-  labels: [],
-  plan: "free"
+  labels: []
 });
 const uses = {
   support: { kind: "pidgeon" as const, ...support, revision: 1 },
   invoices: { kind: "pidgeon" as const, ...invoices, revision: 1 }
 };
 
-const page = (data: ReadonlyArray<unknown>, next: string | null = null) => ({
-  data,
-  has_more: next !== null,
-  next_cursor: next
-});
-const threadRow = {
-  id: "thr_1",
-  identity: address.email,
-  subject: "Cracked chainstay",
-  status: "open",
-  owner_type: "human",
-  message_count: 1,
-  folder: "inbox",
-  from: "ana@customer.example",
-  from_name: "Ana",
-  preview: "Hi Lumen team",
-  has_attachments: true,
-  last_message_at: "2026-10-26T09:00:00.000Z",
-  created_at: "2026-10-26T09:00:00.000Z"
-};
-const messageRow = {
-  id: "msg_1",
-  thread_id: "thr_1",
-  identity_id: address.identityId,
-  from: { email: "ana@customer.example", name: "Ana" },
-  to: [{ email: address.email, name: null }],
-  cc: [],
-  subject: "Cracked chainstay",
-  text: "Is this covered?",
-  html: "<p>Is this covered?</p>",
-  test: true,
-  is_held: false,
-  firewall: { verdict: "clean", signals: [], clean_text: "Is this covered?", version: 3 },
-  attachments: [
-    {
-      id: "att_1",
-      filename: "receipt.txt",
-      content_type: "text/plain",
-      size: 64,
-      downloadable: true
-    }
-  ],
-  delivery: null,
-  created_at: "2026-10-26T09:00:00.000Z"
-};
-const answers: ReadonlyArray<PidgeonTest.Recorded> = [
-  { match: PidgeonTest.route("GET", "/threads"), body: page([threadRow]) },
-  { match: PidgeonTest.route("GET", "/threads/thr_1"), body: { data: threadRow } },
-  { match: PidgeonTest.route("GET", "/threads/thr_1/labels"), body: page([]) },
-  { match: PidgeonTest.route("GET", "/messages"), body: page([messageRow]) },
-  { match: PidgeonTest.route("GET", "/messages/search"), body: page([]) },
-  {
-    match: PidgeonTest.route("GET", "/attachments/att_1/text"),
-    body: {
-      data: {
-        id: "att_1",
-        filename: "receipt.txt",
-        content_type: "text/plain",
-        size: 64,
-        text: "Order LB-20417, paid.",
-        truncated: false,
-        firewall: { verdict: "clean", signals: [], version: 3 }
-      }
-    }
-  },
-  {
-    match: PidgeonTest.route("POST", "/messages/msg_1/reply"),
-    status: 202,
-    body: {
-      data: {
-        status: "sent",
-        id: "msg_2",
-        draft_id: null,
-        thread_id: "thr_1",
-        rejected: [],
-        test: true,
-        approval: null
-      }
-    }
-  },
-  {
-    match: PidgeonTest.route("PATCH", "/threads/thr_1"),
-    body: { data: { ...threadRow, status: "waiting" } }
-  }
-];
-
-/** The Pidgeon handlers as the server builds them, over the recorded answers, and two connections. */
+/**
+ * The Pidgeon handlers as the server builds them, over a double holding two inboxes of one
+ * account, each with a customer's mail, and one key that reaches both, as a dashboard key does:
+ * `support` sends from the first, and `invoices` reads the second.
+ */
 const handlers = Effect.gen(function* () {
-  const recorded = PidgeonTest.recorded(answers);
-  const store = yield* SqlConnectionStore.make.pipe(Effect.provide([recorded.layer, Teams.layer]));
-  yield* PidgeonTest.seed({ ...who, ...support });
-  yield* PidgeonTest.seed({ ...who, ...invoices, access: "read" });
+  const pidgeon = PidgeonTest.double();
+  const inbox = pidgeon.inbox(email);
+  const other = pidgeon.inbox(invoicesEmail);
+  const mail = pidgeon.deliver(inbox, {
+    from: "ana@customer.example",
+    name: "Ana",
+    subject: "Cracked chainstay",
+    text: "Is this covered?",
+    attachments: [{ filename: "receipt.pdf", size: 64 }]
+  });
+  const invoice = pidgeon.deliver(other, {
+    from: "billing@supplier.example",
+    subject: "Invoice 88",
+    text: "Due in 30 days."
+  });
+  const key = pidgeon.key("send");
+  const store = yield* SqlConnectionStore.make.pipe(Effect.provide([pidgeon.layer, Teams.layer]));
+  yield* PidgeonTest.seed({ ...who, ...support, inboxId: inbox, email, key, test: true });
+  yield* PidgeonTest.seed({
+    ...who,
+    ...invoices,
+    access: "read",
+    inboxId: other,
+    email: invoicesEmail,
+    key,
+    test: true
+  });
   const built = yield* Operations.makeHandlers.pipe(
-    Effect.provide(Layer.merge(recorded.layer, Directory.layer)),
+    Effect.provide(Layer.merge(pidgeon.layer, Directory.layer)),
     Effect.provideService(ConnectionStore.ConnectionStore, store)
   );
-  return { handlers: built, requests: recorded.requests };
+  return { handlers: built, pidgeon, inbox, mail, invoice };
 });
 
 /** Every recent call and log line, as text, for the sentinel to be looked for in. */
@@ -216,18 +157,19 @@ it.layer(tier1)("Pidgeon from a tier 2 action's callbacks", (it) => {
     () => {
       const logs: string[] = [];
       return Effect.gen(function* () {
-        const { handlers: built, requests } = yield* handlers;
+        const { handlers: built, pidgeon, inbox: inboxId, mail, invoice } = yield* handlers;
+        const requests = pidgeon.requests;
         const call = yield* RuntimeTest.page(built, patchId, versionId);
         const inbox = yield* RuntimeTest.pidgeonClient(
           "support",
           support,
-          snapshot("send", address.email),
+          snapshot("send", email),
           call
         );
         const readOnly = yield* RuntimeTest.pidgeonClient(
           "invoices",
           invoices,
-          snapshot("read", `${invoices.handle}@acme.example`),
+          snapshot("read", invoicesEmail),
           call
         );
 
@@ -237,32 +179,61 @@ it.layer(tier1)("Pidgeon from a tier 2 action's callbacks", (it) => {
         );
         assert.deepStrictEqual(
           threads.map((thread) => thread.id),
-          ["thr_1"]
+          [mail.threadId]
         );
-        assert.strictEqual(
-          (yield* Effect.promise(() => inbox.threads.get("thr_1"))).nextCursor,
-          null
+        // The key reaches both inboxes; each connection shows its own, and the other's mail by
+        // id isn't there, as an unknown id isn't.
+        assert.deepStrictEqual(
+          (yield* Effect.promise(() => readOnly.threads.list({}))).threads.map(
+            (thread) => thread.id
+          ),
+          [invoice.threadId]
         );
-        assert.strictEqual(
-          (yield* Effect.promise(() => inbox.attachments.text("att_1"))).text,
-          "Order LB-20417, paid."
+        for (const [operation, id] of [
+          ["threads.get", invoice.threadId],
+          ["messages.get", invoice.messageId]
+        ] as const)
+          assert.include(
+            yield* Effect.promise(() =>
+              call("pidgeon.read", { connection: "support", operation, input: { id } })
+            ),
+            { code: "not_found" },
+            operation
+          );
+        const read = yield* Effect.promise(() => inbox.threads.get(mail.threadId));
+        assert.strictEqual(read.nextCursor, null);
+        assert.deepStrictEqual(
+          read.messages[0]!.attachments.map((file) => file.filename),
+          ["receipt.pdf"]
         );
         yield* Effect.promise(() => inbox.messages.search({ text: SENTINEL }));
         const draft = "journey-draft-0001";
         const sent = yield* Effect.promise(() =>
-          inbox.messages.reply("msg_1", { text: `${SENTINEL} reply`, idempotencyKey: draft })
+          inbox.messages.reply(mail.messageId, { text: `${SENTINEL} reply`, idempotencyKey: draft })
         );
         assert.deepInclude(sent, { status: "sent", replayed: false });
         assert.strictEqual(
-          (yield* Effect.promise(() => inbox.threads.update("thr_1", { status: "waiting" })))
+          (yield* Effect.promise(() => inbox.threads.update(mail.threadId, { status: "waiting" })))
             .status,
           "waiting"
         );
-        const reply = requests.find(PidgeonTest.route("POST", "/messages/msg_1/reply"))!;
-        assert.deepStrictEqual(reply.body, { text: `${SENTINEL} reply` });
-        assert.strictEqual(
-          reply.idempotencyKey,
-          sha256(JSON.stringify(["pidgeon.send", support.id, patchId, draft]))
+        const written = requests.find(
+          PidgeonTest.route("POST", `/email/inboxes/${inboxId}/drafts`)
+        )!;
+        assert.deepStrictEqual(written.body, {
+          to: ["ana@customer.example"],
+          subject: "Re: Cracked chainstay",
+          text: `${SENTINEL} reply`,
+          reply_to: mail.messageId
+        });
+        // The draft key never leaves Patchy: its ledger keeps a hash of it.
+        assert.notInclude(JSON.stringify(requests), draft);
+        const sql = yield* SqlClient.SqlClient;
+        const ledger = yield* sql<{ readonly draft: string }>`SELECT draft FROM pidgeon_drafts
+          WHERE connection_id = ${support.id}`;
+        assert.deepStrictEqual(
+          ledger.map((row) => row.draft),
+          [sha256(JSON.stringify(["pidgeon.send", support.id, patchId, draft]))]
         );
 
         // A read connection's client has no write methods; one made by hand is refused unsent.
@@ -273,16 +244,19 @@ it.layer(tier1)("Pidgeon from a tier 2 action's callbacks", (it) => {
             call("pidgeon.write", {
               connection: "invoices",
               operation: "messages.reply",
-              input: { id: "msg_1", text: "Hi", idempotencyKey: "journey-draft-0002" }
+              input: { id: mail.messageId, text: "Hi", idempotencyKey: "journey-draft-0002" }
             })
           ),
           { code: "access_denied" }
         );
         // 100,000 characters at the cap, however they encode, reach Pidgeon; past it, nothing does.
-        for (const text of ["\u0001".repeat(100_000), "😀".repeat(50_000)])
+        for (const [index, text] of ["\u0001".repeat(100_000), "😀".repeat(50_000)].entries())
           assert.deepInclude(
             yield* Effect.promise(() =>
-              inbox.messages.reply("msg_1", { text, idempotencyKey: "journey-draft-0003" })
+              inbox.messages.reply(mail.messageId, {
+                text,
+                idempotencyKey: `journey-draft-000${3 + index}`
+              })
             ),
             { status: "sent" }
           );
@@ -291,12 +265,30 @@ it.layer(tier1)("Pidgeon from a tier 2 action's callbacks", (it) => {
             call("pidgeon.write", {
               connection: "support",
               operation: "messages.reply",
-              input: { id: "msg_1", text: "\u0001".repeat(200_000), idempotencyKey: "journey-big1" }
+              input: {
+                id: mail.messageId,
+                text: "\u0001".repeat(200_000),
+                idempotencyKey: "journey-big1"
+              }
             })
           ),
           { code: "too_large", limitId: "runtime.pidgeon.bytes" }
         );
-        assert.strictEqual(requests.length, before + 2);
+        // Each reply reads its target, writes its draft and sends it once.
+        assert.strictEqual(requests.length, before + 6);
+        // A reply to the other inbox's mail is refused as a reply to an unknown id is, unwritten.
+        assert.include(
+          yield* Effect.promise(() =>
+            call("pidgeon.write", {
+              connection: "support",
+              operation: "messages.reply",
+              input: { id: invoice.messageId, text: "Paid.", idempotencyKey: "journey-foreign-01" }
+            })
+          ),
+          { code: "not_found" }
+        );
+        assert.strictEqual(pidgeon.sentFrom(inboxId).length, 3);
+        assert.deepStrictEqual(pidgeon.drafts(), []);
 
         // Recent calls name each call; neither they nor a log line hold a body or search text.
         const log = yield* RuntimeLog.RuntimeLog;
@@ -309,15 +301,14 @@ it.layer(tier1)("Pidgeon from a tier 2 action's callbacks", (it) => {
           calls.map((recent) => recent.resource),
           [
             "threads.list",
-            "threads.get thr_1",
-            "attachments.text att_1",
+            `threads.get ${mail.threadId}`,
             "messages.search",
-            "messages.reply msg_1",
-            "threads.update thr_1 waiting"
+            `messages.reply ${mail.messageId}`,
+            `threads.update ${mail.threadId} waiting`
           ]
         );
         const seen = yield* everything(logs);
-        assert.isAbove(seen.rows, 6);
+        assert.isAbove(seen.rows, 5);
         assert.notInclude(seen.text, SENTINEL);
       }).pipe(
         Effect.provide(
@@ -353,7 +344,8 @@ it.layer(tier2, { excludeTestServices: true, timeout: 60_000 })(
       "an action in workerd reads, replies with the page's draft key and triages, as its viewer",
       () =>
         Effect.gen(function* () {
-          const { handlers: built, requests } = yield* handlers;
+          const { handlers: built, pidgeon, mail } = yield* handlers;
+          const requests = pidgeon.requests;
           const viewer = {
             user: { id: who.userId, name: "Dev", email: "dev@patchy.local" },
             company: { id: who.companyId, name: "Patchy Dev", handle: "patchy-dev" },
@@ -380,37 +372,31 @@ it.layer(tier2, { excludeTestServices: true, timeout: 60_000 })(
             }
           });
           const invoke = yield* RuntimeTest.invoker(built, binding, PidgeonTest.desk.source);
-          assert.deepStrictEqual(
-            yield* invoke("desk.answer", {
-              subject: "Cracked chainstay",
-              draft: "tier2-draft-0001",
-              text: "Covered: a new chainstay ships today."
-            }),
-            {
-              ok: true,
-              value: {
-                found: true,
-                threadId: "thr_1",
-                messages: 1,
-                receipt: "Order LB-20417, paid.",
-                repliedTo: "msg_1",
-                sent: {
-                  status: "sent",
-                  messageId: "msg_2",
-                  threadId: "thr_1",
-                  rejected: [],
-                  replayed: false,
-                  test: true
-                },
-                status: "waiting"
-              }
+          const answered = yield* invoke("desk.answer", {
+            subject: "Cracked chainstay",
+            draft: "tier2-draft-0001",
+            text: "Covered: a new chainstay ships today."
+          });
+          const sent = pidgeon.sentFrom(pidgeon.message(mail.messageId)!.inbox_id);
+          assert.strictEqual(sent.length, 1);
+          assert.deepStrictEqual(answered, {
+            ok: true,
+            value: {
+              found: true,
+              threadId: mail.threadId,
+              messages: 1,
+              files: ["receipt.pdf"],
+              repliedTo: mail.messageId,
+              sent: {
+                status: "sent",
+                messageId: sent[0]!.id,
+                threadId: mail.threadId,
+                replayed: false
+              },
+              status: "waiting"
             }
-          );
-          const reply = requests.find(PidgeonTest.route("POST", "/messages/msg_1/reply"))!;
-          assert.strictEqual(
-            reply.idempotencyKey,
-            sha256(JSON.stringify(["pidgeon.send", support.id, "pidgeontier2", "tier2-draft-0001"]))
-          );
+          });
+          assert.notInclude(JSON.stringify(requests), "tier2-draft-0001");
           const sentBefore = requests.length;
           for (const handler of ["desk.forced", "desk.peek"])
             assert.include(Runtime.toFailure(yield* invoke(handler).pipe(Effect.flip)), {

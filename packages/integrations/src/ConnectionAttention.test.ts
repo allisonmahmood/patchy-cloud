@@ -71,24 +71,13 @@ const attio = (id: string): ConnectionStore.Connection => ({
   }
 });
 
-const pidgeon = (
-  id: string,
-  display: { readonly test: boolean; readonly retired?: boolean }
-): ConnectionStore.Connection => ({
+const pidgeon = (id: string, display: { readonly test: boolean }): ConnectionStore.Connection => ({
   ...shared,
   id,
   handle: id,
   status: "connected",
   integration: "pidgeon",
-  display: {
-    email: `${id}@example.com`,
-    identityId: `idn_${id}`,
-    sendPolicy: "reply_only",
-    access: "send",
-    test: display.test,
-    key: { id: `key_${id}`, name: `Patchy ${id}`, madeAt: "2026-11-01T10:00:00.000Z" },
-    ...(display.retired === true ? { retired: [{ id: "key_old", name: "Patchy old" }] } : {})
-  }
+  display: { email: `${id}@example.com`, inboxId: `inb_${id}`, access: "send", test: display.test }
 });
 
 describe("what needs an admin among a company's connections", () => {
@@ -146,24 +135,17 @@ describe("what needs an admin among a company's connections", () => {
     ]);
   });
 
-  it("names Pidgeon's leftover key, and a test key only while live patches use it", () => {
+  it("names a Pidgeon test key only while live patches use it", () => {
     expect(
       attention(
         [
-          pidgeon("billing", { test: false, retired: true }),
+          pidgeon("billing", { test: false }),
           pidgeon("hello", { test: true }),
           pidgeon("sandbox", { test: true })
         ],
         new Map([["hello", used(2)]])
       )
     ).toEqual([
-      {
-        id: "billing",
-        name: "pidgeon/billing",
-        mark: { logo: "pidgeon" },
-        problem: "The old key is still active in Pidgeon",
-        fix: { label: "Test again…", href: "/settings/integrations/billing" }
-      },
       {
         id: "hello",
         name: "pidgeon/hello",

@@ -1015,28 +1015,26 @@ describe("patchy list", () => {
     expect(JSON.parse(json.stdout)).toEqual(listed);
   });
 
-  it("prints a Pidgeon connection's address, access, send policy and labels", async () => {
+  it("prints a Pidgeon connection's address, access, mode and labels", async () => {
     const detail = {
       integration: "pidgeon",
       handle: "support",
       description: "Customer mail",
       status: "connected",
       snapshot: {
-        version: 1,
+        version: 2,
         revision: 2,
         takenAt: "2026-10-25T00:00:00.000Z",
         address: {
           email: "support@acme.example",
-          displayName: "Acme Support",
-          sendPolicy: "reply_only"
+          displayName: "Acme Support"
         },
         access: "send",
         test: true,
         labels: [
           { id: "lbl-1", name: "Warranty", colour: "amber" },
           { id: "lbl-2", name: "Returns", colour: "pink" }
-        ],
-        plan: "free"
+        ]
       }
     };
     const instance = await stubInstance((request, respond) => {
@@ -1054,9 +1052,7 @@ describe("patchy list", () => {
           "pidgeon/support  Customer mail  connected",
           "Address: support@acme.example (Acme Support)",
           "Access: read and send",
-          "Send policy: reply_only",
           "Mode: test · mail stays in Pidgeon",
-          "Plan: free",
           "Labels: Warranty, Returns",
           "Snapshot revision: 2",
           "Taken at: 2026-10-25T00:00:00.000Z",

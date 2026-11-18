@@ -91,12 +91,10 @@ it.layer(
             ? connection.display.writable
             : connection.integration === "imap"
               ? connection.display.paused
-              : connection.integration === "pidgeon"
-                ? connection.display.retired
-                : connection.integration === "github"
-                  ? (connection.display.attention ??
-                    connection.display.repositories.find((item) => item.left === true))
-                  : undefined;
+              : connection.integration === "github"
+                ? (connection.display.attention ??
+                  connection.display.repositories.find((item) => item.left === true))
+                : undefined;
         expect({ handle, status: connection.status, reason: reason !== undefined }).toEqual({
           handle,
           // Attio's writable key and GitHub's uninstalled App or changed permissions are paused

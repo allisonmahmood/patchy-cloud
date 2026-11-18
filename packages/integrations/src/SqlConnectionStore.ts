@@ -68,6 +68,7 @@ import * as CredentialKeys from "./CredentialKeys.js";
 import * as PostgresSource from "./postgres/Source.js";
 import * as PostHogSource from "./posthog/Source.js";
 import * as PidgeonKeys from "./pidgeon/Keys.js";
+import * as PidgeonLedger from "./pidgeon/Ledger.js";
 import * as PidgeonSource from "./pidgeon/Source.js";
 import * as AttioSource from "./attio/Source.js";
 import * as NotionSource from "./notion/Source.js";
@@ -170,7 +171,7 @@ const sameTarget = (current: Target, next: Target) =>
         next.display.region === current.display.region &&
         next.display.projectId === current.display.projectId
       : current.integration === "pidgeon"
-        ? next.integration === "pidgeon" && next.display.identityId === current.display.identityId
+        ? next.integration === "pidgeon" && next.display.inboxId === current.display.inboxId
         : current.integration === "imap"
           ? next.integration === "imap" && sameLogin(current.display, next.display)
           : current.integration === "github"
@@ -246,10 +247,7 @@ const Lookup = Schema.Struct({
   locked: Schema.Boolean
 });
 
-/**
- * Runs `effect` to its end even when the request that started it is interrupted, so a key Patchy
- * minted in Pidgeon is always saved, revoked or named.
- */
+/** Runs `effect` to its end even when the request that started it is interrupted. */
 const detached = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.flatMap(Effect.forkDetach(effect), Fiber.join);
 
@@ -663,38 +661,8 @@ const storeKnowing = (known: ReadonlyArray<Integration>) =>
       return yield* get(input.companyId, identity.id);
     });
 
-    // ---------- Pidgeon: keys Patchy mints, keeps and revokes ----------
+    // ---------- Pidgeon: a pasted key, kept with the one inbox it serves here ----------
 
-    /** `display` with these retired keys, leaving them out when there are none. */
-    const pidgeonDisplay = (
-      display: PidgeonSource.Display,
-      retired: PidgeonSource.Display["retired"]
-    ): PidgeonSource.Display => ({
-      email: display.email,
-      identityId: display.identityId,
-      sendPolicy: display.sendPolicy,
-      access: display.access,
-      test: display.test,
-      key: display.key,
-      ...(retired === undefined || retired.length === 0 ? {} : { retired })
-    });
-    /** The old keys a connection still has to revoke, with their secrets and names. */
-    const retiredOf = (display: PidgeonSource.Display, credentials: PidgeonSource.Credentials) => {
-      const named = new Map((display.retired ?? []).map((item) => [item.id, item.name] as const));
-      return (credentials.retired ?? []).map((key) => ({ key, name: named.get(key.id) ?? key.id }));
-    };
-    const pidgeonOf = Effect.fn("ConnectionStore.pidgeonOf")(function* (
-      input: Identity,
-      locked = false
-    ) {
-      const current = yield* stored(input, locked);
-      if (current.integration !== "pidgeon")
-        return yield* new ConnectionNotFound({
-          companyId: input.companyId,
-          lookup: { id: input.id }
-        });
-      return current;
-    });
     const secretOf = (current: StoredPidgeon) =>
       keys
         .decrypt(current, current)
@@ -704,106 +672,166 @@ const storeKnowing = (known: ReadonlyArray<Integration>) =>
         { companyId: current.companyId, id: current.id, integration: "pidgeon" },
         PidgeonSource.credentials(value)
       );
-    /** Saves the credentials and display of a Pidgeon connection whose lock this transaction holds. */
-    const updatePidgeon = Effect.fn("ConnectionStore.updatePidgeon")(function* (
-      input: Identity,
-      display: PidgeonSource.Display,
-      credentials?: { readonly value: PidgeonSource.Credentials; readonly newKey: boolean }
-    ) {
-      const encrypted =
-        credentials === undefined ? undefined : yield* sealed(input, credentials.value);
-      yield* sql`UPDATE connections SET
-        display = ${encodeDisplay({ integration: "pidgeon", display })}
-        ${encrypted === undefined ? sql`` : sql`, credentials = ${encrypted.credentials}, key_id = ${encrypted.keyId}`}
-        ${credentials?.newKey === true ? sql`, credential_revision = credential_revision + 1` : sql``}
-        WHERE id = ${input.id} AND company_id = ${input.companyId}`;
-    });
+    const withPidgeon = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      effect.pipe(Effect.provideService(PidgeonSource.Source, pidgeonSource));
 
-    /**
-     * Tracks a key Pidgeon minted for a save. A failure before the save's last statement revokes it; a
-     * failure after, at COMMIT, leaves the save's outcome unknown, so nothing is revoked.
-     */
-    const minting = (name: string) => {
-      let made: PidgeonKeys.Made | undefined;
-      let finished = false;
-      return {
-        /** The key Pidgeon minted for this save. */
-        made: (value: PidgeonKeys.Made) =>
-          Effect.sync(() => {
-            made = value;
-          }),
-        /** The save's last statement ran; only its COMMIT is left. */
-        done: Effect.sync(() => {
-          finished = true;
-        }),
-        settle: <E>(
-          error: E
-        ): Effect.Effect<
-          never,
-          E | PidgeonKeys.SaveUnknown | PidgeonKeys.StrayKey,
-          PidgeonSource.Source | Cryptography.Cryptography
-        > =>
-          made === undefined
-            ? Effect.fail(error)
-            : finished
-              ? Effect.fail(new PidgeonKeys.SaveUnknown({ key: made.name, name }))
-              : PidgeonKeys.undo(made, error)
-      };
-    };
-
+    /** Connect: the pasted key's checks and the snapshot it read, saved with the inbox's id. */
     const pidgeonConnect = Effect.fn("ConnectionStore.pidgeonConnect")(function* (
       input: ConnectInput,
       report?: (connection: Connection) => Effect.Effect<void>
     ) {
       const request = yield* PidgeonKeys.parseConnect(input.credentials);
-      const identity = {
-        ...input,
-        integration: "pidgeon" as const,
-        id: yield* cryptography.internalId("conn")
-      };
-      const minted = minting(`pidgeon/${input.handle}`);
-      return yield* detached(
-        audited(
-          identity,
-          "pidgeon.connect",
+      // An interrupted connect never keeps the name.
+      return yield* claimed(
+        input,
+        Effect.gen(function* () {
+          const identity = {
+            ...input,
+            integration: "pidgeon" as const,
+            id: yield* cryptography.internalId("conn")
+          };
+          const checked = yield* audited(
+            identity,
+            "pidgeon.connect",
+            withPidgeon(PidgeonKeys.connect(request))
+          );
+          const encrypted = yield* sealed(identity, checked.credentials);
+          const now = yield* Clock.currentTimeMillis;
+          return yield* reportedTransaction(
+            insert(
+              identity,
+              input,
+              { integration: "pidgeon", display: checked.display },
+              encrypted,
+              { integration: "pidgeon", snapshot: checked.snapshot },
+              now
+            ),
+            report
+          );
+        })
+      );
+    });
+
+    /**
+     * Saves what a Pidgeon check found under the connection's lock, as a new snapshot revision:
+     * its display, and its key when it brought a new one.
+     */
+    const pidgeonSave = (
+      input: Identity,
+      current: StoredPidgeon,
+      checked: Omit<PidgeonKeys.Checked, "credentials"> & {
+        readonly credentials?: PidgeonSource.Credentials;
+      },
+      tested: boolean
+    ) =>
+      Effect.gen(function* () {
+        const encrypted =
+          checked.credentials === undefined ? undefined : yield* sealed(input, checked.credentials);
+        const now = yield* Clock.currentTimeMillis;
+        return yield* sql.withTransaction(
           Effect.gen(function* () {
-            const provisioned = yield* PidgeonKeys.provision({
-              request,
-              handle: input.handle,
-              scope: input.companyId
-            });
-            const { made, identity: address } = provisioned;
-            yield* minted.made(made);
-            const display: PidgeonSource.Display = {
-              email: address.email,
-              identityId: address.id,
-              sendPolicy: address.sendPolicy,
-              access: request.access,
-              test: provisioned.test,
-              key: { id: made.id, name: made.name, madeAt: made.madeAt }
-            };
-            const now = yield* Clock.currentTimeMillis;
-            const encrypted = yield* sealed(identity, {
-              identityId: address.id,
-              key: { id: made.id, token: Redacted.value(made.token) }
-            });
-            return yield* reportedTransaction(
-              insert(
-                identity,
-                input,
-                { integration: "pidgeon", display },
-                encrypted,
-                { integration: "pidgeon", snapshot: provisioned.snapshot },
-                now
-              ).pipe(Effect.tap(() => minted.done)),
-              report
+            yield* lock(input, current);
+            const revision = current.metadataRevision + 1;
+            yield* writeSnapshot(
+              input,
+              revision,
+              { integration: "pidgeon", snapshot: checked.snapshot },
+              now
             );
-          }).pipe(
-            Effect.catch(minted.settle),
-            Effect.provideService(PidgeonSource.Source, pidgeonSource),
-            Effect.provideService(Cryptography.Cryptography, cryptography)
-          )
-        )
+            yield* sql`UPDATE connections SET metadata_revision = ${revision},
+              display = ${encodeDisplay({ integration: "pidgeon", display: checked.display })}
+              ${encrypted === undefined ? sql`` : sql`, credentials = ${encrypted.credentials}, key_id = ${encrypted.keyId}, credential_revision = credential_revision + 1`}
+              ${tested ? sql`, last_tested_at = to_timestamp(${now / 1_000}), last_discovered_at = to_timestamp(${now / 1_000})` : sql``}
+              WHERE id = ${input.id} AND company_id = ${input.companyId}`;
+            return yield* get(input.companyId, input.id);
+          })
+        );
+      });
+
+    /**
+     * Replace key: a new key, checked to reach the same inbox and do what patches may, saved with a
+     * fresh snapshot. Change access: Patchy's own setting, so lowering it asks Pidgeon nothing;
+     * raising it to send checks that the stored key can send.
+     */
+    const pidgeonChange = Effect.fn("ConnectionStore.pidgeonChange")(function* (
+      input: CredentialsInput,
+      current: StoredPidgeon
+    ) {
+      const change = yield* PidgeonKeys.parseChange(input.credentials);
+      const identity = { ...input, integration: "pidgeon" as const };
+      if ("key" in change)
+        return yield* pidgeonSave(
+          input,
+          current,
+          yield* audited(
+            identity,
+            "pidgeon.replace",
+            withPidgeon(PidgeonKeys.replace(change.key, current.display))
+          ),
+          true
+        );
+      if (change.access === current.display.access) return yield* get(input.companyId, input.id);
+      if (change.access === "send")
+        return yield* pidgeonSave(
+          input,
+          current,
+          yield* audited(
+            identity,
+            "pidgeon.access",
+            withPidgeon(PidgeonKeys.inspect(yield* secretOf(current), current.display, "send"))
+          ),
+          true
+        );
+      const kept = yield* snapshot(input.companyId, input.id, current.metadataRevision);
+      if (kept.integration !== "pidgeon")
+        return yield* new ConnectionNotFound({
+          companyId: input.companyId,
+          lookup: { id: input.id }
+        });
+      return yield* pidgeonSave(
+        input,
+        current,
+        {
+          display: { ...current.display, access: "read" },
+          snapshot: { ...kept.snapshot, access: "read" }
+        },
+        false
+      );
+    });
+
+    /** Test connection: the stored key's checks at the connection's access. */
+    const pidgeonTest = Effect.fn("ConnectionStore.pidgeonTest")(function* (
+      input: Identity,
+      current: StoredPidgeon
+    ) {
+      yield* withPidgeon(PidgeonKeys.test(yield* secretOf(current), current.display));
+      const now = yield* Clock.currentTimeMillis;
+      return yield* sql.withTransaction(
+        Effect.gen(function* () {
+          yield* lock(input, current);
+          yield* sql`UPDATE connections SET last_tested_at = to_timestamp(${now / 1_000}) WHERE id = ${input.id} AND company_id = ${input.companyId}`;
+          return yield* get(input.companyId, input.id);
+        })
+      );
+    });
+
+    /** Refresh labels: the stored key's checks and a fresh snapshot, attributed to the admin. */
+    const pidgeonRefresh = Effect.fn("ConnectionStore.pidgeonRefresh")(function* (
+      input: Identity,
+      current: StoredPidgeon
+    ) {
+      if (current.status !== "connected") return yield* new ConnectionNotConnected({});
+      const credentials = yield* secretOf(current);
+      const checked = yield* audited(
+        { ...input, integration: "pidgeon" },
+        "pidgeon.discover",
+        withPidgeon(PidgeonKeys.inspect(credentials, current.display, current.display.access))
+      );
+      return yield* pidgeonSave(
+        input,
+        current,
+        { display: checked.display, snapshot: checked.snapshot },
+        true
       );
     });
 
@@ -1935,153 +1963,10 @@ const storeKnowing = (known: ReadonlyArray<Integration>) =>
       Effect.catchTags(safe("connect"))
     );
 
-    /** Revokes old keys with their own secrets: the ids it revoked, and the ones that refused. */
-    const retire = Effect.fn("ConnectionStore.retire")(
-      function* (old: ReadonlyArray<{ readonly key: PidgeonSource.Key; readonly name: string }>) {
-        const revoked = new Set<string>();
-        const left: Array<{ readonly key: PidgeonSource.Key; readonly name: string }> = [];
-        for (const item of old) {
-          const done = yield* PidgeonKeys.revoke(
-            Redacted.make(item.key.token),
-            item.key.id,
-            "self"
-          ).pipe(
-            Effect.as(true),
-            Effect.orElseSucceed(() => false)
-          );
-          if (done) revoked.add(item.key.id);
-          else left.push(item);
-        }
-        return { revoked, left };
-      },
-      Effect.provideService(PidgeonSource.Source, pidgeonSource),
-      Effect.provideService(Cryptography.Cryptography, cryptography)
-    );
-    /**
-     * Forgets old keys Pidgeon has revoked, under the connection's lock and as it stands now, so a
-     * key retired meanwhile stays. Best effort: a revoked key still listed is tried again, and
-     * counts as done, at the next Test connection.
-     */
-    const dropRetired = (input: Identity, revoked: ReadonlySet<string>) =>
-      revoked.size === 0
-        ? Effect.void
-        : sql
-            .withTransaction(
-              Effect.gen(function* () {
-                const current = yield* pidgeonOf(input, true);
-                const credentials = yield* secretOf(current);
-                const left = (credentials.retired ?? []).filter((key) => !revoked.has(key.id));
-                yield* updatePidgeon(
-                  input,
-                  pidgeonDisplay(
-                    current.display,
-                    (current.display.retired ?? []).filter((item) => !revoked.has(item.id))
-                  ),
-                  {
-                    value: {
-                      identityId: credentials.identityId,
-                      key: credentials.key,
-                      ...(left.length === 0 ? {} : { retired: left })
-                    },
-                    newKey: false
-                  }
-                );
-              })
-            )
-            .pipe(Effect.ignore);
-
-    /**
-     * Change access and Replace key: under the connection's lock, a new key for the same address,
-     * checked, with a fresh snapshot, saved together with the old key as retired. Then the old key
-     * revokes itself; one that won't, or a commit whose answer was lost, leaves it retired, named
-     * on the page until Test connection or Delete revokes it.
-     */
-    const pidgeonReplace = Effect.fn("ConnectionStore.pidgeonReplace")(function* (
-      input: CredentialsInput
-    ) {
-      const request = yield* PidgeonKeys.parseReplace(input.credentials);
-      const identity = { ...input, integration: "pidgeon" as const };
-      return yield* detached(
-        Effect.gen(function* () {
-          const current = yield* pidgeonOf(input);
-          const minted = minting(`pidgeon/${current.handle}`);
-          const replaced = yield* audited(
-            identity,
-            "pidgeon.replace",
-            sql
-              .withTransaction(
-                Effect.gen(function* () {
-                  const locked = yield* pidgeonOf(input, true);
-                  const old = yield* secretOf(locked);
-                  const provisioned = yield* PidgeonKeys.replace({
-                    request,
-                    handle: locked.handle,
-                    identityId: locked.display.identityId
-                  });
-                  const { made } = provisioned;
-                  yield* minted.made(made);
-                  const now = yield* Clock.currentTimeMillis;
-                  const revision = locked.metadataRevision + 1;
-                  yield* writeSnapshot(
-                    input,
-                    revision,
-                    { integration: "pidgeon", snapshot: provisioned.snapshot },
-                    now
-                  );
-                  // The old key is saved as retired with the new one, so it's never left untracked.
-                  const retired = [
-                    ...(locked.display.retired ?? []),
-                    { id: old.key.id, name: locked.display.key.name }
-                  ];
-                  const retiredKeys = [...(old.retired ?? []), old.key];
-                  yield* updatePidgeon(
-                    input,
-                    pidgeonDisplay(
-                      {
-                        email: provisioned.identity.email,
-                        identityId: locked.display.identityId,
-                        sendPolicy: provisioned.identity.sendPolicy,
-                        access: request.access,
-                        test: provisioned.test,
-                        key: { id: made.id, name: made.name, madeAt: made.madeAt }
-                      },
-                      retired
-                    ),
-                    {
-                      value: {
-                        identityId: old.identityId,
-                        key: { id: made.id, token: Redacted.value(made.token) },
-                        retired: retiredKeys
-                      },
-                      newKey: true
-                    }
-                  );
-                  yield* sql`UPDATE connections SET metadata_revision = ${revision},
-                    last_tested_at = to_timestamp(${now / 1_000}),
-                    last_discovered_at = to_timestamp(${now / 1_000})
-                    WHERE id = ${input.id} AND company_id = ${input.companyId}`;
-                  yield* minted.done;
-                  return retiredOf(
-                    { ...locked.display, retired },
-                    { ...old, retired: retiredKeys }
-                  );
-                })
-              )
-              .pipe(Effect.catch(minted.settle))
-          );
-          yield* dropRetired(input, (yield* retire(replaced)).revoked);
-          return yield* get(input.companyId, input.id);
-        }).pipe(
-          Effect.provideService(PidgeonSource.Source, pidgeonSource),
-          Effect.provideService(Cryptography.Cryptography, cryptography)
-        )
-      );
-    });
-
     const rotate = Effect.fn("ConnectionStore.rotate")(
       function* (input: CredentialsInput) {
         const current = yield* stored(input);
-        if (current.integration === "pidgeon") return yield* pidgeonReplace(input);
+        if (current.integration === "pidgeon") return yield* pidgeonChange(input, current);
         if (current.integration === "attio") return yield* attioReplace(input, current);
         if (current.integration === "notion")
           return yield* notionDiscover(input, current, input.credentials);
@@ -2104,25 +1989,6 @@ const storeKnowing = (known: ReadonlyArray<Integration>) =>
       Effect.catchTags(safe("rotate"))
     );
 
-    /** Checks the stored key reaches its address, and tries again to revoke old keys. */
-    const pidgeonTest = Effect.fn("ConnectionStore.pidgeonTest")(
-      function* (input: Identity, current: StoredPidgeon) {
-        const credentials = yield* secretOf(current);
-        yield* PidgeonKeys.test(credentials, current.display.email);
-        yield* dropRetired(input, (yield* retire(retiredOf(current.display, credentials))).revoked);
-        const now = yield* Clock.currentTimeMillis;
-        return yield* sql.withTransaction(
-          Effect.gen(function* () {
-            yield* lock(input, current);
-            yield* sql`UPDATE connections SET last_tested_at = to_timestamp(${now / 1_000}) WHERE id = ${input.id} AND company_id = ${input.companyId}`;
-            return yield* get(input.companyId, input.id);
-          })
-        );
-      },
-      Effect.provideService(PidgeonSource.Source, pidgeonSource),
-      Effect.provideService(Cryptography.Cryptography, cryptography)
-    );
-
     const test = Effect.fn("ConnectionStore.test")(
       function* (input: Identity) {
         const current = yield* stored(input);
@@ -2142,43 +2008,6 @@ const storeKnowing = (known: ReadonlyArray<Integration>) =>
         );
       },
       Effect.catchTags(safe("test"))
-    );
-    /** A fresh snapshot of a Pidgeon address through its stored key: Refresh labels. */
-    const pidgeonRefresh = Effect.fn("ConnectionStore.pidgeonRefresh")(
-      function* (input: Identity, current: StoredPidgeon) {
-        if (current.status !== "connected") return yield* new ConnectionNotConnected({});
-        const credentials = yield* secretOf(current);
-        const inspected = yield* audited(
-          { ...input, integration: "pidgeon" },
-          "pidgeon.discover",
-          PidgeonKeys.inspect(credentials, current.display.email, current.display.access)
-        );
-        const now = yield* Clock.currentTimeMillis;
-        return yield* sql.withTransaction(
-          Effect.gen(function* () {
-            yield* lock(input, current);
-            const revision = current.metadataRevision + 1;
-            yield* writeSnapshot(
-              input,
-              revision,
-              { integration: "pidgeon", snapshot: inspected.snapshot },
-              now
-            );
-            yield* updatePidgeon(input, {
-              ...current.display,
-              email: inspected.identity.email,
-              sendPolicy: inspected.identity.sendPolicy
-            });
-            yield* sql`UPDATE connections SET metadata_revision = ${revision},
-            last_tested_at = to_timestamp(${now / 1_000}),
-            last_discovered_at = to_timestamp(${now / 1_000})
-            WHERE id = ${input.id} AND company_id = ${input.companyId}`;
-            return yield* get(input.companyId, input.id);
-          })
-        );
-      },
-      Effect.provideService(PidgeonSource.Source, pidgeonSource),
-      Effect.provideService(Cryptography.Cryptography, cryptography)
     );
     const discover = Effect.fn("ConnectionStore.discover")(function* (
       input: Identity,
@@ -2256,10 +2085,7 @@ const storeKnowing = (known: ReadonlyArray<Integration>) =>
         if (current.status === "connected") return yield* get(input.companyId, input.id);
         // The key was kept, so reconnecting needs no admin key: only a check that it still works.
         if (current.integration === "pidgeon")
-          yield* PidgeonKeys.test(yield* secretOf(current), current.display.email).pipe(
-            Effect.provideService(PidgeonSource.Source, pidgeonSource),
-            Effect.provideService(Cryptography.Cryptography, cryptography)
-          );
+          yield* withPidgeon(PidgeonKeys.test(yield* secretOf(current), current.display));
         else if (current.integration === "attio") return yield* attioReconnect(input, current);
         else if (current.integration === "notion") yield* notionCheck(input, current);
         else if (current.integration === "imap") return yield* imapReconnect(input, current);
@@ -2476,26 +2302,15 @@ const storeKnowing = (known: ReadonlyArray<Integration>) =>
       Effect.catchTags(safe("blockingGuests"))
     );
     /**
-     * Delete runs to its end even when its request is interrupted: once the row is gone, its keys
-     * revoke themselves. If the COMMIT's answer is lost, the row says whether it went, but not who
-     * removed it: the keys still revoke themselves, and only a delete whose own COMMIT answered
-     * reports it.
+     * Delete runs to its end even when its request is interrupted, so a GitHub connection's
+     * installation access is forgotten once its row is gone. A Pidgeon connection's key stays
+     * valid in Pidgeon: Patchy can't revoke it, so its page tells the admin to.
      */
     const remove = Effect.fn("ConnectionStore.delete")(
       (input: Identity, report?: (connection: Connection) => Effect.Effect<void>) =>
         detached(
           Effect.gen(function* () {
-            // Set once the DELETE ran, with the keys a removed row leaves to revoke.
-            let doomed:
-              | {
-                  readonly connection: Connection;
-                  readonly keys: ReadonlyArray<{
-                    readonly key: PidgeonSource.Key;
-                    readonly name: string;
-                  }>;
-                }
-              | undefined;
-            const removed = yield* reportedTransaction(
+            const connection = yield* reportedTransaction(
               Effect.gen(function* () {
                 // A GitHub connection's installation row is locked before the connection, as
                 // every claim and release does.
@@ -2519,16 +2334,6 @@ const storeKnowing = (known: ReadonlyArray<Integration>) =>
                 const references = yield* sql`SELECT 1 FROM ${declarations(input.companyId)}
                 AND declaration.value->>'id' = ${input.id} LIMIT 1`;
                 if (references.length !== 0) return yield* new ConnectionInUse({});
-                // A minted key revokes itself once the row is gone, so its secret is read first.
-                const minted =
-                  connection.integration === "pidgeon" ? yield* pidgeonOf(input) : undefined;
-                const keys =
-                  minted === undefined
-                    ? []
-                    : yield* Effect.map(secretOf(minted), (credentials) => [
-                        { key: credentials.key, name: minted.display.key.name },
-                        ...retiredOf(minted.display, credentials)
-                      ]);
                 yield* sql`DELETE FROM connections WHERE id = ${input.id} AND company_id = ${input.companyId}`;
                 if (connection.integration === "github")
                   yield* GithubClaims.release({
@@ -2536,26 +2341,13 @@ const storeKnowing = (known: ReadonlyArray<Integration>) =>
                     companyId: input.companyId,
                     except: input.id
                   }).pipe(Effect.provideService(SqlClient.SqlClient, sql));
-                doomed = { connection, keys };
-                return doomed;
+                return connection;
               }),
-              (value) => report?.(value.connection) ?? Effect.void
-            ).pipe(
-              Effect.catch((error) =>
-                Effect.gen(function* () {
-                  if (doomed === undefined || doomed.keys.length === 0) return yield* error;
-                  if (Option.isSome(yield* connectionRow({ ...input, locked: false })))
-                    return yield* error;
-                  return doomed;
-                })
-              )
+              report
             );
-            const { left } = yield* retire(removed.keys);
-            if (removed.connection.integration === "github") yield* githubAccess.forget(input.id);
-            return {
-              connection: removed.connection,
-              keyLeft: left.length === 0 ? null : left.map((item) => item.name).join(", ")
-            };
+            if (connection.integration === "github") yield* githubAccess.forget(input.id);
+            const deleted: ConnectionStore.Deleted = { connection };
+            return deleted;
           })
         ),
       Effect.catchTags(safe("delete"))
@@ -2606,27 +2398,29 @@ const storeKnowing = (known: ReadonlyArray<Integration>) =>
       Effect.catchTags(safe("poolCredentials"))
     );
 
-    // The connection's row must be the company's; the budget check and the count are one
-    // statement, so concurrent sends never pass it together.
-    const countSend = Effect.fn("ConnectionStore.countSend")(
-      function* (companyId: string, id: string, day: string, budget: number) {
-        const counted = yield* sql<{ readonly sends: number }>`INSERT INTO pidgeon_sends
-            (connection_id, day, sends)
-          SELECT id, ${day}::date, 1 FROM connections
-            WHERE id = ${id} AND company_id = ${companyId} AND integration = 'pidgeon'
-              AND ${budget} > 0
-          ON CONFLICT (connection_id, day) DO UPDATE SET sends = pidgeon_sends.sends + 1
-            WHERE pidgeon_sends.sends < ${budget}
-          RETURNING sends`;
-        return counted.length === 1;
-      },
-      Effect.catchTags({
-        SqlError: (cause) =>
-          Effect.fail(
-            new ConnectionStorageFailed({ operation: "countSend", cause: Redacted.make(cause) })
-          )
-      })
-    );
+    // The ledger of Pidgeon sends (`pidgeon/Ledger.ts`), over this store's database.
+    const ledger = <A>(effect: Effect.Effect<A, SqlError, SqlClient.SqlClient>) =>
+      effect.pipe(
+        Effect.provideService(SqlClient.SqlClient, sql),
+        Effect.catchTags({
+          SqlError: (cause) =>
+            Effect.fail(
+              new ConnectionStorageFailed({ operation: "drafts", cause: Redacted.make(cause) })
+            )
+        })
+      );
+    const claimDraft: ConnectionStore.ConnectionStore["Service"]["claimDraft"] = (input) =>
+      ledger(PidgeonLedger.claim(input));
+    const recordDraft: ConnectionStore.ConnectionStore["Service"]["recordDraft"] = (change) =>
+      ledger(PidgeonLedger.record(change));
+    const releaseDraft: ConnectionStore.ConnectionStore["Service"]["releaseDraft"] = (key) =>
+      ledger(PidgeonLedger.release(key));
+    const readDraft: ConnectionStore.ConnectionStore["Service"]["readDraft"] = (key) =>
+      ledger(PidgeonLedger.read(key));
+    const unsettledSends: ConnectionStore.ConnectionStore["Service"]["unsettledSends"] = (
+      companyId,
+      id
+    ) => ledger(PidgeonLedger.unsettled(companyId, id));
     const sends = Effect.fn("ConnectionStore.sends")(
       function* (companyId: string, id: string, day: string) {
         const rows = yield* sql<{ readonly sends: number }>`SELECT s.sends FROM pidgeon_sends s
@@ -2667,7 +2461,11 @@ const storeKnowing = (known: ReadonlyArray<Integration>) =>
       delete: remove,
       resolve,
       poolCredentials,
-      countSend,
+      claimDraft,
+      recordDraft,
+      releaseDraft,
+      readDraft,
+      unsettledSends,
       sends,
       pauseLogin
     });

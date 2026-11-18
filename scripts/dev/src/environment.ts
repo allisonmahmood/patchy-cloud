@@ -22,7 +22,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
-import * as Random from "effect/Random";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -36,15 +35,16 @@ import {
   readGithubAppConfig,
   readGithubSeed,
   readCredentialKeys,
+  readPidgeonSendKey,
   readPidgeonTestKey
 } from "./developerEnv.js";
 import {
   decodeMail,
-  deliverMail,
-  isRecorded,
+  DOMAIN as PIDGEON_DOMAIN,
   isTestKey,
   MailFailed,
-  recordAddress
+  readyInbox,
+  recordedInbox
 } from "./pidgeon.js";
 import { hostLabel, type Plan, worktreeHash } from "./plan.js";
 import { startMailbox, type Login } from "./mailbox.js";
@@ -201,7 +201,7 @@ export const layoutOf = (dir: string, path: Path.Path) => ({
   claudeWorker: path.join(dir, "worker-claude"),
   codexWorker: path.join(dir, "worker-codex"),
   manifest: path.join(dir, "environment.json"),
-  /** The local parts of the Pidgeon test addresses `up` asked for, for `down` to take down. */
+  /** The names of the Pidgeon test inboxes `up` asked for, for `down` to take down. */
   pidgeon: path.join(dir, "pidgeon-addresses.json")
 });
 type Layout = ReturnType<typeof layoutOf>;
@@ -646,16 +646,16 @@ export const writeWorkers = Effect.fn("writeWorkers")(function* (
 });
 
 /**
- * Connects a scenario's connection as `email` through its connect page in a browser, as an admin
- * would, the page's script included: the test admin key, then a new address on pidgeon.email at
- * `localPart`. One already connected under its name is left be.
+ * Connects a scenario's Pidgeon connection as `email` through its connect page in a browser, as an
+ * admin would: the developer's test key, the environment's own inbox's `address`, what patches may
+ * do, the name and the description, in one submit. One already connected under its name is left be.
  */
 const connectSource = Effect.fn("connectSource")(function* (
   apiUrl: string,
   email: string,
   connection: Extract<LiveConnection, { readonly integration: "pidgeon" }>,
-  adminKey: Redacted.Redacted<string>,
-  localPart: string
+  key: Redacted.Redacted<string>,
+  address: string
 ) {
   const name = `${connection.integration}/${connection.handle}`;
   // Where it got to, for a failure's message; Playwright's own error stays redacted.
@@ -671,28 +671,14 @@ const connectSource = Effect.fn("connectSource")(function* (
           `${apiUrl}/dev/sign-in?as=${encodeURIComponent(email)}&return=${encodeURIComponent("/settings/integrations")}`
         );
         if ((await page.getByRole("link", { name, exact: true }).count()) > 0) return;
-        step = "pasting the admin key";
+        step = "filling in the connect form";
         await page.goto(`${apiUrl}/settings/integrations/connect/${connection.integration}`);
-        await page.locator("#pidgeon-key").fill(Redacted.value(adminKey));
-        step = "finding addresses";
-        await page.getByRole("button", { name: "Find addresses" }).click();
-        step = "describing the new address";
-        await page.locator("label.tile-option", { hasText: "New address" }).click();
-        await page.locator("#pidgeon-local").fill(localPart);
-        await page.locator("#pidgeon-display").fill(connection.displayName);
-        step = "choosing what patches may do";
-        await page
-          .locator("label.choice-card")
-          .filter({
-            has: page.getByText(connection.access === "send" ? "Read and send" : "Read", {
-              exact: true
-            })
-          })
-          .click();
-        step = "naming it";
+        await page.locator("#connection-key").fill(Redacted.value(key));
+        await page.locator("#connection-address").fill(address);
+        await page.locator("#connection-access").selectOption(connection.access);
         await page.locator("#connection-handle").fill(connection.handle);
         await page.locator("#connection-description").fill(connection.description);
-        step = "connecting";
+        step = "checking the key and the inbox";
         await Promise.all([
           page.waitForURL(/\/settings\/integrations\/conn_/),
           page.getByRole("button", { name: "Test and connect", exact: true }).click()
@@ -979,6 +965,9 @@ const materialize = Effect.fn("materialize")(function* (
   const pidgeonKey = connections.some((connection) => connection.integration === "pidgeon")
     ? yield* readPidgeonTestKey(devEnv)
     : Option.none();
+  const pidgeonSendKey = connections.some((connection) => connection.integration === "pidgeon")
+    ? yield* readPidgeonSendKey(devEnv)
+    : Option.none();
   const attioKey = connections.some((connection) => connection.integration === "attio")
     ? yield* readAttioTestKey(devEnv)
     : Option.none();
@@ -1061,62 +1050,66 @@ const materialize = Effect.fn("materialize")(function* (
       );
       continue;
     }
-    // A live key would make a live address and key, which nothing here takes down again.
-    const test = yield* isTestKey(pidgeonKey.value).pipe(
-      Effect.provide(PidgeonSource.layer),
-      Effect.orElseSucceed(() => false)
-    );
-    if (!test) {
+    // A Send test key connects it, as an admin pastes one; the admin key makes and fills its inbox.
+    const connectKey = Option.getOrElse(pidgeonSendKey, () => pidgeonKey.value);
+    // A live key would send real mail, which a dev environment never does.
+    if (!isTestKey(pidgeonKey.value) || !isTestKey(connectKey)) {
       skipped.add(name);
       yield* Console.error(
-        `  ${name}: skipped. PIDGEON_TEST_ADMIN_KEY isn't a Pidgeon test key, and dev environments only use one.`
+        `  ${name}: skipped. PIDGEON_TEST_ADMIN_KEY or PIDGEON_TEST_SEND_KEY isn't a Pidgeon test key, and dev environments only use those.`
       );
       continue;
     }
-    // An earlier start that connected it, then stopped, left its address: its mail resumes there.
+    // An earlier start connected it: the inbox it made keeps whatever mail reached it.
     const existing = yield* connectedLocalPart(layout, env, name);
-    let localPart: string;
     if (Option.isSome(existing)) {
-      if (
-        Option.isNone(existing.value) ||
-        !(yield* isRecorded(layout.pidgeon, existing.value.value))
-      ) {
-        yield* Console.error(
-          `  ${name}: already connected to an address this environment didn't make, so it gets no mail.`
-        );
-        continue;
-      }
-      localPart = existing.value.value;
-      yield* Console.error(`  ${name}: already connected`);
-    } else {
-      // A code of this environment's after the local part makes the address its own. It's recorded
-      // before Pidgeon is asked, so `down` finds the address even if the connect fails after it.
-      localPart = `${connection.localPart}-${(yield* Random.next).toString(36).slice(2, 8)}`;
-      yield* recordAddress(layout.pidgeon, localPart);
-      yield* Console.error(`  ${name}: connecting as ${publisher.name}`);
-      yield* connectSource(
-        manifest.apiUrl,
-        publisher.email,
-        connection,
-        pidgeonKey.value,
-        localPart
-      );
-    }
-    if (connection.mail !== undefined) {
-      const mail = yield* decodeMail(
-        yield* fs.readFileString(path.join(scenarioDir, connection.mail))
-      ).pipe(Effect.mapError((cause) => new MailFailed({ step: "reading the mail", cause })));
-      const delivered = yield* deliverMail(pidgeonKey.value, localPart, mail).pipe(
-        Effect.provide(PidgeonSource.layer)
-      );
+      const made = Option.isSome(existing.value)
+        ? yield* recordedInbox(layout.pidgeon, existing.value.value)
+        : Option.none();
       yield* Console.error(
-        Option.match(delivered, {
-          onNone: () => `  ${name}: its address isn't in Pidgeon any more, so it gets no mail.`,
+        Option.match(made, {
+          onNone: () =>
+            `  ${name}: already connected to an inbox this environment didn't make, so it gets no mail.`,
+          onSome: (entry) =>
+            entry.seeded
+              ? `  ${name}: already connected`
+              : `  ${name}: already connected, though its mail may not all have arrived; \`pnpm dev reset\` starts it over.`
+        })
+      );
+      continue;
+    }
+    // Made and filled before it's connected, so its snapshot holds the scenario's labels. An
+    // inbox whose mail didn't all arrive is replaced; one whose did is used as it is.
+    const mail =
+      connection.mail === undefined
+        ? undefined
+        : yield* decodeMail(yield* fs.readFileString(path.join(scenarioDir, connection.mail))).pipe(
+            Effect.mapError((cause) => new MailFailed({ step: "reading the mail", cause }))
+          );
+    const ready = yield* readyInbox({
+      file: layout.pidgeon,
+      adminKey: pidgeonKey.value,
+      connection: name,
+      localPart: connection.localPart,
+      displayName: connection.displayName,
+      mail
+    }).pipe(Effect.provide(PidgeonSource.layer));
+    if (mail !== undefined)
+      yield* Console.error(
+        Option.match(ready.delivered, {
+          onNone: () => `  ${name}: its inbox's mail arrived on an earlier start`,
           onSome: (done) =>
             `  ${name}: ${done.messages} messages in ${done.conversations} conversations delivered through Pidgeon's test inbound mail.`
         })
       );
-    }
+    yield* Console.error(`  ${name}: connecting as ${publisher.name}`);
+    yield* connectSource(
+      manifest.apiUrl,
+      publisher.email,
+      connection,
+      connectKey,
+      `${ready.localPart}@${PIDGEON_DOMAIN}`
+    );
   }
   for (const patch of scenario.patches) {
     const key = "repo" in patch ? patch.repo : patch.name;
