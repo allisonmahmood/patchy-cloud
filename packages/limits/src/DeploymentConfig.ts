@@ -1,7 +1,6 @@
 import * as Config from "effect/Config";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
-import * as Hex from "effect/encoding/Hex";
 import * as Schema from "effect/Schema";
 import { registry, type OperatingLimitId } from "./registry.js";
 
@@ -79,12 +78,8 @@ export const load = Effect.gen(function* () {
     managedIds.map((limitId) => [limitId, overrides[limitId] ?? registry[limitId].default])
   ) as Record<ManagedOperatingLimitId, number>;
   return {
-    revision: Crypto.Crypto.pipe(
-      Effect.flatMap((crypto) =>
-        crypto.digest("SHA-256", new TextEncoder().encode(encodeValues(values)))
-      ),
-      Effect.map(Hex.encode),
-      Effect.orDie
+    revision: Digest.Digest.use((digest) =>
+      digest.digestHex(Digest.sha256, new TextEncoder().encode(encodeValues(values)))
     ),
     get: (limitId: ManagedOperatingLimitId): number => values[limitId]
   };

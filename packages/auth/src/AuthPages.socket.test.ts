@@ -8,7 +8,7 @@ import * as Cookies from "effect/http/Cookies";
 import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { CookieJar } from "tough-cookie";
-import { Companies, InviteMail, Teams, Users } from "@patchy/companies";
+import { Companies, InviteMail, Teams, TeamsPage, Users } from "@patchy/companies";
 import { Analytics } from "@patchy/analytics";
 import { Limits } from "@patchy/limits";
 import * as AgentConnections from "./AgentConnections.js";
@@ -28,6 +28,7 @@ import {
   signSession
 } from "./testing.js";
 import { NodeCryptography } from "@patchy/core";
+import { stalledUpload } from "../../../test/socket.js";
 
 const localRevocation = Layer.effect(
   Session.Session,
@@ -121,15 +122,65 @@ it.layer(layer)("auth pages on a socket", (it) => {
           redirect: "manual",
           ...(streamed ? { duplex: "half" as const } : {})
         };
-        const request = Effect.tryPromise(() => fetch(url, options));
-        if (streamed) {
-          // The server cuts an undeclared body off mid-stream, so the request fails.
-          yield* request.pipe(Effect.flip);
-        } else {
-          const response = yield* request;
-          assert.strictEqual(response.status, 413);
-          assert.strictEqual(response.headers.get("location"), null);
-          assert.include(yield* Effect.promise(() => response.text()), "Invalid form");
+        const response = yield* Effect.tryPromise(() => fetch(url, options));
+        // An undeclared body that crosses the cap stops being read and answers as unreadable.
+        assert.strictEqual(response.status, streamed ? 400 : 413);
+        assert.strictEqual(response.headers.get("location"), null);
+        assert.include(yield* Effect.promise(() => response.text()), "Invalid form");
+      }
+    })
+  );
+
+  it.effect("answers a form overflow whose sender never finishes, then closes its connection", () =>
+    Effect.gen(function* () {
+      const server = yield* HttpServer.HttpServer;
+      if (server.address._tag === "UnixPathAddress") return assert.fail("Expected a TCP listener");
+      const { port } = server.address;
+      const answer = yield* Effect.promise(() =>
+        stalledUpload(
+          port,
+          `POST /login/device HTTP/1.1\nhost: 127.0.0.1\norigin: ${PUBLIC_BASE_URL}\ncontent-type: application/x-www-form-urlencoded`,
+          { chunked: 8_192 }
+        )
+      );
+      assert.strictEqual(answer.status, 400);
+      // Closed within the adapter's half-second grace, rather than held open for more body.
+      assert.isDefined(answer.closedAfterMs);
+    })
+  );
+
+  it.effect("refuses each company form one byte past its cap, streamed or declared", () =>
+    Effect.gen(function* () {
+      const server = yield* HttpServer.HttpServer;
+      if (server.address._tag === "UnixPathAddress") return assert.fail("Expected a TCP listener");
+      const { port } = server.address;
+      // The seeded admin manages the company; the door is for someone in none yet.
+      const admin = signedInCookies();
+      const newcomer = signedInCookies(
+        signSession({ sub: "user_socket_newcomer", email: "newcomer@example.com" })
+      );
+      for (const [path, cookie, maxBytes] of [
+        ["/join", newcomer, 4_096],
+        ["/settings/agent-access", admin, 1_024],
+        ["/settings/people/invites", admin, 233_596],
+        ["/settings/people/invites/inv_unread/resend", admin, 1_024],
+        ["/settings/people/users/usr_unread/role", admin, 1_024],
+        [`${TeamsPage.path}/create`, admin, 8_388_608]
+      ] as const) {
+        const head = [
+          `POST ${path} HTTP/1.1`,
+          "host: 127.0.0.1",
+          `origin: ${PUBLIC_BASE_URL}`,
+          `cookie: ${cookie}`,
+          "content-type: application/x-www-form-urlencoded"
+        ].join("\n");
+        // The rest of either body never arrives, so only a refusal at the cap answers at all.
+        for (const body of [{ chunked: maxBytes + 1 }, { declared: maxBytes + 1 }]) {
+          const label = `${path} ${JSON.stringify(body)}`;
+          const answer = yield* Effect.promise(() => stalledUpload(port, head, body));
+          assert.strictEqual(answer.status, 400, label);
+          assert.include(answer.body, "Invalid form", label);
+          assert.isDefined(answer.closedAfterMs, label);
         }
       }
     })

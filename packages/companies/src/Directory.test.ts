@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as PgClient from "@effect/sql-pg/PgClient";
+import * as Arr from "effect/Array";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
@@ -200,7 +201,7 @@ it.layer(services)("company directory", (it) => {
         const sql = yield* SqlClient.SqlClient;
         const directory = yield* Directory.Directory;
         const { company } = yield* createCompany("directory-pages");
-        const rows = Array.from({ length: 103 }, (_, index) => {
+        const rows = Arr.makeBy(103, (index) => {
           const suffix = String(index).padStart(3, "0");
           return {
             id: `usr_directory_${suffix}`,
@@ -211,7 +212,7 @@ it.layer(services)("company directory", (it) => {
             role: "member"
           };
         });
-        yield* sql`INSERT INTO users ${sql.insert(rows.toReversed())}`;
+        yield* sql`INSERT INTO users ${sql.insert(Arr.reverse(rows))}`;
         const expected = rows.map(
           ({ id, name, email }) =>
             new Directory.Member({

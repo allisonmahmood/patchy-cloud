@@ -5,7 +5,11 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as HttpApi from "effect/http-api/HttpApi";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpServer from "effect/http/HttpServer";
 import * as HttpApiTest from "effect/http-api/HttpApiTest";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import { RuntimeStreamFrame, RuntimeStreamGroup } from "@patchy/api";
@@ -13,12 +17,14 @@ import * as WideEvents from "@patchy/analytics/wide-events";
 import { Session } from "@patchy/auth";
 import { PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import { DEV_SEED } from "@patchy/auth/seed";
+import { ContractLimits } from "@patchy/limits";
 import * as RuntimeStream from "./RuntimeStream.js";
 import * as RuntimeStreamApi from "./RuntimeStreamApi.js";
 import * as Fixtures from "./test/fixtures.js";
 import * as StreamAdmission from "./StreamAdmission.js";
 import * as StreamLimits from "./StreamLimits.js";
 import * as Subscriptions from "./Subscriptions.js";
+import { stalledUpload } from "../../../test/socket.js";
 
 const layerWith = <Events>(events: Layer.Layer<Events>) =>
   RuntimeStreamApi.layer.pipe(
@@ -385,3 +391,34 @@ it.layer(layerWith(recording))("subscription request events", (it) => {
     }).pipe(Effect.scoped)
   );
 });
+
+it.effect("a reconcile body past its cap answers 413, then closes its connection", () =>
+  Effect.gen(function* () {
+    const server = yield* HttpServer.HttpServer;
+    if (server.address._tag === "UnixPathAddress") return assert.fail("Expected a TCP listener");
+    const { port } = server.address;
+    // The cap is (16 + 16) × 1 + 16 = 48 bytes; the rest of this body never arrives.
+    const answer = yield* Effect.promise(() =>
+      stalledUpload(
+        port,
+        "POST /api/runtime/subscriptions HTTP/1.1\nhost: 127.0.0.1\ncontent-type: application/json",
+        { chunked: 1_024 }
+      )
+    );
+    assert.strictEqual(answer.status, 413);
+    assert.isDefined(answer.closedAfterMs);
+  }).pipe(
+    Effect.provide(
+      HttpRouter.serve(HttpApiBuilder.layer(HttpApi.make("patchy").add(RuntimeStreamGroup)), {
+        disableLogger: true,
+        disableListenLog: true
+      }).pipe(Layer.provideMerge(NodeHttpServer.layerTest))
+    ),
+    Effect.provide(layer),
+    Effect.provideService(ContractLimits.overrides, {
+      "runtime.call.bytes": 16,
+      "tier2.args.bytes": 16,
+      "subscriptions.document": 1
+    })
+  )
+);
