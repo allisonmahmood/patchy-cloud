@@ -43,13 +43,16 @@ const nodeRuntime = {
 // that adds one fails here. None is supported, and none reaches past the guest:
 // cloudflare:workers sees the guest's empty environment and only its own exports;
 // cloudflare:sockets meets the network refusal test/network.ts proves; the ai and br clients
-// only call a fetcher they are handed, and the global one is refused as `refusals` shows; the
-// rest are classes, constants and request adapters. cloudflare:email is registered, but the
-// internal module it needs isn't, so getBuiltinModule throws for it.
+// only call a fetcher they are handed, and the global one is refused as `refusals` shows;
+// cloudflare:durable-objects, new in workerd 1.20261112.1, marks the methods and hibernation
+// hook of a Durable Object class, and a guest is bound to no Durable Object; the rest are
+// classes, constants and request adapters. cloudflare:email is registered, but the internal
+// module it needs isn't, so getBuiltinModule throws for it.
 const workerdModules = {
   modules: [
     "cloudflare:ai",
     "cloudflare:br",
+    "cloudflare:durable-objects",
     "cloudflare:node",
     "cloudflare:pipelines",
     "cloudflare:sockets",
@@ -61,6 +64,7 @@ const workerdModules = {
     resolved: [
       "cloudflare:ai",
       "cloudflare:br",
+      "cloudflare:durable-objects",
       "cloudflare:node",
       "cloudflare:pipelines",
       "cloudflare:sockets",

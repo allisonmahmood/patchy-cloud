@@ -893,10 +893,11 @@ the engine itself offers a guest no Node built-in except workerd's minimal
 empty, its `getBuiltinModule` reaches no other Node built-in, and its `exit` ends
 only the guest's own call. The engine's own `cloudflare:workers`,
 `cloudflare:sockets`, `cloudflare:node`, `cloudflare:ai`, `cloudflare:br`,
-`cloudflare:vectorize`, `cloudflare:workflows` and `cloudflare:pipelines` modules
-load too, and are unsupported. `cloudflare:workers` sees only the guest's empty
-environment and its own exports; the others are classes, constants and clients
-that need a binding the guest lacks or the network it is refused. Before loading
+`cloudflare:vectorize`, `cloudflare:workflows`, `cloudflare:pipelines` and
+`cloudflare:durable-objects` modules load too, and are unsupported.
+`cloudflare:workers` sees only the guest's empty environment and its own
+exports; the others are classes, constants, markers and clients that need a
+binding the guest lacks or the network it is refused. Before loading
 either a bound or inspected guest, the loader scans the artifact for imports,
 re-exports and dynamic imports to give an early closed-module error. This lexer
 is not a containment boundary. In particular, JavaScript's ambiguous
