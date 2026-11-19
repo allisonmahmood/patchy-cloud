@@ -165,7 +165,7 @@ it.layer(layer)("auth pages on a socket", (it) => {
         ["/settings/people/invites", admin, 233_596],
         ["/settings/people/invites/inv_unread/resend", admin, 1_024],
         ["/settings/people/users/usr_unread/role", admin, 1_024],
-        [`${TeamsPage.path}/create`, admin, 1_048_576]
+        [`${TeamsPage.path}/create`, admin, 8_388_608]
       ] as const) {
         const head = [
           `POST ${path} HTTP/1.1`,

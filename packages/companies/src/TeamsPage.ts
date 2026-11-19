@@ -45,9 +45,11 @@ export type Action = "view" | "create" | "rename" | "delete" | "stage" | "save";
 const dialogs = ["create", "rename", "delete", "review"] as const;
 /**
  * A roster form carries up to two member ids for each person in the company (a shown member's
- * removal and the box that keeps them), about 70 bytes a person: 1 MiB holds over 14,000 people.
+ * removal and the box that keeps them), about 70 bytes a person. Nothing limits how many people
+ * a company or a team holds, so the cap sits far past any roster this page could show at once:
+ * 8 MiB holds about 119,000 people.
  */
-const MAX_FORM_BYTES = 1_048_576;
+const MAX_FORM_BYTES = 8_388_608;
 type Dialog = (typeof dialogs)[number];
 const decodeName = Schema.decodeUnknownEffect(Schema.Struct({ name: Schema.String }));
 
