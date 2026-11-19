@@ -25,6 +25,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as ConnectionStore from "../src/ConnectionStore.js";
 import * as CredentialKeys from "../src/CredentialKeys.js";
 import * as DevReads from "../src/DevReads.js";
+import * as ModelsAdmission from "../src/models/Admission.js";
+import * as ModelsSource from "../src/models/Source.js";
 import * as PidgeonDev from "../src/pidgeon/Dev.js";
 import * as Keys from "../src/pidgeon/Keys.js";
 import * as PostgresSource from "../src/postgres/Source.js";
@@ -97,6 +99,8 @@ const door = HttpRouter.serve(routes, { disableLogger: true, disableListenLog: t
       Layer.provideMerge(AttioSource.layer),
       Layer.provideMerge(ImapTest.offline),
       Layer.provideMerge(GithubTest.unconfigured),
+      Layer.provideMerge(ModelsSource.layer),
+      Layer.provideMerge(ModelsAdmission.layer),
       Layer.provideMerge(Live.layer)
     )
   ),

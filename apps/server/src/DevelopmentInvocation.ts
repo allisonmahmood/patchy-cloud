@@ -5,6 +5,7 @@ import type { OperatingLimits } from "@patchy/limits";
 import type { InvalidLimit } from "@patchy/limits/deployment-config";
 import { MutationTransaction, QuerySnapshot } from "@patchy/primitives";
 import {
+  ActionSlots,
   CallbackGateway,
   CallbackGatewayApi,
   Executor,
@@ -105,7 +106,22 @@ export const make: (
         Effect.flatMap((local) => local.invoke(request))
       )
   });
-  return yield* Invocation.make({ callbackUrl: listener.url }).pipe(
+  // PROTOTYPE: how action slots count model calls, chosen at start for the load test.
+  const slotMode = yield* Config.Literals(ActionSlots.modes, "PATCHY_DEV_SLOT_MODE").pipe(
+    Config.withDefault("today" as const)
+  );
+  // `company=24,person=4`; unset is ActionSlots.POOL.
+  const poolText = yield* Config.String("PATCHY_DEV_MODEL_POOL").pipe(Config.withDefault(""));
+  const pool = { ...ActionSlots.POOL };
+  for (const part of poolText.split(",").filter((piece) => piece.trim() !== "")) {
+    const [name, value] = part.split("=").map((piece) => piece.trim());
+    const number = Number(value);
+    if ((name !== "company" && name !== "person") || !Number.isInteger(number) || number < 1)
+      return yield* new Executor.ExecutionError({ operation: "bind", reason: "load_failed" });
+    pool[name] = number;
+  }
+  yield* Effect.logInfo(`action slots: ${slotMode} pool ${pool.company}/${pool.person}`);
+  return yield* Invocation.make({ callbackUrl: listener.url, slotMode, pool }).pipe(
     Effect.provideService(Executor.Executor, executor)
   );
 });

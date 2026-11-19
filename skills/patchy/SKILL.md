@@ -54,7 +54,7 @@ flag applies to connections. Wrong-level flags are local errors, exit 1.
 
 For a company connection, run `patchy list connections`, then
 `patchy list connections <integration>/<handle>`, such as `postgres/warehouse` or
-`posthog/product`, `pidgeon/support`, `attio/crm`, `imap/invoices` or `github/platform`, to inspect its snapshot and `takenAt`.
+`posthog/product`, `pidgeon/support`, `attio/crm`, `imap/invoices`, `github/platform` or `models/writer`, to inspect its snapshot and `takenAt`.
 `list connections --all` also shows offered integrations. A null snapshot means
 unavailable, not an empty source. Select a connected handle and add it from
 the consuming repo with `pnpm patchy add <integration>/<handle> --as <alias>`.
@@ -111,7 +111,9 @@ A repo's **tier** is where its code runs, set by `tier` in `patchy.config.ts`:
   member directory, all read-only, and company connections (Postgres, PostHog,
   Attio, an IMAP mailbox and GitHub repositories' CI runs, job logs and pull
   requests, each read-only, and Pidgeon, which reads one inbox's email and,
-  when its connection allows, sends it). Tools in `agent/` are what people's own
+  when its connection allows, sends it), and the company's model roles, which
+  answer fixed questions with probabilities or write text and typed values
+  (`models/<role>` in `patchy list connections`). Tools in `agent/` are what people's own
   agents call, as them, through Patchy MCP; tier 1 has no agent tools. It
   cannot be shared public.
 

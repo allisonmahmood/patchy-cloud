@@ -72,7 +72,7 @@ it.layer(Platform)("scenarios", (it) => {
       const error = yield* Effect.flip(loadScenario(repo, "nope"));
       expect(error._tag).toBe("ScenarioNotFound");
       expect(error.message).toContain(
-        "brightline, dense, github, guests, imap, kit-room, pidgeon, team"
+        "brightline, dense, github, guests, imap, kit-room, models, pidgeon, team"
       );
     })
   );

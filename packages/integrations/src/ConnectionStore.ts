@@ -6,6 +6,8 @@ import {
   GithubSnapshot,
   ImapSnapshot,
   type Integration,
+  ModelsSnapshot,
+  OpenAiSnapshot,
   PidgeonSnapshot,
   PostHogSnapshot
 } from "@patchy/api";
@@ -26,6 +28,7 @@ import * as ImapSource from "./imap/Source.js";
 import type * as GithubAccess from "./github/Access.js";
 import * as GithubConnection from "./github/Connection.js";
 import type * as GithubSource from "./github/Source.js";
+import * as ModelsSource from "./models/Source.js";
 
 export const Description = Schema.String.check(
   Schema.isMaxLength(500),
@@ -91,6 +94,18 @@ export const GithubConnectionRow = Schema.Struct({
    */
   suspendedAt: Schema.NullOr(Schema.String)
 });
+/** A model provider connection: the company's key, which model roles call with. */
+export const OpenAiConnection = Schema.Struct({
+  ...fields,
+  integration: Schema.Literal("openai"),
+  display: ModelsSource.OpenAiDisplay
+});
+/** A model role: its kind, the provider connection it maps to and the model there. */
+export const ModelsConnection = Schema.Struct({
+  ...fields,
+  integration: Schema.Literal("models"),
+  display: ModelsSource.RoleDisplay
+});
 /** A company connection; its integration decides what its display says. */
 export const Connection = Schema.Union([
   PostgresConnection,
@@ -98,7 +113,9 @@ export const Connection = Schema.Union([
   PidgeonConnection,
   AttioConnection,
   ImapConnection,
-  GithubConnectionRow
+  GithubConnectionRow,
+  OpenAiConnection,
+  ModelsConnection
 ]);
 export type Connection = typeof Connection.Type;
 /** Where a connection reads, in its integration's terms; credentials of one target share it. */
@@ -113,7 +130,9 @@ export const Metadata = Schema.Union([
   Schema.Struct({ integration: Schema.Literal("pidgeon"), snapshot: PidgeonSnapshot }),
   Schema.Struct({ integration: Schema.Literal("attio"), snapshot: AttioSnapshot }),
   Schema.Struct({ integration: Schema.Literal("imap"), snapshot: ImapSnapshot }),
-  Schema.Struct({ integration: Schema.Literal("github"), snapshot: GithubSnapshot })
+  Schema.Struct({ integration: Schema.Literal("github"), snapshot: GithubSnapshot }),
+  Schema.Struct({ integration: Schema.Literal("openai"), snapshot: OpenAiSnapshot }),
+  Schema.Struct({ integration: Schema.Literal("models"), snapshot: ModelsSnapshot })
 ]);
 export type Metadata = typeof Metadata.Type;
 
@@ -280,6 +299,7 @@ export class ConnectionStorageFailed extends Schema.TaggedError<ConnectionStorag
       "poolCredentials",
       "drafts",
       "sends",
+      "devModelCalls",
       "pauseLogin"
     ]),
     cause: Schema.Redacted(Schema.Defect())
@@ -562,6 +582,17 @@ export class ConnectionStore extends Context.Service<
       companyId: string,
       id: string
     ) => Effect.Effect<number, ConnectionStorageFailed>;
+    /**
+     * PROTOTYPE: counts one `patchy dev` model call for a person on `day` (UTC, `YYYY-MM-DD`)
+     * unless they already made `budget`: the count after, or `undefined` when it's spent. Held in
+     * the database, so the count holds across processes and restarts.
+     */
+    readonly countDevModelCall: (input: {
+      readonly companyId: string;
+      readonly userId: string;
+      readonly day: string;
+      readonly budget: number;
+    }) => Effect.Effect<number | undefined, ConnectionStorageFailed>;
     /** How many sends and replies a Pidgeon connection has counted on `day` (UTC). */
     readonly sends: (
       companyId: string,

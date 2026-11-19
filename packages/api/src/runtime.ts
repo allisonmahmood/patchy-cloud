@@ -664,7 +664,11 @@ export const RuntimeCode = Schema.Literals([
   "source_rate_limited",
   "idempotency_conflict",
   "auth_failed",
-  "mailbox_reset"
+  "mailbox_reset",
+  // PROTOTYPE (model calls): a generation stopped at its maxOutputTokens cap, and the model
+  // refused to generate. Everything else a model call refuses with reuses a code above.
+  "output_truncated",
+  "model_refused"
 ]).annotate({ identifier: "RuntimeCode" });
 export type RuntimeCode = typeof RuntimeCode.Type;
 

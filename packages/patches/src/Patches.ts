@@ -2190,7 +2190,8 @@ export const make = Effect.gen(function* () {
         declaration.kind === "pidgeon" ||
         declaration.kind === "attio" ||
         declaration.kind === "imap" ||
-        declaration.kind === "github"
+        declaration.kind === "github" ||
+        declaration.kind === "models"
       ) {
         // Resolving refuses a connection that isn't there; one gone since can't be built with.
         yield* connections.resolve(companyId, declaration);

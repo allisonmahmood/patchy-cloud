@@ -232,6 +232,15 @@ export const sdkCapabilities: readonly SdkCapability[] = [
     limits: `Declare a connected GitHub connection, read-only: a set of repositories on one account, each named by its name in the connection. repos.list and get, workflows.list, runs.list (newest first, filtered by branch, sha, workflow, event, status and created), runs.get, runs.jobs (the latest attempt's), jobs.log (the end of a job's log, at most 1 MiB, with truncated when its start was cut), commits.checks, pulls.list, pulls.get (with Patchy's review count, not GitHub's merge rule), pulls.files and pulls.reviews. A repository outside the connection fails not_found before GitHub is asked. Every list answers complete; runs reach GitHub's first 1,000, a pull request's files its first 3,000, lists without a cursor 100; limit 1–100 with a cursor. ${runtimeByteLimits.githubBytes / 1024} KiB of arguments, ${runtimeByteLimits.resultBytes / 1024 ** 2} MiB results and a 15-second service deadline bounded by the action's remaining time. GitHub's own limits fail source_rate_limited and are never retried. Queries and mutations cannot use ctx.connections; GitHub reads are not live-query dependencies.`
   },
   {
+    id: "integrations.models",
+    group: "Integrations",
+    name: "Company model roles: decide with probabilities, or generate text and typed values",
+    entrypoints: ["patchy/_generated/server.ts: ctx.connections"],
+    runs: "Tier 2 actions. patchy dev calls the real role through the instance as the machine key's person, counted per person per UTC day",
+    limits:
+      "Declare a connected models/<role>; patchy list connections names each role's kind. A decision role's client has decide: one input and 1–20 fixed questions (choice, scale or yesNo), answered with probabilities, null for a question the model refused. A text role's has generate: instructions and an input, maxOutputTokens required (at most 16,000), text or a value of a t.object shape Patchy checks. One provider request per call, never retried, cut off a second before the action's 60-second deadline. Refusals: timeout, busy (4 running and 4 waiting per person), source_rate_limited, source_unavailable, output_truncated, shape_mismatch, model_refused, invalid_request, access_denied; in patchy dev also rate_limited past 200 calls per person per UTC day. Patch code never sees the provider, the model or the key. Queries, mutations and pages cannot call a role."
+  },
+  {
     id: "helpers.csv",
     group: "Helpers",
     name: "CSV text codec",
@@ -255,7 +264,7 @@ const groups = ["Core", "Primitives", "Integrations", "Helpers"] as const;
 const unavailable: Partial<Record<(typeof groups)[number], string>> = {
   Core: "window.print() works in the frame, including browser print-to-PDF.",
   Integrations:
-    "Postgres, PostHog, Pidgeon, Attio, IMAP and GitHub are the shipped company integrations, called from tier 2 actions. Pidgeon has no thread assignment, per-person read state, HTML, raw headers, attachment contents or sent attachments. Attio is read-only, with no notes, tasks, comments, meetings, emails, files, search, saved views or OR across attributes. IMAP is read-only, with no sending, moving, flagging or deleting, attachments past 20 MiB, attachments' text, raw source, server sort or threads, push, or reading without a viewer. GitHub is read-only, with no re-runs, merges, comments or labels, commit history, comparisons, file contents, issues, deployments, releases, pull request comments, earlier attempts' jobs, commit statuses, member list, webhooks or reading without a viewer.",
+    "Postgres, PostHog, Pidgeon, Attio, IMAP, GitHub and model roles are the shipped company integrations, called from tier 2 actions. Pidgeon has no thread assignment, per-person read state, HTML, raw headers, attachment contents or sent attachments. Attio is read-only, with no notes, tasks, comments, meetings, emails, files, search, saved views or OR across attributes. IMAP is read-only, with no sending, moving, flagging or deleting, attachments past 20 MiB, attachments' text, raw source, server sort or threads, push, or reading without a viewer. GitHub is read-only, with no re-runs, merges, comments or labels, commit history, comparisons, file contents, issues, deployments, releases, pull request comments, earlier attempts' jobs, commit statuses, member list, webhooks or reading without a viewer. Model roles have no streaming, images, files, tools, conversations or embeddings.",
   Helpers:
     "The SDK does not yet offer PDF generation, spreadsheets beyond CSV, time-zone arithmetic, phone parsing, component libraries, rich text, charts or HTML sanitisation."
 };

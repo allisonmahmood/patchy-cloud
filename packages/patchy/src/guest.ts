@@ -7,6 +7,7 @@ import { decodeError, PatchyError } from "./clientError.js";
 import { extractHandlerDescriptors, foldAgentArea } from "./handlerDescriptors.js";
 import { InvalidManifestError } from "./invalidManifestError.js";
 import { createPidgeonClient } from "./pidgeon.js";
+import { createModelsClient } from "./models.js";
 import { createAttioClient } from "./attio.js";
 import { createImapClient } from "./imap.js";
 import { createGithubClient } from "./github.js";
@@ -359,7 +360,8 @@ export function createGuest(
   pidgeon: readonly string[] = [],
   attio: readonly string[] = [],
   imap: readonly string[] = [],
-  github: readonly string[] = []
+  github: readonly string[] = [],
+  models: readonly string[] = []
 ) {
   let handlers: ReturnType<typeof dispatch>;
   try {
@@ -504,7 +506,9 @@ export function createGuest(
                       ? createImapClient(connection, call)
                       : github.includes(connection)
                         ? createGithubClient(connection, call)
-                        : connectionClient(call, connection, invalidRequest)
+                        : models.includes(connection)
+                          ? createModelsClient(connection, call)
+                          : connectionClient(call, connection, invalidRequest)
               ),
               run: names((module) =>
                 names(

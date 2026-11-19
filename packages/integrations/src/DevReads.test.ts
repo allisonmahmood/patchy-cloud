@@ -37,6 +37,8 @@ import { ConnectionError, SqlError } from "effect/sql/SqlError";
 import * as ConnectionStore from "./ConnectionStore.js";
 import * as CredentialKeys from "./CredentialKeys.js";
 import * as DevDoor from "./DevDoor.js";
+import * as ModelsAdmission from "./models/Admission.js";
+import * as ModelsSource from "./models/Source.js";
 import * as DevReads from "./DevReads.js";
 import * as AttioDev from "./attio/Dev.js";
 import * as GithubDev from "./github/Dev.js";
@@ -289,7 +291,9 @@ const serve = (
         Layer.provideMerge(mail.layer),
         Layer.provideMerge(workspace.layer),
         Layer.provideMerge(imap),
-        Layer.provideMerge(github)
+        Layer.provideMerge(github),
+        Layer.provideMerge(ModelsSource.layer),
+        Layer.provideMerge(ModelsAdmission.layer)
       )
     ),
     Layer.provideMerge(Layer.mergeAll(MachineTokens.layer, log, Limits.layer)),

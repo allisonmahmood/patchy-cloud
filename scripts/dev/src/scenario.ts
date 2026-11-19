@@ -185,7 +185,16 @@ export type LiveConnection = typeof LiveConnection.Type;
  * Pidgeon keep no such reason; a Pidgeon test key is its own, `test`.
  */
 export const OfflineConnection = Schema.Struct({
-  integration: Schema.Literals(["postgres", "posthog", "attio", "pidgeon", "imap", "github"]),
+  integration: Schema.Literals([
+    "postgres",
+    "posthog",
+    "attio",
+    "pidgeon",
+    "imap",
+    "github",
+    "openai",
+    "models"
+  ]),
   handle: Slug,
   description: Schema.NonEmptyString,
   state: Schema.Literals(["connected", "needs-attention", "paused"]),
@@ -205,7 +214,14 @@ export const OfflineConnection = Schema.Struct({
    * installation's `permissions` changed, both pausing it, or its `docs` repository `left` the
    * installation, which keeps it connected and refuses only that repository.
    */
-  reason: Schema.optionalKey(Schema.Literals(["uninstalled", "permissions", "left"]))
+  reason: Schema.optionalKey(Schema.Literals(["uninstalled", "permissions", "left"])),
+  /**
+   * PROTOTYPE: a model role's kind, the handle of the scenario's `openai` connection it maps to,
+   * and the model there, which picks the dev fake's behaviour (`scripts/dev/src/fakeModels.ts`).
+   */
+  kind: Schema.optionalKey(Schema.Literals(["decision", "text"])),
+  provider: Schema.optionalKey(Slug),
+  model: Schema.optionalKey(Schema.NonEmptyString)
 });
 export type OfflineConnection = typeof OfflineConnection.Type;
 

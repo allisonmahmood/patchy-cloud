@@ -1,0 +1,249 @@
+import { registry } from "@patchy/limits/registry";
+import * as Schema from "effect/Schema";
+
+/**
+ * How a model call refuses, in Patchy's codes. Every refusal reuses a runtime code except two:
+ * `output_truncated` (the model reached the call's cap) and `model_refused` (the model declined
+ * to generate). None carries the prompt, the answer or the provider's own words. PROTOTYPE.
+ */
+
+const Cause = Schema.optionalKey(Schema.Redacted(Schema.Defect(), { disallowJsonEncode: true }));
+/** What the provider counted before the call failed, kept for the wide event, never shown. */
+const Usage = Schema.optionalKey(
+  Schema.Struct({
+    inputTokens: Schema.NullOr(Schema.Int),
+    outputTokens: Schema.NullOr(Schema.Int)
+  })
+);
+
+/** The alias names no model role this version declares. */
+export class ConnectionNotDeclared extends Schema.TaggedError<ConnectionNotDeclared>()(
+  "ModelsConnectionNotDeclared",
+  {}
+) {
+  readonly code = "connection_not_declared" as const;
+  readonly status = 400;
+  override get message() {
+    return "This model role is not declared by this version.";
+  }
+}
+
+/** The call reached its cut-off, its action's deadline less a second; the request was cancelled. */
+export class Timeout extends Schema.TaggedError<Timeout>()("ModelsTimeout", {
+  milliseconds: Schema.Int
+}) {
+  readonly code = "timeout" as const;
+  readonly status = 504;
+  readonly limitId = "tier2.action.deadline" as const;
+  get scope() {
+    return registry[this.limitId].scope;
+  }
+  get value() {
+    return this.milliseconds;
+  }
+  get details() {
+    return { cutoffMs: this.milliseconds };
+  }
+  override get message() {
+    return `The model didn't answer within the ${this.milliseconds} ms left in this action, so Patchy cancelled the request.`;
+  }
+}
+
+/** The provider refused for its rate or the account's quota. Never retried by Patchy. */
+export class RateLimited extends Schema.TaggedError<RateLimited>()("ModelsRateLimited", {
+  limit: Schema.Literals(["requests", "quota"]),
+  retryAfterSeconds: Schema.optionalKey(Schema.Int)
+}) {
+  readonly code = "source_rate_limited" as const;
+  readonly status = 429;
+  get details() {
+    return { limit: this.limit };
+  }
+  override get message() {
+    return this.limit === "quota"
+      ? "The model provider refused: the company's account is out of quota. Ask an admin."
+      : `The model provider is refusing requests for now: its rate limit was reached.${this.retryAfterSeconds === undefined ? "" : ` Try again in ${this.retryAfterSeconds} seconds.`}`;
+  }
+}
+
+/** The provider couldn't be reached, refused the key, failed, or answered in a shape Patchy doesn't read. */
+export class Unavailable extends Schema.TaggedError<Unavailable>()("ModelsUnavailable", {
+  reason: Schema.Literals(["unreachable", "key", "provider", "answer"]),
+  upstreamStatus: Schema.optionalKey(Schema.Int),
+  cause: Cause
+}) {
+  readonly code = "source_unavailable" as const;
+  readonly status = 503;
+  get details() {
+    return {
+      reason: this.reason,
+      ...(this.upstreamStatus === undefined ? {} : { upstreamStatus: this.upstreamStatus })
+    };
+  }
+  override get message() {
+    return {
+      unreachable: "The model provider couldn't be reached. Try again.",
+      key: "The model provider no longer accepts the company's key. Ask an admin to replace it.",
+      provider: "The model provider failed to answer. Try again.",
+      answer: "The model provider answered in a shape Patchy doesn't read."
+    }[this.reason];
+  }
+}
+
+/** A call Patchy or the provider can't run as asked. Nothing was generated. */
+export class InvalidRequest extends Schema.TaggedError<InvalidRequest>()("ModelsInvalidRequest", {
+  reason: Schema.Literals(["kind", "output", "input", "provider"]),
+  /** Where in `output` the unsupported descriptor is, such as `items[]`. */
+  path: Schema.optionalKey(Schema.String),
+  /** The role's kind, when the call was for the other kind. */
+  kind: Schema.optionalKey(Schema.Literals(["decision", "text"])),
+  upstreamStatus: Schema.optionalKey(Schema.Int),
+  cause: Cause
+}) {
+  readonly code = "invalid_request" as const;
+  readonly status = 400;
+  get details() {
+    return {
+      reason: this.reason,
+      ...(this.path === undefined ? {} : { path: this.path }),
+      ...(this.kind === undefined ? {} : { kind: this.kind }),
+      ...(this.upstreamStatus === undefined ? {} : { upstreamStatus: this.upstreamStatus })
+    };
+  }
+  override get message() {
+    return {
+      kind:
+        this.kind === "decision"
+          ? "This is a decision role: call decide, not generate."
+          : "This is a text role: call generate, not decide.",
+      output: `A typed output takes objects whose fields are all required, of text, integer, number, boolean, enum and arrays of those. ${this.path ?? "The output"} isn't one.`,
+      input: "The input is larger than a model call takes.",
+      provider: "The model provider refused the request as invalid."
+    }[this.reason];
+  }
+}
+
+/** The model's answer didn't match the typed output; nothing was returned. */
+export class ShapeMismatch extends Schema.TaggedError<ShapeMismatch>()("ModelsShapeMismatch", {
+  usage: Usage
+}) {
+  readonly code = "shape_mismatch" as const;
+  readonly status = 422;
+  get details() {
+    return { reason: "output" };
+  }
+  override get message() {
+    return "The model's answer didn't match the output's shape.";
+  }
+}
+
+/** The model reached the call's `maxOutputTokens` before it finished; nothing was returned. */
+export class OutputTruncated extends Schema.TaggedError<OutputTruncated>()(
+  "ModelsOutputTruncated",
+  { maxOutputTokens: Schema.Int, usage: Usage }
+) {
+  readonly code = "output_truncated" as const;
+  readonly status = 422;
+  get details() {
+    return { maxOutputTokens: this.maxOutputTokens };
+  }
+  override get message() {
+    return `The model reached maxOutputTokens (${this.maxOutputTokens}) before it finished. Raise it, or ask for less.`;
+  }
+}
+
+/** The model declined to generate. */
+export class Refused extends Schema.TaggedError<Refused>()("ModelsRefused", { usage: Usage }) {
+  readonly code = "model_refused" as const;
+  readonly status = 422;
+  override get message() {
+    return "The model declined to answer this request.";
+  }
+}
+
+/**
+ * Patchy's gate for the provider connection refused: its waiting room was full, or the call
+ * waited its turn until its cut-off. Nothing was sent, so nothing was billed.
+ */
+export class Busy extends Schema.TaggedError<Busy>()("ModelsBusy", {
+  limit: Schema.Literals(["concurrent", "perPerson", "waiting", "personWaiting"]),
+  value: Schema.Int,
+  waitedMs: Schema.Int
+}) {
+  readonly code = "busy" as const;
+  readonly status = 503;
+  get limitId() {
+    return `models.calls.${this.limit}`;
+  }
+  get scope() {
+    return this.limit === "perPerson" || this.limit === "personWaiting" ? "viewer" : "company";
+  }
+  /** A full waiting room may clear in a moment; a wait to the cut-off advises no retry. */
+  get retryAfterSeconds() {
+    return this.waitedMs === 0 ? 1 : undefined;
+  }
+  get details() {
+    return { waitedMs: this.waitedMs };
+  }
+  override get message() {
+    return this.waitedMs === 0
+      ? "Too many model calls are already waiting on this provider connection, so Patchy sent nothing. Try again shortly."
+      : `This provider connection stayed busy for the ${Math.round(this.waitedMs / 1_000)} s this call could wait, so Patchy sent nothing.`;
+  }
+}
+
+/**
+ * The developer made the model calls `patchy dev` allows a person in a UTC day; nothing was sent.
+ * Published patches aren't counted, and the count starts again at 00:00 UTC.
+ */
+export class DevDailySpent extends Schema.TaggedError<DevDailySpent>()("ModelsDevDailySpent", {
+  budget: Schema.Int,
+  /** Until the UTC day ends. */
+  retryAfterSeconds: Schema.Int
+}) {
+  readonly code = "rate_limited" as const;
+  readonly status = 429;
+  readonly limitId = "models.dev.calls.daily" as const;
+  readonly scope = "viewer" as const;
+  get value() {
+    return this.budget;
+  }
+  get details() {
+    return { limit: "devDaily" };
+  }
+  override get message() {
+    return `You've made the ${this.budget} model calls patchy dev allows you each UTC day (models.dev.calls.daily), so Patchy sent nothing. Your count starts again at 00:00 UTC; published patches aren't counted.`;
+  }
+}
+
+/**
+ * The provider's answer, or the body of its refusal, was larger than Patchy reads: reading stopped
+ * at the bound, nothing was decoded and nothing is returned.
+ */
+export class TooLarge extends Schema.TaggedError<TooLarge>()("ModelsTooLarge", {
+  maxBytes: Schema.Int,
+  /** The provider's status, when the oversized body was a refusal's. */
+  upstreamStatus: Schema.optionalKey(Schema.Int)
+}) {
+  readonly code = "too_large" as const;
+  readonly status = 502;
+  get details() {
+    return {
+      maxBytes: this.maxBytes,
+      ...(this.upstreamStatus === undefined ? {} : { upstreamStatus: this.upstreamStatus })
+    };
+  }
+  override get message() {
+    return `The model provider's answer was larger than the ${this.maxBytes / 1024 ** 2} MiB Patchy reads, so nothing was returned.`;
+  }
+}
+
+export type CallError =
+  | Timeout
+  | RateLimited
+  | Unavailable
+  | InvalidRequest
+  | ShapeMismatch
+  | OutputTruncated
+  | Refused
+  | TooLarge;

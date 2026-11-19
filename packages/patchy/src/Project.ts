@@ -75,6 +75,7 @@ const changeSchema = Schema.Union([
       Schema.Struct({ kind: Schema.Literal("attio"), handle: Schema.String }),
       Schema.Struct({ kind: Schema.Literal("imap"), handle: Schema.String }),
       Schema.Struct({ kind: Schema.Literal("github"), handle: Schema.String }),
+      Schema.Struct({ kind: Schema.Literal("models"), handle: Schema.String }),
       Schema.Struct({
         kind: Schema.Literal("sharedTable"),
         patchId: Schema.String,
@@ -144,14 +145,23 @@ export const manifestFile = (manifest: typeof Manifest.Type) => json(encodeManif
 type Change = typeof changeSchema.Type;
 
 /** The integrations `patchy add <integration>/<handle>` declares, as their pages name them. */
-const connectionKinds = ["postgres", "posthog", "pidgeon", "attio", "imap", "github"] as const;
+const connectionKinds = [
+  "postgres",
+  "posthog",
+  "pidgeon",
+  "attio",
+  "imap",
+  "github",
+  "models"
+] as const;
 const connectionLabels: { readonly [K in (typeof connectionKinds)[number]]: string } = {
   postgres: "Postgres",
   posthog: "PostHog",
   pidgeon: "Pidgeon",
   attio: "Attio",
   imap: "Email (IMAP)",
-  github: "GitHub"
+  github: "GitHub",
+  models: "model role"
 };
 
 const connectionAlias = (handle: string): string => {
@@ -686,11 +696,13 @@ export const generate = Effect.fn("Project.generate")(function* (
                 ? "patchy-imap"
                 : removedKind === "github"
                   ? "patchy-github"
-                  : removedKind === "members"
-                    ? "patchy-members"
-                    : removedKind === "sharedStore"
-                      ? "patchy-shared-stores"
-                      : "patchy-shared-tables";
+                  : removedKind === "models"
+                    ? "patchy-models"
+                    : removedKind === "members"
+                      ? "patchy-members"
+                      : removedKind === "sharedStore"
+                        ? "patchy-shared-stores"
+                        : "patchy-shared-tables";
     if (skills.includes(skill)) removedSkills.push(skill);
     skills = skills.filter((name) => name !== skill);
   }
@@ -1022,7 +1034,11 @@ export const add = Effect.fn("Project.add")(function* (
       });
     if (connections.length > 1)
       return yield* new LocalError({
-        message: `Choose a ${label} connection from patchy list connections:\n${connections.map((connection) => `  patchy add ${kind}/${connection.handle} · ${connection.description}`).join("\n")}`
+        message:
+          kind === "models"
+            ? // PROTOTYPE: a role's kind decides its one call, so the choice says it.
+              `Choose a model role. A decision role answers fixed questions with probabilities (decide); a text role writes text or a typed value (generate):\n${connections.map((connection) => `  patchy add models/${connection.handle} · ${connection.kind ?? "unknown"} role · ${connection.description}`).join("\n")}`
+            : `Choose a ${label} connection from patchy list connections:\n${connections.map((connection) => `  patchy add ${kind}/${connection.handle} · ${connection.description}`).join("\n")}`
       });
     const chosen = connections[0]!.handle;
     declaration = { kind, handle: chosen };
@@ -1082,7 +1098,7 @@ export const add = Effect.fn("Project.add")(function* (
   } else
     return yield* new LocalError({
       message:
-        "Use patchy add members, patchy add postgres/<handle>, patchy add posthog/<handle>, patchy add pidgeon/<handle>, patchy add attio/<handle>, patchy add imap/<handle>, patchy add github/<handle>, patchy add shared-table <patchId>/<table>, or patchy add shared-store <patchId>/<store>."
+        "Use patchy add members, patchy add postgres/<handle>, patchy add posthog/<handle>, patchy add pidgeon/<handle>, patchy add attio/<handle>, patchy add imap/<handle>, patchy add github/<handle>, patchy add models/<role>, patchy add shared-table <patchId>/<table>, or patchy add shared-store <patchId>/<store>."
     });
   const alias = Option.getOrElse(as, () => defaultAlias);
   yield* refresh(cwd, token, { kind: "add", alias, declaration });

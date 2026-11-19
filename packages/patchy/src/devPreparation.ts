@@ -33,10 +33,12 @@ export type Prepared = typeof Prepared.Type;
 
 /**
  * Whether dev reads a declared connection through the instance, and so needs this machine's key
- * (ADR-0013): PostHog's, Pidgeon's, Attio's, IMAP's and GitHub's have no fixture.
+ * (ADR-0013): PostHog's, Pidgeon's, Attio's, IMAP's and GitHub's have no fixture, and a model
+ * role's calls are real.
  */
 export const readsLive = (metadata: Prepared["metadata"]) =>
-  Object.keys(metadata.posthog).length +
+  Object.keys(metadata.models ?? {}).length +
+    Object.keys(metadata.posthog).length +
     Object.keys(metadata.pidgeon).length +
     Object.keys(metadata.attio).length +
     Object.keys(metadata.imap).length +
@@ -97,9 +99,11 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
         const refused = lowerTierUses(unresolved);
         if (refused !== undefined) return yield* refused;
         for (const [alias, declaration] of Object.entries(unresolved.uses)) {
-          // PostHog, Pidgeon, Attio, IMAP and GitHub have no fixture: dev reads the real connection.
+          // PostHog, Pidgeon, Attio, IMAP, GitHub and model roles have no fixture: dev reads (or
+          // calls) the real connection.
           if (
             declaration.kind === "members" ||
+            declaration.kind === "models" ||
             declaration.kind === "posthog" ||
             declaration.kind === "pidgeon" ||
             declaration.kind === "attio" ||
@@ -149,6 +153,7 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
             Object.keys(metadata.attio).length +
             Object.keys(metadata.imap).length +
             Object.keys(metadata.github).length +
+            Object.keys(metadata.models ?? {}).length +
             Object.keys(metadata.shared).length !==
           Object.values(manifest.uses).filter((declaration) => declaration.kind !== "members")
             .length
@@ -171,7 +176,9 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
                       ? metadata.imap[alias]?.declaration
                       : declaration.kind === "github"
                         ? metadata.github[alias]?.declaration
-                        : metadata.shared[alias]?.declaration;
+                        : declaration.kind === "models"
+                          ? metadata.models?.[alias]?.declaration
+                          : metadata.shared[alias]?.declaration;
           if (
             actual === undefined ||
             actual.kind !== declaration.kind ||
@@ -182,13 +189,15 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
               actual.kind === "pidgeon" ||
               actual.kind === "attio" ||
               actual.kind === "imap" ||
-              actual.kind === "github") &&
+              actual.kind === "github" ||
+              actual.kind === "models") &&
               (declaration.kind === "postgres" ||
                 declaration.kind === "posthog" ||
                 declaration.kind === "pidgeon" ||
                 declaration.kind === "attio" ||
                 declaration.kind === "imap" ||
-                declaration.kind === "github") &&
+                declaration.kind === "github" ||
+                declaration.kind === "models") &&
               actual.handle !== declaration.handle) ||
             (actual.kind === "sharedTable" &&
               declaration.kind === "sharedTable" &&

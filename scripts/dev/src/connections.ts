@@ -22,6 +22,7 @@ import {
   GithubConnection,
   GithubSource,
   ImapSource,
+  ModelsSource,
   PidgeonSource,
   PostgresSource,
   PostHogSource
@@ -46,7 +47,9 @@ const Target = Schema.Union([
   Schema.Struct({ integration: Schema.Literal("pidgeon"), display: PidgeonSource.Display }),
   Schema.Struct({ integration: Schema.Literal("attio"), display: AttioSource.Display }),
   Schema.Struct({ integration: Schema.Literal("imap"), display: ImapSource.Display }),
-  Schema.Struct({ integration: Schema.Literal("github"), display: GithubConnection.Display })
+  Schema.Struct({ integration: Schema.Literal("github"), display: GithubConnection.Display }),
+  Schema.Struct({ integration: Schema.Literal("openai"), display: ModelsSource.OpenAiDisplay }),
+  Schema.Struct({ integration: Schema.Literal("models"), display: ModelsSource.RoleDisplay })
 ]);
 // Encoding checks a value against its schema's filters, so an invented one that breaks them fails
 // here. The SQL takes the part of the JSON its column holds.
@@ -343,6 +346,31 @@ const saved = (
             }))
           }
         }
+      };
+    }
+    case "openai": {
+      // An invented key: the dev fake answers every key, and a real provider none of these.
+      const apiKey = `sk-dev-${secret}`;
+      return {
+        target: { integration: "openai", display: { keyHint: `…${apiKey.slice(-4)}` } },
+        credentials: ModelsSource.openAiCredentials({ apiKey }),
+        metadata: { integration: "openai", snapshot: { version: 1 } }
+      };
+    }
+    case "models": {
+      const kind = connection.kind ?? "text";
+      const provider = connectionId(scenario, {
+        ...connection,
+        integration: "openai",
+        handle: connection.provider ?? "main"
+      });
+      return {
+        target: {
+          integration: "models",
+          display: { kind, provider, model: connection.model ?? "fake-delay-300" }
+        },
+        credentials: ModelsSource.roleCredentials(),
+        metadata: { integration: "models", snapshot: { version: 1, kind } }
       };
     }
     case "imap": {

@@ -16,6 +16,7 @@ import {
   AttioDev,
   GithubDev,
   ImapDev,
+  ModelsDev,
   PidgeonDev,
   PostgresDev,
   PostgresExecution,
@@ -310,6 +311,8 @@ const make = Effect.fn("DevResources.make")(function* (
     ...(yield* AttioDev.handlers(options.instance)),
     ...(yield* ImapDev.handlers(options.instance, yield* Files.makeStagingLocal)),
     ...(yield* GithubDev.handlers(options.instance)),
+    // PROTOTYPE: model calls are real, through the instance, counted per person per UTC day.
+    ...(yield* ModelsDev.handlers(options.instance)),
     ...(yield* PidgeonDev.handlers(
       options.instance,
       prepared.metadata.pidgeon,

@@ -12,6 +12,7 @@ catalogs:
 
 overrides:
   effect: 4.1.4
+  '@effect/ai-openai': 4.1.4
   '@effect/platform-node': 4.1.4
   '@effect/sql-pg': 4.1.4
   '@effect/sql-pglite': 4.1.4
@@ -462,6 +463,9 @@ importers:
 
   packages/integrations:
     dependencies:
+      '@effect/ai-openai':
+        specifier: 4.1.4
+        version: 4.1.4(effect@4.1.4)
       '@electric-sql/pglite':
         specifier: 0.5.16
         version: 0.5.16
@@ -1213,6 +1217,11 @@ packages:
     engines: {node: '>=16'}
     cpu: [x64]
     os: [win32]
+
+  '@effect/ai-openai@4.1.4':
+    resolution: {integrity: sha512-xodZLHmt1N7Ziw94jr0nTfG/fgyMZioYKS85fyy2L1kscNurWGllaDaTQyHUSYd8wghqMoc8vV3XPei0+c9NIQ==}
+    peerDependencies:
+      effect: 4.1.4
 
   '@effect/platform-node-shared@4.1.4':
     resolution: {integrity: sha512-DWdfphHGOFJNj/mYadgpT3jIm8aRXDcPrQiGXFBH4p2H4XmA7iYMrPsI8NxVgZ7kNX0q1+FGJZJama0tINHRAg==}
@@ -3469,6 +3478,10 @@ snapshots:
 
   '@cloudflare/workerd-windows-64@1.20260924.1':
     optional: true
+
+  '@effect/ai-openai@4.1.4(effect@4.1.4)':
+    dependencies:
+      effect: 4.1.4
 
   '@effect/platform-node-shared@4.1.4(effect@4.1.4)':
     dependencies:

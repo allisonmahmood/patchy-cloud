@@ -26,6 +26,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Random from "effect/Random";
+import * as ActionSlots from "./ActionSlots.js";
 import * as Binding from "./Binding.js";
 import * as Executor from "./Executor.js";
 import * as ExecutionLifecycle from "./ExecutionLifecycle.js";
@@ -216,6 +217,10 @@ export class Invocation extends Context.Service<
 interface Options {
   readonly callbackUrl: string;
   readonly dev?: { readonly observe: (settlement: DevSettlement) => Effect.Effect<void> };
+  /** PROTOTYPE: how action slots count a model call; `today` unless a dev host chose another. */
+  readonly slotMode?: ActionSlots.Mode;
+  /** PROTOTYPE: the `pool` mode's caps; ActionSlots.POOL unless a dev host chose others. */
+  readonly pool?: ActionSlots.PoolLimits;
 }
 
 interface PlatformBehavior {
@@ -262,8 +267,7 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
     fileBytes: ContractLimits.get("tier2.callbacks.fileBytes")
   });
   const codecs = new WeakMap<typeof Manifest.Type, Map<string, CompiledHandler>>();
-  const companyActions = new Map<string, number>();
-  const viewerActions = new Map<string, number>();
+  const slots = ActionSlots.make(options.slotMode ?? "today", options.pool);
 
   const call = Effect.fn("Invocation.call")(function* (
     args: unknown,
@@ -376,20 +380,24 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
                   owners: 0
                 }
               : undefined;
-        if (actionLimits !== undefined) {
+        // PROTOTYPE: admission and the counts are in ActionSlots, so a mode can leave a parked
+        // model call uncounted. The check and the peaks it records are as before.
+        const admitted =
+          actionLimits === undefined
+            ? undefined
+            : slots.admit(
+                binding.companyId,
+                key,
+                canonicalArgs([binding.companyId, viewer.user.id]),
+                {
+                  company: actionLimits.company.value,
+                  viewer: actionLimits.viewer.value
+                }
+              );
+        if (actionLimits !== undefined && admitted !== undefined) {
           for (const [used, limit, limitId, limitScope] of [
-            [
-              companyActions.get(binding.companyId) ?? 0,
-              actionLimits.company.value,
-              "tier2.actions.company",
-              "company"
-            ],
-            [
-              viewerActions.get(key) ?? 0,
-              actionLimits.viewer.value,
-              "tier2.actions.viewer",
-              "viewer"
-            ]
+            [admitted.used.company, actionLimits.company.value, "tier2.actions.company", "company"],
+            [admitted.used.viewer, actionLimits.viewer.value, "tier2.actions.viewer", "viewer"]
           ] as const) {
             const effective = limitScope === "company" ? actionLimits.company : actionLimits.viewer;
             yield* WideEvents.enrich({
@@ -402,22 +410,23 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
                 }
               ]
             });
-            if (used >= limit) {
+            if (admitted.result.refused === limitScope) {
               if (parent === undefined && admission !== undefined) yield* admission.lease.release;
               return yield* new InvocationBusy({ limitId, value: limit, scope: limitScope });
             }
           }
         }
+        const admittedResult = admitted?.result;
+        const slot =
+          admittedResult !== undefined && admittedResult.refused === undefined
+            ? admittedResult.slot
+            : undefined;
         if (admission !== undefined) admission.owners++;
         const releaseAdmission = Effect.suspend(() =>
           admission !== undefined && --admission.owners === 0
             ? admission.lease.release
             : Effect.void
         );
-        if (actionLimits !== undefined) {
-          companyActions.set(binding.companyId, (companyActions.get(binding.companyId) ?? 0) + 1);
-          viewerActions.set(key, (viewerActions.get(key) ?? 0) + 1);
-        }
         const startedAt = yield* Clock.currentTimeMillis;
         const deadline = Math.min(
           startedAt + bounds[descriptor.kind],
@@ -549,6 +558,7 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
                 ...(observation === undefined ? {} : { onDependency: observation.onDependency }),
                 tree,
                 ...(counters === undefined ? {} : { counters }),
+                ...(slot === undefined ? {} : { park: slot.park }),
                 ...(descriptor.kind !== "action"
                   ? {}
                   : {
@@ -964,6 +974,7 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
             }))
           });
           if (parent === undefined) yield* WideEvents.enrich({ dbMs: meter.snapshot(), guestMs });
+          if (slot !== undefined) yield* WideEvents.enrich({ slots: { ...slot.report } });
           return yield* outcome;
         }).pipe(
           Effect.onInterrupt(() =>
@@ -986,17 +997,9 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
             })
           ),
           Effect.ensuring(
-            Effect.sync(() => {
+            Effect.suspend(() => {
               execution?.interruptUnsafe();
-              if (actionLimits === undefined) return;
-              for (const [counts, entry] of [
-                [companyActions, binding.companyId],
-                [viewerActions, key]
-              ] as const) {
-                const count = (counts.get(entry) ?? 1) - 1;
-                if (count === 0) counts.delete(entry);
-                else counts.set(entry, count);
-              }
+              return slot?.release ?? Effect.void;
             })
           ),
           Effect.ensuring(releaseAdmission)
@@ -1036,6 +1039,8 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
 
 export const make = Effect.fn("Invocation.makeProduction")(function* (options: {
   readonly callbackUrl: string;
+  readonly slotMode?: ActionSlots.Mode;
+  readonly pool?: ActionSlots.PoolLimits;
 }) {
   const operating = yield* OperatingLimits.OperatingLimits;
   const rollups = yield* QueryRollups.make;

@@ -24,6 +24,7 @@ import * as ImapPage from "./imap/Page.js";
 import * as GithubFlows from "./github/Flows.js";
 import * as GithubPage from "./github/Page.js";
 import * as GithubSource from "./github/Source.js";
+import * as ModelsPage from "./models/Page.js";
 
 /** A page to read. */
 export type Target =
@@ -112,7 +113,9 @@ const pages: { readonly [K in Integration]: IntegrationPage } = {
   pidgeon: PidgeonPage,
   attio: AttioPage,
   imap: ImapPage,
-  github: GithubPage
+  github: GithubPage,
+  openai: ModelsPage.OpenAi,
+  models: ModelsPage.Models
 };
 /**
  * The integrations this instance offers, in order: GitHub only while its App is configured, so
@@ -120,7 +123,11 @@ const pages: { readonly [K in Integration]: IntegrationPage } = {
  */
 const offered = Effect.gen(function* () {
   const github = Option.isSome((yield* GithubSource.Source).app);
-  return integrations.filter((integration) => integration !== "github" || github);
+  // PROTOTYPE: model providers and roles have no connect flow yet, so the catalogue skips them.
+  return integrations.filter(
+    (integration) =>
+      (integration !== "github" || github) && integration !== "openai" && integration !== "models"
+  );
 });
 /**
  * A connection's integration as the pages name and mark it: wearing the logo of the provider the
@@ -199,6 +206,18 @@ const about = (
         access: GithubPage.allowed(connection),
         attention: GithubPage.attention(connection, people, now)
       };
+    case "openai":
+      return {
+        source: ModelsPage.openAiSource(connection),
+        facts: ModelsPage.openAiFacts(connection),
+        credential: ModelsPage.openAiCredential(connection)
+      };
+    case "models":
+      return {
+        source: ModelsPage.roleSource(connection),
+        facts: ModelsPage.roleFacts(connection),
+        credential: ModelsPage.roleCredential()
+      };
   }
 };
 /** What a snapshot lets patches read, in its integration's words. */
@@ -213,7 +232,11 @@ const readsOf = (metadata: ConnectionStore.Metadata) =>
           ? ImapPage.reads(metadata.snapshot)
           : metadata.integration === "github"
             ? GithubPage.reads(metadata.snapshot)
-            : PidgeonPage.reads(metadata.snapshot);
+            : metadata.integration === "models"
+              ? ModelsPage.roleReads(metadata.snapshot)
+              : metadata.integration === "openai"
+                ? { summary: "Nothing patches read: roles call its models.", items: [], more: 0 }
+                : PidgeonPage.reads(metadata.snapshot);
 
 /** The field each refusal is about, when it is about one. */
 const refusedField = (page: IntegrationPage, code: string | undefined): View.Field | undefined =>

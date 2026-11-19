@@ -38,6 +38,7 @@ import { PG_FLAGS, PG_PASSWORD, PG_USER } from "./postgres.js";
 import { bun, realNode } from "./runtimes.js";
 import { loadScenario, seedScenario } from "./scenario.js";
 import { FAILED, layout, writeEnv, writePlan } from "./state.js";
+import * as FakeModels from "./fakeModels.js";
 
 export class PostgresError extends Schema.TaggedError<PostgresError>()("PostgresError", {
   stage: Schema.Literals(["start", "create-database"]),
@@ -255,6 +256,29 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
   // personas secret, or Clerk's from the developer's `dev.env`), so
   // nothing exported in the agent's shell (another DATABASE_URL, a storage
   // driver, an API token) leaks in.
+  // PROTOTYPE: model calls go to a loopback fake provider; the server honours it only in development.
+  const fakeModels = yield* FakeModels.start(enqueue("models"));
+  // PROTOTYPE: the slot mode and model gate a load test chose, patchy dev's daily model calls a
+  // refusal test chose, and Bun's cap on a process's simultaneous fetches, passed through when set.
+  const loadTest = Object.fromEntries(
+    Object.entries(
+      yield* Config.all({
+        PATCHY_DEV_SLOT_MODE: Config.option(Config.String("PATCHY_DEV_SLOT_MODE")),
+        PATCHY_DEV_MODEL_GATE: Config.option(Config.String("PATCHY_DEV_MODEL_GATE")),
+        PATCHY_DEV_MODEL_DAILY: Config.option(Config.String("PATCHY_DEV_MODEL_DAILY")),
+        PATCHY_DEV_MODEL_POOL: Config.option(Config.String("PATCHY_DEV_MODEL_POOL")),
+        PATCHY_DEV_MODEL_CLIENT: Config.option(Config.String("PATCHY_DEV_MODEL_CLIENT")),
+        BUN_CONFIG_MAX_HTTP_REQUESTS: Config.option(Config.String("BUN_CONFIG_MAX_HTTP_REQUESTS"))
+      })
+    ).flatMap(([name, value]) => (Option.isSome(value) ? [[name, value.value]] : []))
+  );
+  if (Object.keys(loadTest).length > 0)
+    yield* say(
+      `load test: ${Object.entries(loadTest)
+        .map(([name, value]) => `${name}=${value}`)
+        .join(" ")}`
+    );
+  yield* say(`models: fake provider at ${fakeModels.url} (requests logged as [models], GET /_log)`);
   yield* say(
     personas
       ? "sign-in: dev personas (no Clerk)"
@@ -278,7 +302,9 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
           PATCHY_COMPANY_DB_URL: plan.databaseUrl,
           PATCHY_STORAGE_DIR: files.storageDir,
           PATCHY_PUBLIC_BASE_URL: plan.apiUrl,
-          PATCHY_DEV_MAILBOXES: files.mailboxes
+          PATCHY_DEV_MAILBOXES: files.mailboxes,
+          PATCHY_DEV_MODELS_URL: fakeModels.url,
+          ...loadTest
         },
         extendEnv: false,
         stdin: "ignore",

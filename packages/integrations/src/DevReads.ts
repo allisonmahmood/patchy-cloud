@@ -1,6 +1,8 @@
 /**
  * The instance's door for `patchy dev` reads of integrations that read the real connection in
- * development (ADR-0013): PostHog's queries, Pidgeon's reads, Attio's, IMAP's and GitHub's. A machine token is the only
+ * development (ADR-0013): PostHog's queries, Pidgeon's reads, Attio's, IMAP's and GitHub's, and
+ * (PROTOTYPE) model roles' calls, which take the local action's remaining time instead of the
+ * integration deadline and count against the person's daily allowance. A machine token is the only
  * authority: its current person, company and machine decide every call, and are checked again
  * once a read holds its slot. The repo's manifest only routed the call here; the connection it
  * names must be the company's. Writes never come here: `patchy dev` simulates them.
@@ -48,6 +50,10 @@ import type { DevRead, Target } from "./definition.js";
 import { github } from "./github/index.js";
 import * as GithubAccess from "./github/Access.js";
 import * as GithubOperations from "./github/Operations.js";
+import { models } from "./models/index.js";
+import * as ModelsAdmission from "./models/Admission.js";
+import * as ModelsOperations from "./models/Operations.js";
+import * as ModelsSource from "./models/Source.js";
 import { pidgeon } from "./pidgeon/index.js";
 import * as PidgeonOperations from "./pidgeon/Operations.js";
 import * as PidgeonSource from "./pidgeon/Source.js";
@@ -93,7 +99,7 @@ export class ConnectionNotConnected extends Schema.TaggedError<ConnectionNotConn
  * Pidgeon write is refused.
  */
 const live = new Set(
-  [postgres, posthog, pidgeon, attio, imap, github].flatMap((integration) =>
+  [postgres, posthog, pidgeon, attio, imap, github, models].flatMap((integration) =>
     (integration.live ?? []).map((operation) => `${integration.name}.${operation}`)
   )
 );
@@ -105,12 +111,15 @@ const runners: {
       | keyof typeof AttioOperations.devReads
       | keyof typeof ImapOperations.devReads
       | keyof typeof GithubOperations.devReads
+      | keyof typeof ModelsOperations.devReads
   ]: DevRead<
     | PostHogSource.Source
     | PidgeonSource.Source
     | AttioSource.Source
     | ImapSessions.Sessions
     | GithubAccess.Access
+    | ModelsSource.Source
+    | ModelsAdmission.Admission
     | Cryptography.Cryptography
   >;
 } = {
@@ -118,7 +127,8 @@ const runners: {
   ...PidgeonOperations.devReads,
   ...AttioOperations.devReads,
   ...ImapOperations.devReads,
-  ...GithubOperations.devReads
+  ...GithubOperations.devReads,
+  ...ModelsOperations.devReads
 };
 const isLive = (op: string): op is keyof typeof runners =>
   live.has(op) && Object.hasOwn(runners, op);
@@ -150,9 +160,12 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
     const attioSource = yield* AttioSource.Source;
     const imapSessions = yield* ImapSessions.Sessions;
     const githubAccess = yield* GithubAccess.Access;
+    const modelsSource = yield* ModelsSource.Source;
+    const modelsAdmission = yield* ModelsAdmission.Admission;
     const settings = yield* Effect.all({
       callsPerMinute: ContractLimits.get("runtime.calls.perMinute"),
-      deadlineMs: ContractLimits.get("integration.deadline")
+      deadlineMs: ContractLimits.get("integration.deadline"),
+      actionDeadlineMs: ContractLimits.get("tier2.action.deadline")
     });
     const sizes = new Map(
       yield* Effect.forEach(bounds, (limitId) =>
@@ -172,6 +185,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
     const devCall = Effect.fnUntraced(function* <A>(call: {
       readonly op: string;
       readonly connection: { readonly id: string; readonly handle: string };
+      /** A model call's remaining action time; every other call has the integration deadline. */
+      readonly deadlineMs?: number;
       readonly resource: string | null;
       readonly sql?: string | undefined;
       readonly run:
@@ -188,6 +203,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
             | AttioSource.Source
             | ImapSessions.Sessions
             | GithubAccess.Access
+            | ModelsSource.Source
+            | ModelsAdmission.Admission
             | Cryptography.Cryptography
             | ConnectionStore.ConnectionStore
           >)
@@ -211,6 +228,9 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
       const connectionId = lookup._tag === "Success" ? lookup.success : null;
       const correlationId = yield* cryptography.internalId("call");
       const startedAt = yield* Clock.currentTimeMillis;
+      const deadlineMs = call.deadlineMs ?? settings.deadlineMs;
+      const limitId =
+        call.deadlineMs === undefined ? "integration.deadline" : "tier2.action.deadline";
       yield* log
         .begin({
           companyId: identity.company.id,
@@ -224,7 +244,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
           connectionId,
           ...(call.sql === undefined ? {} : { sql: call.sql }),
           correlationId,
-          deadlineMs: settings.deadlineMs
+          deadlineMs
         })
         .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
       // The same token, person, company and machine, once a slot is held and before the source hears.
@@ -268,8 +288,9 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
           .run({
             companyId: identity.company.id,
             connection: call.connection,
-            deadline: startedAt + settings.deadlineMs,
-            recheck
+            deadline: startedAt + deadlineMs,
+            recheck,
+            person: identity.user.id
           })
           .pipe(
             Effect.provideService(PostHogSource.Source, posthogSource),
@@ -277,6 +298,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
             Effect.provideService(AttioSource.Source, attioSource),
             Effect.provideService(ImapSessions.Sessions, imapSessions),
             Effect.provideService(GithubAccess.Access, githubAccess),
+            Effect.provideService(ModelsSource.Source, modelsSource),
+            Effect.provideService(ModelsAdmission.Admission, modelsAdmission),
             Effect.provideService(Cryptography.Cryptography, cryptography),
             Effect.provideService(ConnectionStore.ConnectionStore, connections),
             Effect.catchTags({
@@ -288,14 +311,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
           );
       }).pipe(
         Effect.timeoutOrElse({
-          duration: settings.deadlineMs,
-          orElse: () =>
-            Effect.fail(
-              new Runtime.Timeout({
-                deadlineMs: settings.deadlineMs,
-                limitId: "integration.deadline"
-              })
-            )
+          duration: deadlineMs,
+          orElse: () => Effect.fail(new Runtime.Timeout({ deadlineMs, limitId }))
         })
       );
       const result = yield* Effect.exit(run);
@@ -334,9 +351,15 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
       const maxBytes = sizes.get(limitId) ?? (yield* ContractLimits.get(limitId));
       if (byteLength > maxBytes) return yield* new Runtime.TooLarge({ maxBytes, limitId });
       const operation = isLive(input.op) ? runners[input.op] : undefined;
+      // A model call may take what's left of its local action, at most an action's deadline.
+      const deadlineMs =
+        input.op.startsWith("models.") && input.deadlineMs !== undefined
+          ? Math.max(1, Math.min(input.deadlineMs, settings.actionDeadlineMs))
+          : undefined;
       return yield* devCall({
         op: input.op,
         connection: input.connection,
+        ...(deadlineMs === undefined ? {} : { deadlineMs }),
         resource: operation?.resource(input.args) ?? null,
         sql: operation?.sql?.(input.args),
         run: operation === undefined ? undefined : (target) => operation.run(target, input.args),

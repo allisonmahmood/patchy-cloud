@@ -77,7 +77,7 @@ const connectionLines = (result: typeof Connections.Type) => {
   const lines: string[] = [];
   for (const connection of result.connections) {
     lines.push(
-      `${connection.integration}/${connection.handle}  ${connection.description}  ${connection.status}${connection.test === true ? " · test, mail stays in Pidgeon" : ""}${connection.paused === true ? " · needs attention, its password was refused" : ""}${connection.suspended === true ? " · suspended on GitHub" : ""}`,
+      `${connection.integration}/${connection.handle}  ${connection.description}  ${connection.status}${connection.test === true ? " · test, mail stays in Pidgeon" : ""}${connection.paused === true ? " · needs attention, its password was refused" : ""}${connection.suspended === true ? " · suspended on GitHub" : ""}${connection.kind === undefined ? "" : ` · ${connection.kind} role`}`,
       `  ${connection.hint}`
     );
   }
@@ -186,6 +186,14 @@ const connectionDetailLines = (connection: typeof ConnectionDetail.Type) => {
       )
     ];
   }
+  // PROTOTYPE: a model role names its kind; a provider holds nothing patches read.
+  if (connection.integration === "models")
+    return [
+      ...lines,
+      `Kind: ${connection.snapshot.kind} (${connection.snapshot.kind === "decision" ? "decide" : "generate"} in actions)`
+    ];
+  if (connection.integration === "openai")
+    return [...lines, "A model provider: patches declare its roles, models/<role>."];
   if (connection.integration === "posthog") {
     const snapshot = connection.snapshot;
     const described = (description: string | undefined) =>
