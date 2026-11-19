@@ -238,7 +238,7 @@ class StepFailed extends Error {
 /**
  * The inherited environment without any PATCHY_ setting, which could point a CLI at production.
  * Any pnpm run with it, nested ones included, switches to the version its checkout's
- * `packageManager` pins, which the repo turns off with `pmOnFail: ignore`. The switch records that
+ * `packageManager` pins, which the repo turns off with `pmOnFail: ignore`. A switch records that
  * version in the checkout's lockfile, which the next forced checkout discards.
  */
 const closedEnv = (extra: Record<string, string> = {}): NodeJS.ProcessEnv => ({
@@ -1492,6 +1492,8 @@ const rehearse = async (live: string, head: string) => {
           await git("worktree", "add", "--quiet", "--detach", worktree, step.commit);
           added = true;
         }
+        // A frozen install refuses to record a switch to the commit's pnpm, so this records it first.
+        await run("pnpm", ["--version"], { cwd: worktree });
         await run("pnpm", ["install", "--frozen-lockfile"], {
           cwd: worktree,
           env: closedEnv({ SKIP_INSTALL_SIMPLE_GIT_HOOKS: "1" }),
