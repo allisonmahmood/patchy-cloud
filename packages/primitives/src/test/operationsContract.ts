@@ -1232,4 +1232,18 @@ export const uuidContract = Effect.fn("test.uuidContract")(function* (companyId:
     yield* Clock.currentTimeMillis
   );
   assert.isTrue(rows.every((row) => String(row.id) < String(next.id)));
+  // A clock outside the 48-bit field clamps to its ends rather than wrapping.
+  for (const [millis, stamped] of [
+    [-1, 0],
+    [2 ** 48 + 7, 2 ** 48 - 1]
+  ] as const) {
+    yield* TestClock.setTime(millis);
+    const row = yield* call("tables.insert", {
+      table: "notes",
+      row: { title: "clamped", slug: `clamped-${millis}` }
+    }).pipe(Effect.flatMap(decodeRow));
+    const bytes = Buffer.from(String(row.id).replaceAll("-", ""), "hex");
+    assert.strictEqual(bytes.readUIntBE(0, 6), stamped, String(millis));
+    assert.strictEqual(bytes[6]! >>> 4, 7);
+  }
 });

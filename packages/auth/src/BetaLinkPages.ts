@@ -4,7 +4,6 @@
  * the page always shows the link's current state. Nothing here reads the browser's session: the
  * link admits by its secret alone, and Clerk's own sign-up proves the address it reserved.
  */
-import * as ByteSize from "effect/ByteSize";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import type * as Layer from "effect/Layer";
@@ -14,6 +13,7 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as UrlParams from "effect/http/UrlParams";
 import type * as SqlClient from "effect/sql/SqlClient";
+import { capBody } from "@patchy/api";
 import type { InviteMail } from "@patchy/companies";
 import { button, type Cryptography, escapeHtml, field, input, linkButton } from "@patchy/core";
 import * as BetaLinks from "./BetaLinks.js";
@@ -135,9 +135,7 @@ export const routes = (
         const link = yield* BetaLinks.find(secret);
         if (Option.isNone(link)) return notFound;
         const request = yield* HttpServerRequest.HttpServerRequest;
-        const form = yield* request.urlParamsBody.pipe(
-          Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(MAX_FORM_BYTES))
-        );
+        const form = yield* request.urlParamsBody.pipe(capBody(MAX_FORM_BYTES));
         const email = Option.getOrElse(UrlParams.getFirst(form, "email"), () => "");
         const refuse = (status: number) => (error: { readonly message: string }) =>
           Effect.succeed(openPage(link.value, { status, message: error.message, email }));
