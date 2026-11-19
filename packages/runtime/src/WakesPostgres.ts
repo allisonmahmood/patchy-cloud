@@ -1,6 +1,6 @@
 import * as PgClient from "@effect/sql-pg/PgClient";
 import * as WideEvents from "@patchy/analytics/wide-events";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
@@ -37,10 +37,7 @@ export class WakeDeliveryFailed extends Schema.TaggedError<WakeDeliveryFailed>()
 export const make = Effect.gen(function* () {
   const pg = yield* PgClient.PgClient;
   const local = yield* Wakes.make;
-  const origin = yield* Crypto.Crypto.pipe(
-    Effect.flatMap((crypto) => crypto.randomUUIDv4()),
-    Effect.orDie
-  );
+  const origin = yield* SecureRandom.SecureRandom.use((random) => random.uuidV4());
   const listen = Effect.scoped(
     Effect.gen(function* () {
       const notifications = yield* pg.listen(channel);

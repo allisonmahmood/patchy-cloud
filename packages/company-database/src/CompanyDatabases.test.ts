@@ -1102,6 +1102,7 @@ const interruptedCreate = Layer.effect(
     let interruptNextCreate = true;
     return yield* SqlClient.make({
       compiler: PgClient.makeCompiler(),
+      driver: real.driver,
       spanAttributes: [],
       acquirer: real.reserve.pipe(
         Effect.map((connection) => ({

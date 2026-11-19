@@ -391,24 +391,19 @@ it.layer(
 
       for (const [request, status] of [
         [share.pipe(HttpClientRequest.bodyText(padded, "application/json")), 413],
+        // An undeclared body that crosses the cap stops being read and answers as malformed.
         [
           share.pipe(
             HttpClientRequest.bodyStream(Stream.succeed(new TextEncoder().encode(padded)), {
               contentType: "application/json"
             })
           ),
-          "disconnected"
+          400
         ]
       ] as const) {
-        if (status === "disconnected") {
-          // Node destroys the request stream when an undeclared body crosses the cap.
-          const failure = yield* send(request).pipe(Effect.flip);
-          assert.strictEqual(failure.reason._tag, "TransportError");
-        } else {
-          const response = yield* send(request);
-          assert.strictEqual(response.status, status);
-          expect(yield* response.json).toEqual({ ok: false, error: expect.any(String) });
-        }
+        const response = yield* send(request);
+        assert.strictEqual(response.status, status);
+        expect(yield* response.json).toEqual({ ok: false, error: expect.any(String) });
         for (const path of [patchPath, `${patchPath}/~v/1`]) {
           const page = yield* send(HttpClientRequest.get(path));
           assert.strictEqual(page.status, 401);

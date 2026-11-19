@@ -192,6 +192,18 @@ it.layer(server(env).pipe(Layer.provideMerge(stdout)))("the door in the server",
         `POST http://evil.example/mcp HTTP/1.1\nhost: ${HOST}\nauthorization: Bearer ${minted.token}\ncontent-length: 0`
       );
       assert.strictEqual(absolute.status, 421);
+      // Userinfo is refused, though Effect's adapter strips it before the door sees the request.
+      const userinfo = yield* raw(
+        `POST http://user@${HOST}/mcp HTTP/1.1\nhost: ${HOST}\nauthorization: Bearer ${minted.token}\ncontent-length: 0`
+      );
+      assert.strictEqual(userinfo.status, 421);
+      // The door's own scheme and host in absolute form are the same request as origin form.
+      const body = JSON.stringify(initialize);
+      const own = yield* raw(
+        `POST ${BASE}/mcp HTTP/1.1\nhost: ${HOST}\nauthorization: Bearer ${minted.token}\ncontent-type: application/json\ncontent-length: ${Buffer.byteLength(body)}`,
+        body
+      );
+      assert.strictEqual(own.status, 200);
       // Node keeps the first of two Host fields; the door refuses both.
       const twoHosts = yield* raw(
         `POST /mcp HTTP/1.1\nhost: ${HOST}\nhost: evil.example:29276\nauthorization: Bearer ${minted.token}\ncontent-length: 0`

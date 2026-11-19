@@ -7,7 +7,7 @@ import * as Executor from "@patchy/runtime/executor";
 import * as ExecutionLifecycle from "@patchy/runtime/execution-lifecycle";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -136,7 +136,7 @@ export const promote = Effect.fn("Fleet.promote")(function* (
 
 /** Host code, not a service deployment. One instance is scoped to one host replica. */
 export const make = Effect.fn("Fleet.make")(function* (options: Options) {
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const provider = yield* TaskProvider.TaskProvider;
   const limits = yield* OperatingLimits.OperatingLimits;
   const config = yield* DeploymentConfig.load;
@@ -443,7 +443,7 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
           const reserved: string[] = [];
           for (let count = measured.spares; count < target; count++) {
             yield* guard;
-            const taskId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+            const taskId = yield* random.uuidV4();
             if (
               !(yield* store.reserve(
                 taskId,

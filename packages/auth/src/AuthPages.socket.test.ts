@@ -28,6 +28,7 @@ import {
   signSession
 } from "./testing.js";
 import { NodeCryptography } from "@patchy/core";
+import { stalledUpload } from "../../../test/socket.js";
 
 const localRevocation = Layer.effect(
   Session.Session,
@@ -121,17 +122,30 @@ it.layer(layer)("auth pages on a socket", (it) => {
           redirect: "manual",
           ...(streamed ? { duplex: "half" as const } : {})
         };
-        const request = Effect.tryPromise(() => fetch(url, options));
-        if (streamed) {
-          // The server cuts an undeclared body off mid-stream, so the request fails.
-          yield* request.pipe(Effect.flip);
-        } else {
-          const response = yield* request;
-          assert.strictEqual(response.status, 413);
-          assert.strictEqual(response.headers.get("location"), null);
-          assert.include(yield* Effect.promise(() => response.text()), "Invalid form");
-        }
+        const response = yield* Effect.tryPromise(() => fetch(url, options));
+        // An undeclared body that crosses the cap stops being read and answers as unreadable.
+        assert.strictEqual(response.status, streamed ? 400 : 413);
+        assert.strictEqual(response.headers.get("location"), null);
+        assert.include(yield* Effect.promise(() => response.text()), "Invalid form");
       }
+    })
+  );
+
+  it.effect("answers a form overflow whose sender never finishes, then closes its connection", () =>
+    Effect.gen(function* () {
+      const server = yield* HttpServer.HttpServer;
+      if (server.address._tag === "UnixPathAddress") return assert.fail("Expected a TCP listener");
+      const { port } = server.address;
+      const answer = yield* Effect.promise(() =>
+        stalledUpload(
+          port,
+          `POST /login/device HTTP/1.1\nhost: 127.0.0.1\norigin: ${PUBLIC_BASE_URL}\ncontent-type: application/x-www-form-urlencoded`,
+          { chunked: 8_192 }
+        )
+      );
+      assert.strictEqual(answer.status, 400);
+      // Closed within the adapter's half-second grace, rather than held open for more body.
+      assert.isDefined(answer.closedAfterMs);
     })
   );
 
