@@ -26,7 +26,7 @@
   },
   "dependencies": {
     "@effect/ai-openai": "catalog:",
-    "@electric-sql/pglite": "0.5.10",
+    "@electric-sql/pglite": "0.5.16",
     "@patchy/analytics": "workspace:*",
     "@patchy/api": "workspace:*",
     "@patchy/auth": "workspace:*",
@@ -35,7 +35,7 @@
     "@patchy/limits": "workspace:*",
     "@patchy/runtime": "workspace:*",
     "effect": "catalog:",
-    "imapflow": "2.10.2",
+    "imapflow": "2.11.0",
     "pg": "^8.23.1"
   },
   "devDependencies": {
@@ -43,6 +43,6 @@
     "@effect/vitest": "catalog:",
     "@patchy/sql": "workspace:*",
     "@types/pg": "^8.23.1",
-    "vitest": "^5.0.5"
+    "vitest": "^5.1.0"
   }
 }

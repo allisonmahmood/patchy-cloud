@@ -72,7 +72,7 @@ builder-owned toolchain dependencies are installed with lifecycle scripts disabl
 `jsxImportSource: "patchy/preact"`. Every entry initializes the same compat
 instance before rendering. In DEV, the SDK also initializes `preact/debug`
 against that instance; patch code does not import debugging support.
-Preact 11.1.0, `@preact/signals` 2.11.4 and `@preact/signals-core` 1.14.5 are
+Preact 11.2.0, `@preact/signals` 2.11.4 and `@preact/signals-core` 1.14.5 are
 exact bundled dependencies, not patch dependencies or overrides. They remain
 real packages inside the tarball so the optimizer, JSX runtimes, hooks and
 signals resolve one shared instance, including its types and licenses.
@@ -81,10 +81,10 @@ Exports name individual entries, never a `patchy/*` wildcard. Config and local
 dev remain tooling entries; the generated client and Preact entries are for the
 page. `patchy/server` ships the handler builders and guest entry for hosted code;
 `patchy/csv` ships CSV parsing and stringification for either graph;
-`patchy/hotkeys` ships keyboard shortcuts for the page. TanStack Hotkeys and the
-TanStack Store under it are bundled into that entry at an exact version, with
-their MIT notices in `dist/licenses`; it shares the bundled Preact. The graph
-import checks run independently on the page and server publication graphs.
+`patchy/hotkeys` ships keyboard shortcuts for the page. TanStack Hotkeys is
+bundled into that entry at an exact version, with its MIT notice in
+`dist/licenses`; it shares the bundled Preact. The graph import checks run
+independently on the page and server publication graphs.
 
 Managed package pins are `patchy` on every tier and `workerd` on tier 2.
 Changing tier plus `refresh` adds or removes the workerd pin and generated

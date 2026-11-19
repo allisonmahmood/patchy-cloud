@@ -30,7 +30,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@clerk/backend": "3.23.0",
+    "@clerk/backend": "3.27.0",
     "@patchy/analytics": "workspace:*",
     "@patchy/api": "workspace:*",
     "@patchy/companies": "workspace:*",
@@ -42,7 +42,7 @@
   "devDependencies": {
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
-    "tough-cookie": "^6.0.2",
-    "vitest": "^5.0.5"
+    "tough-cookie": "^6.1.0",
+    "vitest": "^5.1.0"
   }
 }

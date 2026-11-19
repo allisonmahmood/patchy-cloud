@@ -36,7 +36,9 @@
           "globalErrorInEffectCatch": "error",
           "globalErrorInEffectFailure": "error",
           "unknownInEffectCatch": "error",
-          "preferSchemaOverJson": "error",
+          // JSON is the one global checked only inside Effect code: its whole-file
+          // variant, globalJson, stays off (the default).
+          "globalJsonInEffect": "error",
           "globalConsoleInEffect": "error",
           "globalDateInEffect": "error",
           "globalRandomInEffect": "error",
