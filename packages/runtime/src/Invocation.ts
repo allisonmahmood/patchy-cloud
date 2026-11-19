@@ -385,10 +385,15 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
         const admitted =
           actionLimits === undefined
             ? undefined
-            : slots.admit(binding.companyId, key, canonicalArgs([binding.companyId, viewer.user.id]), {
-                company: actionLimits.company.value,
-                viewer: actionLimits.viewer.value
-              });
+            : slots.admit(
+                binding.companyId,
+                key,
+                canonicalArgs([binding.companyId, viewer.user.id]),
+                {
+                  company: actionLimits.company.value,
+                  viewer: actionLimits.viewer.value
+                }
+              );
         if (actionLimits !== undefined && admitted !== undefined) {
           for (const [used, limit, limitId, limitScope] of [
             [admitted.used.company, actionLimits.company.value, "tier2.actions.company", "company"],

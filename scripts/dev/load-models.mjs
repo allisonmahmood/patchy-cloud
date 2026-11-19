@@ -377,14 +377,14 @@ const kindOf = (result) =>
       : result.code === "busy" && String(result.limitId).startsWith("tier2.models")
         ? "poolRefused"
         : result.code === "busy" && String(result.limitId).startsWith("models.calls")
-        ? result.details?.waitedMs > 0
-          ? "gateWaited"
-          : "gateRefused"
-        : result.code === "timeout"
-          ? "timeout"
-          : result.code === "handler_timeout"
-            ? "handlerTimeout"
-            : `other:${result.code}`;
+          ? result.details?.waitedMs > 0
+            ? "gateWaited"
+            : "gateRefused"
+          : result.code === "timeout"
+            ? "timeout"
+            : result.code === "handler_timeout"
+              ? "handlerTimeout"
+              : `other:${result.code}`;
 const max = (values) => (values.length === 0 ? 0 : Math.max(...values));
 const rows = [];
 for (const group of [...new Set(results.map((result) => result.group))]) {
@@ -394,7 +394,10 @@ for (const group of [...new Set(results.map((result) => result.group))]) {
   // After the last model call answered (and, in park-r2, was let go): the action's own work.
   const after = mineEvents
     .filter((event) => (event.slots?.resumedAt ?? 0) > 0 && event.outcome === "success")
-    .map((event) => ({ opened: event.slots.resumedAt, closed: event.startedAt + event.durationMs }));
+    .map((event) => ({
+      opened: event.slots.resumedAt,
+      closed: event.startedAt + event.durationMs
+    }));
   const kinds = {};
   for (const result of mine) kinds[kindOf(result)] = (kinds[kindOf(result)] ?? 0) + 1;
   const slots = mineEvents.map((event) => event.slots).filter(Boolean);
