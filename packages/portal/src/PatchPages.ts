@@ -1,7 +1,6 @@
 // Owns a patch's page at `/patches/<name>`: Overview, Log, Versions and Settings, the dialogs its
 // acts ask in, and their forms. Renders with `render.ts` and `log.ts`; what other surfaces need is
 // in `shared/`.
-import * as ByteSize from "effect/ByteSize";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -10,7 +9,7 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as WideEvents from "@patchy/analytics/wide-events";
-import { agentTools, PatchState } from "@patchy/api";
+import { agentTools, PatchState, capBody } from "@patchy/api";
 import { AgentConnections, pageResponse, Receipt, RequireSession } from "@patchy/auth";
 import { Companies, Users } from "@patchy/companies";
 import { patchTitle } from "@patchy/core";
@@ -555,13 +554,7 @@ const post = Effect.fn("PatchPages.post")(function* (name: string, action: Patch
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
   yield* WideEvents.enrich({ patchId: selected.patch.id });
   const request = yield* HttpServerRequest.HttpServerRequest;
-  const form = Object.fromEntries(
-    new URLSearchParams(
-      yield* request.text.pipe(
-        Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(16_384))
-      )
-    )
-  );
+  const form = Object.fromEntries(new URLSearchParams(yield* request.text.pipe(capBody(16_384))));
   // Every form carries the id of the patch it was rendered for. A form without it, or
   // whose name now belongs to another patch, stops on the card before any other check:
   // a re-rendered form would post at whichever patch holds the name now.

@@ -6,7 +6,9 @@ import {
   RuntimeStreamGroup,
   ShortcutsRequest,
   ViewerGroup,
-  handlerKinds
+  capBody,
+  handlerKinds,
+  isBodyTooLarge
 } from "@patchy/api";
 import type { ReleaseToolchain } from "@patchy/api";
 import {
@@ -19,7 +21,7 @@ import {
   StreamLimits
 } from "@patchy/runtime/dev";
 import { Cryptography, documentTitle } from "@patchy/core";
-import { Limits } from "@patchy/limits";
+import { ContractLimits, Limits } from "@patchy/limits";
 import {
   brokerScript,
   renderPatchWrapper,
@@ -36,6 +38,7 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import type * as Redacted from "effect/Redacted";
@@ -74,6 +77,8 @@ const headers = {
 };
 const absent = HttpServerResponse.text("Not found", { status: 404, headers });
 const decodeAgentRequest = Schema.decodeUnknownEffect(AgentRequest);
+/** The shortcuts form, as Patchy reads it: the value and a page path to land back on. */
+const MAX_SHORTCUTS_BYTES = 4_096;
 // External trusted script, never inserted into the sandbox. A reload retains pathname/query/hash.
 const reloadScript = `(() => {
   const revision = new URL(document.currentScript.src).searchParams.get("v");
@@ -222,17 +227,22 @@ export const serve = Effect.fn("Dev.serve")(function* (
             Effect.gen(function* () {
               const request = yield* HttpServerRequest.HttpServerRequest;
               if (request.headers["x-patchy-dev"] !== record.nonce) return absent;
+              const mount = { person: identity, address: `${origin}${base}` };
               const body = yield* request.json.pipe(
+                // `patchy dev agent`'s call, read up to the cap Patchy MCP reads one at.
+                capBody(yield* ContractLimits.get("mcp.body.bytes")),
                 Effect.flatMap(decodeAgentRequest),
-                Effect.option
+                Effect.result
               );
-              if (Option.isNone(body))
-                return HttpServerResponse.text("Bad request", { status: 400, headers });
-              const reply = yield* DevAgent.answer(
-                agentDev,
-                { person: identity, address: `${origin}${base}` },
-                body.value
-              ).pipe(Effect.provideContext(resources.context), Effect.provideContext(events));
+              // One past the cap is refused unread, as the door refuses it; the rest is malformed.
+              if (Result.isFailure(body))
+                return isBodyTooLarge(body.failure)
+                  ? HttpServerResponse.jsonUnsafe(DevAgent.tooLarge(agentDev, mount), { headers })
+                  : HttpServerResponse.text("Bad request", { status: 400, headers });
+              const reply = yield* DevAgent.answer(agentDev, mount, body.success).pipe(
+                Effect.provideContext(resources.context),
+                Effect.provideContext(events)
+              );
               return HttpServerResponse.jsonUnsafe(reply, { headers });
             })
           );
@@ -317,6 +327,7 @@ export const serve = Effect.fn("Dev.serve")(function* (
             if (request.headers.origin !== origin)
               return HttpServerResponse.text("Request refused", { status: 403, headers });
             const form = yield* HttpServerRequest.schemaBodyUrlParams(ShortcutsRequest).pipe(
+              capBody(MAX_SHORTCUTS_BYTES),
               Effect.option
             );
             if (Option.isNone(form))

@@ -1,7 +1,6 @@
 // Owns What's new: a page per month at `/whats-new/YYYY-MM`, the newest at `/whats-new`, the bell's
 // seen marker and script, and the public feed at `/whats-new.json`. What other surfaces need is in
 // `shared/`.
-import * as ByteSize from "effect/ByteSize";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import type * as Layer from "effect/Layer";
@@ -11,6 +10,7 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import type * as SqlClient from "effect/sql/SqlClient";
+import { capBody } from "@patchy/api";
 import { pageResponse, RequireSession, Session } from "@patchy/auth";
 import {
   behindTheScenes,
@@ -224,11 +224,7 @@ const page = (month: string | undefined) =>
 const seen = Effect.gen(function* () {
   const viewer = yield* RequireSession.Viewer;
   const request = yield* HttpServerRequest.HttpServerRequest;
-  const form = Object.fromEntries(
-    yield* request.urlParamsBody.pipe(
-      Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(1_024))
-    )
-  );
+  const form = Object.fromEntries(yield* request.urlParamsBody.pipe(capBody(1_024)));
   const { through } = yield* decodeSeen(form);
   yield* markSeen(viewer.user.id, through);
   return HttpServerResponse.empty({ status: 204 });

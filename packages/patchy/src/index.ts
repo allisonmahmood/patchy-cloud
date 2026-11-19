@@ -21,7 +21,7 @@ import * as CliOutput from "effect/cli/CliOutput";
 import * as Command from "effect/cli/Command";
 import { Cwd, root } from "./commands.js";
 import { RELEASE } from "./release.js";
-import { Failed, jsonRequested, toJson } from "./Output.js";
+import { jsonRequested, toJson } from "./Output.js";
 import { NodeCryptography } from "@patchy/core";
 
 const json = jsonRequested(process.argv.slice(2));
@@ -80,11 +80,6 @@ const jsonConsole = Layer.effect(
 );
 
 Command.run(root, { version: RELEASE }).pipe(
-  // A global flag's own bad value, such as `--log-level loud`, fails without Effect rendering it.
-  Effect.catchTags({
-    InvalidValue: (error) =>
-      Console.error(renderErrors([error])).pipe(Effect.andThen(new Failed({ code: 1 })))
-  }),
   Effect.ensuring(Effect.suspend(() => (heldHelp === "" ? Effect.void : Console.log(heldHelp)))),
   Effect.provide(
     Layer.mergeAll(
