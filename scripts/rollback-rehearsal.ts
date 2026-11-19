@@ -23,7 +23,10 @@
  * dev runner's supervisor does, without the supervisor's seeding, which would
  * repair rows a migration broke. Each build's server runs on the runtime its
  * server package starts with, as production would run it: across the move to
- * Bun, live's server runs on Node and HEAD's on Bun.
+ * Bun, live's server runs on Node and HEAD's on Bun. Likewise every pnpm
+ * command in a checkout, nested ones included, runs the pnpm that commit's
+ * `packageManager` pins, which pnpm downloads and switches to: after a pnpm
+ * bump, the live commit's `engines` refuse HEAD's pnpm.
  *
  * The exercise is the same at every step: the deep health check, the build's
  * own CLI (whoami, list, a publish), and in Chromium, as the scenario's admin,
@@ -232,11 +235,17 @@ class StepFailed extends Error {
 
 // ---- Processes --------------------------------------------------------------
 
-/** The inherited environment without any PATCHY_ setting, which could point a CLI at production. */
+/**
+ * The inherited environment without any PATCHY_ setting, which could point a CLI at production.
+ * Any pnpm run with it, nested ones included, switches to the version its checkout's
+ * `packageManager` pins, which the repo turns off with `pmOnFail: ignore`. The switch records that
+ * version in the checkout's lockfile, which the next forced checkout discards.
+ */
 const closedEnv = (extra: Record<string, string> = {}): NodeJS.ProcessEnv => ({
   ...Object.fromEntries(
     Object.entries(process.env).filter(([name]) => !name.startsWith("PATCHY_"))
   ),
+  pnpm_config_pm_on_fail: "download",
   ...extra
 });
 
