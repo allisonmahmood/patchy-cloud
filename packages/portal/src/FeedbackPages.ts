@@ -10,7 +10,6 @@
  * above its table. A refusal never carries the draft back: the person's text stays in their own
  * field, or is gone with the page.
  */
-import * as ByteSize from "effect/ByteSize";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import type * as Layer from "effect/Layer";
@@ -26,7 +25,8 @@ import {
   SUBMISSION_TEXT_MAX,
   SUBMISSION_TITLE_MAX,
   SUBMISSION_TITLE_MIN,
-  SubmissionKind
+  SubmissionKind,
+  capBody
 } from "@patchy/api";
 import { pageResponse, Receipt, RequireSession, Session } from "@patchy/auth";
 import type { Companies, Users } from "@patchy/companies";
@@ -627,7 +627,7 @@ const context = Effect.gen(function* () {
 const form = Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
   request.urlParamsBody.pipe(
     Effect.map((params) => Object.fromEntries(params)),
-    Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(MAX_FORM_BYTES))
+    capBody(MAX_FORM_BYTES)
   )
 );
 

@@ -1,5 +1,5 @@
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
@@ -383,10 +383,8 @@ export const initialize = Effect.gen(function* () {
       singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
       secret text NOT NULL
     )`);
-  const secret = yield* Crypto.Crypto.pipe(
-    Effect.flatMap((crypto) => crypto.randomBytes(32)),
-    Effect.map(Hex.encode),
-    Effect.orDie
+  const secret = yield* SecureRandom.SecureRandom.use((random) => random.randomBytes(32)).pipe(
+    Effect.map(Hex.encode)
   );
   yield* sql`INSERT INTO patchy.file_handle_key (secret)
     VALUES (${secret}) ON CONFLICT (singleton) DO NOTHING`;

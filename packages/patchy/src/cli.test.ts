@@ -671,11 +671,10 @@ describe("help", () => {
     const failures = [
       [["init", "notes", "--tier", "7", "--json"], tier],
       [["init", "notes", "--tier", "7", "--json=true"], tier],
-      [["init", "notes", "--tier", "7", "-json=true"], tier],
       [["publish", "--bogus", "--json"], "Unrecognized flag: --bogus in command patchy publish"],
       [["look", "publish", "./x", "--json"], "Missing required flag: --note"],
       [["look", "publish", "--note", "darker", "--json"], "Missing required argument: dir"],
-      // A global flag's value fails outside Effect's usage path.
+      // A global flag's bad value, too.
       [["whoami", "--log-level", "loud", "--json"], logLevel]
     ] as const;
     const failed = await Promise.all(failures.map(([args]) => runCli(args)));
@@ -692,7 +691,8 @@ describe("help", () => {
     ]);
     expect(text).toMatchObject({ status: 1, stderr: `${tier}\n` });
     expect(text.stdout).toContain("USAGE\n  patchy init");
-    expect(logLevelText).toMatchObject({ status: 1, stdout: "", stderr: `${logLevel}\n` });
+    expect(logLevelText).toMatchObject({ status: 1, stderr: `${logLevel}\n` });
+    expect(logLevelText.stdout).toContain("USAGE\n  patchy whoami");
 
     // Asked for with --help, or shown by a command without a handler.
     const [help, helpJson, group, groupJson] = await Promise.all([

@@ -1,11 +1,11 @@
 // Owns the Share dialog's forms, posted to `/patches/<name>/<act>`, and Remove… on a patch shared
 // with the viewer. Renders with `share.ts`; what other surfaces need is in `shared/`.
-import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { capBody } from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { pageResponse, Receipt, RequireSession } from "@patchy/auth";
 import { patchTitle } from "@patchy/core";
@@ -98,11 +98,7 @@ export const layer = (pages: PagesBehind): Routes => {
       return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
     yield* WideEvents.enrich({ patchId: selected.patch.id });
     const request = yield* HttpServerRequest.HttpServerRequest;
-    const values = new URLSearchParams(
-      yield* request.text.pipe(
-        Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(16_384))
-      )
-    );
+    const values = new URLSearchParams(yield* request.text.pipe(capBody(16_384)));
     const form = Object.fromEntries(values);
     // As every patch form: one rendered for whichever patch had this name stops here.
     if (form.expectedPatchId !== selected.patch.id)

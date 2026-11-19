@@ -210,7 +210,7 @@ export class AuthGroup extends HttpApiGroup.make("auth", { topLevel: true })
           "follows this login; the first login a live line starts binds to it, and a later one " +
           "proceeds as an ordinary login. An unknown or expired value is ignored. " +
           "The JSON body is limited to 4096 bytes: a declared overflow answers 413; " +
-          "overflow while streaming aborts the connection before parsing."
+          "overflow while streaming answers 400 and closes the connection, before parsing."
       )
     ),
     HttpApiEndpoint.post("pollDeviceLogin", "/login/device/token", {
@@ -225,8 +225,8 @@ export class AuthGroup extends HttpApiGroup.make("auth", { topLevel: true })
           "and company handle and name in the same response. The key expires in 90 days or after " +
           "30 idle days. Complete, expired and denied logins are deleted, so a subsequent poll " +
           "answers 410 `unknown`. Plaintext tokens are never stored. The JSON body is limited " +
-          "to 4096 bytes: a declared overflow answers 413; overflow while streaming aborts " +
-          "the connection before parsing."
+          "to 4096 bytes: a declared overflow answers 413; overflow while streaming answers " +
+          "400 and closes the connection, before parsing."
       )
     )
   )
@@ -256,7 +256,8 @@ export class ViewerGroup extends HttpApiGroup.make("viewer", { topLevel: true })
           "`application/json` gets the stored `{ value }`. Any other, such as a form post, is " +
           "sent with a receipt to `return`, a path on this instance, or else to `/`. A missing " +
           "or unknown value is 400 and changes nothing. The form is limited to 4096 bytes: a " +
-          "declared overflow answers 413; overflow while streaming aborts the connection. " +
+          "declared overflow answers 413; overflow while streaming answers 400 and closes the " +
+          "connection. " +
           "Responses are `private, no-store`, and the route spends no per-address API limit."
       )
     )

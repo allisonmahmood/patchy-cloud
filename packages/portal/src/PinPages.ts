@@ -1,11 +1,11 @@
 // Personal pin forms and the adapter that supplies every app page's sidebar.
-import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { capBody } from "@patchy/api";
 import { Receipt, RequireSession, returnPath } from "@patchy/auth";
 import { patchTitle } from "@patchy/core";
 import { Patches } from "@patchy/patches";
@@ -37,11 +37,7 @@ export const navigation = Layer.effect(
 const setPinned = Effect.fn("PinPages.setPinned")(function* (pinned: boolean) {
   const { viewer, session, access } = yield* context;
   const request = yield* HttpServerRequest.HttpServerRequest;
-  const form = new URLSearchParams(
-    yield* request.text.pipe(
-      Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(4096))
-    )
-  );
+  const form = new URLSearchParams(yield* request.text.pipe(capBody(4096)));
   if (form.get("user") !== viewer.user.id)
     return yield* errorPage(
       409,
