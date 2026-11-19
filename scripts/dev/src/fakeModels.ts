@@ -12,7 +12,11 @@
  *   - `rate-limited`: 429 with `retry-after: 7`. `quota`: 429 insufficient_quota.
  *   - `refuse`: a text model refuses; a decision model refuses the last question.
  *   - `invalid`: a typed output that doesn't match its schema.
- *   - `truncated`: stop at max_output_tokens, status incomplete.
+ *   - `truncated`: stop at max_output_tokens, status incomplete, usage at the cap.
+ *   - `stop-short`: stop for max_output_tokens with usage below the cap, and `full-at-cap`: a
+ *     complete answer whose usage equals the cap, so a stop reason read from the answer and one
+ *     guessed from the token count disagree.
+ *   - `huge`: a 2 MiB answer; `huge-error`: a 500 with a 2 MiB body. Both past the host's bound.
  *   - `load`: the call picks its own answer time, with `[delay=<ms>]` or `[at=<epoch ms>]` in its
  *     input, for the slot load test (`scenarios/models/load.mjs`).
  * Each request is logged with whether the caller closed the connection before the answer
@@ -31,6 +35,9 @@ interface Entry {
   /** The request's header names and top-level body keys, never their values. */
   readonly headers: ReadonlyArray<string>;
   readonly bodyKeys: ReadonlyArray<string>;
+  /** A Responses request's `include` and its messages' roles, never their content. */
+  readonly include?: ReadonlyArray<string>;
+  readonly roles?: ReadonlyArray<string>;
 }
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
@@ -174,8 +181,17 @@ const responses = (body: ResponsesBody, model: string) => {
         )
       : draft(input);
   const cap = body.max_output_tokens ?? 1_000;
-  const truncated = model.includes("truncated") || tokens(text) > cap;
+  const short = model.includes("stop-short");
+  const huge = model.includes("huge");
+  const truncated = !huge && (model.includes("truncated") || short || tokens(text) > cap);
   if (truncated) text = text.slice(0, Math.max(1, Math.min(text.length - 1, cap * 4 - 1)));
+  if (huge) text = "x".repeat(2 * 1024 * 1024);
+  // The two signals a client can read a cut-off from, pulled apart on purpose.
+  const used = short
+    ? Math.max(1, Math.floor(cap / 2))
+    : model.includes("full-at-cap") || truncated
+      ? cap
+      : tokens(text);
   const content = model.includes("refuse")
     ? [{ type: "refusal", refusal: "I can't help with that request." }]
     : [{ type: "output_text", text, annotations: [] }];
@@ -197,8 +213,8 @@ const responses = (body: ResponsesBody, model: string) => {
     ],
     usage: {
       input_tokens: tokens(input),
-      output_tokens: truncated ? cap : tokens(text),
-      total_tokens: tokens(input) + (truncated ? cap : tokens(text)),
+      output_tokens: used,
+      total_tokens: tokens(input) + used,
       input_tokens_details: { cached_tokens: 0 },
       output_tokens_details: { reasoning_tokens: 0 }
     }
@@ -262,7 +278,19 @@ export const start = (log: (line: string) => void) =>
             status: "pending",
             closedEarly: false,
             headers: Object.keys(req.headers).sort(),
-            bodyKeys: Object.keys(body).sort()
+            bodyKeys: Object.keys(body).sort(),
+            ...(Array.isArray(body.include)
+              ? { include: body.include.filter((item) => typeof item === "string") }
+              : {}),
+            ...(Array.isArray(body.input)
+              ? {
+                  roles: body.input.map((message: unknown) =>
+                    typeof message === "object" && message !== null && "role" in message
+                      ? String(message.role)
+                      : "?"
+                  )
+                }
+              : {})
           };
           record(entry);
           res.on("close", () => {
@@ -296,6 +324,12 @@ export const start = (log: (line: string) => void) =>
                 },
                 { "retry-after": "7" }
               );
+            }
+            if (model.includes("huge-error")) {
+              entry.status = 500;
+              return send(res, 500, {
+                error: { message: "x".repeat(2 * 1024 * 1024), type: "server_error" }
+              });
             }
             if (model.includes("quota")) {
               entry.status = 429;

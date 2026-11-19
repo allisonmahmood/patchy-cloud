@@ -36,6 +36,10 @@ export default defineConfig({
     sloppy: models("sloppy"),
     rambler: models("rambler"),
     bouncer: models("bouncer"),
+    shorted: models("shorted"),
+    brimful: models("brimful"),
+    flood: models("flood"),
+    floodError: models("flood-error"),
     offline: models("offline"),
     loader: models("loader"),
     scorer: models("scorer")

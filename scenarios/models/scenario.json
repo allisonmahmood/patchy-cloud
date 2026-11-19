@@ -201,6 +201,42 @@
     },
     {
       "integration": "models",
+      "handle": "shorted",
+      "description": "Failure mode: the model stops for its cap with usage below it.",
+      "state": "connected",
+      "kind": "text",
+      "provider": "main",
+      "model": "fake-text-stop-short"
+    },
+    {
+      "integration": "models",
+      "handle": "brimful",
+      "description": "Failure mode: a complete answer whose usage equals the cap.",
+      "state": "connected",
+      "kind": "text",
+      "provider": "main",
+      "model": "fake-text-full-at-cap"
+    },
+    {
+      "integration": "models",
+      "handle": "flood",
+      "description": "Failure mode: the provider's answer is larger than Patchy reads.",
+      "state": "connected",
+      "kind": "text",
+      "provider": "main",
+      "model": "fake-text-huge"
+    },
+    {
+      "integration": "models",
+      "handle": "flood-error",
+      "description": "Failure mode: the provider's error body is larger than Patchy reads.",
+      "state": "connected",
+      "kind": "text",
+      "provider": "main",
+      "model": "fake-text-huge-error"
+    },
+    {
+      "integration": "models",
       "handle": "offline",
       "description": "Failure mode: the provider can't be reached.",
       "state": "connected",
@@ -244,7 +280,11 @@
         "models/bouncer",
         "models/offline",
         "models/loader",
-        "models/scorer"
+        "models/scorer",
+        "models/shorted",
+        "models/brimful",
+        "models/flood",
+        "models/flood-error"
       ],
       "description": "Paste a request: a decision role routes it to a team, scores its urgency and spots spam, and a text role drafts a short formal reply. Buttons run each model failure and show what the page received."
     }

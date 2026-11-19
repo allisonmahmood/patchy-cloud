@@ -13,6 +13,11 @@ const MODES: ReadonlyArray<readonly [Mode, string]> = [
   ["sloppy", "Typed output doesn't match"],
   ["rambler", "Output truncated at the cap"],
   ["bouncer", "Provider answers a redirect"],
+  ["shorted", "Stops for the cap, usage below it"],
+  ["brimful", "Complete, usage equals the cap"],
+  ["flood", "Answer over the byte bound"],
+  ["floodError", "Error body over the byte bound"],
+  ["ramblerTyped", "Typed output truncated at the cap"],
   ["offline", "Provider unreachable"],
   ["wrongKind", "decide on a text role"],
   ["badOutput", "Unsupported output shape"]

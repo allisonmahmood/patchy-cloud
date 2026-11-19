@@ -92,6 +92,11 @@ const modes = [
   "sloppy",
   "rambler",
   "bouncer",
+  "shorted",
+  "brimful",
+  "flood",
+  "floodError",
+  "ramblerTyped",
   "offline",
   "wrongKind",
   "badOutput"
@@ -111,7 +116,18 @@ export const failure = action({
       body: "My laptop shows a black screen since this morning. I need it today."
     };
     const write = (
-      role: "thinker" | "stuck" | "limited" | "refuser" | "offline" | "rambler" | "bouncer"
+      role:
+        | "thinker"
+        | "stuck"
+        | "limited"
+        | "refuser"
+        | "offline"
+        | "rambler"
+        | "bouncer"
+        | "shorted"
+        | "brimful"
+        | "flood"
+        | "floodError"
     ) =>
       ctx.connections[role].generate({
         instructions: "Draft a formal reply.",
@@ -127,6 +143,10 @@ export const failure = action({
       case "offline":
       case "rambler":
       case "bouncer":
+      case "shorted":
+      case "brimful":
+      case "flood":
+      case "floodError":
         outcome = (await write(mode)).text.slice(0, 80);
         break;
       case "picky": {
@@ -142,6 +162,15 @@ export const failure = action({
           }
         });
         outcome = `team=${answers.team?.choice ?? "null"} spam=${answers.spam === null ? "null (refused)" : answers.spam.probability}`;
+        break;
+      }
+      case "ramblerTyped": {
+        const { value } = await ctx.connections.rambler.generate({
+          input,
+          maxOutputTokens: 300,
+          output: t.object({ reply: t.text(), tone: t.enum(["formal", "neutral"]) })
+        });
+        outcome = value.reply;
         break;
       }
       case "sloppy": {
