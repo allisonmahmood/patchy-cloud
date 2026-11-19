@@ -216,5 +216,34 @@ export class DevDailySpent extends Schema.TaggedError<DevDailySpent>()("ModelsDe
   }
 }
 
+/**
+ * The provider's answer, or the body of its refusal, was larger than Patchy reads: reading stopped
+ * at the bound, nothing was decoded and nothing is returned.
+ */
+export class TooLarge extends Schema.TaggedError<TooLarge>()("ModelsTooLarge", {
+  maxBytes: Schema.Int,
+  /** The provider's status, when the oversized body was a refusal's. */
+  upstreamStatus: Schema.optionalKey(Schema.Int)
+}) {
+  readonly code = "too_large" as const;
+  readonly status = 502;
+  get details() {
+    return {
+      maxBytes: this.maxBytes,
+      ...(this.upstreamStatus === undefined ? {} : { upstreamStatus: this.upstreamStatus })
+    };
+  }
+  override get message() {
+    return `The model provider's answer was larger than the ${this.maxBytes / 1024 ** 2} MiB Patchy reads, so nothing was returned.`;
+  }
+}
+
 export type CallError =
-  Timeout | RateLimited | Unavailable | InvalidRequest | ShapeMismatch | OutputTruncated | Refused;
+  | Timeout
+  | RateLimited
+  | Unavailable
+  | InvalidRequest
+  | ShapeMismatch
+  | OutputTruncated
+  | Refused
+  | TooLarge;

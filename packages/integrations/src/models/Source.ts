@@ -1,9 +1,12 @@
 // @effect-diagnostics schemaInFunctionBody:off -- A typed output's schema is the call's own, so it is built per call.
 import type { HandlerSchema, ModelQuestion, ModelsDecided, ModelUsage } from "@patchy/api";
-import { ModelRoleKind } from "@patchy/api";
+import { handlerJsonSchema, ModelRoleKind } from "@patchy/api";
 import * as OpenAiClient from "@effect/ai-openai/OpenAiClient";
+import * as OpenAiDecisionModel from "@effect/ai-openai/OpenAiDecisionModel";
 import * as OpenAiLanguageModel from "@effect/ai-openai/OpenAiLanguageModel";
 import type * as AiError from "effect/ai/AiError";
+import * as Decision from "effect/ai/Decision";
+import * as DecisionModel from "effect/ai/DecisionModel";
 import * as LanguageModel from "effect/ai/LanguageModel";
 import * as Telemetry from "effect/ai/Telemetry";
 import * as Config from "effect/Config";
@@ -13,17 +16,27 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Errors from "./Errors.js";
 
 /**
  * Model providers, called through Effect's AI module with the company's key. The hosting server
  * makes every call, only to the provider's API (`https://api.openai.com/v1`), never following a
- * redirect and without trace context. One request per call, never retried. A dev instance may
- * point the provider at a loopback fake instead (`PATCHY_DEV_MODELS_URL`), which the server
- * refuses outside development. PROTOTYPE.
+ * redirect and without trace context, and reads at most `MAX_ANSWER_BYTES` of any answer, a
+ * refusal's included. One request per call, never retried. A dev instance may point the provider
+ * at a loopback fake instead (`PATCHY_DEV_MODELS_URL`), which the server refuses outside
+ * development. PROTOTYPE.
+ *
+ * `generate` has two versions, for comparing them: one through `LanguageModel`, one through the
+ * provider's generated client, reading the Responses answer itself. `PATCHY_DEV_MODEL_CLIENT=raw`
+ * picks the second.
  */
 
 export const PRODUCTION_URL = "https://api.openai.com/v1";
@@ -106,6 +119,8 @@ export class Source extends Context.Service<
   {
     /** Where provider requests go: the provider's API, or a dev instance's loopback fake. */
     readonly apiUrl: string;
+    /** Which `generate` runs: through `LanguageModel`, or the provider's client directly. */
+    readonly client: "effect-ai" | "raw";
     /** One Decisions request. A question the model refused answers `null`. */
     readonly decide: (call: DecideCall) => Effect.Effect<ModelsDecided, Errors.CallError>;
     /** One Responses request: text, or a value of `output`'s shape, checked here. */
@@ -117,9 +132,93 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Json));
 const inputText = (input: typeof Schema.Json.Type) =>
   typeof input === "string" ? input : encodeJson(input);
 const MAX_INPUT_CHARS = 200_000;
+/** The most of one provider answer Patchy reads, a refusal's body included. */
+export const MAX_ANSWER_BYTES = 1024 * 1024;
+
+// ---------- reading answers under a bound ----------
+
+/** One call's bound, which says afterwards whether an answer passed it. */
+interface Bound {
+  exceeded: boolean;
+  status?: number;
+}
+const overBound = (bound: Bound, response: HttpClientResponse.HttpClientResponse) => {
+  bound.exceeded = true;
+  bound.status = response.status;
+  return new HttpClientError.HttpClientError({
+    reason: new HttpClientError.DecodeError({
+      request: response.request,
+      response,
+      description: `The answer is larger than ${MAX_ANSWER_BYTES} bytes.`
+    })
+  });
+};
+/** The body, collected under the bound before anything decodes it, as a response of its own. */
+const collect = (response: HttpClientResponse.HttpClientResponse, bound: Bound) =>
+  Effect.gen(function* () {
+    const declared = Number(response.headers["content-length"]);
+    if (Number.isFinite(declared) && declared > MAX_ANSWER_BYTES)
+      return yield* overBound(bound, response);
+    const chunks = yield* response.stream.pipe(
+      Stream.runFoldEffect(
+        () => ({ bytes: 0, chunks: [] as Uint8Array[] }),
+        (state, chunk) => {
+          if (state.bytes + chunk.byteLength > MAX_ANSWER_BYTES)
+            return Effect.fail(overBound(bound, response));
+          state.bytes += chunk.byteLength;
+          state.chunks.push(chunk);
+          return Effect.succeed(state);
+        }
+      )
+    );
+    const body = new Uint8Array(chunks.bytes);
+    let offset = 0;
+    for (const chunk of chunks.chunks) {
+      body.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return HttpClientResponse.fromWeb(
+      response.request,
+      new Response(body, { status: response.status, headers: { ...response.headers } })
+    );
+  });
+/**
+ * The client's `transformClient`. It runs after the client's status filter, so a refusal arrives
+ * as a failure holding an unread body: that body is collected under the bound too, before the
+ * client's error mapping reads it.
+ */
+const bounded =
+  (bound: Bound) =>
+  (client: HttpClient.HttpClient): HttpClient.HttpClient =>
+    client.pipe(
+      HttpClient.transformResponse((effect) =>
+        effect.pipe(
+          Effect.flatMap((response) => collect(response, bound)),
+          Effect.catchTag("HttpClientError", (error) =>
+            error.reason._tag === "StatusCodeError"
+              ? Effect.flatMap(collect(error.reason.response, bound), (response) =>
+                  Effect.fail(
+                    new HttpClientError.HttpClientError({
+                      reason: new HttpClientError.StatusCodeError({
+                        request: error.reason.request,
+                        response
+                      })
+                    })
+                  )
+                )
+              : Effect.fail(error)
+          )
+        )
+      )
+    );
 
 /** The provider's error, in Patchy's codes; the provider's own words stay in the cause. */
-const refusal = (error: AiError.AiError): Errors.CallError => {
+const refusal = (error: AiError.AiError, bound: Bound): Errors.CallError => {
+  if (bound.exceeded)
+    return new Errors.TooLarge({
+      maxBytes: MAX_ANSWER_BYTES,
+      ...(bound.status === undefined || bound.status < 300 ? {} : { upstreamStatus: bound.status })
+    });
   const reason = error.reason;
   const http = "http" in reason ? reason.http : undefined;
   const upstreamStatus = http?.response?.status;
@@ -156,7 +255,6 @@ const refusal = (error: AiError.AiError): Errors.CallError => {
       return new Errors.Unavailable({ reason: "provider", ...status, cause });
   }
 };
-
 // ---------- typed output: a subset of handler descriptors, checked before anything is sent ----------
 
 type OutputSchema = Schema.Codec<unknown, unknown, never, never>;
@@ -204,95 +302,47 @@ const outputSchema = (
 // ---------- decisions ----------
 
 type Answer = ModelsDecided["answers"][string];
-type ProviderAnswer = Effect.Success<
-  ReturnType<OpenAiClient.OpenAiClient["Service"]["createDecisions"]>
->["answers"][number];
-
-/** Rounded probabilities may drift from 1 by half a hundredth each; more than that isn't read. */
-const distribution = (
-  labels: ReadonlyArray<string>,
-  raw: ReadonlyMap<string, number>
-): Record<string, number> | undefined => {
-  const probabilities: Record<string, number> = {};
-  let total = 0;
-  for (const label of labels) {
-    const value = raw.get(label);
-    if (value === undefined || !Number.isFinite(value) || value < 0 || value > 1) return undefined;
-    probabilities[label] = value;
-    total += value;
-  }
-  if (total === 0 || Math.abs(total - 1) > labels.length * 0.005 + 1e-6) return undefined;
-  for (const label of labels) probabilities[label] = probabilities[label]! / total;
-  return probabilities;
-};
-
-/** One answer in its question's terms, `null` when refused, or undefined when it doesn't read. */
-const answerOf = (question: ModelQuestion, answer: ProviderAnswer): Answer | undefined => {
-  if (answer.type === "refusal") return null;
-  switch (question.type) {
-    case "choice": {
-      if (answer.type !== "choice") return undefined;
-      const labels = Object.keys(question.options);
-      if (!labels.includes(answer.choice)) return undefined;
-      const probabilities = distribution(
-        labels,
-        new Map(answer.probabilities.map((entry) => [entry.value, entry.probability]))
-      );
-      return probabilities === undefined ? undefined : { choice: answer.choice, probabilities };
-    }
-    case "scale": {
-      if (answer.type !== "score") return undefined;
-      const levels = question.levels;
-      if (!(answer.score >= 0 && answer.score <= levels.length - 1)) return undefined;
-      const probabilities = distribution(
-        levels,
-        new Map(
-          answer.probabilities.flatMap((entry) => {
-            const level = levels[entry.value];
-            return level === undefined ? [] : [[level, entry.probability] as const];
-          })
-        )
-      );
-      if (probabilities === undefined) return undefined;
-      // The likeliest level, the first on a tie.
-      const level = levels.reduce((best, next) =>
-        probabilities[next]! > probabilities[best]! ? next : best
-      );
-      return { level, score: answer.score, probabilities };
-    }
-    case "yesNo":
-      return answer.type === "predicate" && answer.probability >= 0 && answer.probability <= 1
-        ? { probability: answer.probability }
-        : undefined;
-  }
-};
-
-const question = (name: string, value: ModelQuestion) => {
+/** A question as Effect's decision kinds hold it. Levels describe themselves. */
+const decisionOf = (value: ModelQuestion) => {
   switch (value.type) {
     case "choice":
-      return {
-        type: "choice" as const,
-        name,
-        instructions: value.instructions,
-        choices: Object.entries(value.options).map(([option, description]) => ({
-          value: option,
-          description
-        }))
-      };
+      return Decision.classify({ instructions: value.instructions, criteria: value.options });
     case "scale":
-      return {
-        type: "score" as const,
-        name,
-        instructions: value.instructions,
-        levels: value.levels.map((label) => ({ label, description: label }))
-      };
+      return Decision.rate({ instructions: value.instructions, criteria: value.levels });
     case "yesNo":
-      return { type: "predicate" as const, name, instructions: value.instructions };
+      return Decision.probability({ instructions: value.instructions });
   }
+};
+/** A settled answer in its question's terms: `null` when refused, undefined when it doesn't read. */
+const answerOf = (
+  question: ModelQuestion,
+  outcome: Decision.Outcome<ReturnType<typeof decisionOf>>
+): Answer | undefined => {
+  if (Result.isFailure(outcome)) return outcome.failure.reason === "Refused" ? null : undefined;
+  const answer = outcome.success;
+  if (question.type === "choice" && "label" in answer && !("rating" in answer))
+    return { choice: answer.label, probabilities: { ...answer.probabilities } };
+  if (question.type === "scale" && "rating" in answer)
+    return {
+      level: answer.label,
+      score: answer.rating,
+      probabilities: { ...answer.probabilities }
+    };
+  if (question.type === "yesNo" && "probability" in answer)
+    return { probability: answer.probability };
+  return undefined;
 };
 
 const tokens = (value: number | undefined): number | null =>
   value === undefined || !Number.isFinite(value) ? null : value;
+
+/** A typed output's schema and the Responses format it asks for, or the refusal of its shape. */
+const outputOf = (output: HandlerSchema | undefined) =>
+  output === undefined
+    ? undefined
+    : output.kind === "object"
+      ? outputSchema(output, "")
+      : new Errors.InvalidRequest({ reason: "output", path: "output" });
 
 export const make = Effect.gen(function* () {
   const dev = yield* Config.option(Config.String("PATCHY_DEV_MODELS_URL"));
@@ -307,10 +357,17 @@ export const make = Effect.gen(function* () {
       return yield* new DevProviderRefused({ url: dev.value });
     apiUrl = dev.value;
   }
+  const client =
+    (yield* Config.String("PATCHY_DEV_MODEL_CLIENT").pipe(Config.withDefault("effect-ai"))) ===
+    "raw"
+      ? ("raw" as const)
+      : ("effect-ai" as const);
 
-  /** The provider's client with this key, over fetch, built for the one call. */
-  const client = (key: Redacted.Redacted<string>) =>
-    OpenAiClient.layer({ apiUrl, apiKey: key }).pipe(Layer.provide(FetchHttpClient.layer));
+  /** The provider's client with this key, over fetch, built for the one call, reading under `bound`. */
+  const provider = (key: Redacted.Redacted<string>, bound: Bound) =>
+    OpenAiClient.layer({ apiUrl, apiKey: key, transformClient: bounded(bound) }).pipe(
+      Layer.provide(FetchHttpClient.layer)
+    );
   /** Every request: never follow a redirect, which would carry the key elsewhere; no trace context. */
   const outbound = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
@@ -322,42 +379,44 @@ export const make = Effect.gen(function* () {
     const text = inputText(call.input);
     if (text.length > MAX_INPUT_CHARS) return yield* new Errors.InvalidRequest({ reason: "input" });
     const entries = Object.entries(call.questions);
-    // Effect's DecisionModel fails the whole call when any question is refused, so its client is
-    // called directly here, and a refused question answers null beside the others.
-    const response = yield* Effect.gen(function* () {
-      const openai = yield* OpenAiClient.OpenAiClient;
-      return yield* openai.createDecisions({
-        model: call.model,
-        input: text,
-        questions: entries.map(([name, value]) => question(name, value))
-      });
-    }).pipe(Effect.provide(client(call.key)), outbound, Effect.mapError(refusal));
-    const byName = new Map(response.answers.map((answer) => [answer.name, answer]));
+    // The input goes as a string: as JSON, an object under Decision's image key would be sent
+    // as an image.
+    const definition = Decision.make({
+      input: Schema.String,
+      decisions: Object.fromEntries(entries.map(([name, value]) => [name, decisionOf(value)]))
+    });
+    const bound: Bound = { exceeded: false };
+    // decideSettled keeps the other answers when one question is refused; decide fails them all.
+    const response = yield* DecisionModel.decideSettled(definition, { input: text }).pipe(
+      Effect.provide(
+        OpenAiDecisionModel.layer({ model: call.model }).pipe(
+          Layer.provide(provider(call.key, bound))
+        )
+      ),
+      outbound,
+      Effect.mapError((error) => refusal(error, bound))
+    );
     const answers: Record<string, Answer> = {};
     for (const [name, value] of entries) {
-      const found = byName.get(name);
-      const answer = found === undefined ? undefined : answerOf(value, found);
+      const outcome = response.outcomes[name];
+      const answer = outcome === undefined ? undefined : answerOf(value, outcome);
       if (answer === undefined) return yield* new Errors.Unavailable({ reason: "answer" });
       answers[name] = answer;
     }
     return {
       answers,
       usage: {
-        inputTokens: tokens(response.usage?.input_tokens),
-        outputTokens: tokens(response.usage?.output_tokens)
+        inputTokens: tokens(response.usage.inputTokens),
+        outputTokens: tokens(response.usage.outputTokens)
       }
     } satisfies ModelsDecided;
   });
 
-  const generate = Effect.fn("Models.generate")(function* (call: GenerateCall) {
+  /** `generate` through `LanguageModel`. */
+  const generateWithLanguageModel = Effect.fn("Models.generate")(function* (call: GenerateCall) {
     const text = inputText(call.input);
     if (text.length > MAX_INPUT_CHARS) return yield* new Errors.InvalidRequest({ reason: "input" });
-    const schema =
-      call.output === undefined
-        ? undefined
-        : call.output.kind === "object"
-          ? outputSchema(call.output, "")
-          : new Errors.InvalidRequest({ reason: "output", path: "output" });
+    const schema = outputOf(call.output);
     if (isInvalidRequest(schema)) return yield* schema;
     const prompt = [
       ...(call.instructions === undefined
@@ -365,75 +424,159 @@ export const make = Effect.gen(function* () {
         : [{ role: "system" as const, content: call.instructions }]),
       { role: "user" as const, content: text }
     ];
-    // What the model's last answer said, seen before LanguageModel decodes a typed output, which
-    // keeps neither the finish reason nor the usage when the decode fails.
-    const seen: { finish?: string; usage?: ModelUsage; refused: boolean } = { refused: false };
-    const observe: Telemetry.SpanTransformer = ({ response }) => {
-      for (const part of response) {
-        if (part.type === "finish") {
-          seen.finish = part.reason;
-          seen.usage = {
-            inputTokens: tokens(part.usage.inputTokens.total),
-            outputTokens: tokens(part.usage.outputTokens.total)
-          };
-        }
-        if (part.type === "text" && part.metadata?.openai?.refusal !== undefined)
-          seen.refused = true;
-      }
-    };
+    const bound: Bound = { exceeded: false };
     const model = OpenAiLanguageModel.layer({
       model: call.model,
-      config: { max_output_tokens: call.maxOutputTokens, store: false }
-    }).pipe(Layer.provide(client(call.key)));
-    const run = <A>(effect: Effect.Effect<A, AiError.AiError, LanguageModel.LanguageModel>) =>
-      effect.pipe(
-        Effect.provide(model),
-        Effect.provideService(Telemetry.CurrentSpanTransformer, observe),
-        outbound
-      );
-    const usage = () => seen.usage ?? { inputTokens: null, outputTokens: null };
-    /** Whatever the decode said, a refusal or a cut-off answer is what to report. */
-    const ending = (): Errors.CallError | undefined =>
-      seen.refused || seen.finish === "content-filter"
-        ? new Errors.Refused({ usage: usage() })
-        : // @effect/ai-openai 4.0.5 maps no `max_output_tokens` finish to "length", so a cut-off
-          // Responses answer reads "unknown": the provider's count at the cap says it instead.
-          seen.finish === "length" || (seen.usage?.outputTokens ?? 0) >= call.maxOutputTokens
-          ? new Errors.OutputTruncated({ maxOutputTokens: call.maxOutputTokens, usage: usage() })
+      // One turn, never stored: no developer role and no encrypted reasoning to carry forward,
+      // whatever the model id looks like.
+      config: { max_output_tokens: call.maxOutputTokens, store: false, reasoningModel: false }
+    }).pipe(Layer.provide(provider(call.key, bound)));
+    /** How an answer ended, which reports first: a refusal, then a cut-off. */
+    const ending = (
+      finish: string | undefined,
+      refused: boolean,
+      usage: ModelUsage
+    ): Errors.CallError | undefined =>
+      refused || finish === "content-filter"
+        ? new Errors.Refused({ usage })
+        : finish === "length"
+          ? new Errors.OutputTruncated({ maxOutputTokens: call.maxOutputTokens, usage })
           : undefined;
-    if (schema === undefined) {
-      const response = yield* run(LanguageModel.generateText({ prompt })).pipe(
-        Effect.mapError(refusal)
+    const refusedIn = (
+      parts: ReadonlyArray<{ readonly type: string; readonly metadata?: unknown }>
+    ) =>
+      parts.some(
+        (part) =>
+          part.type === "text" &&
+          typeof part.metadata === "object" &&
+          part.metadata !== null &&
+          "openai" in part.metadata &&
+          typeof part.metadata.openai === "object" &&
+          part.metadata.openai !== null &&
+          "refusal" in part.metadata.openai &&
+          part.metadata.openai.refusal !== undefined
       );
-      const ended = ending();
+    const usageOf = (usage: {
+      inputTokens: { total?: number };
+      outputTokens: { total?: number };
+    }) => ({
+      inputTokens: tokens(usage.inputTokens.total),
+      outputTokens: tokens(usage.outputTokens.total)
+    });
+    if (schema === undefined) {
+      const response = yield* LanguageModel.generateText({ prompt }).pipe(
+        Effect.provide(model),
+        outbound,
+        Effect.mapError((error) => refusal(error, bound))
+      );
+      const usage = usageOf(response.usage);
+      const ended = ending(response.finishReason, refusedIn(response.content), usage);
       if (ended !== undefined) return yield* ended;
-      return { text: response.text, usage: usage() } satisfies Generated;
+      return { text: response.text, usage } satisfies Generated;
     }
-    const response = yield* run(
-      LanguageModel.generateObject({
-        prompt,
-        // The root is always an object, so it encodes to a record as a structured output must.
-        schema: schema as Schema.Codec<
-          Record<string, unknown>,
-          Record<string, unknown>,
-          never,
-          never
-        >,
-        objectName: "output"
+    // A failed decode keeps neither the finish reason nor the usage (StructuredOutputError's
+    // usage stays empty on 4.1.4), so the telemetry hook sees the answer before it is decoded.
+    const seen: { finish?: string; usage?: ModelUsage; refused: boolean } = { refused: false };
+    const observe: Telemetry.SpanTransformer = ({ response }) => {
+      for (const part of response)
+        if (part.type === "finish") {
+          seen.finish = part.reason;
+          seen.usage = usageOf(part.usage);
+        }
+      seen.refused = refusedIn(response);
+    };
+    const response = yield* LanguageModel.generateObject({
+      prompt,
+      // The root is always an object, so it encodes to a record as a structured output must.
+      schema: schema as Schema.Codec<
+        Record<string, unknown>,
+        Record<string, unknown>,
+        never,
+        never
+      >,
+      objectName: "output"
+    }).pipe(
+      Effect.provide(model),
+      Effect.provideService(Telemetry.CurrentSpanTransformer, observe),
+      outbound,
+      Effect.mapError((error) => {
+        if (error.reason._tag !== "StructuredOutputError") return refusal(error, bound);
+        const usage = seen.usage ?? { inputTokens: null, outputTokens: null };
+        return ending(seen.finish, seen.refused, usage) ?? new Errors.ShapeMismatch({ usage });
       })
-    ).pipe(
-      Effect.mapError((error) =>
-        error.reason._tag === "StructuredOutputError"
-          ? (ending() ?? new Errors.ShapeMismatch({ usage: usage() }))
-          : refusal(error)
-      )
     );
-    const ended = ending();
+    const usage = usageOf(response.usage);
+    const ended = ending(response.finishReason, refusedIn(response.content), usage);
     if (ended !== undefined) return yield* ended;
-    return { value: response.value as typeof Schema.Json.Type, usage: usage() } satisfies Generated;
+    return { value: response.value as typeof Schema.Json.Type, usage } satisfies Generated;
   });
 
-  return Source.of({ apiUrl, decide, generate });
+  /** `generate` through the provider's generated client, reading the Responses answer itself. */
+  const generateWithClient = Effect.fn("Models.generateRaw")(function* (call: GenerateCall) {
+    const text = inputText(call.input);
+    if (text.length > MAX_INPUT_CHARS) return yield* new Errors.InvalidRequest({ reason: "input" });
+    const schema = outputOf(call.output);
+    if (isInvalidRequest(schema)) return yield* schema;
+    const bound: Bound = { exceeded: false };
+    const [answer] = yield* Effect.gen(function* () {
+      const openai = yield* OpenAiClient.OpenAiClient;
+      return yield* openai.createResponse({
+        model: call.model,
+        input: [
+          ...(call.instructions === undefined
+            ? []
+            : [{ role: "system" as const, content: call.instructions }]),
+          { role: "user" as const, content: text }
+        ],
+        max_output_tokens: call.maxOutputTokens,
+        store: false,
+        text: {
+          format:
+            call.output === undefined
+              ? { type: "text" }
+              : {
+                  type: "json_schema",
+                  name: "output",
+                  // Patchy's own rendering of the descriptor, as agent tools publish it.
+                  schema: { ...handlerJsonSchema(call.output, {}) },
+                  strict: true
+                }
+        }
+      });
+    }).pipe(
+      Effect.provide(provider(call.key, bound)),
+      outbound,
+      Effect.mapError((error) => refusal(error, bound))
+    );
+    const usage = {
+      inputTokens: tokens(answer.usage?.input_tokens),
+      outputTokens: tokens(answer.usage?.output_tokens)
+    };
+    const parts = answer.output.flatMap((item) => (item.type === "message" ? item.content : []));
+    if (
+      parts.some((part) => part.type === "refusal") ||
+      answer.incomplete_details?.reason === "content_filter"
+    )
+      return yield* new Errors.Refused({ usage });
+    if (answer.incomplete_details?.reason === "max_output_tokens")
+      return yield* new Errors.OutputTruncated({ maxOutputTokens: call.maxOutputTokens, usage });
+    const written = parts
+      .flatMap((part) => (part.type === "output_text" ? [part.text] : []))
+      .join("");
+    if (schema === undefined) return { text: written, usage } satisfies Generated;
+    // oxlint-disable-next-line patchy/no-inline-schema-compile -- the output's shape is the call's own.
+    const value = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(schema))(written).pipe(
+      Effect.mapError(() => new Errors.ShapeMismatch({ usage }))
+    );
+    return { value: value as typeof Schema.Json.Type, usage } satisfies Generated;
+  });
+
+  return Source.of({
+    apiUrl,
+    client,
+    decide,
+    generate: client === "raw" ? generateWithClient : generateWithLanguageModel
+  });
 });
 
 export const layer = Layer.effect(Source, make);

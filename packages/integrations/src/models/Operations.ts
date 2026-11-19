@@ -56,6 +56,7 @@ export const ModelErrors = Schema.Union([
   Errors.ShapeMismatch,
   Errors.OutputTruncated,
   Errors.Refused,
+  Errors.TooLarge,
   Errors.DevDailySpent,
   Runtime.InvalidRequest,
   ...ViewerRefusal.members
