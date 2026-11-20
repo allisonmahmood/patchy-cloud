@@ -226,9 +226,15 @@ const readWhole = Effect.fnUntraced(function* (send: Send, rowId: string, proper
   return items;
 });
 
-/** A row with the selected properties by the snapshot's names, matched by property id. */
+/**
+ * A row with the selected properties by the snapshot's names, matched by property id. A relation
+ * Notion says holds rows yet shows none of is hidden, not empty: its target data source is no
+ * longer shared, so the row fails `not_found` naming it rather than answer an empty list a patch
+ * could write back.
+ */
 const row = Effect.fnUntraced(function* (
   send: Send,
+  snapshot: NotionSnapshot,
   raw: typeof RawRow.Type,
   selected: readonly Property[]
 ) {
@@ -239,9 +245,15 @@ const row = Effect.fnUntraced(function* (
     const value = byId.get(property.id);
     if (value?.type !== property.type || !isKnownType(property.type))
       return yield* mismatch(property);
-    const read = values[property.type](
-      isCut(value) ? yield* readWhole(send, raw.id, property) : value[value.type]
-    );
+    const whole = isCut(value) ? yield* readWhole(send, raw.id, property) : undefined;
+    if (property.type === "relation" && whole?.length === 0)
+      return yield* new Refusal({
+        code: "not_found",
+        dataSource:
+          snapshot.dataSources.find(({ id }) => id === property.relationTarget)?.key ??
+          property.name
+      });
+    const read = values[property.type](whole ?? value[value.type]);
     if (read === undefined) return yield* mismatch(property);
     properties[property.name] = read;
   }
@@ -371,7 +383,7 @@ export const planList = Effect.fnUntraced(function* (
       return yield* new Refusal({ code: "offset_exhausted" });
     const rows: Row[] = [];
     for (const result of answer.results)
-      rows.push(yield* row(send, yield* readRow(result), selected));
+      rows.push(yield* row(send, snapshot, yield* readRow(result), selected));
     return { rows, cursor: nextCursor(answer) };
   });
 });
@@ -384,7 +396,7 @@ export const planGet: Plan<NotionGetInput, NotionGetOutput> = (snapshot, input) 
       if (answer === null) return null;
       const raw = yield* readRow(answer);
       if (raw.parent.data_source_id !== source.id) return null;
-      return yield* row(send, raw, source.properties);
+      return yield* row(send, snapshot, raw, source.properties);
     })
   );
 

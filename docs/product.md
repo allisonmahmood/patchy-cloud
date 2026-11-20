@@ -1468,16 +1468,20 @@ schema context. Actions use the connection through `ctx.connections`.
 
 Notion is read from tier 2 actions only, through `ctx.connections`; queries, mutations and
 tier 1 pages can't reach it. A data source's `list` returns a page of rows and Notion's own
-cursor, which goes back as `start_cursor` unchanged; a cursor from another list is Notion's
-`invalid_request`. Filter, order and selection names come from the generated client, and
+cursor, which goes back as `start_cursor` unchanged. Notion doesn't check that a cursor
+belongs to the list it is sent with: one from another list is accepted and continues from
+wherever it pointed, so a patch passes a cursor back only with the arguments that returned
+it. Filter, order and selection names come from the generated client, and
 Patchy checks them against the version's snapshot, then sends them by property id, so renames
 keep working. Nothing else is sent before the query: a property deleted or retyped in Notion
 fails `shape_mismatch` naming it when the rows come back without it, or Notion's own
 `invalid_request` when a filter, order or selection names it; a data source no longer shared
 fails `not_found` naming it, and a list past Notion's 10,000th row fails `offset_exhausted`.
 People, relations and mentions Notion cuts at 25 are read whole, within the call's
-`notion.response.bytes`. A relation whose target database was unshared reads as Notion
-returns it.
+`notion.response.bytes`. Notion hides a relation's rows once its target database is no longer
+shared with the connection: where it says the relation holds rows and shows none, the row
+fails `not_found` naming the target's data source, never an empty list a patch could write
+back.
 
 Use `get(id)` for a single row. It returns null when the row is missing, unshared,
 or belongs to another data source. `pages.markdown(id)` preserves unsupported block

@@ -217,6 +217,27 @@ it.effect("reads people, mentions and relations at Notion's cut whole, page afte
   })
 );
 
+it.effect("refuses a relation Notion says holds rows but shows none of, naming its target", () =>
+  Effect.gen(function* () {
+    const relation = { id: "rel", name: "Project", type: "relation", relationTarget: otherId };
+    const projects = { ...snapshot().dataSources[0]!, id: otherId, key: "Projects" };
+    const saved = snapshot([...fields, relation]);
+    // What Notion answers once the target data source is no longer shared with the connection.
+    const sent = notion(({ url }) =>
+      url.endsWith("/properties/rel")
+        ? page([])
+        : page([row({ Project: { ...property("rel", "relation", []), has_more: true } })])
+    );
+    const read = yield* list(
+      { select: ["Project"] },
+      { ...saved, dataSources: [...saved.dataSources, projects] }
+    );
+    const refused = yield* read(sent.send).pipe(Effect.flip);
+    assert.equal(refused.code, "not_found");
+    assert.equal(refused.dataSource, "Projects");
+  })
+);
+
 it.effect("gets one row, and null when it is missing or another data source's", () =>
   Effect.gen(function* () {
     const get = yield* planGet(snapshot(), { source: "Tasks", id: rowId });

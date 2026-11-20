@@ -68,7 +68,7 @@ const refusals = {
   ],
   invalid_request: [
     400,
-    "Notion refused the request. A cursor continues only the list that returned it; otherwise a property or option may have changed since this version was generated: refresh the connection, run patchy refresh and publish again."
+    "Notion refused the request. A property or option may have changed since this version was generated: refresh the connection, run patchy refresh and publish again. A cursor Notion didn't return is refused too."
   ],
   offset_exhausted: [422, "Notion stops a list at 10,000 rows. Narrow the filter and start again."],
   write_conflict: [409, "Notion reported a conflict. Try again."],
