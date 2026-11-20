@@ -4,10 +4,12 @@ import { registry, type LimitId } from "./registry.js";
 
 const page = renderBuilderLimits();
 const allowlist = builderLimitGroups.flatMap((group) => group.rows.map((row) => row.id));
-// Every table body row on the page, header and divider rows left out, split into its cells.
-const rows = page
-  .split("\n")
-  .filter((line) => line.startsWith("|") && !/^\| (Limit|---) \|/.test(line))
+// Every table body row on the page, split into its cells. A header is left out by its place,
+// the row above a divider, never by what it says.
+const lines = page.split("\n");
+const isDivider = (line: string | undefined) => line?.startsWith("| ---") === true;
+const rows = lines
+  .filter((line, index) => line.startsWith("|") && !isDivider(line) && !isDivider(lines[index + 1]))
   .map((line) => ({ line, cells: line.slice(2, -2).split(" | ") }));
 // A row's first cell ends with its limit's id: `<what> \`<id>\``.
 const idOf = (cell: string | undefined) => /`([^`]+)`$/.exec(cell ?? "")?.[1];
