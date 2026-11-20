@@ -83,7 +83,7 @@
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
-    "es-module-lexer": "3.0.4",
+    "es-module-lexer": "3.0.5",
     "esbuild": "0.28.2",
     "vitest": "^5.1.0"
   }
