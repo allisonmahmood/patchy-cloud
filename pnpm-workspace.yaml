@@ -39,6 +39,10 @@ overrides:
   "@effect/sql-pglite": "catalog:"
   "@effect/vitest": "catalog:"
   "@effect/tsgo": "catalog:"
+  # The Vercel CLI, the docs app's deploy tool, reaches tar through @vercel/container, which pins
+  # tar 7.5.11; advisories up to GHSA-23hp-3jrh-7fpw cover it, fixed by 7.5.21. It takes the
+  # release the rest of the tree already uses. Drop this once @vercel/container moves on.
+  "@vercel/container>tar": "7.5.23"
 patchedDependencies:
   # TanStack Hotkeys as patchy/hotkeys bundles it. A sequence asks `allowStep` before it takes a
   # key, so a focused field can keep it, and calls `onStep` as it takes one; a sequence on an
