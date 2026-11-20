@@ -82,11 +82,14 @@ export const builderLimitGroups: ReadonlyArray<BuilderLimitGroup> = [
       row("runtime.mutation.deadline", { what: "Time for one tier 1 write", per: "Each write" }),
       row("company.admission.rate", {
         what: "Calls from pages and people's agents",
-        per: "Each company"
+        per: "Each company",
+        reached: "Refused with {code} and a time to wait."
       }),
+      // The burst is the rate's bucket: running it dry is refused as the rate.
       row("company.admission.burst", {
-        what: "Calls allowed at once above that rate",
-        per: "Each company"
+        what: "Calls in one quick burst, before that rate holds them back",
+        per: "Each company",
+        reached: "Refused with {code} and a time to wait, naming `company.admission.rate`."
       }),
       row("download.bytes", {
         what: "A file the page hands over to download",
@@ -201,9 +204,9 @@ export const builderLimitGroups: ReadonlyArray<BuilderLimitGroup> = [
       row("execution.breaker.kills", {
         what: "Times a handler process is stopped for running past its deadline, stalling or running out of memory",
         per: (limits) =>
-          `Each patch, across its versions, within ${formatValue(limits["execution.breaker.window"])}`,
+          `Each patch, across its versions, within ${valueOf(limits["execution.breaker.window"])}`,
         reached: (limits) =>
-          `Calls are refused with {code} for ${formatValue(limits["execution.breaker.pause"])}; a new publish ends the pause.`
+          `Calls are refused with {code} for ${valueOf(limits["execution.breaker.pause"])}; a new publish ends the pause.`
       })
     ]
   },
@@ -289,7 +292,7 @@ export const builderLimitGroups: ReadonlyArray<BuilderLimitGroup> = [
       row("mcp.body.bytes", {
         what: "One request to Patchy MCP",
         per: "Each request",
-        reached: "Refused with {code}, as HTTP 413, before the request is read."
+        reached: "Answered HTTP 413 with {code} before the request is parsed, so nothing runs."
       })
     ]
   },
@@ -359,7 +362,8 @@ const unitWords: Readonly<Record<string, string>> = {
   subscriptions: "live queries"
 };
 
-const count = (n: number): string => n.toLocaleString("en-US");
+// Every digit a value has, so a small rate such as 0.0001 calls a second never reads as 0.
+const count = (n: number): string => n.toLocaleString("en-US", { maximumFractionDigits: 20 });
 function plural(n: number, unit: string): string {
   const noun = unitWords[unit] ?? unit;
   if (n !== 1) return `${count(n)} ${noun}`;
@@ -370,15 +374,16 @@ function plural(n: number, unit: string): string {
 export function formatValue(limit: LimitDefinition): string {
   const n = limit.default;
   if (limit.unit === "bytes") {
+    // The MCP body cap is the tier 2 argument cap plus an envelope: "1 MiB and 64 KiB", not
+    // "1,088 KiB".
+    if (n > MiB && n % MiB !== 0 && n % KiB === 0)
+      return `${count(Math.floor(n / MiB))} MiB and ${count((n % MiB) / KiB)} KiB`;
     for (const [size, name] of [
       [GiB, "GiB"],
       [MiB, "MiB"],
       [KiB, "KiB"]
     ] as const)
       if (n >= size && n % size === 0) return `${count(n / size)} ${name}`;
-    // The MCP body cap is the tier 2 argument cap plus an envelope: "1 MiB and 64 KiB".
-    if (n > MiB && n % KiB === 0)
-      return `${count(Math.floor(n / MiB))} MiB and ${count((n % MiB) / KiB)} KiB`;
     return plural(n, "bytes");
   }
   if (limit.unit === "milliseconds") {
@@ -391,6 +396,10 @@ export function formatValue(limit: LimitDefinition): string {
   if (rate?.[1] !== undefined) return `${plural(n, rate[1])} a ${rate[2]}`;
   return plural(n, limit.unit);
 }
+
+/** A value as the page states it: an operating value, which a deployment can change, says so. */
+const valueOf = (limit: LimitDefinition): string =>
+  `${formatValue(limit)}${limit.kind === "operating" ? " (default)" : ""}`;
 
 /** The "When it's reached" cell: the row's words, or its refusal code's, with the code filled in. */
 function outcome(id: LimitId, reached: Text | undefined): string {
@@ -417,9 +426,7 @@ const cell = (text: string): string => text.replaceAll("|", "\\|");
 
 // The id rides in the first cell: an id can't wrap, and a column of its own crowds the prose.
 function line({ id, what, per, reached }: BuilderLimit): string {
-  const limit: LimitDefinition = registry[id];
-  const value = `${formatValue(limit)}${limit.kind === "operating" ? " (default)" : ""}`;
-  return `| ${[`${say(what)} \`${id}\``, value, say(per), outcome(id, reached)].map(cell).join(" | ")} |`;
+  return `| ${[`${say(what)} \`${id}\``, valueOf(registry[id]), say(per), outcome(id, reached)].map(cell).join(" | ")} |`;
 }
 
 /**
@@ -431,8 +438,8 @@ export function renderBuilderLimits(): string {
     "These are the limits a patch meets: its page, its handlers, its connections and the agents that use it. They are the ones in the release this site was built from.",
     "",
     "- A value marked **(default)** is the one Patchy starts with and can change, so treat it as typical rather than promised. Every other value is fixed for the release.",
-    "- Rates, and counts of work running at once, are kept by each of Patchy's servers on its own.",
-    "- The id after each limit is the `limitId` a refusal of that limit carries.",
+    "- Per-second and per-minute rates, and counts of calls running at once, are kept by each of Patchy's servers on its own. The daily Pidgeon send budget is one count across all of them.",
+    "- Each limit's id follows its name. A refusal that names the limit it hit, as `limitId`, uses these ids.",
     "",
     ...builderLimitGroups.flatMap((group) => [
       `## ${group.title}`,
