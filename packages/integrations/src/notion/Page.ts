@@ -16,7 +16,8 @@ export const actions: View.Actions = {
   rotate: "Replace token",
   access: "Change access"
 };
-export const logged = "Only connection checks and discovery are available in this release.";
+export const logged =
+  "Each call keeps the data source, property names and page id it named, and how many rows came back; filter values, search text, row values and page text are never logged.";
 export const results = {
   connect: "Notion connected and its data sources discovered.",
   rotate: "Token replaced and the workspace discovered again.",

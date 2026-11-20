@@ -412,6 +412,15 @@ export const registry = {
     refusal: "busy",
     overridable: false
   },
+  "runtime.notion.bytes": {
+    kind: "contract",
+    default: 65536,
+    unit: "bytes",
+    scope: "viewer",
+    measure: "Notion operation arguments: a data source, filters, property names and a cursor",
+    refusal: "too_large",
+    overridable: false
+  },
   "notion.response.bytes": {
     kind: "contract",
     default: 8388608,

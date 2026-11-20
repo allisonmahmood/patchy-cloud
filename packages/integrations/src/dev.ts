@@ -9,3 +9,4 @@ export * as PidgeonDev from "./pidgeon/Dev.js";
 export * as AttioDev from "./attio/Dev.js";
 export * as ImapDev from "./imap/Dev.js";
 export * as GithubDev from "./github/Dev.js";
+export * as NotionDev from "./notion/Dev.js";

@@ -2,7 +2,7 @@
 
 The [foundation map](https://github.com/allisonmahmood/patchy-cloud/issues/5), [auth map](https://github.com/allisonmahmood/patchy-cloud/issues/112), [SDK map](https://github.com/allisonmahmood/patchy-cloud/issues/164), [portal map](https://github.com/allisonmahmood/patchy-cloud/issues/230), [tier 2 map](https://github.com/allisonmahmood/patchy-cloud/issues/294) and [Patchy MCP map](https://github.com/allisonmahmood/patchy-cloud/issues/730) record the decisions. The tier 2 spec is [#384](https://github.com/allisonmahmood/patchy-cloud/issues/384). Each `GLOSSARY.md` defines its context's terms; this file describes the product.
 
-Built and live at [cloud.patchyhq.com](https://cloud.patchyhq.com): tier 1 pages that run in a sandboxed browser frame, tier 2 tools with hosted query, mutation and action handlers, and [Patchy MCP](#patchy-mcp), through which people's own agents use tier 2 patches. A single HTML file publishes as a tier 1 page; tiers 1 and 2 publish from a repo. Repos have code-first config, a generated typed client, release-bound project skills and a local PGlite dev loop with fixtures. Publish is replay-safe and provisions patch-owned tables and file stores additively into a database per company. Tier 1 reaches only its own patch: its tables and files through the shell broker as the viewer, the viewer's identity and routing. Tier 2 pages call handlers that enforce the patch's rules, and those handlers also reach read-only shared tables and stores, the member directory and company Postgres, PostHog, Pidgeon and Attio connections. Both tiers support live queries.
+Built and live at [cloud.patchyhq.com](https://cloud.patchyhq.com): tier 1 pages that run in a sandboxed browser frame, tier 2 tools with hosted query, mutation and action handlers, and [Patchy MCP](#patchy-mcp), through which people's own agents use tier 2 patches. A single HTML file publishes as a tier 1 page; tiers 1 and 2 publish from a repo. Repos have code-first config, a generated typed client, release-bound project skills and a local PGlite dev loop with fixtures. Publish is replay-safe and provisions patch-owned tables and file stores additively into a database per company. Tier 1 reaches only its own patch: its tables and files through the shell broker as the viewer, the viewer's identity and routing. Tier 2 pages call handlers that enforce the patch's rules, and those handlers also reach read-only shared tables and stores, the member directory and company Postgres, PostHog, Pidgeon, Attio and Notion connections. Both tiers support live queries.
 
 Signed-in members find company patches at `/` and open their cards at `/patches/<name>`. Owners manage descriptions, sharing, served versions and the lifecycle from the portal or CLI. Patches stay live or retired indefinitely; deletion starts a 30-day recovery window. Off addresses show colleagues an actor-stamped notice and a route to restore. Admins can manage and reassign every company patch in the portal, but opening its content takes being in its audience, and publishing takes becoming its owner. An owner who can no longer open their own patch sees that and how to recover; admins see the patch under Needs attention and can reassign it to an active person who can open it. Deactivation and reactivation offer patch selections with dependant and source warnings, committed together with the user's access change.
 
@@ -1461,9 +1461,37 @@ can take time to find newly shared databases. Refresh creates a new schema revis
 replacement token must belong to the same workspace. The access setting is Read or Read and
 write. Changing it creates a new revision with the same token.
 
-A builder runs `patchy add notion/<handle>` in a tier 2 repo to add the declaration and
-schema context. This release provides discovery metadata. Operations on Notion content
-arrive in later releases.
+A builder runs `patchy add notion/<handle>` in a tier 2 repo to add the typed client and
+schema context. Actions use the connection through `ctx.connections`.
+
+### Reading Notion
+
+Notion is read from tier 2 actions only, through `ctx.connections`; queries, mutations and
+tier 1 pages can't reach it. A data source's `list` returns a page of rows and Notion's own
+cursor, which goes back as `start_cursor` unchanged. Notion doesn't check that a cursor
+belongs to the list it is sent with: one from another list is accepted and continues from
+wherever it pointed, so a patch passes a cursor back only with the arguments that returned
+it. Filter, order and selection names come from the generated client, and
+Patchy checks them against the version's snapshot, then sends them by property id, so renames
+keep working. Nothing else is sent before the query: a property deleted or retyped in Notion
+fails `shape_mismatch` naming it when the rows come back without it, or Notion's own
+`invalid_request` when a filter, order or selection names it; a data source no longer shared
+fails `not_found` naming it, and a list past Notion's 10,000th row fails `offset_exhausted`.
+People, relations and mentions Notion cuts at 25 are read whole, within the call's
+`notion.response.bytes`. Notion hides a relation's rows once its target database is no longer
+shared with the connection: where it says the relation holds rows and shows none, the row
+fails `not_found` naming the target's data source, never an empty list a patch could write
+back.
+
+Use `get(id)` for a single row. It returns null when the row is missing, unshared,
+or belongs to another data source. `pages.markdown(id)` preserves unsupported block
+markers and reports truncation. Use `search` to find shared pages and data sources
+by title, and `people.list` to get ids, names, and types for an assignee picker.
+
+The same reads run through the instance during `patchy dev`. The host keeps the Notion token
+and, once a call holds one of its bot's slots, checks the caller and that the connection is
+still connected before calling Notion. Recent calls name the data source, the property names
+and the ids a call named, never a filter value, search text, row value or page text.
 
 ### Connecting Attio
 
@@ -2100,10 +2128,10 @@ Each integration chooses its **dev binding**
 fixtures or a fake, never live source rows or production credentials. An
 integration whose fixtures wouldn't resemble production reads the real connection
 in dev instead, and its connect page's Once connected says so; writes never run live in dev.
-Postgres keeps fixtures; PostHog, Pidgeon and Attio read live.
+Postgres keeps fixtures; PostHog, Pidgeon, Attio and Notion read live.
 
-**Dev reads.** PostHog, Pidgeon and Attio have no fixture. `patchy dev` sends each
-PostHog query, each Pidgeon read and each Attio read to the instance as the machine token's
+**Dev reads.** PostHog, Pidgeon, Attio and Notion have no fixture. `patchy dev` sends
+these reads to the instance as the machine token's
 person, for either local viewer; the instance runs it with the connection's own
 key, which never leaves it. The instance takes the company, person and machine
 from the token on every call, and again after any wait for one of the project's,
@@ -2112,7 +2140,7 @@ only routes the call: it must name a connected connection of the token's company
 Only reads the integration opts into run this way, under the runtime's argument
 and result bounds, its deadline, draining and a per-person rate limit across
 integrations. A Pidgeon dev read checks what comes back against the inbox and
-keeps held mail empty, as a published read does. An Attio dev read carries the
+keeps held mail empty, as a published read does. An Attio or Notion dev read carries the
 revision the repo was generated from, and the instance decodes by that snapshot of
 that connection, so a client generated before a Refresh reads as generated; a
 revision of another connection isn't found. Each read, refused or not, is a
@@ -2196,7 +2224,7 @@ Agent tools are for agents only. They are reached through Patchy MCP and `patchy
 
 To give agents a handler the page already uses, re-export it: `export { listDeals } from "../server/deals.js"` makes it `deals.listDeals` for the page and the tool `listDeals` for agents, with one contract; as a tool it must be described, and its `ctx.agent` is null when the page calls it. A tool of its own can hold agents to rules the page doesn't have, such as requiring fields the page leaves optional, with the shared logic in a helper both call; its schema then tells the agent the fields are required, and a call missing one is refused before the handler runs. Calls an agent's action makes through `ctx.run` see the same `ctx.agent`.
 
-**Reads and changes.** An agent tool is a **read** when it is a query or a **read-only action**, and a **change** otherwise. `action({ readOnly: true, description, args, result, handler })` declares a read-only action. The literal flag gives its handler a `ReadOnlyActionContext`: `viewer`, `log`, `agent`, declared member reads, table `get`, `getMany` and `list`, shared reads, file `list`, `stat` and `get`, connections, and `ctx.run` for queries only, so a table or file write is a type error; connections keep their full types. Patchy enforces it too: the descriptor carries `readOnly: true` (its wire `kind` stays `action`), the host-issued invocation capability carries the flag, the callback gate refuses table inserts, updates and deletes, file puts and deletes and Pidgeon writes, nested-call admission refuses mutations and actions, and Postgres runs inside `BEGIN READ ONLY`. A read therefore never runs a Patchy write, because Patchy enforces it rather than taking the builder's word; its Postgres reads keep the connection's own promise, constrained reads through the role the admin supplied. The flag means the same on page calls, and is refused on queries and mutations. Postgres, PostHog, Pidgeon and Attio reads count as reads only from a read-only action, which can't reply, send or triage.
+**Reads and changes.** An agent tool is a **read** when it is a query or a **read-only action**, and a **change** otherwise. `action({ readOnly: true, description, args, result, handler })` declares a read-only action. The literal flag gives its handler a `ReadOnlyActionContext`: `viewer`, `log`, `agent`, declared member reads, table `get`, `getMany` and `list`, shared reads, file `list`, `stat` and `get`, connections, and `ctx.run` for queries only, so a table or file write is a type error; connections keep their full types. Patchy enforces it too: the descriptor carries `readOnly: true` (its wire `kind` stays `action`), the host-issued invocation capability carries the flag, the callback gate refuses table inserts, updates and deletes, file puts and deletes and Pidgeon writes, nested-call admission refuses mutations and actions, and Postgres runs inside `BEGIN READ ONLY`. A read therefore never runs a Patchy write, because Patchy enforces it rather than taking the builder's word; its Postgres reads keep the connection's own promise, constrained reads through the role the admin supplied. The flag means the same on page calls, and is refused on queries and mutations. Postgres, PostHog, Pidgeon, Attio and Notion reads count as reads only from a read-only action, which can't reply, send or triage.
 
 **Descriptions.** A tool's `description` is required. Any handler value takes `.describe(text)`. Every description is nonblank and at most 2,000 characters. Undescribed top-level arguments warn at publish; nested and result descriptions are optional. When a nullable wrapper and its value are both described, the outer description wins. Table columns take no `.describe()`: the types and the config check refuse it, and a row's schema carries its table's description instead.
 

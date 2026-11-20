@@ -1,4 +1,4 @@
-import { NotionAccess, type NotionSnapshot } from "@patchy/api";
+import { NotionAccess, notionPropertyType, type NotionSnapshot } from "@patchy/api";
 import { ContractLimits } from "@patchy/limits";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -68,8 +68,9 @@ const refusals = {
   ],
   invalid_request: [
     400,
-    "Notion refused the request. A property or option may have changed since this version was generated: refresh the connection, run patchy refresh and publish again."
+    "Notion refused the request. A property or option may have changed since this version was generated: refresh the connection, run patchy refresh and publish again. A cursor Notion didn't return is refused too."
   ],
+  offset_exhausted: [422, "Notion stops a list at 10,000 rows. Narrow the filter and start again."],
   write_conflict: [409, "Notion reported a conflict. Try again."],
   source_rate_limited: [429, "Notion is limiting requests. Try again shortly."],
   shape_mismatch: [
@@ -90,6 +91,10 @@ export class Refusal extends Schema.TaggedError<Refusal>()("NotionRefusal", {
   /** Notion's status, when the refusal is about one; a 401 names the token as the fix. */
   upstreamStatus: Schema.optionalKey(Schema.Int),
   retryAfterSeconds: Schema.optionalKey(Schema.Int),
+  /** The data source key a `not_found` is about, as the generated client names it. */
+  dataSource: Schema.optionalKey(Schema.String),
+  /** The property a `shape_mismatch` is about, by the snapshot's name. */
+  property: Schema.optionalKey(Schema.String),
   cause: Schema.optionalKey(SecretCause)
 }) {
   get status() {
@@ -101,6 +106,10 @@ export class Refusal extends Schema.TaggedError<Refusal>()("NotionRefusal", {
       return "Notion did not accept the token. Paste a working internal connection token.";
     if (this.code === "source_rate_limited" && this.retryAfterSeconds !== undefined)
       return `Notion is limiting requests. Try again in ${this.retryAfterSeconds} seconds.`;
+    if (this.code === "not_found" && this.dataSource !== undefined)
+      return `Notion found no data source “${this.dataSource}”: it may be gone or no longer shared with the connection.`;
+    if (this.code === "shape_mismatch" && this.property !== undefined)
+      return `Notion's property “${this.property}” isn't what this version was generated with: it may have been deleted or changed type. Refresh the connection, run patchy refresh and publish again.`;
     return refusals[this.code][1];
   }
 }
@@ -255,31 +264,10 @@ const decodeSearchSource = Schema.decodeUnknownOption(SourceBody);
 const decodeSource = Schema.decodeUnknownEffect(SourceBody);
 const decodeDatabase = Schema.decodeUnknownEffect(DatabaseBody);
 const decodeError = Schema.decodeUnknownOption(ErrorBody);
-const shape = (cause: Schema.SchemaError) =>
+/** An answer that didn't decode. */
+export const shape = (cause: Schema.SchemaError) =>
   new Refusal({ code: "shape_mismatch", cause: Redacted.make(cause) });
 
-/** The property types a snapshot keeps; the rest, formulas and rollups among them, are excluded. */
-const supported = new Set([
-  "title",
-  "rich_text",
-  "number",
-  "select",
-  "status",
-  "multi_select",
-  "date",
-  "checkbox",
-  "url",
-  "email",
-  "phone_number",
-  "people",
-  "relation",
-  "files",
-  "created_time",
-  "created_by",
-  "last_edited_time",
-  "last_edited_by",
-  "unique_id"
-]);
 /** Names the generated client already uses, so a data source titled one gets an id suffix. */
 const reservedNames = ["search", "pages", "people"];
 const decoder = new TextDecoder();
@@ -520,7 +508,8 @@ export const make = Effect.gen(function* () {
         const title = titleOf(source.title) || "Untitled";
         const properties: Property[] = [];
         for (const property of Object.values(source.properties)) {
-          if (supported.has(property.type))
+          // The types reads decode; the rest, formulas and rollups among them, are excluded.
+          if (notionPropertyType(property.type))
             properties.push({
               id: property.id,
               name: property.name,

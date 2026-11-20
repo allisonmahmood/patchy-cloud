@@ -20,7 +20,8 @@ const decodeAliases = Schema.decodeUnknownSync(
       pidgeon: Schema.Array(Schema.String),
       attio: Schema.Array(Schema.String),
       imap: Schema.Array(Schema.String),
-      github: Schema.Array(Schema.String)
+      github: Schema.Array(Schema.String),
+      notion: Schema.Array(Schema.String)
     })
   )
 );

@@ -126,6 +126,28 @@ const shared = (declaration: typeof contacts | { revision: number }) => ({
   shared: { contacts: { declaration: { ...contacts, ...declaration }, tables: {}, uses: {} } }
 });
 
+it("keeps the machine credential for a Notion-only dev project", () => {
+  const metadata = shared(contacts);
+  assert.isFalse(Preparation.readsLive(metadata));
+  assert.isTrue(
+    Preparation.readsLive({
+      ...metadata,
+      notion: {
+        probe: {
+          declaration: { kind: "notion", handle: "probe", id: "conn_notion", revision: 1 },
+          snapshot: {
+            workspace: { id: "workspace", name: "Probe" },
+            botId: "bot",
+            access: "read",
+            dataSources: [],
+            exclusions: []
+          }
+        }
+      }
+    })
+  );
+});
+
 it.layer(NodeServices.layer)("DevPreparation.prepare", (it) => {
   it.effect(
     "discovers server modules without evaluating them or rewriting refresh-owned types",

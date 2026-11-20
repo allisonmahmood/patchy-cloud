@@ -86,6 +86,7 @@ import {
   ImapSource,
   type ImapNetwork,
   NotionSource,
+  NotionOperations,
   PatchVisibility,
   PidgeonOperations
 } from "@patchy/integrations";
@@ -368,6 +369,7 @@ const services = Layer.mergeAll(
         Effect.provideService(FileStaging.FileStaging, staging)
       );
       const github = yield* GithubOperations.makeHandlers;
+      const notion = yield* NotionOperations.makeHandlers;
       const handlers = {
         me,
         ...tables,
@@ -378,7 +380,8 @@ const services = Layer.mergeAll(
         ...pidgeon,
         ...attio,
         ...imap,
-        ...github
+        ...github,
+        ...notion
       };
       // Runtime tells the streams of each admitted call, which keeps its viewer's documents active.
       const runtime = RuntimeProduction.layer(handlers).pipe(

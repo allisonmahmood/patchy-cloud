@@ -1004,14 +1004,32 @@ it.layer(layer)("SDK company generation", (it) => {
       })
   );
 
-  it.effect("generates Notion context without importing a client", () =>
+  it.effect("generates a typed Notion client and skill", () =>
     Effect.gen(function* () {
       const sql = yield* PgClient.PgClient;
       const snapshot = {
         workspace: { id: "work", name: "Notion Probe" },
         botId: "bot",
         access: "read",
-        dataSources: [],
+        dataSources: [
+          {
+            id: "source",
+            key: "Tasks",
+            title: "Tasks",
+            url: "https://notion.example/tasks",
+            databaseTitle: "Requests",
+            properties: [
+              { id: "title", name: "Name", type: "title" },
+              {
+                id: "state",
+                name: "Status",
+                type: "status",
+                options: [{ id: "todo", name: "To do" }]
+              },
+              { id: "assignee", name: "Assignee", type: "people" }
+            ]
+          }
+        ],
         exclusions: []
       } as const;
       const display = {
@@ -1046,9 +1064,22 @@ it.layer(layer)("SDK company generation", (it) => {
       const output = yield* decodeGenerated(yield* response.json);
       assert.deepStrictEqual(output.uses, [{ alias: "probe", id: "sdk-notion", revision: 1 }]);
       const file = (path: string) => output.files.find((item) => item.path === path)?.contents;
-      assert.include(file("patchy/_generated/context/probe.md")!, "Notion Probe");
-      assert.isUndefined(file("patchy/_generated/uses/probe.ts"));
-      assert.notInclude(file("patchy/_generated/server.ts")!, "./uses/probe.js");
+      const context = file("patchy/_generated/context/probe.md")!;
+      assert.include(context, "Notion Probe");
+      assert.include(context, "To do");
+      for (const read of ["get(id)", "pages.markdown(id)", "search", "people.list"])
+        assert.include(context, read);
+      const generated = file("patchy/_generated/uses/probe.ts")!;
+      assert.include(generated, 'readonly "Tasks":');
+      assert.include(generated, 'readonly "Status": string | null;');
+      assert.include(generated, 'readonly "Assignee": string;');
+      assert.include(file("patchy/_generated/server.ts")!, "./uses/probe.js");
+      assert.isDefined(file(".agents/skills/patchy-notion/SKILL.md"));
+      assert.isFalse(output.files.some(({ path }) => path.startsWith("fixtures/")));
+      const index = JSON.parse(file("patchy/_generated/index.json")!);
+      assert.includeDeepMembers(index.skills, [
+        { name: "patchy-notion", path: ".agents/skills/patchy-notion/SKILL.md" }
+      ]);
     })
   );
 
