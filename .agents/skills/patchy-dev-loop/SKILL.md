@@ -114,8 +114,10 @@ Done when `pnpm dev status` exits 0.
   Postgres declarations read invented fixtures. PostHog, Pidgeon, Attio, IMAP and
   GitHub declarations have none: `patchy dev` reads the real connection through this instance, as
   the CLI's key, and each read shows as a Dev call on the connection's page.
-  Pidgeon's sends, replies and triage are simulated in the dev process and never
-  sent; `pnpm patchy dev logs` names each with its recipients and subject.
+  Pidgeon's sends, replies and triage and Notion's writes are simulated in the dev
+  process and never sent; `pnpm patchy dev logs` names each, a send with its
+  recipients and subject, a Notion write with its data source, row and property
+  names.
   Connecting PostHog here takes a real key and project, so check dev reads
   through the suites' PostHog double unless the person hands you a disposable
   project.

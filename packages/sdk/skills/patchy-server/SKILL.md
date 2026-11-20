@@ -158,7 +158,7 @@ options?)` accepts `Uint8Array`, `ArrayBuffer` or `Blob`; `put(name, upload)`
 Queries and read-only actions are reads; every other mutation or action is a
 change, even one that writes nothing. So Postgres, PostHog, Pidgeon, Attio, IMAP, GitHub and
 Notion reads count as reads only from a read-only action, and a read-only action can't reply,
-send or triage through Pidgeon.
+send or triage through Pidgeon or add, change or trash Notion rows.
 
 All three kinds expose `ctx.members`, the company's member directory, once
 `pnpm patchy add members` declares `uses.members`. The command also installs
@@ -534,7 +534,7 @@ PGlite dev has one connection. It does not reproduce production connection conte
 | `attio.discovery.optionRequests` | contract | 2000 | requests | company | Requests an Attio discovery may have sent and still read options; past it, the rest are skipped and marked | None | No | release |
 | `attio.discovery.optionDeadline` | contract | 45000 | milliseconds | company | Time into an Attio discovery after which it reads no more options; the rest are skipped and marked | None | No | release |
 | `notion.calls.concurrent` | contract | 3 | calls | host | Notion calls at once through one internal connection, by its bot, in a server process; an excess call waits within its deadline | `busy` | No | release |
-| `runtime.notion.bytes` | contract | 65536 | bytes | viewer | Notion operation arguments: a data source, filters, property names and a cursor | `too_large` | No | release |
+| `runtime.notion.bytes` | contract | 500000 | bytes | viewer | Notion operation arguments: a read's filters and cursor, or the values a write sets, within Notion's own request limit | `too_large` | No | release |
 | `notion.response.bytes` | contract | 8388608 | bytes | company | One raw Notion answer before decoding, the answers one call reads together, and a discovered snapshot | `too_large` | No | release |
 | `notion.discovery.deadline` | contract | 60000 | milliseconds | company | Notion token check and all discovery requests when connecting, refreshing or replacing a token | `timeout` | No | release |
 | `github.connection.repositories` | contract | 100 | repositories | company | Repositories in one GitHub connection, left ones included | `limit_exceeded` | No | release |

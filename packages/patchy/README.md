@@ -1014,9 +1014,11 @@ carries the snapshot revision the repo was generated from. The key reaches the d
 when such a declaration exists, never argv, the environment, state files or
 `dev.log`, and never workerd. A refused key fails `access_denied` naming
 `patchy login` and a dev restart; an unreachable instance fails `source_unavailable`
-and the rest of dev keeps working. Pidgeon's sends, replies and triage never leave
-the daemon: each is checked as the host checks it, answered with ids starting
-`dev_`, and written to `dev.log` with its recipients and subject.
+and the rest of dev keeps working. Pidgeon's sends, replies and triage and Notion's
+creates, updates, trashes and restores never leave the daemon: each is checked as
+the host checks it, answered with ids starting `dev_`, and written to `dev.log`,
+a send with its recipients and subject, a Notion write with its data source, row
+and property names.
 Shared tables need `fixtures/shared-<alias>.sql`
 and use cumulative source definitions, including retained ref targets whose
 declaration was omitted from the source's current manifest. Missing files fail naming the

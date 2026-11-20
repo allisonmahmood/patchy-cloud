@@ -55,7 +55,7 @@ const listFields = {
 };
 const cursor = Schema.NullOr(NotionCursor);
 const SearchKind = Schema.Literals(["page", "data_source"]);
-const read = <const Name extends string, F extends Schema.Struct.Fields, O extends Schema.Top>(
+const operation = <const Name extends string, F extends Schema.Struct.Fields, O extends Schema.Top>(
   name: Name,
   input: Schema.Struct<F>,
   output: O
@@ -75,13 +75,17 @@ const read = <const Name extends string, F extends Schema.Struct.Fields, O exten
   } as const;
 };
 export const notionReads = {
-  listRows: read(
+  listRows: operation(
     "listRows",
     Schema.Struct(listFields),
     Schema.Struct({ rows: Schema.Array(NotionRow), cursor })
   ),
-  getRow: read("getRow", Schema.Struct({ source: Name, id: NotionId }), Schema.NullOr(NotionRow)),
-  markdown: read(
+  getRow: operation(
+    "getRow",
+    Schema.Struct({ source: Name, id: NotionId }),
+    Schema.NullOr(NotionRow)
+  ),
+  markdown: operation(
     "markdown",
     Schema.Struct({ id: NotionId }),
     Schema.NullOr(
@@ -94,7 +98,7 @@ export const notionReads = {
       })
     )
   ),
-  search: read(
+  search: operation(
     "search",
     Schema.Struct({
       text: Schema.optionalKey(Text),
@@ -115,7 +119,7 @@ export const notionReads = {
       cursor
     })
   ),
-  listPeople: read(
+  listPeople: operation(
     "listPeople",
     Schema.Struct(pagination),
     Schema.Struct({
@@ -141,12 +145,49 @@ export type NotionSearchInput = typeof notionReads.search.input.Type;
 export type NotionSearchOutput = typeof notionReads.search.output.Type;
 export type NotionPeopleInput = typeof notionReads.listPeople.input.Type;
 export type NotionPeopleOutput = typeof notionReads.listPeople.output.Type;
+/** A row a write names: Notion's id, or one `patchy dev` answered a simulated create with. */
+export const NotionWriteId = Schema.Union([
+  NotionId,
+  Schema.String.check(Schema.isPattern(/^dev_[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i))
+]);
+/** Values by property name, each the whole value it sets. */
+const writeProperties = Schema.Record(Name, Schema.Json);
+const writeRow = { source: Name, id: NotionWriteId };
+const trashed = Schema.Struct({ id: NotionWriteId, inTrash: Schema.Boolean });
+export const notionWrites = {
+  create: operation(
+    "create",
+    Schema.Struct({ source: Name, properties: writeProperties }),
+    Schema.Struct({ id: NotionWriteId, url: Schema.String })
+  ),
+  update: operation(
+    "update",
+    Schema.Struct({ ...writeRow, properties: writeProperties }),
+    Schema.Struct({ id: NotionWriteId })
+  ),
+  trash: operation("trash", Schema.Struct(writeRow), trashed),
+  restore: operation("restore", Schema.Struct(writeRow), trashed)
+};
+export type NotionWrite = keyof typeof notionWrites;
+export type NotionCreateInput = typeof notionWrites.create.input.Type;
+export type NotionCreateOutput = typeof notionWrites.create.output.Type;
+export type NotionUpdateInput = typeof notionWrites.update.input.Type;
+export type NotionUpdateOutput = typeof notionWrites.update.output.Type;
+export type NotionTrashInput = typeof notionWrites.trash.input.Type;
+export type NotionTrashOutput = typeof notionWrites.trash.output.Type;
+export const isNotionWrite = (op: string) =>
+  Object.values(notionWrites).some((write) => write.op === op);
+
 export const notionOperations = {
   [notionReads.listRows.op]: notionReads.listRows.operation,
   [notionReads.getRow.op]: notionReads.getRow.operation,
   [notionReads.markdown.op]: notionReads.markdown.operation,
   [notionReads.search.op]: notionReads.search.operation,
-  [notionReads.listPeople.op]: notionReads.listPeople.operation
+  [notionReads.listPeople.op]: notionReads.listPeople.operation,
+  [notionWrites.create.op]: notionWrites.create.operation,
+  [notionWrites.update.op]: notionWrites.update.operation,
+  [notionWrites.trash.op]: notionWrites.trash.operation,
+  [notionWrites.restore.op]: notionWrites.restore.operation
 } as const;
 
 interface PropertyType {

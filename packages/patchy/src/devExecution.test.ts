@@ -20,7 +20,7 @@ import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
-import type { PidgeonDev } from "@patchy/integrations/dev";
+import type { NotionDev, PidgeonDev } from "@patchy/integrations/dev";
 import type { Prepared } from "./devPreparation.js";
 import * as DevResources from "./devResources.js";
 import type { ServerBinding } from "./devExecution.js";
@@ -516,7 +516,7 @@ it.live(
         handle: "support",
         revision: 1
       };
-      const simulated: PidgeonDev.Simulated[] = [];
+      const simulated: Array<PidgeonDev.Simulated | NotionDev.Simulated> = [];
       const resources = yield* DevResources.prepare(
         {
           ...prepared,

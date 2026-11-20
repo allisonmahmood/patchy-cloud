@@ -414,10 +414,11 @@ export const registry = {
   },
   "runtime.notion.bytes": {
     kind: "contract",
-    default: 65536,
+    default: 500000,
     unit: "bytes",
     scope: "viewer",
-    measure: "Notion operation arguments: a data source, filters, property names and a cursor",
+    measure:
+      "Notion operation arguments: a read's filters and cursor, or the values a write sets, within Notion's own request limit",
     refusal: "too_large",
     overridable: false
   },

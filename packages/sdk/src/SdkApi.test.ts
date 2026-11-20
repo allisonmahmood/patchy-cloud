@@ -1047,19 +1047,21 @@ it.layer(layer)("SDK company generation", (it) => {
         (connection_id, company_id, integration, revision, snapshot)
         VALUES ('sdk-notion', ${identity.company.id}, 'notion', 1, ${sql.json(snapshot)})`;
       const client = yield* HttpClient.HttpClient;
-      const response = yield* client.execute(
-        HttpClientRequest.post("/api/sdk/generate").pipe(
-          HttpClientRequest.bearerToken(identity.machine.id),
-          HttpClientRequest.bodyJsonUnsafe({
-            ...generateRequest(),
-            manifest: {
-              ...Fixtures.manifest,
-              tier: 2,
-              uses: { probe: { kind: "notion", handle: "probe" } }
-            }
-          })
-        )
-      );
+      const generate = () =>
+        client.execute(
+          HttpClientRequest.post("/api/sdk/generate").pipe(
+            HttpClientRequest.bearerToken(identity.machine.id),
+            HttpClientRequest.bodyJsonUnsafe({
+              ...generateRequest(),
+              manifest: {
+                ...Fixtures.manifest,
+                tier: 2,
+                uses: { probe: { kind: "notion", handle: "probe" } }
+              }
+            })
+          )
+        );
+      const response = yield* generate();
       assert.strictEqual(response.status, 200);
       const output = yield* decodeGenerated(yield* response.json);
       assert.deepStrictEqual(output.uses, [{ alias: "probe", id: "sdk-notion", revision: 1 }]);
@@ -1070,6 +1072,8 @@ it.layer(layer)("SDK company generation", (it) => {
       for (const read of ["get(id)", "pages.markdown(id)", "search", "people.list"])
         assert.include(context, read);
       const generated = file("patchy/_generated/uses/probe.ts")!;
+      assert.include(generated, 'NotionClient<Sources, "read">');
+      assert.notInclude(generated, "readonly writable:");
       assert.include(generated, 'readonly "Tasks":');
       assert.include(generated, 'readonly "Status": string | null;');
       assert.include(generated, 'readonly "Assignee": string;');
@@ -1080,6 +1084,20 @@ it.layer(layer)("SDK company generation", (it) => {
       assert.includeDeepMembers(index.skills, [
         { name: "patchy-notion", path: ".agents/skills/patchy-notion/SKILL.md" }
       ]);
+      yield* sql`INSERT INTO connection_snapshots
+        (connection_id, company_id, integration, revision, snapshot)
+        VALUES ('sdk-notion', ${identity.company.id}, 'notion', 2, ${sql.json({ ...snapshot, access: "write" })})`;
+      yield* sql`UPDATE connections SET metadata_revision = 2, display = ${sql.json({ ...display, access: "write" })}
+        WHERE id = 'sdk-notion' AND company_id = ${identity.company.id}`;
+      const writable = yield* generate();
+      assert.strictEqual(writable.status, 200);
+      const updated = yield* decodeGenerated(yield* writable.json);
+      assert.deepStrictEqual(updated.uses, [{ alias: "probe", id: "sdk-notion", revision: 2 }]);
+      const code = updated.files.find(({ path }) => path === "patchy/_generated/uses/probe.ts")!;
+      assert.include(code.contents, 'NotionClient<Sources, "write">');
+      assert.include(code.contents, "readonly writable:");
+      assert.include(code.contents, 'readonly "Status": "To do" | null;');
+      assert.include(code.contents, 'readonly "Assignee": readonly string[];');
     })
   );
 

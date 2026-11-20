@@ -1051,6 +1051,48 @@ it.layer(
           assert.strictEqual(ran.length, ops.length);
         }).pipe(Effect.scoped)
     );
+  it.effect("a read-only action never dispatches a Notion write; another action does", () =>
+    Effect.gen(function* () {
+      const capabilities = yield* InvocationCapabilities.make;
+      const ops = ["notion.create", "notion.update", "notion.trash", "notion.restore"] as const;
+      const ran: Array<string> = [];
+      const gateway = yield* CallbackGateway.make(
+        Object.fromEntries(
+          ops.map((op): [string, Runtime.JsonHandler] => [
+            op,
+            {
+              kind: "integration",
+              connectionId: () => "notion-connection",
+              run: () =>
+                Effect.sync(() => {
+                  ran.push(op);
+                  return { ok: true };
+                })
+            }
+          ])
+        )
+      ).pipe(Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities));
+      const readOnly = yield* Fixtures.issue(capabilities, { kind: "action", readOnly: true });
+      for (const op of ops)
+        assert.include(
+          yield* gateway.callback(readOnly.token, readOnly.attempt, {
+            op,
+            args: { connection: "probe" }
+          }),
+          { ok: false, code: "access_denied", error: "A read-only action cannot write." }
+        );
+      assert.deepStrictEqual(ran, []);
+      const action = yield* Fixtures.issue(capabilities, { kind: "action" });
+      for (const op of ops)
+        assert.isTrue(
+          (yield* gateway.callback(action.token, action.attempt, {
+            op,
+            args: { connection: "probe" }
+          })).ok
+        );
+      assert.deepStrictEqual(ran, [...ops]);
+    }).pipe(Effect.scoped)
+  );
   it.effect("IMAP runs only in actions, read-only ones included, and caps its arguments", () =>
     Effect.gen(function* () {
       const capabilities = yield* InvocationCapabilities.make;

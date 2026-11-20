@@ -1493,6 +1493,33 @@ and, once a call holds one of its bot's slots, checks the caller and that the co
 still connected before calling Notion. Recent calls name the data source, the property names
 and the ids a call named, never a filter value, search text, row value or page text.
 
+### Writing Notion rows
+
+On a Read and write connection, each data source's client also has `create`, `update`,
+`trash` and `restore`, from tier 2 actions that aren't read-only; a Read connection's client
+has none, and the host refuses one forced past its types. The host checks the connection's
+access once more right before sending, so a connection changed to Read stops writing at
+once. A write sets each property it names whole, by property id, and select, multi-select
+and status values only to options the version's snapshot knows, by option id, so Notion never
+makes an option out of a typo; any other name is refused naming the known options, with
+nothing sent. Notion's own limits on a value are checked before sending. `update`, `trash`
+and `restore` first read the row and refuse one of another data source, so no other page
+shared with the connection can be changed through a data source; a write that sets a
+relation first checks its target is still shared, since Notion answers an unshared one's
+relations as empty.
+
+Writes answer the row's id, never a re-read row. Notion has no idempotency keys, so Patchy
+never retries one: a write whose answer is lost, or that gets a 5xx other than 529 or a 2xx
+Patchy can't read, fails `unknown_outcome`, naming the row when Notion's 503 does, and the
+skill says to read before writing again. A 409 changed nothing and fails `write_conflict`. A
+write is an ordinary Notion edit by the connection: it notifies people and runs the database's
+automations and the workspace's webhooks. There's no write budget. Recent calls name a write's
+data source, the row it named and the property names it set, never a value.
+
+`patchy dev` simulates writes: checked as the host would, a create answered with an id
+starting `dev_`, each named in dev's output, and nothing reaches the instance or Notion, so
+later reads don't show them.
+
 ### Connecting Attio
 
 Attio is read-only and company-wide: one connection reads one Attio workspace

@@ -93,7 +93,7 @@ The calls and discoveries one server process lets run at once against one Attio 
 _Avoid_: pool, rate limit (Attio's own)
 
 **Data source snapshot**:
-An immutable description of the data sources a Notion workspace-owned internal connection can discover, with property ids and types, status groups, relation targets, access and named exclusions. Tier 2 actions resolve property names and types through the version’s snapshot and use Notion property ids for reads.
+An immutable description of the data sources a Notion workspace-owned internal connection can discover, with property ids and types, status groups, relation targets, access and named exclusions. Tier 2 actions resolve property names and types through the version’s snapshot and use Notion property ids for reads and writes, and option ids for the options a write sets, which must be ones the snapshot knows. A write checks the connection's current access, not the snapshot's.
 
 **Mailbox snapshot**:
 An immutable description of one IMAP mailbox login: its host, port, security mode and username, the capabilities its server advertised once logged in, and its folders by path with their delimiter, the special-use flags the server sent and whether each is selectable, at most 5,000 and marked truncated past that. Never mail. The folders are hints for generation and context, not limits on calls. Refresh folders takes a new one.

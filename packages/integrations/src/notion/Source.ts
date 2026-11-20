@@ -1,4 +1,4 @@
-import { NotionAccess, notionPropertyType, type NotionSnapshot } from "@patchy/api";
+import { NotionAccess, NotionId, notionPropertyType, type NotionSnapshot } from "@patchy/api";
 import { ContractLimits } from "@patchy/limits";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -71,7 +71,8 @@ const refusals = {
     "Notion refused the request. A property or option may have changed since this version was generated: refresh the connection, run patchy refresh and publish again. A cursor Notion didn't return is refused too."
   ],
   offset_exhausted: [422, "Notion stops a list at 10,000 rows. Narrow the filter and start again."],
-  write_conflict: [409, "Notion reported a conflict. Try again."],
+  write_conflict: [409, "Notion reported a conflict and saved nothing. Try again."],
+  unknown_outcome: [503, "Notion may have saved the write. Read before writing again."],
   source_rate_limited: [429, "Notion is limiting requests. Try again shortly."],
   shape_mismatch: [
     422,
@@ -93,8 +94,15 @@ export class Refusal extends Schema.TaggedError<Refusal>()("NotionRefusal", {
   retryAfterSeconds: Schema.optionalKey(Schema.Int),
   /** The data source key a `not_found` is about, as the generated client names it. */
   dataSource: Schema.optionalKey(Schema.String),
-  /** The property a `shape_mismatch` is about, by the snapshot's name. */
+  /**
+   * The property a `shape_mismatch` is about, or an `invalid_request`'s value with an option this
+   * version doesn't know, by the snapshot's name.
+   */
   property: Schema.optionalKey(Schema.String),
+  /** With `property` on an `invalid_request`, the options this version knows; nothing was sent. */
+  knownOptions: Schema.optionalKey(Schema.Array(Schema.String)),
+  /** The row Notion's 503 says a write saved anyway, which its `unknown_outcome` names. */
+  rowId: Schema.optionalKey(NotionId),
   cause: Schema.optionalKey(SecretCause)
 }) {
   get status() {
@@ -102,6 +110,10 @@ export class Refusal extends Schema.TaggedError<Refusal>()("NotionRefusal", {
   }
 
   override get message() {
+    if (this.code === "invalid_request" && this.knownOptions !== undefined)
+      return `“${this.property}” takes only the options this version knows: ${this.knownOptions.map((name) => `“${name}”`).join(", ") || "none"}. To use another, add it in Notion, refresh the connection, run patchy refresh and publish again.`;
+    if (this.code === "unknown_outcome" && this.rowId !== undefined)
+      return `Notion may have saved the write, as row ${this.rowId}. Read it before writing again.`;
     if (this.code === "source_unavailable" && this.upstreamStatus === 401)
       return "Notion did not accept the token. Paste a working internal connection token.";
     if (this.code === "source_rate_limited" && this.retryAfterSeconds !== undefined)
@@ -251,7 +263,8 @@ const ErrorBody = Schema.Struct({
   additional_data: Schema.optionalKey(
     Schema.Struct({
       retry_after: Schema.optionalKey(Schema.Number),
-      limit_kind: Schema.optionalKey(Schema.String)
+      limit_kind: Schema.optionalKey(Schema.String),
+      committed_resource_id: Schema.optionalKey(NotionId)
     })
   )
 });
@@ -307,6 +320,28 @@ const settingsOf = (
 const complete = (source: typeof SourceBody.Type) =>
   Object.values(source.properties).every((property) => settingsOf(property) !== undefined);
 
+/**
+ * A write's refusal once its request may have reached Notion, which keeps no idempotency keys, so
+ * Patchy never sends a write twice. An answer that was lost, a 5xx other than 529, or a 2xx
+ * Patchy can't read may hide a saved write: `unknown_outcome`, naming the row when Notion's 503
+ * did. Every other refusal is Notion's no, and nothing was saved.
+ */
+export const afterWrite = (refusal: Refusal): Refusal => {
+  const status = refusal.upstreamStatus;
+  const uncertain =
+    (refusal.code === "source_unavailable" &&
+      (status === undefined || status < 300 || status >= 500)) ||
+    refusal.code === "too_large" ||
+    refusal.code === "shape_mismatch";
+  return uncertain
+    ? new Refusal({
+        code: "unknown_outcome",
+        ...(refusal.rowId === undefined ? {} : { rowId: refusal.rowId }),
+        cause: Redacted.make(refusal)
+      })
+    : refusal;
+};
+
 export const make = Effect.gen(function* () {
   const client = yield* HttpClient.HttpClient;
   const concurrency = yield* ContractLimits.get("notion.calls.concurrent");
@@ -346,7 +381,7 @@ export const make = Effect.gen(function* () {
         Effect.provideService(Tracer.DisablePropagation, true)
       );
     const status = response.status;
-    if ((status >= 300 && status < 400) || status === 401 || (status >= 500 && status !== 529))
+    if ((status >= 300 && status < 400) || status === 401)
       return yield* new Refusal({ code: "source_unavailable", upstreamStatus: status });
     if (Number(response.headers["content-length"]) > limit)
       return yield* new Refusal({ code: "too_large" });
@@ -372,6 +407,16 @@ export const make = Effect.gen(function* () {
       offset += chunk.byteLength;
     }
     const json = decodeJson(decoder.decode(body));
+    if (status >= 500 && status !== 529) {
+      // Notion's 503 may name the row a write saved anyway.
+      const rowId = Option.getOrUndefined(Option.flatMap(json, decodeError))?.additional_data
+        ?.committed_resource_id;
+      return yield* new Refusal({
+        code: "source_unavailable",
+        upstreamStatus: status,
+        ...(rowId === undefined ? {} : { rowId })
+      });
+    }
     if (status >= 200 && status < 300) {
       if (Option.isNone(json))
         return yield* new Refusal({ code: "source_unavailable", upstreamStatus: status });

@@ -727,9 +727,10 @@ local runtime (`patchy dev`) runs its handlers over PGlite and invented fixtures
 PostHog, Pidgeon, Attio, IMAP, GitHub and Notion declarations have no fixture: `patchy dev` reads the real
 connection through the cloud's dev read door, as the CLI's machine key
 ([ADR-0013](adr/ADR-0013-dev-bindings-per-integration.md)), so the connection must
-exist on this instance. Pidgeon's sends, replies and triage are simulated in the
-dev process, never sent: `patchy dev logs` names each one with its recipients
-and subject.
+exist on this instance. Pidgeon's sends, replies and triage and Notion's writes
+are simulated in the dev process, never sent: `patchy dev logs` names each one,
+a send with its recipients and subject, a Notion write with its data source, row
+and property names.
 With the cloud healthy, initialize beneath this checkout so discovery finds it:
 
 ```sh

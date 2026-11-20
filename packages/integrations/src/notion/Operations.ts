@@ -1,4 +1,11 @@
-import { NotionId, notionReads, type NotionRead } from "@patchy/api";
+import {
+  NotionId,
+  NotionWriteId,
+  notionReads,
+  notionWrites,
+  type NotionRead,
+  type NotionWrite
+} from "@patchy/api";
 import { ContractLimits } from "@patchy/limits";
 import { Binding, Runtime } from "@patchy/runtime/core";
 import * as Clock from "effect/Clock";
@@ -10,6 +17,7 @@ import * as ConnectionStore from "../ConnectionStore.js";
 import { connectionRecheck, type DevRead, type Target } from "../definition.js";
 import * as Reads from "./Reads.js";
 import * as Source from "./Source.js";
+import * as Writes from "./Writes.js";
 
 export class ConnectionNotDeclared extends Schema.TaggedError<ConnectionNotDeclared>()(
   "NotionConnectionNotDeclared",
@@ -23,8 +31,8 @@ export class ConnectionNotDeclared extends Schema.TaggedError<ConnectionNotDecla
 }
 
 /** A Notion refusal as the wire carries it: its code, status and message, and what it names. */
-const refusal = (error: Source.Refusal): Runtime.RuntimeError => {
-  const { code, dataSource, property, retryAfterSeconds } = error;
+export const refusal = (error: Source.Refusal): Runtime.RuntimeError => {
+  const { code, dataSource, property, knownOptions, rowId, retryAfterSeconds } = error;
   // Only the token check refuses these; a stored token that no longer parses is Patchy's side.
   if (
     code === "invalid_credentials" ||
@@ -32,8 +40,14 @@ const refusal = (error: Source.Refusal): Runtime.RuntimeError => {
     code === "notion_other_workspace"
   )
     return new Runtime.SourceUnavailable({ cause: error });
-  const details: Readonly<Record<string, string>> | undefined =
-    dataSource !== undefined ? { dataSource } : property !== undefined ? { property } : undefined;
+  const details: Runtime.OperationError["details"] =
+    dataSource !== undefined
+      ? { dataSource }
+      : property !== undefined
+        ? { property, ...(knownOptions === undefined ? {} : { knownOptions }) }
+        : rowId !== undefined
+          ? { rowId }
+          : undefined;
   return {
     code,
     status: error.status,
@@ -42,7 +56,7 @@ const refusal = (error: Source.Refusal): Runtime.RuntimeError => {
     ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds })
   };
 };
-const isRefusal = Schema.is(Source.Refusal);
+export const isRefusal = Schema.is(Source.Refusal);
 
 const storedRefusal = (cause: ConnectionStore.ConnectionError) =>
   cause._tag === "ConnectionNotFound" || cause._tag === "ConnectionNotConnected"
@@ -54,15 +68,16 @@ const storedRefusal = (cause: ConnectionStore.ConnectionError) =>
 /**
  * One call as its door admitted it. Its arguments are checked against the version's snapshot
  * first, with nothing sent. Then, holding one of the bot's slots: the door's recheck of the caller,
- * the connection still connected and still this integration and handle, and the token decrypted
- * right before sending. The connection's absence and the door's refusal come back as they are,
- * for the door to say.
+ * the connection still connected and still this integration and handle, a write's connection
+ * still able to write, and the token decrypted right before sending. The connection's absence and
+ * the door's refusal come back as they are, for the door to say.
  */
 const run = Effect.fn("Notion.run")(
   function* <E extends Runtime.RuntimeError, I, A>(
     target: Target<E>,
     input: I,
-    plan: Reads.Plan<I, A>
+    plan: Reads.Plan<I, A, Runtime.InvalidRequest | Source.Refusal>,
+    write = false
   ) {
     const { companyId, connection, deadline, recheck } = target;
     const revision = connection.revision;
@@ -95,6 +110,8 @@ const run = Effect.fn("Notion.run")(
           });
         if (current.status !== "connected")
           return yield* new ConnectionStore.ConnectionNotConnected({});
+        // The connection's access now, whatever this version was generated with.
+        if (write && current.display.access !== "write") return yield* new Runtime.AccessDenied({});
         const { key } = yield* store
           .poolCredentials(
             companyId,
@@ -137,13 +154,28 @@ const idOf = (args: unknown) => (Predicate.isObject(args) && isId(args.id) ? arg
 const count = (key: "rows" | "results" | "people") => (value: unknown) =>
   Predicate.isObject(value) && Array.isArray(value[key]) ? value[key].length : null;
 const oneOrNone = (value: unknown) => (value === null ? 0 : 1);
+const isWriteId = Schema.is(NotionWriteId);
+/** A write's data source, the row it named and the property names it set, never a value. */
+const written = (args: unknown): string | null => {
+  if (!Predicate.isObject(args) || !isLabel(args.source)) return null;
+  const names = Predicate.isObject(args.properties)
+    ? Object.keys(args.properties).filter(isLabel).slice(0, 8)
+    : [];
+  return [
+    args.source,
+    ...(isWriteId(args.id) ? [args.id] : []),
+    ...(names.length === 0 ? [] : [names.join(", ")])
+  ].join(" · ");
+};
+const write = { resource: written, rowCount: oneOrNone };
 
 /**
  * How each call reads in recent calls: the data source, the property names and the ids it
- * named, and how many rows came back. Never a filter value, search text, row value or page text.
+ * named, and how many rows came back or were written. Never a filter value, search text, row
+ * value or page text.
  */
 export const recorded: {
-  readonly [K in NotionRead]: {
+  readonly [K in NotionRead | NotionWrite]: {
     readonly resource: (args: unknown) => string | null;
     readonly rowCount: (value: unknown) => number | null;
   };
@@ -156,7 +188,11 @@ export const recorded: {
   },
   markdown: { resource: idOf, rowCount: oneOrNone },
   search: { resource: () => null, rowCount: count("results") },
-  listPeople: { resource: () => null, rowCount: count("people") }
+  listPeople: { resource: () => null, rowCount: count("people") },
+  create: write,
+  update: write,
+  trash: write,
+  restore: write
 };
 
 /**
@@ -195,7 +231,12 @@ export const makeHandlers = Effect.gen(function* () {
   const connections = yield* ConnectionStore.ConnectionStore;
   const deadlineMs = yield* ContractLimits.get("integration.deadline");
 
-  const invoke = <I, A>(alias: string, input: I, plan: Reads.Plan<I, A>) =>
+  const invoke = <I, A>(
+    alias: string,
+    input: I,
+    plan: Reads.Plan<I, A, Runtime.InvalidRequest | Source.Refusal>,
+    write = false
+  ) =>
     Effect.gen(function* () {
       const binding = yield* Binding.Binding;
       const connection = declarationOf(alias, binding);
@@ -216,7 +257,8 @@ export const makeHandlers = Effect.gen(function* () {
           )
         },
         input,
-        plan
+        plan,
+        write
       );
     }).pipe(
       Effect.provideService(Source.Source, source),
@@ -230,7 +272,7 @@ export const makeHandlers = Effect.gen(function* () {
     I extends Schema.Top & Schema.Codec<unknown, unknown>,
     O extends Schema.Top & Schema.Codec<unknown, unknown>
   >(
-    name: NotionRead,
+    name: NotionRead | NotionWrite,
     { guest, output }: { readonly guest: I; readonly output: O },
     run: (args: I["Type"]) => Effect.Effect<O["Type"], Runtime.RuntimeError, Binding.Binding>
   ) =>
@@ -269,6 +311,20 @@ export const makeHandlers = Effect.gen(function* () {
       "listPeople",
       notionReads.listPeople,
       ({ connection, ...input }) => invoke(connection, input, Reads.planPeople)
+    ),
+    [notionWrites.create.op]: handler("create", notionWrites.create, ({ connection, ...input }) =>
+      invoke(connection, input, Writes.planCreate, true)
+    ),
+    [notionWrites.update.op]: handler("update", notionWrites.update, ({ connection, ...input }) =>
+      invoke(connection, input, Writes.planUpdate, true)
+    ),
+    [notionWrites.trash.op]: handler("trash", notionWrites.trash, ({ connection, ...input }) =>
+      invoke(connection, input, Writes.planTrash, true)
+    ),
+    [notionWrites.restore.op]: handler(
+      "restore",
+      notionWrites.restore,
+      ({ connection, ...input }) => invoke(connection, input, Writes.planRestore, true)
     )
   };
 });

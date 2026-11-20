@@ -2,6 +2,7 @@
 import { Buffer } from "node:buffer";
 import {
   FilePutUpload,
+  isNotionWrite,
   limitRefusal,
   runtimeBodyLimitId,
   type HandlerKind,
@@ -90,6 +91,10 @@ const connections: Readonly<Record<string, true>> = {
   "notion.markdown": true,
   "notion.search": true,
   "notion.listPeople": true,
+  "notion.create": true,
+  "notion.update": true,
+  "notion.trash": true,
+  "notion.restore": true,
   "attio.listRecords": true,
   "attio.getRecord": true,
   "attio.getManyRecords": true,
@@ -132,7 +137,8 @@ const writes = (op: string) =>
   Object.hasOwn(writeTable, op) ||
   op === "files.put" ||
   op === "files.delete" ||
-  op === "pidgeon.write";
+  op === "pidgeon.write" ||
+  isNotionWrite(op);
 const viewerAuthority = (op: string) =>
   Object.hasOwn(shared, op) ||
   op === "shared.files.get" ||
