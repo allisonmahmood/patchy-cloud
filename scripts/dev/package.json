@@ -20,7 +20,7 @@
     "@patchy/runtime": "workspace:*",
     "@patchy/server": "workspace:*",
     "@patchy/sql": "workspace:*",
-    "@playwright/test": "^1.65.0",
+    "@playwright/test": "^1.65.1",
     "effect": "catalog:",
     "embedded-postgres": "18.6.0-beta.19",
     "imapflow": "2.11.0"
