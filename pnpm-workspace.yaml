@@ -39,10 +39,15 @@ overrides:
   "@effect/sql-pglite": "catalog:"
   "@effect/vitest": "catalog:"
   "@effect/tsgo": "catalog:"
-  # The Vercel CLI, the docs app's deploy tool, reaches tar through @vercel/container, which pins
-  # tar 7.5.11; advisories up to GHSA-23hp-3jrh-7fpw cover it, fixed by 7.5.21. It takes the
-  # release the rest of the tree already uses. Drop this once @vercel/container moves on.
+  # The Vercel CLI, the docs app's deploy tool, pins two dependencies that open advisories cover.
+  # Drop each once Vercel's packages move on.
+  # @vercel/container pins tar 7.5.11 (GHSA-23hp-3jrh-7fpw and others, fixed by 7.5.21); it takes
+  # the release the rest of the tree already uses.
   "@vercel/container>tar": "7.5.23"
+  # @vercel/node and @vercel/cli-support pin undici 5, whose @fastify/busboy 2 is covered by
+  # GHSA-x8mw-p69m-v3mx and GHSA-gxm5-99cw-xjw9, fixed by 3.2.2. Busboy 3 keeps the constructor,
+  # exports and events undici 5 uses; only its files moved.
+  "undici@5>@fastify/busboy": "3.2.3"
 patchedDependencies:
   # TanStack Hotkeys as patchy/hotkeys bundles it. A sequence asks `allowStep` before it takes a
   # key, so a focused field can keep it, and calls `onStep` as it takes one; a sequence on an

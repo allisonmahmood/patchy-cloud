@@ -19,6 +19,7 @@ overrides:
   '@effect/vitest': 4.1.4
   '@effect/tsgo': 0.68.1
   '@vercel/container>tar': 7.5.23
+  undici@5>@fastify/busboy: 3.2.3
 
 patchedDependencies:
   '@tanstack/hotkeys@0.27.1': 8c7afdc2812d563cc2dc8586a53b7c8114c0294564f208dc1ab496085abdae5c
@@ -1771,9 +1772,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@fastify/busboy@2.1.1':
-    resolution: {integrity: sha512-vBZP4NlzfOlerQTnba4aqZoMhE/a9HY7HRqoOPaETQcSQuWEIyZMHGfVu6w9wGtGK5fED5qRs2DteVCjOH60sA==}
-    engines: {node: '>=14'}
+  '@fastify/busboy@3.2.3':
+    resolution: {integrity: sha512-fmo/IKgkenPzz3qTKG+sIUXdF/Kv83AkvvOXJHPTHJeKJbat8SsL1ihUaFaDotqoEl4UZ1Lf8Eb/3vK6eaWX2A==}
 
   '@floating-ui/core@1.8.0':
     resolution: {integrity: sha512-0CIZ5itps/8x7BG8dEIhs53BvCUH2PCoogtakwRTut+Arm58sJooJ0AuZhLw2HJYIR5cMLNPBSS728sPho2khQ==}
@@ -6659,7 +6659,7 @@ snapshots:
   '@esbuild/win32-x64@0.28.2':
     optional: true
 
-  '@fastify/busboy@2.1.1':
+  '@fastify/busboy@3.2.3':
     optional: true
 
   '@floating-ui/core@1.8.0':
@@ -10755,12 +10755,12 @@ snapshots:
 
   undici@5.28.4:
     dependencies:
-      '@fastify/busboy': 2.1.1
+      '@fastify/busboy': 3.2.3
     optional: true
 
   undici@5.29.0:
     dependencies:
-      '@fastify/busboy': 2.1.1
+      '@fastify/busboy': 3.2.3
     optional: true
 
   undici@6.29.1:
