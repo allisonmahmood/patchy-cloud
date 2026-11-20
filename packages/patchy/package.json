@@ -71,7 +71,7 @@
   "files": [
     "dist",
     "README.md",
-    "skills"
+    "global-skill"
   ],
   "scripts": {
     "build": "node ../../scripts/build-patchy-package.mjs",

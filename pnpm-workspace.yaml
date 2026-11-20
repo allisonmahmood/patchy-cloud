@@ -34,9 +34,7 @@ overrides:
   "@effect/sql-pglite": "catalog:"
   "@effect/vitest": "catalog:"
   "@effect/tsgo": "catalog:"
-# embedded-postgres's beforeExit hook must preserve Vitest failures, not exit 0.
 patchedDependencies:
-  async-exit-hook@2.0.1: patches/async-exit-hook@2.0.1.patch
   # TanStack Hotkeys as patchy/hotkeys bundles it. A sequence asks `allowStep` before it takes a
   # key, so a focused field can keep it, and calls `onStep` as it takes one; a sequence on an
   # element takes its keys ahead of chords and sequences further out. A target may be any
@@ -44,6 +42,10 @@ patchedDependencies:
   # open, as patchy/hotkeys documents, where upstream leaves it to the browser. Drop each part
   # when upstream has it; upstream already ignores keys while an input method composes.
   "@tanstack/hotkeys@0.27.1": patches/@tanstack__hotkeys@0.27.1.patch
+  # embedded-postgres stops its clusters from exit-hook. As async-exit-hook did before it, the
+  # patched hook starts that stop on process.exit() too, without the notice exit-hook prints
+  # there, and on SIGHUP and SIGBREAK, so no exit leaves a cluster running.
+  exit-hook@5.1.0: patches/exit-hook@5.1.0.patch
 allowBuilds:
   esbuild: true
   workerd: false

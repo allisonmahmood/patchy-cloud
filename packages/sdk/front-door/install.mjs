@@ -97,10 +97,15 @@ const install = async (/** @type {string} */ work, /** @type {string | undefined
     );
   }
   // An earlier installer put patchy in this Node's npm prefix, where it would run
-  // first and leave with this Node. Its bundled skill tells it from npm's unrelated `patchy`.
+  // first and leave with this Node; so does `npm install --global` by hand. Its bundled
+  // skill tells it from npm's unrelated `patchy`: at `global-skill`, or at `skills/patchy`
+  // in the releases those installers shipped.
   const globalPrefix = prefixResult.stdout.trim();
   const earlier = path.join(globalPrefix, ...(windows ? [] : ["lib"]), "node_modules", "patchy");
-  const hasEarlier = () => fs.existsSync(path.join(earlier, "skills", "patchy", "SKILL.md"));
+  const hasEarlier = () =>
+    [["global-skill"], ["skills", "patchy"]].some((dir) =>
+      fs.existsSync(path.join(earlier, ...dir, "SKILL.md"))
+    );
   const home = os.homedir();
   const prefix = path.join(home, ".patchy", "cli");
   const entry = path.join(prefix, "node_modules", "patchy", "dist", "index.js");

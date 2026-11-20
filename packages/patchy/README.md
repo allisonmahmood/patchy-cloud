@@ -1212,7 +1212,7 @@ one may be in a file the probe could not read.
 ### `patchy setup [--remove]`
 
 Register the package's bundled global skill with agents. Setup copies the whole
-`skills/patchy` directory, references included, to `~/.patchy/skills/patchy` and
+`global-skill` directory, references included, to `~/.patchy/skills/patchy` and
 links that copy as `~/.agents/skills/patchy` and `~/.claude/skills/patchy`:
 symlinks on macOS and Linux, junctions on Windows. The copy lives outside the
 package it came from, so agents keep the skill when that package is replaced or
@@ -1948,7 +1948,7 @@ A token saved for one instance is never sent to another, and a patch ID cached f
 
 ## Agent skill
 
-The package bundles the global skill at `skills/patchy/SKILL.md`: what Patchy is,
+The package bundles the global skill at `global-skill/SKILL.md`: what Patchy is,
 sign-in, single-file publishing and the `patchy init` door for building a
 tool. Inside a patch repo, its project skills govern. The instance generates
 those from `packages/sdk`: core loop/tables/files skills at init, Preact guidance

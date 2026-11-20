@@ -369,7 +369,7 @@ const writeWorkspace = Effect.fn("writeWorkspace")(function* (layout: Layout) {
   yield* fs.makeDirectory(skills, { recursive: true });
   const skill = path.join(skills, "patchy");
   yield* fs.remove(skill, { recursive: true, force: true });
-  yield* fs.symlink(path.join(layout.cli, "node_modules", "patchy", "skills", "patchy"), skill);
+  yield* fs.symlink(path.join(layout.cli, "node_modules", "patchy", "global-skill"), skill);
   const miseFile = path.join(layout.workspace, "mise.toml");
   yield* fs.writeFileString(
     miseFile,

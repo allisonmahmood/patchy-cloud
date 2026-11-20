@@ -717,6 +717,7 @@ describe("the judges", () => {
         "skills/patchy/SKILL.md",
         "packages/sdk/skills/patchy-tables/SKILL.md",
         "packages/patchy/artifacts/patchy-1.0.0.tgz",
+        "packages/patchy/global-skill/SKILL.md",
         "packages/patchy/src/skillLock.ts",
         "scenarios/acme/patches/kudos/AGENTS.md",
         "scenarios/acme/patches/kudos/src/App.tsx",
@@ -740,6 +741,7 @@ describe("the judges", () => {
         { at: "/patchy/AGENTS.md", file: true },
         { at: "/patchy/node_modules/.cache", file: false },
         { at: "/patchy/packages/patchy/artifacts", file: false },
+        { at: "/patchy/packages/patchy/global-skill", file: false },
         { at: "/patchy/packages/sdk/skills", file: false },
         { at: "/patchy/scenarios/acme/patches/kudos/AGENTS.md", file: true },
         { at: "/patchy/scripts/dev/eval-calibration", file: false },
@@ -952,6 +954,9 @@ describe("what a run is", () => {
             "cat .agents/skills/patchy-loop/SKILL.md .agents/skills/patchy-tables/SKILL.md AGENTS.md"
           ),
           step("grep -rn route node_modules/patchy/dist/client.d.ts"),
+          step("cat node_modules/patchy/global-skill/SKILL.md"),
+          // Where a release before global-skill/ holds it: still a skill read, not an off-skill lookup.
+          step("cat node_modules/patchy/skills/patchy/SKILL.md"),
           step(
             "cat > src/App.tsx <<'EOF'\nimport { patchy } from \"../patchy/_generated/client.js\";\n// see node_modules/patchy/dist/x.d.ts\nEOF"
           ),
@@ -968,7 +973,7 @@ describe("what a run is", () => {
       ).skillAccesses
     ).toEqual({});
     expect(metrics.skillAccesses).toEqual({
-      patchy: 1,
+      patchy: 3,
       "patchy-loop": 1,
       "patchy-tables": 1,
       "AGENTS.md": 1

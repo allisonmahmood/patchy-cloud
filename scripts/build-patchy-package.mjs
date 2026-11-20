@@ -28,8 +28,10 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const packageDir = path.join(repoRoot, "packages/patchy");
 const distDir = path.join(packageDir, "dist");
 const packageJson = JSON.parse(await readFile(path.join(packageDir, "package.json"), "utf8"));
-const rootSkillsDir = path.join(repoRoot, "skills");
-const packageSkillsDir = path.join(packageDir, "skills");
+const rootSkillDir = path.join(repoRoot, "skills/patchy");
+// pnpm 12.11+ reads a dependency's `skills/<name>/SKILL.md` as agent skills awaiting approval and
+// says so on every install in a patch repo. `patchy setup` installs this one, so it sits elsewhere.
+const packageSkillDir = path.join(packageDir, "global-skill");
 const uiEntries = ["preact", "preact/jsx-runtime", "preact/jsx-dev-runtime"];
 const publicEntries = ["config", "client", "server", "csv", "hotkeys", "dev", ...uiEntries];
 
@@ -112,7 +114,7 @@ const hashInputs = async (files) => {
 /** Everything a packing build leaves behind: bundles, declarations, skills, license and release. */
 const builtOutputs = async () => [
   ...(await filesUnder("packages/patchy/dist")),
-  ...(await filesUnder("packages/patchy/skills")),
+  ...(await filesUnder("packages/patchy/global-skill")),
   "packages/patchy/LICENSE",
   ...(await filesUnder("packages/patchy/artifacts")).filter((file) => file !== relative(stampFile))
 ];
@@ -328,9 +330,11 @@ await copyFile(
   path.join(tanstackHotkeys, "LICENSE"),
   path.join(distDir, "licenses/tanstack-hotkeys-LICENSE")
 );
-await access(path.join(rootSkillsDir, "patchy/SKILL.md"));
-await rm(packageSkillsDir, { recursive: true, force: true });
-await cp(rootSkillsDir, packageSkillsDir, { recursive: true });
+await access(path.join(rootSkillDir, "SKILL.md"));
+// Earlier builds copied the skill to `skills/`; that copy is no longer packed or ignored.
+await rm(path.join(packageDir, "skills"), { recursive: true, force: true });
+await rm(packageSkillDir, { recursive: true, force: true });
+await cp(rootSkillDir, packageSkillDir, { recursive: true });
 await copyFile(path.join(repoRoot, "LICENSE"), path.join(packageDir, "LICENSE"));
 
 if (!process.argv.includes("--bundle-only")) {
