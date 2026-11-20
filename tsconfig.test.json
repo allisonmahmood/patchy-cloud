@@ -60,6 +60,7 @@
   },
   "include": [
     "**/src/**/*.test.ts",
+    "apps/docs/lib/**/*.test.ts",
     "**/src/test/**/*.ts",
     "packages/*/test/**/*.ts",
     "packages/*/live/**/*.ts",
