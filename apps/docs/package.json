@@ -7,10 +7,10 @@
   "description": "The public docs site: Fumadocs on Next.js, with the Limits page rendered from the limits registry at build time.",
   "scripts": {
     "generate": "node --import tsx --conditions=development scripts/generate.ts",
-    "dev": "pnpm run generate && next dev --port 4477",
-    "build": "pnpm run generate && next build",
-    "start": "next start --port 4477",
-    "typecheck": "next typegen && tsc --noEmit"
+    "dev": "pnpm run generate && NEXT_TELEMETRY_DISABLED=1 next dev --port 4477",
+    "build": "pnpm run generate && NEXT_TELEMETRY_DISABLED=1 next build",
+    "start": "NEXT_TELEMETRY_DISABLED=1 next start --port 4477",
+    "typecheck": "NEXT_TELEMETRY_DISABLED=1 next typegen && tsc --noEmit"
   },
   "dependencies": {
     "@patchy/limits": "workspace:*",
