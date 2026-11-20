@@ -53,7 +53,7 @@ On tier 2, handlers use the same operations through `ctx.tables`, and the page c
 
 ### Who reads and writes
 
-On tier 1, every colleague and guest who can open the patch can read and write every row of its tables, as themselves, while a public page reads none. Hiding rows in the page is not access control. On tier 2, the page has no direct table access: handlers decide what each viewer reads and changes, and their writes to the patch's own tables act as the patch. Every write is recorded for the company's admins.
+On tier 1, every colleague and guest the patch is shared with can read and write every row of its tables, as themselves. A public page reads none, for anyone. Hiding rows in the page is not access control. On tier 2, the page has no direct table access: handlers decide what each viewer reads and changes, and their writes to the patch's own tables act as the patch. Every write is recorded for the company's admins.
 
 ### Changing a published schema
 

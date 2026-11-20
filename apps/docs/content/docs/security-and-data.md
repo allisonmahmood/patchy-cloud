@@ -5,7 +5,7 @@ description: Who can open a patch, what a patch and an agent can reach, how comp
 
 ## Who can open a patch
 
-A patch opens only for its audience, the company, some of its teams or anyone with the link, and for guests it was shared with by name. Patchy checks on every request. Someone who loses access loses it on their next request and any page of the patch they have open closes, though work they started just before may still finish. A reader from another company who isn't a guest, or a colleague outside the patch's teams, gets the same "not found" as a missing address, so a link confirms nothing to them. A signed-out reader gets the sign-in page for any patch that exists: sharing hides what a patch holds, not that its address is taken. [Sharing and access](/docs/sharing-and-access) has the details.
+A patch opens only for its audience, the company, some of its teams or anyone with the link, and for guests it was shared with by name. Patchy checks on every request. Someone who loses access loses it on their next request: a page they have open has its calls refused and its live updates stop, though work they started just before may still finish. A reader from another company who isn't a guest, or a colleague outside the patch's teams, gets the same "not found" as a missing address, so a link confirms nothing to them. A signed-out reader of a patch that isn't public gets the sign-in page whether or not it would open for them: sharing hides what a patch holds, not that its address is taken. [Sharing and access](/docs/sharing-and-access) has the details.
 
 Only a tier 1 page can be public, and only its current version. A public page reaches no data, loads no analytics and carries no session for anyone outside its company.
 
@@ -50,7 +50,7 @@ A connection reads as the credential the admin supplied, so everyone who can ope
 
 ## Records
 
-- **Writes and calls.** Table and file writes and every integration call are recorded before they run. A tier 2 patch's log shows its mutations, its actions and the queries that log or fail: who made each, through which agent, and how it ended. Its owner and the company's admins read it while they can open the patch. It is not a full record of who read what: a query that succeeds without logging leaves no entry.
+- **Writes and calls.** Table and file writes and every integration call are recorded before they run. A tier 2 patch's log shows its mutations, its actions and the queries that log or fail: who made each, through which agent, and how it ended. Its owner and the company's admins read it while they can open the patch. It is not a full record of who read what: a page's query that succeeds without logging gets no entry of its own.
 - **Opens.** Patchy keeps each person's record of the patches they open so their own Home can put their usual ones first. Nobody else, owner or admin, sees it.
 - **Patchy's own analytics.** Patchy reports its product events, such as a publish, a join or a share, by ids and states, never names, email addresses, URLs or page content. Its request diagnostics carry the ids of the person and the patch on each company page opened.
 

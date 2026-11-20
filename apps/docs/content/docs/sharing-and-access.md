@@ -13,7 +13,7 @@ A patch's **audience** says who can open it. There are three:
 
 The audience must include the patch's owner. On top of it, the owner can share a patch with **guests**, named people at other companies.
 
-Patchy checks access on every request. Someone removed from the audience, or from a team the audience names, loses the patch on their next request, and any page of it they have open closes. Work they started just before the change may still finish.
+Patchy checks access on every request. Someone removed from the audience, or from a team the audience names, loses the patch on their next request. What a page already showed them stays on their screen, but its calls are refused and its live updates stop. Work they started just before the change may still finish.
 
 ## Choosing the audience
 
@@ -31,15 +31,15 @@ In the portal, **Share** on a patch opens the Share dialog, where the owner or a
 
 ## Opening a link
 
-| Who opens the address                       | What they get                                     |
-| ------------------------------------------- | ------------------------------------------------- |
-| A colleague in the audience                 | The patch                                         |
-| Someone signed out                          | The sign-in page, which returns them to the patch |
-| A colleague outside a team patch's audience | The same "not found" as a missing address         |
-| A member of another company, not a guest    | The same "not found" as a missing address         |
-| A deactivated user                          | A page saying their account is deactivated        |
+| Who opens the address                         | What they get                                     |
+| --------------------------------------------- | ------------------------------------------------- |
+| A colleague in the audience                   | The patch                                         |
+| Someone signed out, unless the page is public | The sign-in page, which returns them to the patch |
+| A colleague outside a team patch's audience   | The same "not found" as a missing address         |
+| A member of another company, not a guest      | The same "not found" as a missing address         |
+| A deactivated user                            | A page saying their account is deactivated        |
 
-To a colleague outside a team patch's audience, or a member of another company who isn't a guest, the patch looks the same as a missing one, so a link confirms nothing to them. A signed-out reader gets the sign-in page for any patch that exists, open to them or not: sharing hides what a patch holds, not that its address is taken. There is no request-access button.
+To a colleague outside a team patch's audience, or a member of another company who isn't a guest, the patch looks the same as a missing one, so a link confirms nothing to them. A signed-out reader of a patch that isn't public gets the sign-in page whether or not it would open for them: sharing hides what a patch holds, not that its address is taken. There is no request-access button.
 
 ## Guests
 

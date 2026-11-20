@@ -22,7 +22,7 @@ Patchy is built from a computer with Node.js 22.22.0 or newer and npm. The quick
 Set up Patchy using https://cloud.patchyhq.com/llms.txt
 ```
 
-The portal shows the same line in its **Final step** dialog after you first sign in, and **Add a computer** on Your agents gives it again later. The page it names tells the agent how to install the CLI, links Patchy's agent skill so the agent knows how to use it, and starts signing the computer in. The agent then offers the rest of setup, one optional step at a time: in Claude Code, adding Patchy to its auto mode settings as the company's own; for an admin whose company has no look yet, the look its pages start in; then a welcome page and an idea for a first patch.
+The portal shows a setup line of your own in its **Final step** dialog after you first sign in, and **Add a computer** on Your agents gives the line again later. The page it names tells the agent how to install the CLI, links Patchy's agent skill so the agent knows how to use it, and starts signing the computer in. The agent then offers the rest of setup, one optional step at a time: in Claude Code, adding Patchy to its auto mode settings as the company's own; for an admin whose company has no look yet, the look its pages start in; then a welcome page and an idea for a first patch.
 
 To install the CLI yourself on macOS or Linux, run the instance's install line:
 

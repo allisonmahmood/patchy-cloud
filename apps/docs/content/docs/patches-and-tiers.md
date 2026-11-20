@@ -58,7 +58,7 @@ It reaches only its own patch:
 
 It has no server code and no outbound network. Other patches' shared tables and stores, the member directory and company connections are refused from the browser as `server_required`.
 
-Reads of its own tables can be live, so one viewer's write updates every other open copy without a reload. Every colleague or guest who can open the patch can read every row of its tables, and its rules are advisory: a viewer can make the same writes from the browser's developer tools. Direct writes are last-write-wins.
+Reads of its own tables can be live, so one viewer's write updates every other open copy without a reload. Every colleague or guest the patch is shared with can read every row of its tables, and its rules are advisory: a viewer can make the same writes from the browser's developer tools. Direct writes are last-write-wins.
 
 A tier 1 patch can be shared **public**, open to anyone with the link. A public patch runs its browser code and reaches no data: `me()` answers null and its tables and files are unavailable.
 

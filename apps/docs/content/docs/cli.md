@@ -50,7 +50,7 @@ description: The patchy commands people and agents use most, and the contract an
 | `patchy list connections`                        | Lists the company's connections; `--all` adds the integrations on offer.             |
 | `patchy list connections <integration>/<handle>` | Shows what one connection holds, such as a database's tables or a mailbox's folders. |
 
-`--state retired` lists retired patches instead, and `--state all` lists every patch, deleted ones not yet reclaimed included.
+`--state retired` lists retired patches instead, and `--state all` lists every patch you can open, deleted ones not yet reclaimed included.
 
 ## Managing a patch
 

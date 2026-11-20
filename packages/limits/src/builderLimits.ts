@@ -89,7 +89,7 @@ export const builderLimitGroups: ReadonlyArray<BuilderLimitGroup> = [
       row("company.admission.burst", {
         what: "Calls in one quick burst, before that rate holds them back",
         per: "Each company",
-        reached: "Refused with {code} and a time to wait, naming `company.admission.rate`."
+        reached: "Refused with {code} and a time to wait, as that rate is."
       }),
       row("download.bytes", {
         what: "A file the page hands over to download",
@@ -226,7 +226,7 @@ export const builderLimitGroups: ReadonlyArray<BuilderLimitGroup> = [
         reached: "The answer carries `nextCursor` for the next page."
       }),
       row("pidgeon.sends.daily", {
-        what: "Emails sent or replied from one inbox",
+        what: "New emails accepted for sending from one inbox",
         per: "Each Pidgeon connection, per UTC day",
         reached: "A new email is refused with {code} and nothing is sent, until the next UTC day."
       }),
@@ -438,8 +438,8 @@ export function renderBuilderLimits(): string {
     "These are the limits a patch meets: its page, its handlers, its connections and the agents that use it. They are the ones in the release this site was built from.",
     "",
     "- A value marked **(default)** is the one Patchy starts with and can change, so treat it as typical rather than promised. Every other value is fixed for the release.",
-    "- Per-second and per-minute rates, and counts of calls running at once, are kept by each of Patchy's servers on its own. The daily Pidgeon send budget is one count across all of them.",
-    "- Each limit's id follows its name. A refusal that names the limit it hit, as `limitId`, uses these ids.",
+    "- Per-second and per-minute rates, and counts of calls running at once, are kept by each of Patchy's servers on its own. The daily Pidgeon send budget is one count for each connection across all of them.",
+    "- Each limit's id follows its name. Some refusals name the limit they hit, as `limitId`, with these ids.",
     "",
     ...builderLimitGroups.flatMap((group) => [
       `## ${group.title}`,

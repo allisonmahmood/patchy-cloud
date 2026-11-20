@@ -41,7 +41,7 @@ One PostHog Cloud project, in the US or EU region, read-only. The admin pastes a
 
 ## Pidgeon
 
-[Pidgeon](https://pidgeon.ai) gives software real email inboxes. One Pidgeon connection is one inbox, such as `support@…`, with **Read** or **Read and send** access. A patch lists and reads its threads and messages, searches them and reads its labels; with send access, it also replies, sends, and changes a thread's status and labels, as the person using the patch. Each send carries a key the patch keeps for that email, so a retry with the same key doesn't send it again for a day after it went. A send can also come back `held`, when Pidgeon keeps it for someone on the account to approve. Each connection sends at most 200 emails a UTC day.
+[Pidgeon](https://pidgeon.ai) gives software real email inboxes. One Pidgeon connection is one inbox, such as `support@…`, with **Read** or **Read and send** access. A patch lists and reads its threads and messages, searches them and reads its labels; with send access, it also replies, sends, and changes a thread's status and labels, as the person using the patch. Each send carries a key the patch keeps for that email, so sending again with the same key, from the same patch through the same connection, doesn't send a second copy. Patchy forgets the key a day after the email went. A send can also come back `held`, when Pidgeon keeps it for someone on the account to approve. Each connection accepts up to 200 new emails a UTC day.
 
 The key an admin makes in Pidgeon reaches the whole Pidgeon account. Patchy keeps patches to the one inbox on every call, and cutting Patchy off means revoking the key in Pidgeon.
 
