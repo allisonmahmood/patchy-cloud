@@ -390,11 +390,11 @@ const workingRepo = Effect.fn("Eval.workingRepo")(function* (home: string) {
 /** Hidden whole in a checkout: its git history, its local state and the judges' own labelled answers. */
 const HIDDEN = [".git", ".local", "scripts/dev/eval-calibration"];
 /**
- * Folders that carry what builders are told, wherever they are: skills, their
- * release archives, agent folders, and build caches, whose archives hold
- * copies of the built skills.
+ * Folders that carry what builders are told, wherever they are: skills, the
+ * package build's copy of the global skill, their release archives, agent
+ * folders, and build caches, whose archives hold copies of the built skills.
  */
-const TOLD_FOLDERS = new Set(["skills", "artifacts", ".turbo", ...AGENT_FOLDERS]);
+const TOLD_FOLDERS = new Set(["skills", "global-skill", "artifacts", ".turbo", ...AGENT_FOLDERS]);
 
 /**
  * What a blind judge mustn't read in a checkout: the paths in `HIDDEN`, and

@@ -1331,7 +1331,7 @@ describe.skipIf(process.platform === "win32")("refresh and this machine's global
     expect(readJson(path.join(cli, "package.json"))).toMatchObject({ version: CURRENT_RELEASE });
     for (const link of [".agents/skills/patchy", ".claude/skills/patchy"])
       expect(readFileSync(path.join(home, link, "SKILL.md"), "utf8")).toBe(
-        readFileSync(path.join(packageDir, "skills/patchy/SKILL.md"), "utf8")
+        readFileSync(path.join(packageDir, "global-skill/SKILL.md"), "utf8")
       );
     const again = await runCli(["refresh", "--json"], { cwd: dir, env });
     expect(again, again.stderr).toMatchObject({ status: 0, stderr: "" });

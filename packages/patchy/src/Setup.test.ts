@@ -18,15 +18,18 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Setup from "./Setup.js";
 
-/** A home directory and installed-looking `patchy` packages with their bundled skill. */
+/**
+ * A home directory and installed-looking `patchy` packages with their bundled skill, at
+ * `global-skill` or, as releases before the copy shipped it and linked agents to it, `skills/patchy`.
+ */
 const fixture = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "patchy setup " });
   const home = path.join(root, "home");
   mkdirSync(home);
-  const installed = (prefix: string, references = ["onboarding.md"]) => {
+  const installed = (prefix: string, references = ["onboarding.md"], at = "global-skill") => {
     const pkg = path.join(root, prefix, "lib/node_modules/patchy");
-    const skill = path.join(pkg, "skills/patchy");
+    const skill = path.join(pkg, at);
     mkdirSync(path.join(skill, "references"), { recursive: true });
     writeFileSync(path.join(pkg, "package.json"), JSON.stringify({ name: "patchy" }));
     writeFileSync(path.join(skill, "SKILL.md"), `# Patchy from ${prefix}\n`);
@@ -88,13 +91,13 @@ it.layer(NodeFileSystem.layer)("patchy setup", (it) => {
   );
 
   it.effect(
-    "replaces links into another patchy package, including one left by a removed prefix",
+    "replaces an earlier release's links into its patchy package, including one left by a removed prefix",
     () =>
       Effect.gen(function* () {
         const { root, home, skill, installed, agents, claude, copy } = yield* fixture;
         mkdirSync(path.dirname(agents), { recursive: true });
         mkdirSync(path.dirname(claude), { recursive: true });
-        symlinkSync(installed("previous"), agents);
+        symlinkSync(installed("previous", undefined, "skills/patchy"), agents);
         symlinkSync(path.join(root, "uninstalled/lib/node_modules/patchy/skills/patchy"), claude);
         yield* Setup.link(home, skill);
         assert.strictEqual(readlinkSync(agents), copy);
