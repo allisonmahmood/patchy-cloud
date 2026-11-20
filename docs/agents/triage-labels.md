@@ -29,7 +29,7 @@ Triage sets one more axis: **which part of the codebase the issue touches**. App
 | `area:cli`          | `packages/patchy` — the `patchy` package — and the `skills/` it ships                                                                                                                                                                                                                      |
 | `area:core`         | `packages/core` — page titles, looks, ids, crypto                                                                                                                                                                                                                                          |
 | `area:ci`           | `.github/`, `scripts/`, shared `test/` infrastructure, `lint/`, dependency `patches/`, the dev `scenarios/`, root-level workspace, test, tool-version and file-handling config, and the T3 Code project config (`t3.json`, `favicon.svg`). Lockfile changes alone do not apply this label. |
-| `area:docs`         | `docs/`, `examples/`, README, and other Markdown                                                                                                                                                                                                                                           |
+| `area:docs`         | `docs/`, the public docs site in `apps/docs`, `examples/`, README, and other Markdown                                                                                                                                                                                                      |
 
 This table and the globs in `.github/labeler.yml` are meant to say the same thing. If you change one, change the other.
 

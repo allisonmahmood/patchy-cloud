@@ -1,0 +1,16 @@
+{
+  "title": "Patchy Cloud",
+  "description": "How Patchy Cloud works: patches and their tiers, sharing, tables and files, integrations, people's agents, the CLI, limits, and security and data.",
+  "pages": [
+    "index",
+    "getting-started",
+    "patches-and-tiers",
+    "sharing-and-access",
+    "primitives",
+    "integrations",
+    "agents-and-mcp",
+    "cli",
+    "limits",
+    "security-and-data"
+  ]
+}

@@ -1,5 +1,8 @@
 import { registry, type LimitDefinition, type LimitId } from "./registry.js";
 
+// The public docs' Limits page, an allowlisted rendering of the same registry.
+export { renderBuilderLimits } from "./builderLimits.js";
+
 const entries = Object.entries(registry) as [LimitId, LimitDefinition][];
 
 function table(rows: readonly [LimitId, LimitDefinition][]): string {

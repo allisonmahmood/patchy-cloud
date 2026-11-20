@@ -97,5 +97,7 @@
       - any-glob-to-any-file:
           - "docs/**"
           - "**/*.md"
+          # The public docs site.
+          - "apps/docs/**"
           # Sample artifacts that demonstrate published output.
           - "examples/**"
