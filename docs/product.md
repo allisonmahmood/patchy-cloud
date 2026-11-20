@@ -1453,7 +1453,10 @@ saving the encrypted credential. It refuses personal access tokens and public co
 tokens, which act for one person.
 
 Share each database directly in Notion. The Overview shows the data sources and properties the
-connection discovered, including status options and relation targets in its metadata. Search
+connection discovered, including status options and relation targets in its metadata, and
+names the properties it left out: formulas, rollups and other unsupported types. Notion hides
+a relation from the connection entirely while its target database isn't shared with it, so
+discovery can't list that one; sharing the target and refreshing brings it back. Search
 can take time to find newly shared databases. Refresh creates a new schema revision, and a
 replacement token must belong to the same workspace. The access setting is Read or Read and
 write. Changing it creates a new revision with the same token.
