@@ -24,8 +24,10 @@ minimumReleaseAge: 1440
 pmOnFail: ignore
 # A package's optional peers resolve only from its own project's dependencies. Without
 # this, the docs app's React fills @clerk/backend's and @clerk/shared's optional React
-# peers for packages/auth and packages/companies, so the server's dependency tree carries
-# React. The server image must hold neither React nor Next.js.
+# peers in the lockfile for packages/auth and packages/companies, the server's own
+# packages, so their resolution follows the docs app's React. The server's staged
+# production set (`deploy --prod --legacy`) re-resolves peers and stays free of React
+# and Next.js either way.
 projectScopedOptionalPeers: true
 # Two copies of `effect` in the tree break Context/Layer identity, so every
 # transitive `effect` resolves to the catalog version. The @effect/* packages we
