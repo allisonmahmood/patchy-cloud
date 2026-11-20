@@ -8,7 +8,7 @@ description: Get into a company, set up a computer, sign it in, publish a first 
 Every Patchy user belongs to exactly one company. There are two ways in:
 
 - **An invitation.** A company admin invites your email address with a role. Signing in from the invitation's link, you choose **Join** on the company. An invitation lasts 30 days, and an admin can resend it.
-- **The waitlist.** During the private beta, new accounts come only from an invitation's link, and the sign-in page offers **Join the waitlist**. Once you're let in with no invitation waiting, you create a company: you name it, choose its handle and become its first admin. A solo builder is a company of one. Someone at Patchy can also send a beta link, which lets one person skip the waitlist.
+- **The waitlist.** During the private beta, new accounts come only from an invitation's link, and the sign-in page offers **Join the waitlist**. Once you're approved, an email invites you to create your account. Signed in with no company's invitation waiting, you create a company: you name it, choose its handle and become its first admin. A solo builder is a company of one. Someone at Patchy can also send a beta link, which lets one person skip the waitlist.
 
 You sign in with Google, Microsoft or a code sent to your email; there are no passwords. Creating an account means accepting the [terms](https://patchyhq.com/cloud/terms) and the [privacy notice](https://patchyhq.com/cloud/privacy).
 
@@ -22,7 +22,7 @@ Patchy is built from a computer with Node.js 22.22.0 or newer and npm. The quick
 Set up Patchy using https://cloud.patchyhq.com/llms.txt
 ```
 
-The portal shows the same line in its **Final step** dialog after you first sign in, and **Add a computer** on Your agents gives it again later. The page it names tells the agent how to install the CLI, links Patchy's agent skill so the agent knows how to use it, and starts signing the computer in. The agent then walks through the rest of setup: for an admin whose company has no look yet, the look its pages start in, then a welcome page and an idea for a first patch. Each step is optional.
+The portal shows the same line in its **Final step** dialog after you first sign in, and **Add a computer** on Your agents gives it again later. The page it names tells the agent how to install the CLI, links Patchy's agent skill so the agent knows how to use it, and starts signing the computer in. The agent then offers the rest of setup, one optional step at a time: in Claude Code, adding Patchy to its auto mode settings as the company's own; for an admin whose company has no look yet, the look its pages start in; then a welcome page and an idea for a first patch.
 
 To install the CLI yourself on macOS or Linux, run the instance's install line:
 
@@ -35,10 +35,10 @@ The installer checks the release's integrity before installing it under `~/.patc
 ## Sign the computer in
 
 ```sh
-patchy login
+patchy login --api-url https://cloud.patchyhq.com
 ```
 
-The CLI prints a URL and a short code, and doesn't open a browser itself. Open the URL in your own signed-in browser, check that it shows the same code as your terminal, give the computer a name such as "Sam's laptop", and confirm. The code lasts ten minutes. **Deny** ends a login you didn't start.
+`--api-url` names the instance to sign in to. The CLI saves it, so later commands go there without the flag. The CLI prints a URL and a short code, and doesn't open a browser itself. Open the URL in your own signed-in browser, check that it shows the same code as your terminal, give the computer a name such as "Sam's laptop", and confirm. The code lasts ten minutes. **Deny** ends a login you didn't start.
 
 Confirming saves a **publishing key** on the computer. It acts as you, for every agent on that computer, and lasts 90 days, or until it goes 30 days unused, whichever comes first. **Your agents** in the portal lists each computer and disconnects it. `patchy whoami` shows which user, company and computer the CLI is acting as.
 
@@ -86,6 +86,7 @@ Publish prints the address and who can open it, among other lines:
 Published patch
 URL: https://cloud.patchyhq.com/acme/hello
 Scope: company (signed-in colleagues in your company)
+Patch ID: k7f2m9x1a3b8
 Tier: 1
 Version: 1
 …
@@ -97,9 +98,10 @@ A page carries everything it uses: inline scripts and styles, with images and fo
 
 ## Start a patch repo
 
-A tool that keeps data, enforces rules or reads company systems is built in a **patch repo**:
+A tool that keeps data, enforces rules or reads company systems is built in a **patch repo**. A repo needs pnpm on the computer too, and `init` makes only the repo's own folder, so make its parent first:
 
 ```sh
+mkdir -p ~/Patchy
 patchy init ~/Patchy/team-notes --purpose "Track the team's notes and who owns each"
 ```
 

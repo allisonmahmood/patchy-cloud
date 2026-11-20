@@ -13,7 +13,7 @@ A patch's **audience** says who can open it. There are three:
 
 The audience must include the patch's owner. On top of it, the owner can share a patch with **guests**, named people at other companies.
 
-Patchy checks access on every request. Someone removed from the audience, or from a team the audience names, loses the patch on their next request, and any page of it they have open stops.
+Patchy checks access on every request. Someone removed from the audience, or from a team the audience names, loses the patch on their next request, and any page of it they have open closes. Work they started just before the change may still finish.
 
 ## Choosing the audience
 
@@ -39,7 +39,7 @@ In the portal, **Share** on a patch opens the Share dialog, where the owner or a
 | A member of another company, not a guest    | The same "not found" as a missing address         |
 | A deactivated user                          | A page saying their account is deactivated        |
 
-A missing patch and one the reader can't open look the same, so a link confirms nothing to someone outside it. There is no request-access button.
+To a colleague outside a team patch's audience, or a member of another company who isn't a guest, the patch looks the same as a missing one, so a link confirms nothing to them. A signed-out reader gets the sign-in page for any patch that exists, open to them or not: sharing hides what a patch holds, not that its address is taken. There is no request-access button.
 
 ## Guests
 

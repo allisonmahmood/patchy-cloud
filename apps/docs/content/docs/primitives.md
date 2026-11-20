@@ -34,7 +34,7 @@ export default defineConfig({
 
 The description says what one row is, which keys identify or link it, and the units of its numbers; agents read it when they look for data to reuse.
 
-- **Columns** are `text`, `integer`, `number`, `boolean`, `timestamp`, `json`, `ref` (a typed row id, indexed but not a foreign key) and `member` (a company user, on tier 2). A column can be optional or have a default.
+- **Columns** are `text`, `integer`, `number`, `boolean`, `timestamp`, `json`, `ref` (a typed row id, indexed but not a foreign key) and `member` (a company user, on tier 2). Any column can be optional, and every kind but `member` can have a default.
 - **Every row** gets an `id`, `createdAt` and `updatedAt` from Patchy.
 - **Operations** are `get`, `getMany`, `list`, `insert`, `insertMany`, `update` and `delete`. `list` reads one page through an index, 100 rows by default and at most 1,000, with a cursor for the next page. `insertMany` writes all its rows or none.
 - **Live reads.** A page can subscribe to a `list` or `get` with `useQuery`, so a colleague's write shows without a reload.
@@ -53,7 +53,7 @@ On tier 2, handlers use the same operations through `ctx.tables`, and the page c
 
 ### Who reads and writes
 
-On tier 1, everyone who can open the patch can read and write every row of its tables, as themselves. Hiding rows in the page is not access control. On tier 2, the page has no direct table access: handlers decide what each viewer reads and changes, and their writes to the patch's own tables act as the patch. Every write is recorded for the company's admins.
+On tier 1, every colleague and guest who can open the patch can read and write every row of its tables, as themselves, while a public page reads none. Hiding rows in the page is not access control. On tier 2, the page has no direct table access: handlers decide what each viewer reads and changes, and their writes to the patch's own tables act as the patch. Every write is recorded for the company's admins.
 
 ### Changing a published schema
 

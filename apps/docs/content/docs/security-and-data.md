@@ -5,7 +5,7 @@ description: Who can open a patch, what a patch and an agent can reach, how comp
 
 ## Who can open a patch
 
-A patch opens only for its audience, the company, some of its teams or anyone with the link, and for guests it was shared with by name. Patchy checks on every request. Someone who loses access loses it on their next request, and any page of the patch they have open stops. A signed-out reader gets the sign-in page; a reader from another company gets the same "not found" as a missing address, so a link confirms nothing to them. [Sharing and access](/docs/sharing-and-access) has the details.
+A patch opens only for its audience, the company, some of its teams or anyone with the link, and for guests it was shared with by name. Patchy checks on every request. Someone who loses access loses it on their next request and any page of the patch they have open closes, though work they started just before may still finish. A reader from another company who isn't a guest, or a colleague outside the patch's teams, gets the same "not found" as a missing address, so a link confirms nothing to them. A signed-out reader gets the sign-in page for any patch that exists: sharing hides what a patch holds, not that its address is taken. [Sharing and access](/docs/sharing-and-access) has the details.
 
 Only a tier 1 page can be public, and only its current version. A public page reaches no data, loads no analytics and carries no session for anyone outside its company.
 
@@ -13,7 +13,7 @@ Only a tier 1 page can be public, and only its current version. A public page re
 
 - **No passwords.** People sign in with Google, Microsoft or a code sent to their email.
 - **Computers** get a publishing key through a login the person confirms in their own signed-in browser, checking that it shows the same code as the terminal. A key acts as its person, lasts 90 days or until it goes 30 days unused, and never opens a patch's page.
-- **Agents** connect through a consent page the person answers in their own browser, every time. A connection works only while the company's agent access is on, and ends after 30 days without a call.
+- **Agents** connect through a consent page the person answers in their own browser, every time. An agent's tool calls go through only while the company's agent access is on, and its connection ends after 30 days without a call.
 - **Your agents**, in the portal, lists every computer and agent acting as the person, when each was last used, and disconnects any of them. **Disconnect everything** ends them all at once.
 - **Deactivating** a user ends their access and every credential they hold on their next request.
 
@@ -39,18 +39,18 @@ An agent gets no rights its person lacks, and reaches only the tools a patch's b
 
 An admin connects each outside system in the browser. Its credential is stored encrypted and applied by Patchy on the server: it never appears on a page, in generated files or in patch code, and no CLI command accepts one.
 
-A connection reads as the credential the admin supplied, so everyone who can open a patch that declares it reads what that credential reaches through the patch. Each connect page says so before it saves anything. An admin can limit which teams build with a connection, block guests from patches that use it, pause it and disconnect it, and sees each connection's latest calls. [Integrations](/docs/integrations) lists what each one can reach.
+A connection reads as the credential the admin supplied, so everyone who can open a patch that declares it reads what that credential reaches through the patch. Each connect page says so before it saves anything. An admin can limit which teams build with a connection, block guests from patches that use it, pause it and disconnect it, and sees each connection's latest calls from the patches they can open. [Integrations](/docs/integrations) lists what each one can reach.
 
 ## Keeping companies and patches apart
 
 - **Companies.** Each user belongs to exactly one company, and a company's patches stay inside it unless someone shares one publicly or with a named guest. A guest opens only the patch shared with them, as themselves, never as an admin.
-- **Server code.** A company's tier 2 handlers run on a server that runs no other company's code. A server that is let go is stopped and never reused.
+- **Server code.** Each company's tier 2 handlers run in an isolated environment that runs no other company's code. Once released, that environment is stopped and never reused.
 - **Data.** A company's patch tables live in a database of the company's own, each patch's in a namespace of its own. A patch reads another patch's data only through tables and file stores that patch shares, read-only, and only while the viewer can open the source.
 - **Pages.** Each tier 1 page runs in a sandboxed frame on an origin of its own, apart from Patchy's pages and the session.
 
 ## Records
 
-- **Writes and calls.** Table and file writes and every integration call are recorded before they run. A tier 2 patch's log, readable by its owner and the company's admins, shows its mutations, its actions and the queries that log or fail: who made each, through which agent, and how it ended. It records what happened, not who read what.
+- **Writes and calls.** Table and file writes and every integration call are recorded before they run. A tier 2 patch's log shows its mutations, its actions and the queries that log or fail: who made each, through which agent, and how it ended. Its owner and the company's admins read it while they can open the patch. It is not a full record of who read what: a query that succeeds without logging leaves no entry.
 - **Opens.** Patchy keeps each person's record of the patches they open so their own Home can put their usual ones first. Nobody else, owner or admin, sees it.
 - **Patchy's own analytics.** Patchy reports its product events, such as a publish, a join or a share, by ids and states, never names, email addresses, URLs or page content. Its request diagnostics carry the ids of the person and the patch on each company page opened.
 

@@ -18,7 +18,7 @@ A patch belongs to one user in the company, its **owner**, who is the only one w
 
 **Publishing** creates a **version**, an immutable copy of the patch, and serves it at once to everyone the patch is shared with. There is no unpublished patch in the cloud: the working copy stays on the builder's computer.
 
-A version from a repo also keeps the repo it was built from: every file except what `.gitignore` excludes, never `.env` files, `.git` or `node_modules`, up to 2,000 files and 10 MiB. Anyone in the company who can open the patch can copy that repo with `patchy pull <patch>`, so a colleague, or the owner on a new computer, can work on it. Only the owner publishes from the copy, and secrets never belong in a repo.
+A version from a repo also keeps the repo it was built from, up to 2,000 files and 10 MiB: every file `.gitignore` doesn't exclude, apart from symlinks and the files Patchy regenerates. It never keeps `.env` files, `.git`, `node_modules` or local state. Anyone in the company who can open the patch can copy that repo with `patchy pull <patch>`, so a colleague, or the owner on a new computer, can work on it. Only the owner publishes from the copy, and secrets never belong in a repo.
 
 **Rollback** serves any earlier version again without making a new one. Tables, files, sharing, the description and the name stay as they are.
 
@@ -58,7 +58,7 @@ It reaches only its own patch:
 
 It has no server code and no outbound network. Other patches' shared tables and stores, the member directory and company connections are refused from the browser as `server_required`.
 
-Reads of its own tables can be live, so one viewer's write updates every other open copy without a reload. Every row of its tables is readable by whoever can open the patch, and its rules are advisory: a viewer can make the same writes from the browser's developer tools. Direct writes are last-write-wins.
+Reads of its own tables can be live, so one viewer's write updates every other open copy without a reload. Every colleague or guest who can open the patch can read every row of its tables, and its rules are advisory: a viewer can make the same writes from the browser's developer tools. Direct writes are last-write-wins.
 
 A tier 1 patch can be shared **public**, open to anyone with the link. A public patch runs its browser code and reaches no data: `me()` answers null and its tables and files are unavailable.
 
@@ -89,7 +89,7 @@ export const finish = mutation({
 
 The page calls it as `patchy.server.notes.finish({ id })`, from a typed client generated for the repo.
 
-Handlers run on Patchy's machines in credential-free processes, while someone has the patch open or their agent is calling it. They hold no login and no credential and have no path to the internet; everything they do goes through Patchy.
+Handlers run on Patchy's machines in credential-free processes, and Patchy starts them only while someone has the patch open or their agent is calling it. They hold no login and no credential and have no path to the internet; everything they do goes through Patchy.
 
 - A **query** reads under one read-only snapshot, and a page can keep it live.
 - A **mutation** groups its reads and writes of the patch's own tables into one transaction. A conflicting write runs the whole handler again, up to three attempts.
@@ -115,7 +115,7 @@ Tier 1 is the smaller thing to build, and live updates between viewers already w
 
 ### Changing tier
 
-Changing a patch's tier means editing `tier` in `patchy.config.ts`, running `patchy refresh` and publishing a new version. A version's tier never changes in place, and the patch keeps its id and its data.
+Changing a patch's tier means editing `tier` in `patchy.config.ts`, running `pnpm patchy refresh` and publishing a new version. A public page moving to tier 2 also needs `--share company` on that publish, since tier 2 can't be public. A version's tier never changes in place, and the patch keeps its id and its data.
 
 ### Tiers 3 and 4
 

@@ -23,7 +23,7 @@ Patchy Cloud runs at `https://cloud.patchyhq.com`.
 
 ## What it does not do
 
-- Patchy runs code only while someone is using it: a viewer with the patch open, or their agent calling it. Schedules, webhooks, inbound routes and other work with nobody there are not built.
+- Patchy starts a patch's work only while someone is using it: a viewer with the patch open, or their agent calling it. Schedules, webhooks, inbound routes and other work with nobody there are not built.
 - A tool reaches outside systems only through the company's integrations. Patch code has no network access of its own, and there is no way to connect an integration Patchy doesn't offer. A person or their agent can ask for one with `patchy request`.
 - Desktop Chromium-based browsers and Firefox are supported. Safari is untested, and phones are outside this release.
 

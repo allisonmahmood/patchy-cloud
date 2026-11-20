@@ -12,7 +12,7 @@ An **integration** is a capability Patchy builds and maintains for reaching an o
 - **Actions call it.** A tier 2 action reaches the connection through `ctx.connections`, and the page calls the action. Patch code calls the typed operations Patchy defines for each integration and never talks to the outside system directly.
 - **It acts as the viewer.** Patchy checks that the viewer can open the patch, and that the patch's owner may build with the connection, on every call, and records who made it. The outside system sees the connection's own credential, not each person.
 - **Everyone who can open the patch uses it.** Every member who can open a patch that declares a connection reads what the connection reaches, through that patch's handlers. An admin can let only some teams build with a connection, and can **block guests**, which closes every patch using it to guests from other companies.
-- **Admins see the calls.** Each connection's page lists its latest calls: when, from which patch and version, as whom, how long, and the outcome.
+- **Admins see the calls.** Each connection's page lists its latest calls: when, from which patch and version, as whom, how long, and the outcome. An admin sees the calls made from patches they can open.
 
 `patchy list connections` shows the company's connections and their state; `patchy list connections postgres/warehouse` shows what a connection holds, such as its tables or folders, without reading its data. An admin can **pause** a connection, which stops patches reading it and keeps its credential, and **disconnect** it once no version of any patch declares it.
 
@@ -41,7 +41,7 @@ One PostHog Cloud project, in the US or EU region, read-only. The admin pastes a
 
 ## Pidgeon
 
-[Pidgeon](https://pidgeon.ai) gives software real email inboxes. One Pidgeon connection is one inbox, such as `support@…`, with **Read** or **Read and send** access. A patch lists and reads its threads and messages, searches them and reads its labels; with send access, it also replies, sends, and changes a thread's status and labels, as the person using the patch. Each send carries a key the patch keeps for that email, so a retried send never goes out twice. Each connection sends at most 200 emails a UTC day.
+[Pidgeon](https://pidgeon.ai) gives software real email inboxes. One Pidgeon connection is one inbox, such as `support@…`, with **Read** or **Read and send** access. A patch lists and reads its threads and messages, searches them and reads its labels; with send access, it also replies, sends, and changes a thread's status and labels, as the person using the patch. Each send carries a key the patch keeps for that email, so a retry with the same key doesn't send it again for a day after it went. A send can also come back `held`, when Pidgeon keeps it for someone on the account to approve. Each connection sends at most 200 emails a UTC day.
 
 The key an admin makes in Pidgeon reaches the whole Pidgeon account. Patchy keeps patches to the one inbox on every call, and cutting Patchy off means revoking the key in Pidgeon.
 

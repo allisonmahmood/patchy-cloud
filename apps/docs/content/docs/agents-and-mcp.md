@@ -42,7 +42,7 @@ Files don't cross Patchy MCP: there are no uploads or file handles. Patchy doesn
 
 ### Turning it on and connecting
 
-**Agent access** is a company switch at Settings › Agent access. It starts off, and only an admin turns it on. While it is off, every agent's calls are refused, naming the admins; turning it back on lets the same connections work again.
+**Agent access** is a company switch at Settings › Agent access. It starts off, and only an admin turns it on. While it is off, every tool call is refused, naming the admins, and no new agent can connect; turning it back on lets the same connections work again.
 
 Each person connects their own agent from **Connect an app** on Your agents. For example:
 
@@ -77,7 +77,7 @@ Re-exporting a page's handler, as above, makes it a tool with the same arguments
 - A **read** is a query, or an action declared `readOnly: true`, which Patchy holds to reading. Anything else is a **change**.
 - A tool's description and argument schema are all an agent knows about it; each description is up to 2,000 characters, and one patch's tools fit in 60 KiB.
 - `ctx.agent` is `{ name }`, the client name the person approved, or null for a page's call. It is a label, never proof, and a patch can use it to tag or limit agent work.
-- A **change key** makes a retried change apply once. A retried mutation returns its first result; an action that writes is never run twice for one key.
+- A **change key** keeps a retried change from applying twice, for 24 hours on the same connection. A retried mutation returns its first result instead of writing again, or is refused if the patch was published in between. An action never runs a second time under one key, so one that timed out may have partly happened.
 - By default each person has 300 calls a minute per patch and 16 in flight, and a read's result is capped at 100,000 characters, so a large read needs paging and bulk work needs a tool that takes a list. See [Limits](/docs/limits).
 
 `pnpm patchy dev agent` lists the tools as an agent sees them, and `pnpm patchy dev agent <tool> '<json>'` calls one against the local dev runtime, as an agent would. A publish with agent tools lists them as reads and changes, and warns while the company's agent access is off.

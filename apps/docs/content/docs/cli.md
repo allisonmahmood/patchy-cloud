@@ -7,12 +7,12 @@ description: The patchy commands people and agents use most, and the contract an
 
 ## Signing in
 
-| Command         | What it does                                                                                             |
-| --------------- | -------------------------------------------------------------------------------------------------------- |
-| `patchy login`  | Prints a URL and a code to confirm in your signed-in browser, then saves this computer's publishing key. |
-| `patchy whoami` | Shows the user, company, role and computer the CLI acts as.                                              |
-| `patchy status` | Shows the instance and whether a key is available, without touching the network.                         |
-| `patchy logout` | Forgets this computer's key and revokes it.                                                              |
+| Command                                             | What it does                                                                                                                                        |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `patchy login --api-url https://cloud.patchyhq.com` | Prints a URL and a code to confirm in your signed-in browser, then saves this computer's publishing key and the instance, which later commands use. |
+| `patchy whoami`                                     | Shows the user, company, role and computer the CLI acts as.                                                                                         |
+| `patchy status`                                     | Shows the instance and whether a key is available, without touching the network.                                                                    |
+| `patchy logout`                                     | Forgets this computer's key and revokes it.                                                                                                         |
 
 ## Publishing a page
 
@@ -50,11 +50,11 @@ description: The patchy commands people and agents use most, and the contract an
 | `patchy list connections`                        | Lists the company's connections; `--all` adds the integrations on offer.             |
 | `patchy list connections <integration>/<handle>` | Shows what one connection holds, such as a database's tables or a mailbox's folders. |
 
-`--state retired` or `--state all` includes retired and deleted patches.
+`--state retired` lists retired patches instead, and `--state all` lists every patch, deleted ones not yet reclaimed included.
 
 ## Managing a patch
 
-Inside a published repo these act on its patch; elsewhere they take the HTML file it was published from or `--patch <id>`.
+Inside a published repo these act on its patch. Elsewhere, `patchy logs` takes `--patch <id>`, and the others take the HTML file the page was published from or `--patch <id>`.
 
 | Command                    | What it does                                                                         |
 | -------------------------- | ------------------------------------------------------------------------------------ |
