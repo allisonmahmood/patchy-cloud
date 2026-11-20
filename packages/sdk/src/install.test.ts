@@ -9,6 +9,7 @@ import {
   readdirSync,
   readFileSync,
   readlinkSync,
+  renameSync,
   rmSync,
   writeFileSync
 } from "node:fs";
@@ -157,6 +158,12 @@ describe.skipIf(process.platform === "win32")("the instance installer", () => {
         { env, encoding: "utf8" }
       );
       expect(earlier.status, earlier.stderr).toBe(0);
+      // Those installers' releases carried the skill at skills/patchy.
+      mkdirSync(path.join(installed(prefix), "skills"));
+      renameSync(
+        path.join(installed(prefix), "global-skill"),
+        path.join(installed(prefix), "skills/patchy")
+      );
       // Version managers put this Node's bin first.
       const managed = { ...env, PATH: [path.join(prefix, "bin"), env.PATH].join(path.delimiter) };
       expect(

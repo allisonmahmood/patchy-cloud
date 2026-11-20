@@ -74,7 +74,10 @@ const refusals = {
   write_conflict: [409, "Notion reported a conflict and saved nothing. Try again."],
   unknown_outcome: [503, "Notion may have saved the write. Read before writing again."],
   source_rate_limited: [429, "Notion is limiting requests. Try again shortly."],
-  shape_mismatch: [422, "Notion answered in a shape Patchy doesn't read."],
+  shape_mismatch: [
+    422,
+    "Notion answered in a shape Patchy doesn't read. If the connection is missing a capability, such as Read content, turn it on in Notion and try again."
+  ],
   too_large: [413, "Notion's answer is larger than Patchy reads."],
   timeout: [504, "Notion did not answer in time."],
   busy: [

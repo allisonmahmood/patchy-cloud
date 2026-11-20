@@ -186,12 +186,17 @@ try {
     "dist/dev.js",
     "dist/devChild.js",
     "node_modules/@electric-sql/pglite/package.json",
-    "skills/patchy/SKILL.md",
+    "global-skill/SKILL.md",
     "LICENSE",
     "README.md"
   ]) {
     assert.ok(packedFiles.has(requiredFile), `packed CLI is missing ${requiredFile}`);
   }
+  // pnpm asks every patch repo to approve a dependency's `skills/<name>/SKILL.md` as agent skills.
+  assert.ok(
+    ![...packedFiles].some((file) => file.startsWith("skills/")),
+    "packed CLI ships nothing under skills/"
+  );
 
   const tarballPath = path.join(packDir, tarballs[0]);
   console.log("[packed-cli-e2e] installing tarball offline with an empty npm cache");
@@ -2020,7 +2025,7 @@ function assertViewerDoor(viewer) {
 async function startPostgres() {
   if (postgres) return postgres.databaseUrl;
   // Imported here, not at the top: embedded-postgres installs process-exiting
-  // signal handlers (async-exit-hook) the moment it loads, which would pre-empt
+  // signal handlers (exit-hook) the moment it loads, which would pre-empt
   // this harness's own signal latch and cleanup. Only a process that starts
   // Postgres pays that, and it takes the handlers back out — `cleanup` stops
   // Postgres itself.

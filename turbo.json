@@ -15,7 +15,7 @@
         "$TURBO_ROOT$/skills/**",
         "$TURBO_ROOT$/LICENSE"
       ],
-      "outputs": ["dist/**", "artifacts/**", "skills/**", "LICENSE"]
+      "outputs": ["dist/**", "artifacts/**", "global-skill/**", "LICENSE"]
     },
     "@patchy/core#build": {
       "dependsOn": ["^build"],
