@@ -402,6 +402,36 @@ export const registry = {
     refusal: null,
     overridable: false
   },
+  "notion.calls.concurrent": {
+    kind: "contract",
+    default: 3,
+    unit: "calls",
+    scope: "host",
+    measure:
+      "Notion calls at once through one internal connection, by its bot, in a server process; an excess call waits within its deadline",
+    refusal: "busy",
+    overridable: false
+  },
+  "notion.response.bytes": {
+    kind: "contract",
+    default: 8388608,
+    unit: "bytes",
+    scope: "company",
+    measure:
+      "One raw Notion answer before decoding, the answers one call reads together, and a discovered snapshot",
+    refusal: "too_large",
+    overridable: false
+  },
+  "notion.discovery.deadline": {
+    kind: "contract",
+    default: 60000,
+    unit: "milliseconds",
+    scope: "company",
+    measure:
+      "Notion token check and all discovery requests when connecting, refreshing or replacing a token",
+    refusal: "timeout",
+    overridable: false
+  },
   "github.connection.repositories": {
     kind: "contract",
     default: 100,

@@ -12,6 +12,7 @@ import * as Redacted from "effect/Redacted";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import * as AttioSource from "../attio/Source.js";
+import * as NotionSource from "../notion/Source.js";
 import * as ConnectionStore from "../ConnectionStore.js";
 import * as CredentialKeys from "../CredentialKeys.js";
 import * as PidgeonSource from "../pidgeon/Source.js";
@@ -46,6 +47,7 @@ const fixture = Layer.mergeAll(
   PostHogSource.layer,
   PidgeonSource.layer,
   AttioSource.layer,
+  NotionSource.layer,
   Layer.effect(Certs, ImapTest.certificates([host]))
 ).pipe(Layer.provideMerge(Testing.layer()), Layer.provideMerge(NodeCryptography.layer));
 

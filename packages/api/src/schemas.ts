@@ -14,6 +14,7 @@ import { Snapshot } from "./postgresSnapshot.js";
 import { PostHogSnapshot } from "./posthogSnapshot.js";
 import { PidgeonSnapshot } from "./pidgeonSnapshot.js";
 import { AttioSnapshot } from "./attioSnapshot.js";
+import { NotionSnapshot } from "./notionSnapshot.js";
 import { ImapSnapshot } from "./imapSnapshot.js";
 import { GithubSnapshot } from "./githubSnapshot.js";
 import { RepoKind, RepoSnapshot, RepoSummary } from "./repo.js";
@@ -602,6 +603,10 @@ export const AttioDeclaration = Schema.Struct({
   ...PostgresDeclaration.fields,
   kind: Schema.Literal("attio")
 });
+export const NotionDeclaration = Schema.Struct({
+  ...PostgresDeclaration.fields,
+  kind: Schema.Literal("notion")
+});
 /** One IMAP mailbox login, read-only. */
 export const ImapDeclaration = Schema.Struct({
   ...PostgresDeclaration.fields,
@@ -618,6 +623,7 @@ export const ConnectionDeclaration = Schema.Union([
   PostHogDeclaration,
   PidgeonDeclaration,
   AttioDeclaration,
+  NotionDeclaration,
   ImapDeclaration,
   GithubDeclaration
 ]);
@@ -710,6 +716,7 @@ export const Manifest = Schema.Struct({
       PostHogDeclaration,
       PidgeonDeclaration,
       AttioDeclaration,
+      NotionDeclaration,
       ImapDeclaration,
       GithubDeclaration,
       SharedTableDeclaration,
@@ -770,6 +777,11 @@ export const GenerationManifest = Schema.Struct({
         revision: Schema.optionalKey(Revision)
       }),
       Schema.Struct({
+        ...NotionDeclaration.fields,
+        id: Schema.optionalKey(NonEmptyText),
+        revision: Schema.optionalKey(Revision)
+      }),
+      Schema.Struct({
         ...ImapDeclaration.fields,
         id: Schema.optionalKey(NonEmptyText),
         revision: Schema.optionalKey(Revision)
@@ -794,7 +806,15 @@ export const GenerationManifest = Schema.Struct({
 }).check(distinctPrimitiveNames, memberColumnsValid, Schema.makeFilter(handlerTablesValid));
 
 /** Every integration Patchy ships; a connection's handle is unique within its integration. */
-export const integrations = ["postgres", "posthog", "pidgeon", "attio", "imap", "github"] as const;
+export const integrations = [
+  "postgres",
+  "posthog",
+  "pidgeon",
+  "attio",
+  "imap",
+  "github",
+  "notion"
+] as const;
 export const Integration = Schema.Literals(integrations);
 export type Integration = typeof Integration.Type;
 
@@ -845,6 +865,7 @@ export const PostgresConnectionDetail = detail("postgres", Snapshot.fields);
 export const PostHogConnectionDetail = detail("posthog", PostHogSnapshot.fields);
 export const PidgeonConnectionDetail = detail("pidgeon", PidgeonSnapshot.fields);
 export const AttioConnectionDetail = detail("attio", AttioSnapshot.fields);
+export const NotionConnectionDetail = detail("notion", NotionSnapshot.fields);
 export const ImapConnectionDetail = Schema.Struct({
   ...detail("imap", ImapSnapshot.fields).fields,
   /** When its mail server refused the password; calls fail `auth_failed` until it's fixed. */
@@ -857,6 +878,7 @@ export const ConnectionDetail = Schema.Union([
   PostHogConnectionDetail,
   PidgeonConnectionDetail,
   AttioConnectionDetail,
+  NotionConnectionDetail,
   ImapConnectionDetail,
   GithubConnectionDetail
 ]);
@@ -908,6 +930,10 @@ export const DeclarationMetadata = Schema.Struct({
   attio: Schema.Record(
     Schema.String,
     Schema.Struct({ declaration: AttioDeclaration, snapshot: AttioSnapshot })
+  ).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
+  notion: Schema.Record(
+    Schema.String,
+    Schema.Struct({ declaration: NotionDeclaration, snapshot: NotionSnapshot })
   ).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
   // As for Pidgeon: a release before IMAP generates none.
   imap: Schema.Record(

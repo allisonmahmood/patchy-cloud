@@ -97,14 +97,10 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
         const refused = lowerTierUses(unresolved);
         if (refused !== undefined) return yield* refused;
         for (const [alias, declaration] of Object.entries(unresolved.uses)) {
-          // PostHog, Pidgeon, Attio, IMAP and GitHub have no fixture: dev reads the real connection.
           if (
-            declaration.kind === "members" ||
-            declaration.kind === "posthog" ||
-            declaration.kind === "pidgeon" ||
-            declaration.kind === "attio" ||
-            declaration.kind === "imap" ||
-            declaration.kind === "github"
+            declaration.kind !== "postgres" &&
+            declaration.kind !== "sharedTable" &&
+            declaration.kind !== "sharedStore"
           )
             continue;
           const relative =
@@ -143,13 +139,10 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
         });
         const metadata = generated.metadata;
         if (
-          Object.keys(metadata.postgres).length +
-            Object.keys(metadata.posthog).length +
-            Object.keys(metadata.pidgeon).length +
-            Object.keys(metadata.attio).length +
-            Object.keys(metadata.imap).length +
-            Object.keys(metadata.github).length +
-            Object.keys(metadata.shared).length !==
+          Object.values(metadata).reduce(
+            (count, entries) => count + Object.keys(entries).length,
+            0
+          ) !==
           Object.values(manifest.uses).filter((declaration) => declaration.kind !== "members")
             .length
         )
@@ -159,37 +152,16 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
         for (const [alias, declaration] of Object.entries(manifest.uses)) {
           if (declaration.kind === "members") continue;
           const actual =
-            declaration.kind === "postgres"
-              ? metadata.postgres[alias]?.declaration
-              : declaration.kind === "posthog"
-                ? metadata.posthog[alias]?.declaration
-                : declaration.kind === "pidgeon"
-                  ? metadata.pidgeon[alias]?.declaration
-                  : declaration.kind === "attio"
-                    ? metadata.attio[alias]?.declaration
-                    : declaration.kind === "imap"
-                      ? metadata.imap[alias]?.declaration
-                      : declaration.kind === "github"
-                        ? metadata.github[alias]?.declaration
-                        : metadata.shared[alias]?.declaration;
+            "handle" in declaration
+              ? metadata[declaration.kind][alias]?.declaration
+              : metadata.shared[alias]?.declaration;
           if (
             actual === undefined ||
             actual.kind !== declaration.kind ||
             actual.id !== declaration.id ||
             actual.revision !== declaration.revision ||
-            ((actual.kind === "postgres" ||
-              actual.kind === "posthog" ||
-              actual.kind === "pidgeon" ||
-              actual.kind === "attio" ||
-              actual.kind === "imap" ||
-              actual.kind === "github") &&
-              (declaration.kind === "postgres" ||
-                declaration.kind === "posthog" ||
-                declaration.kind === "pidgeon" ||
-                declaration.kind === "attio" ||
-                declaration.kind === "imap" ||
-                declaration.kind === "github") &&
-              actual.handle !== declaration.handle) ||
+            ("handle" in declaration &&
+              (!("handle" in actual) || actual.handle !== declaration.handle)) ||
             (actual.kind === "sharedTable" &&
               declaration.kind === "sharedTable" &&
               (actual.patchId !== declaration.patchId || actual.table !== declaration.table)) ||

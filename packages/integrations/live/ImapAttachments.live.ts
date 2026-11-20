@@ -16,6 +16,7 @@ import * as Schema from "effect/Schema";
 import { ImapFlow } from "imapflow";
 import { inject } from "vitest";
 import * as AttioSource from "../src/attio/Source.js";
+import * as NotionSource from "../src/notion/Source.js";
 import * as ConnectionStore from "../src/ConnectionStore.js";
 import * as CredentialKeys from "../src/CredentialKeys.js";
 import * as ImapNetwork from "../src/imap/Network.js";
@@ -66,6 +67,7 @@ const services = Layer.mergeAll(
   PostHogSource.layer,
   PidgeonSource.layer,
   AttioSource.layer,
+  NotionSource.layer,
   Sessions.layer.pipe(Layer.provideMerge(Source.layer.pipe(Layer.provide(network))))
 ).pipe(Layer.provideMerge(Testing.layer()), Layer.provideMerge(NodeCryptography.layer));
 

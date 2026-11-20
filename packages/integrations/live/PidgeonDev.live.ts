@@ -30,6 +30,7 @@ import * as Keys from "../src/pidgeon/Keys.js";
 import * as PostgresSource from "../src/postgres/Source.js";
 import * as PostHogSource from "../src/posthog/Source.js";
 import * as AttioSource from "../src/attio/Source.js";
+import * as NotionSource from "../src/notion/Source.js";
 import * as ImapTest from "../src/test/imap.js";
 import * as GithubTest from "../src/test/github.js";
 import * as SqlConnectionStore from "../src/SqlConnectionStore.js";
@@ -95,6 +96,7 @@ const door = HttpRouter.serve(routes, { disableLogger: true, disableListenLog: t
       ),
       Layer.provideMerge(PostHogSource.layer),
       Layer.provideMerge(AttioSource.layer),
+      Layer.provideMerge(NotionSource.layer),
       Layer.provideMerge(ImapTest.offline),
       Layer.provideMerge(GithubTest.unconfigured),
       Layer.provideMerge(Live.layer)

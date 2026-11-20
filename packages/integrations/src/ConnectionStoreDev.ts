@@ -80,6 +80,12 @@ export const layer = (metadata: ReadonlyArray<DevConnection> = []) => {
           integration: kept.integration,
           snapshot: { ...kept.snapshot, ...stamp }
         });
+      case "notion":
+        return Effect.succeed({
+          ...base,
+          integration: kept.integration,
+          snapshot: { ...kept.snapshot, ...stamp }
+        });
       case "github":
         return Effect.succeed({
           ...base,

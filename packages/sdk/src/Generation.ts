@@ -10,6 +10,7 @@ import {
   Generated,
   GenerateRequest,
   MANIFEST_VERSION,
+  Integration,
   isManagedOutputPath,
   type LookFiles,
   type LookRestore,
@@ -65,12 +66,13 @@ const labels = {
   pidgeon: "Pidgeon",
   attio: "Attio",
   imap: "Email (IMAP)",
-  github: "GitHub"
+  github: "GitHub",
+  notion: "Notion"
 } as const;
 export class ConnectionNotConnected extends Schema.TaggedError<ConnectionNotConnected>()(
   "SdkConnectionNotConnected",
   {
-    integration: Schema.Literals(["postgres", "posthog", "pidgeon", "attio", "imap", "github"]),
+    integration: Integration,
     handle: Schema.String
   }
 ) {
@@ -135,7 +137,7 @@ export class GenerationUnavailable extends Schema.TaggedError<GenerationUnavaila
 const sharedSourceErrors = (
   declaration: Exclude<
     (typeof GenerateRequest.Type)["manifest"]["uses"][string],
-    { kind: "postgres" | "posthog" | "pidgeon" | "attio" | "imap" | "github" | "members" }
+    { kind: Integration | "members" }
   >
 ) => {
   const source =
@@ -296,9 +298,9 @@ export const generate = Effect.fn("Generation.generate")(function* (
   const uses: Array<
     (typeof Generated.Type)["uses"][number] & {
       declaration: (typeof GenerateRequest.Type)["manifest"]["uses"][string];
-      skill: string;
+      skill?: string;
       context: string;
-      client: string;
+      client?: string;
       fixture?: string;
     }
   > = [];
@@ -317,6 +319,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
     attio: Record<string, (typeof DeclarationMetadata.Type)["attio"][string]>;
     imap: Record<string, (typeof DeclarationMetadata.Type)["imap"][string]>;
     github: Record<string, (typeof DeclarationMetadata.Type)["github"][string]>;
+    notion: Record<string, (typeof DeclarationMetadata.Type)["notion"][string]>;
     shared: Record<string, (typeof DeclarationMetadata.Type)["shared"][string]>;
   } = {
     postgres: Object.create(null),
@@ -325,18 +328,11 @@ export const generate = Effect.fn("Generation.generate")(function* (
     attio: Object.create(null),
     imap: Object.create(null),
     github: Object.create(null),
+    notion: Object.create(null),
     shared: Object.create(null)
   };
   const factories: Record<string, string> = Object.create(null);
-  const available = Object.values(request.manifest.uses).some(
-    (entry) =>
-      entry.kind === "postgres" ||
-      entry.kind === "posthog" ||
-      entry.kind === "pidgeon" ||
-      entry.kind === "attio" ||
-      entry.kind === "imap" ||
-      entry.kind === "github"
-  )
+  const available = Object.values(request.manifest.uses).some((entry) => "handle" in entry)
     ? yield* connections.list(companyId, viewerId).pipe(
         Effect.mapError(
           (cause) =>
@@ -352,14 +348,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
     if (declaration.kind === "members") continue;
     const context = `${root}/context/${alias}.md`;
     const client = `${root}/uses/${alias}.ts`;
-    if (
-      declaration.kind === "postgres" ||
-      declaration.kind === "posthog" ||
-      declaration.kind === "pidgeon" ||
-      declaration.kind === "attio" ||
-      declaration.kind === "imap" ||
-      declaration.kind === "github"
-    ) {
+    if ("handle" in declaration) {
       const connection = available.find(
         (entry) =>
           entry.integration === declaration.kind &&
@@ -464,6 +453,22 @@ export const generate = Effect.fn("Generation.generate")(function* (
           client
         });
         skills.add("patchy-imap");
+      } else if (stored.integration === "notion") {
+        const declared = { kind: "notion" as const, ...resolved };
+        const snapshot = stored.snapshot;
+        const { workspace, access, dataSources, exclusions } = snapshot;
+        metadata.notion[alias] = { declaration: declared, snapshot };
+        files.set(
+          context,
+          `# Notion connection ${connection.handle}\n\nSchema and access from snapshot revision ${resolved.revision}. This declaration provides discovery context only. To pick up changes, ask an admin to refresh the connection, then run patchy refresh.\n\n\`\`\`json\n${json({ workspace, access, dataSources, exclusions })}\`\`\`\n`
+        );
+        uses.push({
+          alias,
+          id: resolved.id,
+          revision: resolved.revision,
+          declaration: declared,
+          context
+        });
       } else if (stored.integration === "github") {
         // GitHub has no fixture: invented CI runs and pull requests never resemble a company's,
         // so dev reads the real repositories.
@@ -500,7 +505,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
         });
         skills.add("patchy-posthog");
       }
-      factories[alias] = `./uses/${alias}.js`;
+      if (files.has(client)) factories[alias] = `./uses/${alias}.js`;
     } else if (declaration.kind === "sharedStore") {
       const source = yield* patches
         .sharedStore(declaration.patchId, declaration.store, companyId, viewerId)

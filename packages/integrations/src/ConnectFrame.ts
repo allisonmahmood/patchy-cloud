@@ -17,8 +17,7 @@ import * as Fields from "./Fields.js";
 
 /**
  * Every integration's connect page: one Flow frame drawn from what the integration says, so
- * connecting Postgres, PostHog, Attio, Pidgeon, IMAP or GitHub differs in words and fields, never
- * layout.
+ * integrations differ in words and fields, never layout.
  * The frame owns the order, the Name section, the access list, the actions and where refusals
  * read; an integration supplies only the slots of its `ConnectSpec`.
  *

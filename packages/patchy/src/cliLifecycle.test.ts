@@ -5,7 +5,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import * as Schema from "effect/Schema";
 import { sha256 } from "../../../test/crypto.js";
-import { CURRENT_RELEASE, MANIFEST_VERSION, PublishRequest } from "@patchy/api";
+import { CURRENT_RELEASE, integrations, MANIFEST_VERSION, PublishRequest } from "@patchy/api";
 import {
   decodeDescriptionRequest,
   decodeForceRequest,
@@ -23,6 +23,8 @@ import {
   tempDir,
   validHtml
 } from "./test/cli.js";
+
+const connectionsListPath = `/api/connections?${new URLSearchParams({ integrations: integrations.join(",") })}`;
 
 describe("patch lifecycle commands", () => {
   const patchId = "abcdefghijkl";
@@ -726,7 +728,7 @@ describe("patchy list", () => {
       // Connections are never filtered by the patch flags; the list names every integration
       // this release decodes.
       expect(url.searchParams.get("integrations")).toBe(
-        "postgres,posthog,pidgeon,attio,imap,github"
+        "postgres,posthog,pidgeon,attio,imap,github,notion"
       );
       respond(200, projectConnections);
     });
@@ -952,11 +954,7 @@ describe("patchy list", () => {
     };
     const instance = await stubInstance((request, respond) => {
       // A bare handle only one connection has finds its integration first.
-      if (
-        request.url ===
-        "/api/connections?integrations=postgres%2Cposthog%2Cpidgeon%2Cattio%2Cimap%2Cgithub"
-      )
-        return respond(200, projectConnections);
+      if (request.url === connectionsListPath) return respond(200, projectConnections);
       expect(request.url).toBe("/api/connections/posthog/product");
       respond(200, detail);
     });
@@ -1040,11 +1038,7 @@ describe("patchy list", () => {
       }
     };
     const instance = await stubInstance((request, respond) => {
-      if (
-        request.url ===
-        "/api/connections?integrations=postgres%2Cposthog%2Cpidgeon%2Cattio%2Cimap%2Cgithub"
-      )
-        return respond(200, projectConnections);
+      if (request.url === connectionsListPath) return respond(200, projectConnections);
       expect(request.url).toBe("/api/connections/pidgeon/support");
       respond(200, detail);
     });
@@ -1201,11 +1195,7 @@ describe("patchy list", () => {
       };
       const instance = await stubInstance((request, respond) => {
         // A bare handle is looked up among every integration's connections first.
-        if (
-          request.url ===
-          "/api/connections?integrations=postgres%2Cposthog%2Cpidgeon%2Cattio%2Cimap%2Cgithub"
-        )
-          return respond(200, projectConnections);
+        if (request.url === connectionsListPath) return respond(200, projectConnections);
         expect(request.url).toBe("/api/connections/postgres/sales-db");
         respond(200, detail);
       });

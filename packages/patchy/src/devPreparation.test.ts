@@ -44,6 +44,7 @@ const harness = Effect.fn("test.preparation.harness")(function* ({
     attio: {},
     imap: {},
     github: {},
+    notion: {},
     shared: {}
   },
   duringGeneration = () => Effect.void
@@ -121,6 +122,7 @@ const shared = (declaration: typeof contacts | { revision: number }) => ({
   attio: {},
   imap: {},
   github: {},
+  notion: {},
   shared: { contacts: { declaration: { ...contacts, ...declaration }, tables: {}, uses: {} } }
 });
 
@@ -281,6 +283,7 @@ it.layer(NodeServices.layer)("DevPreparation.prepare", (it) => {
           attio: {},
           imap: {},
           github: {},
+          notion: {},
           posthog: {
             analytics: {
               declaration: { ...analytics, ...declaration },
@@ -355,6 +358,7 @@ it.layer(NodeServices.layer)("DevPreparation.prepare", (it) => {
         attio: {},
         imap: {},
         github: {},
+        notion: {},
         shared: {}
       });
     })
@@ -383,6 +387,7 @@ it.layer(NodeServices.layer)("DevPreparation.prepare", (it) => {
           attio: {},
           imap: {},
           github: {},
+          notion: {},
           shared: {
             assets: { declaration, definition: { description: "Source documents", shared: true } }
           }

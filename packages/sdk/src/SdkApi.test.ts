@@ -811,6 +811,7 @@ it.layer(layer)("SDK company generation", (it) => {
         attio: {},
         imap: {},
         github: {},
+        notion: {},
         shared: {}
       });
       assert.isFalse(output.files.some(({ path }) => path.startsWith("fixtures/")));
@@ -911,6 +912,7 @@ it.layer(layer)("SDK company generation", (it) => {
           attio: {},
           imap: {},
           github: {},
+          notion: {},
           shared: {}
         });
         for (const path of [
@@ -1000,6 +1002,54 @@ it.layer(layer)("SDK company generation", (it) => {
         const index = JSON.parse(file("patchy/_generated/index.json")!);
         assert.notProperty(index.uses[0], "fixture");
       })
+  );
+
+  it.effect("generates Notion context without importing a client", () =>
+    Effect.gen(function* () {
+      const sql = yield* PgClient.PgClient;
+      const snapshot = {
+        workspace: { id: "work", name: "Notion Probe" },
+        botId: "bot",
+        access: "read",
+        dataSources: [],
+        exclusions: []
+      } as const;
+      const display = {
+        workspace: snapshot.workspace,
+        botId: snapshot.botId,
+        access: snapshot.access,
+        keyHint: "…test"
+      };
+      yield* sql`INSERT INTO connections
+        (id, company_id, integration, handle, description, mode, status, display, credentials,
+         key_id, credential_revision, metadata_revision, created_by)
+        VALUES ('sdk-notion', ${identity.company.id}, 'notion', 'probe', 'Notion Probe',
+          'company', 'connected', ${sql.json(display)}, 'not-a-valid-ciphertext', 'missing-key', 1, 1, ${identity.user.id})`;
+      yield* sql`INSERT INTO connection_snapshots
+        (connection_id, company_id, integration, revision, snapshot)
+        VALUES ('sdk-notion', ${identity.company.id}, 'notion', 1, ${sql.json(snapshot)})`;
+      const client = yield* HttpClient.HttpClient;
+      const response = yield* client.execute(
+        HttpClientRequest.post("/api/sdk/generate").pipe(
+          HttpClientRequest.bearerToken(identity.machine.id),
+          HttpClientRequest.bodyJsonUnsafe({
+            ...generateRequest(),
+            manifest: {
+              ...Fixtures.manifest,
+              tier: 2,
+              uses: { probe: { kind: "notion", handle: "probe" } }
+            }
+          })
+        )
+      );
+      assert.strictEqual(response.status, 200);
+      const output = yield* decodeGenerated(yield* response.json);
+      assert.deepStrictEqual(output.uses, [{ alias: "probe", id: "sdk-notion", revision: 1 }]);
+      const file = (path: string) => output.files.find((item) => item.path === path)?.contents;
+      assert.include(file("patchy/_generated/context/probe.md")!, "Notion Probe");
+      assert.isUndefined(file("patchy/_generated/uses/probe.ts"));
+      assert.notInclude(file("patchy/_generated/server.ts")!, "./uses/probe.js");
+    })
   );
 
   it.effect("generates a Pidgeon declaration's client, context and skill, and no fixture", () =>

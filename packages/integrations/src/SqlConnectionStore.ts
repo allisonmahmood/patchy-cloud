@@ -8,6 +8,7 @@ import {
   ImapSnapshot,
   integrations,
   type Integration,
+  NotionSnapshot,
   PidgeonSnapshot,
   PostHogSnapshot
 } from "@patchy/api";
@@ -51,6 +52,7 @@ import {
   InvalidConnectionDescription,
   InvalidConnectionHandle,
   Metadata,
+  NotionConnection,
   PidgeonConnection,
   PostgresConnection,
   PostHogConnection,
@@ -67,6 +69,7 @@ import * as PidgeonKeys from "./pidgeon/Keys.js";
 import * as PidgeonLedger from "./pidgeon/Ledger.js";
 import * as PidgeonSource from "./pidgeon/Source.js";
 import * as AttioSource from "./attio/Source.js";
+import * as NotionSource from "./notion/Source.js";
 import * as ImapSource from "./imap/Source.js";
 import * as GithubAccess from "./github/Access.js";
 import * as GithubClaims from "./github/Claims.js";
@@ -79,12 +82,14 @@ const encodePostgresSnapshot = Schema.encodeSync(Schema.fromJsonString(Snapshot)
 const encodePostHogSnapshot = Schema.encodeSync(Schema.fromJsonString(PostHogSnapshot));
 const encodePidgeonSnapshot = Schema.encodeSync(Schema.fromJsonString(PidgeonSnapshot));
 const encodeAttioSnapshot = Schema.encodeSync(Schema.fromJsonString(AttioSnapshot));
+const encodeNotionSnapshot = Schema.encodeSync(Schema.fromJsonString(NotionSnapshot));
 const encodeImapSnapshot = Schema.encodeSync(Schema.fromJsonString(ImapSnapshot));
 const encodeGithubSnapshot = Schema.encodeSync(Schema.fromJsonString(GithubSnapshot));
 const encodePostgresDisplay = Schema.encodeSync(Schema.fromJsonString(PostgresSource.Display));
 const encodePostHogDisplay = Schema.encodeSync(Schema.fromJsonString(PostHogSource.Display));
 const encodePidgeonDisplay = Schema.encodeSync(Schema.fromJsonString(PidgeonSource.Display));
 const encodeAttioDisplay = Schema.encodeSync(Schema.fromJsonString(AttioSource.Display));
+const encodeNotionDisplay = Schema.encodeSync(Schema.fromJsonString(NotionSource.Display));
 const encodeImapDisplay = Schema.encodeSync(Schema.fromJsonString(ImapSource.Display));
 const encodeGithubDisplay = Schema.encodeSync(Schema.fromJsonString(GithubConnection.Display));
 const encodeSnapshot = (metadata: Metadata) => {
@@ -97,6 +102,8 @@ const encodeSnapshot = (metadata: Metadata) => {
       return encodePidgeonSnapshot(metadata.snapshot);
     case "attio":
       return encodeAttioSnapshot(metadata.snapshot);
+    case "notion":
+      return encodeNotionSnapshot(metadata.snapshot);
     case "imap":
       return encodeImapSnapshot(metadata.snapshot);
     case "github":
@@ -113,6 +120,8 @@ const encodeDisplay = (target: Target) => {
       return encodePidgeonDisplay(target.display);
     case "attio":
       return encodeAttioDisplay(target.display);
+    case "notion":
+      return encodeNotionDisplay(target.display);
     case "imap":
       return encodeImapDisplay(target.display);
     case "github":
@@ -166,7 +175,7 @@ const sameTarget = (current: Target, next: Target) =>
           : current.integration === "github"
             ? next.integration === "github" &&
               next.display.account.id === current.display.account.id
-            : next.integration === "attio" &&
+            : next.integration === current.integration &&
               next.display.workspace.id === current.display.workspace.id;
 const secret = { credentials: Schema.String, keyId: Schema.String };
 const StoredConnection = Schema.Union([
@@ -174,12 +183,14 @@ const StoredConnection = Schema.Union([
   Schema.Struct({ ...PostHogConnection.fields, ...secret }),
   Schema.Struct({ ...PidgeonConnection.fields, ...secret }),
   Schema.Struct({ ...AttioConnection.fields, ...secret }),
+  Schema.Struct({ ...NotionConnection.fields, ...secret }),
   Schema.Struct({ ...ImapConnection.fields, ...secret }),
   Schema.Struct({ ...GithubConnectionRow.fields, ...secret })
 ]);
 type StoredConnection = typeof StoredConnection.Type;
 type StoredPidgeon = Extract<StoredConnection, { readonly integration: "pidgeon" }>;
 type StoredAttio = Extract<StoredConnection, { readonly integration: "attio" }>;
+type StoredNotion = Extract<StoredConnection, { readonly integration: "notion" }>;
 type StoredImap = Extract<StoredConnection, { readonly integration: "imap" }>;
 type StoredGithub = Extract<StoredConnection, { readonly integration: "github" }>;
 const detailFields = {
@@ -209,6 +220,11 @@ const SnapshotDetail = Schema.Union([
     ...detailFields,
     integration: Schema.Literal("attio"),
     snapshot: Schema.NullOr(AttioSnapshot)
+  }),
+  Schema.Struct({
+    ...detailFields,
+    integration: Schema.Literal("notion"),
+    snapshot: Schema.NullOr(NotionSnapshot)
   }),
   Schema.Struct({
     ...detailFields,
@@ -250,6 +266,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
     const posthog = yield* PostHogSource.Source;
     const pidgeonSource = yield* PidgeonSource.Source;
     const attio = yield* AttioSource.Source;
+    const notion = yield* NotionSource.Source;
     const imap = yield* ImapSource.Source;
     const githubAccess = yield* GithubAccess.Access;
     const githubFlows = yield* GithubFlows.Flows;
@@ -433,6 +450,11 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
             ...row,
             snapshot: row.snapshot === null || stamp === null ? null : { ...row.snapshot, ...stamp }
           } satisfies ConnectionDetail;
+        if (row.integration === "notion")
+          return {
+            ...row,
+            snapshot: row.snapshot === null || stamp === null ? null : { ...row.snapshot, ...stamp }
+          } satisfies ConnectionDetail;
         if (row.integration === "github")
           return {
             ...row,
@@ -543,9 +565,11 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
               ? registry["pidgeon.connect.deadline"].default
               : input.integration === "attio"
                 ? registry["attio.discovery.deadline"].default
-                : input.integration === "imap"
-                  ? registry["imap.test.deadline"].default
-                  : registry["integration.deadline"].default
+                : input.integration === "notion"
+                  ? registry["notion.discovery.deadline"].default
+                  : input.integration === "imap"
+                    ? registry["imap.test.deadline"].default
+                    : registry["integration.deadline"].default
         });
         return yield* effect.pipe(
           Effect.onExit((exit) =>
@@ -1070,6 +1094,166 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
             last_tested_at = to_timestamp(${now / 1_000}) WHERE id = ${input.id} AND company_id = ${input.companyId}`;
           return yield* get(input.companyId, input.id);
         })
+      );
+    });
+
+    // ---------- Notion: a workspace's internal connection, its access Patchy's own setting ----------
+
+    const notionSecret = (current: StoredNotion) =>
+      keys.decrypt(current, current).pipe(Effect.flatMap(NotionSource.parseCredentials));
+    /** What a snapshot says about its connection, as the connection shows it. */
+    const notionDisplay = (snapshot: NotionSnapshot, keyHint: string): NotionSource.Display => ({
+      workspace: snapshot.workspace,
+      botId: snapshot.botId,
+      access: snapshot.access,
+      keyHint
+    });
+
+    /** Connect: the token's check and discovery at the access chosen, saved together or not at all. */
+    const notionConnect = Effect.fn("ConnectionStore.notionConnect")(function* (
+      input: ConnectInput,
+      report?: (connection: Connection) => Effect.Effect<void>
+    ) {
+      const request = yield* NotionSource.parseConnect(input.credentials);
+      // An interrupted connect never keeps the name.
+      return yield* claimed(
+        input,
+        Effect.gen(function* () {
+          const identity = {
+            ...input,
+            integration: "notion" as const,
+            id: yield* cryptography.internalId("conn")
+          };
+          const key = Redacted.make(request.key);
+          const snapshot = yield* audited(
+            identity,
+            "notion.discover",
+            notion.inspect(key, request.access)
+          );
+          const encrypted = yield* keys.encrypt(
+            identity,
+            NotionSource.credentials({ key: request.key, workspaceId: snapshot.workspace.id })
+          );
+          const now = yield* Clock.currentTimeMillis;
+          return yield* reportedTransaction(
+            insert(
+              identity,
+              input,
+              {
+                integration: "notion",
+                display: notionDisplay(snapshot, NotionSource.keyHint(key))
+              },
+              encrypted,
+              { integration: "notion", snapshot },
+              now
+            ),
+            report
+          );
+        })
+      );
+    });
+
+    /**
+     * Saves a snapshot as the connection's next revision under its lock, with the display it
+     * implies and a replacement token when there is one; a discovery also stamps when it ran.
+     */
+    const notionSave = (
+      input: Identity,
+      current: StoredNotion,
+      saved: {
+        readonly snapshot: NotionSnapshot;
+        readonly keyHint: string;
+        readonly encrypted?: CredentialKeys.EncryptedCredentials | undefined;
+      },
+      discovered: boolean
+    ) =>
+      Effect.gen(function* () {
+        const { snapshot, keyHint, encrypted } = saved;
+        const now = yield* Clock.currentTimeMillis;
+        return yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* lock(input, current);
+            const revision = current.metadataRevision + 1;
+            yield* writeSnapshot(input, revision, { integration: "notion", snapshot }, now);
+            yield* sql`UPDATE connections SET metadata_revision = ${revision},
+              display = ${encodeDisplay({ integration: "notion", display: notionDisplay(snapshot, keyHint) })}
+              ${encrypted === undefined ? sql`` : sql`, credentials = ${encrypted.credentials}, key_id = ${encrypted.keyId}, credential_revision = credential_revision + 1`}
+              ${discovered ? sql`, last_tested_at = to_timestamp(${now / 1_000}), last_discovered_at = to_timestamp(${now / 1_000})` : sql``}
+              WHERE id = ${input.id} AND company_id = ${input.companyId}`;
+            return yield* get(input.companyId, input.id);
+          })
+        );
+      });
+
+    /**
+     * Refresh with the stored token, or Replace token with a new one from the same workspace: the
+     * check and a fresh discovery, attributed to the admin. A failed check keeps the working token.
+     */
+    const notionDiscover = Effect.fn("ConnectionStore.notionDiscover")(function* (
+      input: Identity,
+      current: StoredNotion,
+      replacement?: string
+    ) {
+      if (replacement === undefined && current.status !== "connected")
+        return yield* new ConnectionNotConnected({});
+      const token = replacement ?? (yield* notionSecret(current)).key;
+      const key = Redacted.make(token);
+      const snapshot = yield* audited(
+        { ...input, integration: "notion" },
+        "notion.discover",
+        notion.inspect(key, current.display.access, current.display.workspace.id)
+      );
+      const encrypted =
+        replacement === undefined
+          ? undefined
+          : yield* keys.encrypt(
+              current,
+              NotionSource.credentials({ key: token, workspaceId: snapshot.workspace.id })
+            );
+      return yield* notionSave(
+        input,
+        current,
+        { snapshot, keyHint: NotionSource.keyHint(key), encrypted },
+        true
+      );
+    });
+
+    /**
+     * Replace token or Change access, as their dialogs submit them. Access is Patchy's own
+     * setting, so changing it asks Notion nothing; the kept schema takes a new revision either
+     * way, so generation follows the access.
+     */
+    const notionChange = Effect.fn("ConnectionStore.notionChange")(function* (
+      input: CredentialsInput,
+      current: StoredNotion
+    ) {
+      const change = yield* NotionSource.parseChange(input.credentials);
+      if ("key" in change) return yield* notionDiscover(input, current, change.key);
+      if (change.access === current.display.access) return yield* get(input.companyId, input.id);
+      const kept = yield* snapshot(input.companyId, input.id, current.metadataRevision);
+      if (kept.integration !== "notion")
+        return yield* new ConnectionNotFound({
+          companyId: input.companyId,
+          lookup: { id: input.id }
+        });
+      return yield* notionSave(
+        input,
+        current,
+        { snapshot: { ...kept.snapshot, access: change.access }, keyHint: current.display.keyHint },
+        false
+      );
+    });
+
+    /** Test and Reconnect: the stored token's check, recorded in recent calls as the admin's. */
+    const notionCheck = Effect.fn("ConnectionStore.notionCheck")(function* (
+      input: Identity,
+      current: StoredNotion
+    ) {
+      const { key, workspaceId } = yield* notionSecret(current);
+      yield* audited(
+        { ...input, integration: "notion" },
+        "notion.check",
+        notion.check(Redacted.make(key), workspaceId)
       );
     });
 
@@ -1766,6 +1950,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         if (!isDescription(input.description)) return yield* new InvalidConnectionDescription({});
         if (input.integration === "pidgeon") return yield* pidgeonConnect(input, report);
         if (input.integration === "attio") return yield* attioConnect(input, report);
+        if (input.integration === "notion") return yield* notionConnect(input, report);
         if (input.integration === "imap") return yield* imapConnect(input, report);
         if (input.integration === "github") return yield* githubConnect(input, report);
         const identity = {
@@ -1789,6 +1974,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         const current = yield* stored(input);
         if (current.integration === "pidgeon") return yield* pidgeonChange(input, current);
         if (current.integration === "attio") return yield* attioReplace(input, current);
+        if (current.integration === "notion") return yield* notionChange(input, current);
         if (current.integration === "imap") return yield* imapReplace(input, current);
         if (current.integration === "github") return yield* githubChange(input, current);
         const target = yield* testTarget(current.integration, input.credentials);
@@ -1815,7 +2001,8 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         if (current.integration === "attio") return yield* attioTest(input, current);
         if (current.integration === "imap") return yield* imapTest(input, current);
         if (current.integration === "github") return yield* githubTest(input);
-        yield* testTarget(current.integration, yield* keys.decrypt(current, current));
+        if (current.integration === "notion") yield* notionCheck(input, current);
+        else yield* testTarget(current.integration, yield* keys.decrypt(current, current));
         const now = yield* Clock.currentTimeMillis;
         return yield* sql.withTransaction(
           Effect.gen(function* () {
@@ -1839,6 +2026,10 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       if (current.integration === "attio") {
         if (credentials !== undefined) return yield* new ConnectionRetargetUnavailable({});
         return yield* attioRefresh(input, current);
+      }
+      if (current.integration === "notion") {
+        if (credentials !== undefined) return yield* new ConnectionRetargetUnavailable({});
+        return yield* notionDiscover(input, current);
       }
       // Another mailbox is another connection.
       if (current.integration === "imap") {
@@ -1901,6 +2092,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         if (current.integration === "pidgeon")
           yield* withPidgeon(PidgeonKeys.test(yield* secretOf(current), current.display));
         else if (current.integration === "attio") return yield* attioReconnect(input, current);
+        else if (current.integration === "notion") yield* notionCheck(input, current);
         else if (current.integration === "imap") return yield* imapReconnect(input, current);
         else if (current.integration === "github") return yield* githubResume(input);
         else yield* testTarget(current.integration, yield* keys.decrypt(current, current));

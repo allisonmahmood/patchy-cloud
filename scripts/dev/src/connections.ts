@@ -22,6 +22,7 @@ import {
   GithubConnection,
   GithubSource,
   ImapSource,
+  NotionSource,
   PidgeonSource,
   PostgresSource,
   PostHogSource
@@ -46,6 +47,7 @@ const Target = Schema.Union([
   Schema.Struct({ integration: Schema.Literal("pidgeon"), display: PidgeonSource.Display }),
   Schema.Struct({ integration: Schema.Literal("attio"), display: AttioSource.Display }),
   Schema.Struct({ integration: Schema.Literal("imap"), display: ImapSource.Display }),
+  Schema.Struct({ integration: Schema.Literal("notion"), display: NotionSource.Display }),
   Schema.Struct({ integration: Schema.Literal("github"), display: GithubConnection.Display })
 ]);
 // Encoding checks a value against its schema's filters, so an invented one that breaks them fails
@@ -274,6 +276,66 @@ const saved = (
               }
             ],
             excluded: []
+          }
+        }
+      };
+    }
+    case "notion": {
+      const workspace = { id: `wks_env_${scenario.company.handle}`, name: scenario.company.name };
+      const botId = `bot_env_${handle}`;
+      const tasks = `ds_env_${handle}_tasks`;
+      const projects = `ds_env_${handle}_projects`;
+      const title = { id: "title", name: "Name", type: "title" };
+      return {
+        target: {
+          integration: "notion",
+          display: { workspace, botId, access: "read", keyHint: `…${secret.slice(-4)}` }
+        },
+        credentials: NotionSource.credentials({ key: `ntn_${secret}`, workspaceId: workspace.id }),
+        metadata: {
+          integration: "notion",
+          snapshot: {
+            workspace,
+            botId,
+            access: "read",
+            dataSources: [
+              {
+                id: projects,
+                key: "Projects",
+                title: "Projects",
+                url: `https://www.notion.so/${scenario.company.handle}/projects`,
+                databaseTitle: "Projects",
+                properties: [title, { id: "owner", name: "Owner", type: "people" }]
+              },
+              {
+                id: tasks,
+                key: "Tasks",
+                title: "Tasks",
+                url: `https://www.notion.so/${scenario.company.handle}/tasks`,
+                databaseTitle: "Tasks",
+                properties: [
+                  title,
+                  {
+                    id: "status",
+                    name: "Status",
+                    type: "status",
+                    options: [
+                      { id: "todo", name: "Not started" },
+                      { id: "doing", name: "In progress" },
+                      { id: "done", name: "Done" }
+                    ],
+                    groups: [
+                      { id: "todo-group", name: "To-do", optionIds: ["todo"] },
+                      { id: "doing-group", name: "In progress", optionIds: ["doing"] },
+                      { id: "done-group", name: "Complete", optionIds: ["done"] }
+                    ]
+                  },
+                  { id: "due", name: "Due", type: "date" },
+                  { id: "project", name: "Project", type: "relation", relationTarget: projects }
+                ]
+              }
+            ],
+            exclusions: [{ source: "Tasks", name: "Days open", reason: "unsupported_type" }]
           }
         }
       };

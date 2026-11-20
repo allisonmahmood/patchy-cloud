@@ -1,0 +1,30 @@
+{
+  "company": {
+    "name": "Brightline Studio",
+    "handle": "brightline"
+  },
+  "people": [
+    {
+      "key": "allison",
+      "name": "Allison Mahmood",
+      "email": "allison@brightline.example",
+      "role": "admin"
+    },
+    {
+      "key": "jordan",
+      "name": "Jordan Lee",
+      "email": "jordan@brightline.example",
+      "role": "member"
+    }
+  ],
+  "publisher": "allison",
+  "connections": [
+    {
+      "integration": "notion",
+      "handle": "wiki",
+      "description": "Brightline's Notion workspace: its Tasks and Projects databases.",
+      "state": "connected"
+    }
+  ],
+  "patches": []
+}
