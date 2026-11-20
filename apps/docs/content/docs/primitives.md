@@ -7,20 +7,29 @@ A patch stores its data in **primitives** Patchy provides. It defines the ones i
 
 ## Tables
 
-A table is defined with a description and its columns:
+A table is defined with a description and its columns, and a file store with a description:
 
 ```ts
-// patchy.config.ts, inside `tables`
-notes: table(
-  "One team note per id; parent identifies another note.",
-  {
-    title: t.text(),
-    body: t.text().optional(),
-    done: t.boolean().default(false),
-    parent: t.ref("notes").optional()
+// patchy.config.ts
+import { defineConfig, files, table, t } from "patchy/config";
+
+export default defineConfig({
+  name: "team-notes",
+  tier: 1,
+  tables: {
+    notes: table(
+      "One team note per id; parent identifies another note.",
+      {
+        title: t.text(),
+        body: t.text().optional(),
+        done: t.boolean().default(false),
+        parent: t.ref("notes").optional()
+      },
+      { indexes: { byDone: ["done"] } }
+    )
   },
-  { indexes: { byDone: ["done"] } }
-);
+  files: { attachments: files("Note attachments keyed by note id and filename.") }
+});
 ```
 
 The description says what one row is, which keys identify or link it, and the units of its numbers; agents read it when they look for data to reuse.
@@ -54,33 +63,16 @@ Nothing is dropped. A table or column left out of the config keeps its data and 
 
 ## Files
 
-A **file store** holds files by name:
-
-```ts
-// patchy.config.ts, inside `files`
-attachments: files("Note attachments keyed by note id and filename.");
-```
-
-Its operations are `put`, `get`, `list` and `delete`. Names are up to 512 bytes, in `/`-separated segments; a file is at most 20 MiB. A page shows a stored image through a URL that lives only in its frame, and downloads go through Patchy's shell around the page, not the page itself. Patchy never serves a stored file at a public URL, and an uploaded HTML or SVG file stays bytes, never a page.
+A **file store**, such as `attachments` above, holds files by name. Its operations are `put`, `get`, `list` and `delete`. Names are up to 512 bytes, in `/`-separated segments; a file is at most 20 MiB. A page shows a stored image through a URL that lives only in its frame, and downloads go through Patchy's shell around the page, not the page itself. Patchy never serves a stored file at a public URL, and an uploaded HTML or SVG file stays bytes, never a page.
 
 On tier 2, a page uploads by staging the bytes and handing the upload to an action, which saves it into a store. Lists of files carry handles the page uses to show or download one file; each use checks the viewer's access again.
 
 ## Shared tables and stores
 
-A patch can share a table or a whole file store with the rest of its company:
-
-```ts
-contacts: table(
-  "One customer contact per id.",
-  { name: t.text(), email: t.text() },
-  { shared: true }
-);
-```
-
-Another tier 2 patch in the same company declares it by the source patch's id, then reads it in its handlers:
+A patch can share a table or a whole file store with the rest of its company, with `shared: true` in the table's options (`{ indexes: { byDone: ["done"] }, shared: true }`) or the store's (`files("…", { shared: true })`). Another tier 2 patch in the same company declares it by the source patch's id, then reads it in its handlers:
 
 ```sh
-pnpm patchy add shared-table <patchId>/contacts --as contacts
+pnpm patchy add shared-table <patchId>/notes --as notes
 ```
 
 Shared tables and stores are read-only to the patches that declare them. Each read is made as the viewer: it works only while the viewer can open the source patch and the source still shares it. Someone the consuming patch reaches but the source doesn't is refused on those reads, while everyone else keeps working. A source patch can't stop sharing, be retired or be deleted while live patches read it, unless its owner forces it after seeing which patches break.
