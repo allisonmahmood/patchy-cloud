@@ -386,8 +386,8 @@ importers:
   packages/execution:
     dependencies:
       '@aws-sdk/client-ecs':
-        specifier: ^3.1167.0
-        version: 3.1167.0
+        specifier: ^3.1170.0
+        version: 3.1170.0
       '@effect/platform-node':
         specifier: 4.1.4
         version: 4.1.4(effect@4.1.4)(redis@6.2.1)
@@ -1079,8 +1079,8 @@ packages:
     resolution: {integrity: sha512-OHlfkNzDFjYnwNPABhwAkDTUi0HPjfsKUHJDR0bSMORpCXNzRpInPCNCIT08xKDhjaPlcLJ+2Av+Sk7hHnuC8A==}
     engines: {node: '>=20.0.0'}
 
-  '@aws-sdk/client-ecs@3.1167.0':
-    resolution: {integrity: sha512-yF1GJ+S22EWEMdf6977bsfakbUa99sSli+tCmlcvgtUx4WaubHY3qQmmUCwmqGDlNZRvmcb3/7bN44Rs/4f11Q==}
+  '@aws-sdk/client-ecs@3.1170.0':
+    resolution: {integrity: sha512-UD3Q09EwL5Q9DL+P7MiMfDv4dSaDmSmtn2YafH8P9ZoAcG8N272FHSd5EHGssvU+tozNWITCvkqto3XwdhK8hQ==}
     engines: {node: '>=20.0.0'}
 
   '@aws-sdk/client-s3@3.1167.0':
@@ -3259,7 +3259,7 @@ snapshots:
       '@smithy/types': 4.20.0
       tslib: 2.8.1
 
-  '@aws-sdk/client-ecs@3.1167.0':
+  '@aws-sdk/client-ecs@3.1170.0':
     dependencies:
       '@aws-sdk/core': 3.981.0
       '@aws-sdk/credential-provider-node': 3.972.97
