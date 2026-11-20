@@ -38,7 +38,7 @@ packages:
     resolution: {tarball: ${other}}
     version: 0.0.0
 
-  workerd@1.20260924.1:
+  workerd@1.20261112.1:
     resolution: {integrity: sha512-${"C".repeat(86)}==}
 
 snapshots:

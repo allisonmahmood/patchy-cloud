@@ -755,7 +755,7 @@ The stream contract includes a reserved `revoked` frame, and the shell stops if 
 
 ## Private guest protocol
 
-Wire 1 is pinned to workerd `1.20260924.1`, compatibility date `2026-09-24`.
+Wire 1 is pinned to workerd `1.20261112.1`, compatibility date `2026-09-24`.
 The authoritative schemas are in [`packages/api/src/guest.ts`](../packages/api/src/guest.ts).
 These are engine/inspection contracts, not public `HttpApi` routes or CLI operations.
 

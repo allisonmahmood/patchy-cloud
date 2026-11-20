@@ -46,7 +46,7 @@ which production has run on since its first deploy on 2026-10-05 ([#416](https:/
 ## Engine, guest wire and inspection
 
 Wire 1 fixes the workerd compatibility date at `2026-09-24`. This release pins
-`workerd` to `1.20260924.1` and launches its platform binary directly, not the npm
+`workerd` to `1.20261112.1` and launches its platform binary directly, not the npm
 Node launcher. A dynamically loaded Worker belongs to one company/patch/version;
 its binding includes a verified SHA-256 of the exact bundle. Rebinding that
 identity to different bytes is refused. Worker Loader caches the isolate; each
@@ -893,10 +893,11 @@ the engine itself offers a guest no Node built-in except workerd's minimal
 empty, its `getBuiltinModule` reaches no other Node built-in, and its `exit` ends
 only the guest's own call. The engine's own `cloudflare:workers`,
 `cloudflare:sockets`, `cloudflare:node`, `cloudflare:ai`, `cloudflare:br`,
-`cloudflare:vectorize`, `cloudflare:workflows` and `cloudflare:pipelines` modules
-load too, and are unsupported. `cloudflare:workers` sees only the guest's empty
-environment and its own exports; the others are classes, constants and clients
-that need a binding the guest lacks or the network it is refused. Before loading
+`cloudflare:vectorize`, `cloudflare:workflows`, `cloudflare:pipelines` and
+`cloudflare:durable-objects` modules load too, and are unsupported.
+`cloudflare:workers` sees only the guest's empty environment and its own
+exports; the others are classes, constants, markers and clients that need a
+binding the guest lacks or the network it is refused. Before loading
 either a bound or inspected guest, the loader scans the artifact for imports,
 re-exports and dynamic imports to give an early closed-module error. This lexer
 is not a containment boundary. In particular, JavaScript's ambiguous
