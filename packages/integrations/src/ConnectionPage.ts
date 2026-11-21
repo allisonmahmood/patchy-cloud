@@ -108,7 +108,10 @@ interface IntegrationPage {
 }
 /** The integrations these pages connect and show. A model role isn't shown here, nor its provider. */
 type PageIntegration = Exclude<Integration, "models">;
-type PageConnection = Exclude<ConnectionStore.Connection, { readonly integration: "models" }>;
+export type PageConnection = Exclude<
+  ConnectionStore.Connection,
+  { readonly integration: "models" }
+>;
 const pages: { readonly [K in PageIntegration]: IntegrationPage } = {
   postgres: PostgresPage,
   posthog: PostHogPage,
@@ -128,18 +131,14 @@ const offered = Effect.gen(function* () {
       integration !== "models" && (integration !== "github" || github)
   );
 });
-/** Model roles, as attention names and marks them. */
-const models: View.Integration = { key: "models", label: "Models", mark: { icon: "bot" } };
 /**
  * A connection's integration as the pages name and mark it: wearing the logo of the provider the
  * connection reaches where Patchy knows it, such as Gmail's for a mailbox on Gmail's server.
  */
-export const integrationOf = (connection: ConnectionStore.Connection): View.Integration =>
-  connection.integration === "models"
-    ? models
-    : connection.integration === "imap"
-      ? { ...ImapPage.integration, mark: ImapPage.mark(connection) }
-      : pages[connection.integration].integration;
+export const integrationOf = (connection: PageConnection): View.Integration =>
+  connection.integration === "imap"
+    ? { ...ImapPage.integration, mark: ImapPage.mark(connection) }
+    : pages[connection.integration].integration;
 const isIntegration = Schema.is(Integration);
 const isPageIntegration = (value: string): value is PageIntegration =>
   isIntegration(value) && value !== "models";
@@ -1125,8 +1124,6 @@ const act = Effect.fn("ConnectionPage.act")(function* (
   id: string,
   kind: Exclude<Change["kind"], "connect">
 ) {
-  // A role's form never reaches the store from here.
-  yield* pageConnection(viewer, id);
   const form = yield* formBody;
   const submitted = submittedOf(form);
   const chosen = audienceChoice(form);
@@ -1183,6 +1180,17 @@ const act = Effect.fn("ConnectionPage.act")(function* (
     const store = yield* ConnectionStore.ConnectionStore;
     const input = { companyId: viewer.company.id, userId: viewer.user.id, id };
     let integration: Integration | undefined;
+    // The store's lifecycle verbs find no role, but it would change a role's settings. With Models
+    // on, these pages refuse a role first, since they show none; off, the store finds no role, so
+    // nothing more is read.
+    if (
+      (kind === "audience" ||
+        kind === "description" ||
+        kind === "block-guests" ||
+        kind === "allow-guests") &&
+      store.integrations.includes("models")
+    )
+      yield* pageConnection(viewer, id);
     if (kind === "rotate" || kind === "retarget" || kind === "access") {
       const current = yield* pageConnection(viewer, id);
       // Replacing credentials keeps where they point; pointing elsewhere names it anew.

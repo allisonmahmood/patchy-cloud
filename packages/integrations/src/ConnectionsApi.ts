@@ -80,21 +80,30 @@ export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =
           return HttpServerResponse.jsonUnsafe(
             encodeConnections({
               connections: rows.map((row) => {
-                // A role whose provider is paused, or of an integration this release doesn't know,
-                // reaches nothing, so it reads as paused with its own way out.
-                const stopped =
-                  row.integration === "models" &&
-                  row.status === "connected" &&
-                  !ConnectionStore.serving(row)
-                    ? {
-                        status: "disconnected" as const,
-                        reason: "not_connected" as const,
-                        hint:
-                          row.role.provider === null
-                            ? "Its model provider isn't available on this server. Ask an administrator at /settings/integrations."
-                            : "Its model provider is paused. Ask an administrator to resume it at /settings/integrations."
-                      }
-                    : undefined;
+                // No patch can declare a role yet, nor does any page change one, so its hint
+                // names neither. A role whose provider is paused, or of an integration this
+                // release doesn't know, reaches nothing, so it reads as paused.
+                const role =
+                  row.integration !== "models"
+                    ? undefined
+                    : row.status !== "connected"
+                      ? {
+                          reason: "not_connected" as const,
+                          hint: "It's paused, so patches can't use it until an administrator resumes it."
+                        }
+                      : row.role.provider === null
+                        ? {
+                            status: "disconnected" as const,
+                            reason: "not_connected" as const,
+                            hint: "Its model provider isn't available on this server."
+                          }
+                        : !ConnectionStore.serving(row)
+                          ? {
+                              status: "disconnected" as const,
+                              reason: "not_connected" as const,
+                              hint: "Its model provider is paused, so patches can't use it until an administrator resumes the provider."
+                            }
+                          : { hint: "No patch can declare a model role yet." };
                 // An IMAP login its mail server refused fails every call until an admin fixes it, so it says so.
                 const paused = row.integration === "imap" && row.display.paused !== undefined;
                 // A GitHub account that suspended the App refuses every call until it's unsuspended there.
@@ -113,8 +122,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =
                     : {}),
                   ...(paused ? { paused: true as const } : {}),
                   ...(suspended ? { suspended: true as const } : {}),
-                  ...(stopped !== undefined
-                    ? stopped
+                  ...(role !== undefined
+                    ? role
                     : row.status !== "connected"
                       ? {
                           reason: "not_connected" as const,

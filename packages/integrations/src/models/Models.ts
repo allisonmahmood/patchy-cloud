@@ -9,10 +9,14 @@ import * as Config from "effect/Config";
 import * as Schema from "effect/Schema";
 
 /**
- * The host's Models switch, `PATCHY_MODELS`, off unless set. Off, the store reads and makes no
- * role or provider, as a release before Models, and discovery offers and answers none.
+ * The host's Models switch, `PATCHY_MODELS`: `true` is on; `false`, unset or empty is off, as a
+ * host secret holds an unused setting; anything else stops the launch. Off, the store reads and
+ * makes no role or provider, as a release before Models, and discovery offers and answers none.
  */
-export const enabled = Config.Boolean("PATCHY_MODELS").pipe(Config.withDefault(false));
+export const enabled = Config.Literals(["true", "false", ""], "PATCHY_MODELS").pipe(
+  Config.withDefault(""),
+  Config.map((value) => value === "true")
+);
 
 /** Every model provider this release can keep a key for; one integration literal each. */
 export const providers = ["openai"] as const;

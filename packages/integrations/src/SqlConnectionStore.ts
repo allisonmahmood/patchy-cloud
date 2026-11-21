@@ -294,13 +294,14 @@ export const knowing = (known: ReadonlyArray<Models.Kind>) =>
     const knownProvider =
       providerKinds.length === 0 ? sql`false` : sql`p.integration IN ${sql.in(providerKinds)}`;
     // A role's mapping, and its provider as this release reads it: null where it doesn't know it.
-    const role = sql`(SELECT json_build_object('kind', r.kind, 'model', r.model,
-        'providerId', r.provider_id,
+    // Only a role's row looks it up; every other row skips the probe.
+    const role = sql`CASE WHEN connections.integration = 'models' THEN
+      (SELECT json_build_object('kind', r.kind, 'model', r.model, 'providerId', r.provider_id,
         'provider', (SELECT json_build_object('integration', p.integration, 'handle', p.handle,
             'status', p.status)
           FROM connections p WHERE p.company_id = r.company_id AND p.id = r.provider_id
             AND ${knownProvider}))
-      FROM model_roles r WHERE r.connection_id = connections.id) AS "role"`;
+      FROM model_roles r WHERE r.connection_id = connections.id) END AS "role"`;
     const columns = sql`id, company_id AS "companyId", integration, handle, description, mode, status,
     block_guests AS "blockGuests", display, credential_revision AS "credentialRevision", metadata_revision AS "metadataRevision",
     to_char(last_tested_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "lastTestedAt",
@@ -366,9 +367,10 @@ export const knowing = (known: ReadonlyArray<Models.Kind>) =>
       to_char(s.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "takenAt"
       ${
         models
-          ? sql`, (SELECT p.status FROM model_roles r JOIN connections p
-              ON p.company_id = r.company_id AND p.id = r.provider_id AND ${knownProvider}
-              WHERE r.connection_id = c.id) AS "providerStatus"`
+          ? sql`, CASE WHEN c.integration = 'models' THEN (SELECT p.status FROM model_roles r
+              JOIN connections p
+                ON p.company_id = r.company_id AND p.id = r.provider_id AND ${knownProvider}
+              WHERE r.connection_id = c.id) END AS "providerStatus"`
           : sql``
       }
       FROM connections c LEFT JOIN connection_snapshots s
@@ -2496,7 +2498,10 @@ export const knowing = (known: ReadonlyArray<Models.Kind>) =>
         const where = sql`WHERE id = ${input.id} AND company_id = ${input.companyId}`;
         const outcome = yield* reportedTransaction(
           Effect.gen(function* () {
-            const role = yield* roleOf(input, true);
+            // A statement that waited on the role's lock reads its mapping as it stood before the
+            // wait, so the role is read again once locked.
+            const role =
+              (yield* roleOf(input, true)) === undefined ? undefined : yield* roleOf(input);
             const record: ConnectionStore.ModelsConnection | ConnectionStore.ModelProvider =
               role ?? (yield* providerOf(input, true));
             const affected = () =>
@@ -2530,8 +2535,15 @@ export const knowing = (known: ReadonlyArray<Models.Kind>) =>
                 break;
               case "remap": {
                 if (role === undefined) return yield* notFound(input);
-                // The new provider's lock keeps it from being deleted while the role moves to it.
-                yield* providerOf({ companyId: input.companyId, id: change.providerId }, true);
+                // Both providers' locks, in id order: the one it joins can't be deleted while it
+                // moves, and a change to either, such as a pause naming whom it stops, sees the
+                // move whole. A provider's own changes take no role's lock.
+                for (const id of [...new Set([role.role.providerId, change.providerId])].sort())
+                  if (id === change.providerId)
+                    yield* providerOf({ companyId: input.companyId, id }, true);
+                  else
+                    yield* sql`SELECT 1 FROM connections
+                      WHERE company_id = ${input.companyId} AND id = ${id} FOR UPDATE`;
                 if (role.role.providerId === change.providerId && role.role.model === change.model)
                   return unchanged(yield* affected());
                 yield* sql`UPDATE model_roles SET provider_id = ${change.providerId},

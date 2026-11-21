@@ -128,7 +128,8 @@ export type Connection = typeof Connection.Type;
 /**
  * Whether patches that declare it can reach it now: connected and, for a role, mapped to a
  * provider that is connected and of an integration this release knows. A paused provider stops
- * every role on it this way, wherever a connection's state is read.
+ * every role on it this way: discovery and a role's detail read it as paused, while the role's own
+ * status stays the admin's.
  */
 export const serving = (connection: Connection) =>
   connection.status === "connected" &&

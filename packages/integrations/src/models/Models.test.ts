@@ -2,10 +2,15 @@ import { assert, it } from "@effect/vitest";
 import { PatchyApi, authorizationClient } from "@patchy/api";
 import { Authorization as BearerAuthorization, MachineTokens } from "@patchy/auth";
 import { DEV_SEED } from "@patchy/auth/seed";
+import { Teams } from "@patchy/companies";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
 import * as HttpApiTest from "effect/http-api/HttpApiTest";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as ConnectionAttention from "../ConnectionAttention.js";
@@ -15,11 +20,14 @@ import * as CredentialKeys from "../CredentialKeys.js";
 import * as SqlConnectionStore from "../SqlConnectionStore.js";
 import * as PidgeonSource from "../pidgeon/Source.js";
 import * as Pages from "../test/pages.js";
+import * as Release45 from "../test/release45Connections.js";
+import * as Models from "./Models.js";
 
-/** The integrations the release before Models shipped. */
-const before = ["postgres", "posthog", "pidgeon", "attio", "imap", "github"] as const;
-/** What a CLI from before Models asks the instance for. */
+/** The integrations the release before Models shipped, as its CLI asks for them. */
+const before = Release45.integrations;
 const olderCli = before.join(",");
+const decodeOlderListing = Schema.decodeUnknownEffect(Release45.Connections);
+const decodeOlderDetail = Schema.decodeUnknownEffect(Release45.ConnectionDetail);
 
 // The page harness's store, with the switch on as in every test, under the connections API.
 const layer = ConnectionsApi.layer.pipe(
@@ -59,11 +67,12 @@ const setup = Effect.fn(function* (handle: string) {
   return { owner, store, who, reports, report, provider, role, roleNow };
 });
 
-/** A live patch of the owner's whose current version declares `role`. */
+/** A live patch of the owner's with a version that declares `role`, its current one unless not. */
 const declare = Effect.fn(function* (
   owner: Owner,
   name: string,
-  role: ConnectionStore.ModelsConnection
+  role: ConnectionStore.ModelsConnection,
+  options: { readonly current: boolean } = { current: true }
 ) {
   const sql = yield* SqlClient.SqlClient;
   const patchId = `${owner.company.handle}-${name}`;
@@ -80,7 +89,60 @@ const declare = Effect.fn(function* (
     VALUES (${versionId}, ${patchId}, 1, ${`models/${versionId}.html`}, 'test', 1,
       ${DEV_SEED.tokenId}, ${owner.user.id}, 2, 'test', 1, 1, 0, ${manifest}::jsonb, ${versionId},
       'test', '{}'::jsonb, 201)`;
-  yield* sql`UPDATE patches SET current_version_id = ${versionId} WHERE id = ${patchId}`;
+  if (options.current)
+    yield* sql`UPDATE patches SET current_version_id = ${versionId} WHERE id = ${patchId}`;
+});
+
+/** A Postgres connection of the owner's as an earlier release made it, with its snapshot. */
+const legacy = Effect.fn(function* (owner: Owner, handle: string) {
+  const sql = yield* SqlClient.SqlClient;
+  const id = `${owner.company.handle}-${handle}`;
+  yield* sql`INSERT INTO connections
+    (id, company_id, integration, handle, description, mode, status, display, credentials,
+      key_id, credential_revision, metadata_revision, created_by, last_discovered_at)
+    VALUES (${id}, ${owner.company.id}, 'postgres', ${handle}, 'The warehouse', 'company',
+      'connected', ${JSON.stringify({ host: "db.example", port: 5432, database: "sales", role: "reader" })},
+      'sealed', 'key', 1, 1, ${owner.user.id}, '2026-11-01T00:00:00Z')`;
+  yield* sql`INSERT INTO connection_snapshots
+    (connection_id, company_id, integration, revision, snapshot, created_at)
+    VALUES (${id}, ${owner.company.id}, 'postgres', 1,
+      ${JSON.stringify({ version: 1, relations: [], enums: [], exclusions: [] })},
+      '2026-11-01T00:00:00Z')`;
+  return id;
+});
+
+/** Until another session of this database waits on a lock, as a change forked behind one does. */
+const someoneWaits = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  for (let attempt = 0; attempt < 10_000; attempt++) {
+    const [row] = yield* sql<{ readonly waiting: number }>`SELECT count(*)::int AS waiting
+      FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`;
+    if ((row?.waiting ?? 0) > 0) return;
+    yield* Effect.yieldNow;
+  }
+  return yield* Effect.die("nothing waited on the lock");
+});
+
+/**
+ * Runs `change` in a transaction of its own and keeps it open, its locks held and nothing
+ * committed, until `release` is run: another request's change in flight.
+ */
+const inFlight = Effect.fn(function* (
+  change: Effect.Effect<unknown, unknown, SqlClient.SqlClient>
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const held = yield* Deferred.make<void>();
+  const released = yield* Deferred.make<void>();
+  const fiber = yield* sql
+    .withTransaction(
+      change.pipe(
+        Effect.andThen(Deferred.succeed(held, undefined)),
+        Effect.andThen(Deferred.await(released))
+      )
+    )
+    .pipe(Effect.forkChild);
+  yield* Deferred.await(held);
+  return Deferred.succeed(released, undefined).pipe(Effect.andThen(Fiber.join(fiber)));
 });
 
 const connectionsClient = (token: string) =>
@@ -113,6 +175,21 @@ const api = <A, E, R>(
         )
       );
 };
+
+it.effect(
+  "the switch is exactly true or false, absent or empty is off, and nothing else reads",
+  () =>
+    Effect.gen(function* () {
+      const read = (env: { readonly PATCHY_MODELS?: string }) =>
+        Effect.exit(Models.enabled.parse(ConfigProvider.fromUnknown(env)));
+      assert.deepStrictEqual(yield* read({ PATCHY_MODELS: "true" }), Exit.succeed(true));
+      for (const env of [{}, { PATCHY_MODELS: "" }, { PATCHY_MODELS: "false" }])
+        assert.deepStrictEqual(yield* read(env), Exit.succeed(false));
+      // Effect's own boolean reads all of these; the switch reads none, so the launch stops.
+      for (const value of ["1", "yes", "on", "y", "TRUE", "True", " true", "0", "no", "off"])
+        assert.isTrue(Exit.isFailure(yield* read({ PATCHY_MODELS: value })), value);
+    })
+);
 
 it.layer(layer)("Models", (it) => {
   it.effect(
@@ -195,6 +272,85 @@ it.layer(layer)("Models", (it) => {
       })
   );
 
+  it.effect("a remap that waited behind another reads the mapping that one left", () =>
+    Effect.gen(function* () {
+      const { store, who, provider, role, roleNow } = yield* setup("models-remap-race");
+      const backup = yield* store.connectProvider({
+        ...who,
+        provider: "openai",
+        handle: "backup",
+        credentials: Redacted.make("sk-backup")
+      });
+      const sql = yield* SqlClient.SqlClient;
+      // A remap to the backup holds the role's lock, as remap does, and hasn't committed.
+      const release = yield* inFlight(
+        Effect.gen(function* () {
+          yield* sql`SELECT 1 FROM connections WHERE id = ${role.id} FOR UPDATE`;
+          yield* sql`UPDATE model_roles SET provider_id = ${backup.id} WHERE connection_id = ${role.id}`;
+          yield* sql`UPDATE connections SET credential_revision = credential_revision + 1
+            WHERE id = ${role.id}`;
+        })
+      );
+      const reports: Array<ConnectionStore.ModelsChanged> = [];
+      // Remapping it back waits for that lock, and must then see where the first one left it.
+      const back = yield* store
+        .changeModels(
+          {
+            ...who,
+            id: role.id,
+            change: { kind: "remap", providerId: provider.id, model: "gpt-5-mini" }
+          },
+          (changed) => Effect.sync(() => void reports.push(changed))
+        )
+        .pipe(Effect.forkChild);
+      yield* someoneWaits;
+      yield* release;
+      yield* Fiber.join(back);
+      assert.strictEqual((yield* roleNow).role.providerId, provider.id);
+      assert.deepStrictEqual(
+        reports.map((changed) => changed.change),
+        ["remapped"]
+      );
+    })
+  );
+
+  it.effect("a remap waits for a change to the provider it leaves, as to the one it joins", () =>
+    Effect.gen(function* () {
+      const { owner, store, who, provider, role, roleNow } = yield* setup("models-pause-race");
+      yield* declare(owner, "sorter", role);
+      const backup = yield* store.connectProvider({
+        ...who,
+        provider: "openai",
+        handle: "backup",
+        credentials: Redacted.make("sk-backup")
+      });
+      const sql = yield* SqlClient.SqlClient;
+      // A pause of the role's provider holds its lock and hasn't committed: it has named the
+      // patch whose role it stops.
+      const release = yield* inFlight(
+        sql`SELECT 1 FROM connections WHERE id = ${provider.id} FOR UPDATE`.pipe(
+          Effect.andThen(
+            sql`UPDATE connections SET status = 'disconnected' WHERE id = ${provider.id}`
+          )
+        )
+      );
+      const move = yield* store
+        .changeModels({
+          ...who,
+          id: role.id,
+          change: { kind: "remap", providerId: backup.id, model: "gpt-5-mini" }
+        })
+        .pipe(Effect.forkChild);
+      // The move can't leave the provider until the pause commits, so the patch it named was
+      // stopped.
+      yield* someoneWaits;
+      assert.strictEqual((yield* roleNow).role.providerId, provider.id);
+      yield* release;
+      yield* Fiber.join(move);
+      assert.strictEqual((yield* roleNow).role.providerId, backup.id);
+    })
+  );
+
   it.effect(
     "a role pauses and resumes; a new key keeps a paused provider paused and moves its revision",
     () =>
@@ -262,6 +418,23 @@ it.layer(layer)("Models", (it) => {
             ["sorter"]
           );
         assert.strictEqual(reports.length, 4);
+
+        // A version that isn't any patch's current one still declares a role it keeps.
+        const older = yield* store.createRole({
+          ...who,
+          handle: "older",
+          kind: "text",
+          description: "",
+          providerId: provider.id,
+          model: "gpt-5"
+        });
+        yield* declare(owner, "retired-sorter", older, { current: false });
+        assert.instanceOf(
+          yield* store
+            .changeModels({ ...who, id: older.id, change: { kind: "delete" } })
+            .pipe(Effect.flip),
+          ConnectionStore.ConnectionInUse
+        );
 
         // Nothing declares a spare role, so it goes, keeping its snapshot, and then its provider.
         const spareKey = yield* store.connectProvider({
@@ -394,9 +567,10 @@ it.layer(layer)("Models", (it) => {
               listed.connections.map((row) => `${row.integration}/${row.handle}`),
               ["models/triage"]
             );
+            // No patch can declare a role yet, so its hint offers no add.
             assert.deepInclude(listed.connections[0], {
               status: "connected",
-              hint: "patchy add models/triage"
+              hint: "No patch can declare a model role yet."
             });
             assert.deepStrictEqual(
               listed.offered?.map((offer) => offer.integration),
@@ -444,24 +618,65 @@ it.layer(layer)("Models", (it) => {
           blockGuests: false,
           status: "connected"
         });
-        for (const integration of ["openai", "models"])
-          assert.strictEqual(
-            (yield* Pages.read(`/settings/integrations/connect/${integration}`, owner.user)).status,
-            404
+        for (const integration of ["openai", "models"]) {
+          const path = `/settings/integrations/connect/${integration}`;
+          assert.strictEqual((yield* Pages.read(path, owner.user)).status, 404);
+          const posted = yield* Pages.send(
+            path,
+            Pages.post(owner.user, {
+              handle: "posted",
+              description: "",
+              credentials: "sk-posted-key"
+            })
           );
+          assert.strictEqual(posted.status, 404);
+        }
+        assert.deepStrictEqual(
+          (yield* store.providers(who.companyId)).map((item) => item.handle),
+          ["main"]
+        );
+        assert.notInclude(
+          (yield* store.list(who.companyId)).map((row) => row.handle),
+          "posted"
+        );
+
+        // A team grant on a provider, however it got there, shows it to no one: the team's
+        // connections and a member on the team see only the role the team was given.
+        const sql = yield* SqlClient.SqlClient;
+        const teams = yield* Teams.Teams;
+        const actor = { companyId: who.companyId, actorId: who.userId };
+        const team = yield* teams.create({ ...actor, name: "Models team" });
+        const member = yield* Pages.addMember(owner);
+        yield* teams.setMemberships({ ...actor, teamId: team.id, add: [member.id, who.userId] });
+        yield* store.setAudience({
+          ...who,
+          id: role.id,
+          audience: { kind: "teams", teamIds: [team.id] }
+        });
+        yield* sql`INSERT INTO connection_team_grants (connection_id, company_id, team_id)
+          VALUES (${provider.id}, ${who.companyId}, ${team.id})`;
+        assert.deepStrictEqual(
+          (yield* SqlConnectionStore.teamConnections(who.companyId, store.integrations)).map(
+            (row) => `${row.integration}/${row.handle}`
+          ),
+          ["models/triage"]
+        );
+        assert.deepStrictEqual(
+          (yield* store.list(who.companyId, member.id)).map((row) => row.id),
+          [role.id]
+        );
+        assert.strictEqual(
+          (yield* Effect.flip(store.audience(who.companyId, provider.id)))._tag,
+          "ConnectionNotFound"
+        );
         const catalogue = yield* Pages.read("/settings/integrations/connect", owner.user);
         assert.notInclude(catalogue.html, "/settings/integrations/connect/models");
         assert.notInclude(catalogue.html, "/settings/integrations/connect/openai");
 
-        // Attention names the role its provider stopped, never the provider.
+        // Attention names neither, even with the provider paused under a live patch's role: no
+        // page fixes a role yet, and a provider is never a connection.
         yield* store.changeModels({ ...who, id: provider.id, change: { kind: "pause" } });
-        assert.deepStrictEqual(
-          (yield* ConnectionAttention.needingAttention(who.companyId)).map((item) => [
-            item.name,
-            item.problem
-          ]),
-          [["models/triage", "Its model provider is paused"]]
-        );
+        assert.deepStrictEqual(yield* ConnectionAttention.needingAttention(who.companyId), []);
         yield* api(owner, (client) =>
           Effect.gen(function* () {
             const [row] = (yield* client.listConnections({ query: { integrations: "models" } }))
@@ -477,8 +692,9 @@ it.layer(layer)("Models", (it) => {
     "with the switch off, none of it is made, found or offered, and nothing else changes",
     () =>
       Effect.gen(function* () {
-        const { owner, who, provider, role } = yield* setup("models-off");
+        const { owner, store, who, provider, role } = yield* setup("models-off");
         yield* declare(owner, "sorter", role);
+        const warehouse = yield* legacy(owner, "warehouse");
         const switched = (env: Record<string, string>) =>
           SqlConnectionStore.make.pipe(
             Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env)))
@@ -505,7 +721,6 @@ it.layer(layer)("Models", (it) => {
           Effect.flip(off.changeModels({ ...who, id: provider.id, change: { kind: "pause" } }))
         ]);
         assert.isTrue(refusals.every((error) => error._tag === "ModelsUnavailable"));
-        assert.deepStrictEqual(yield* off.list(who.companyId), []);
         assert.isFalse((yield* off.usage(who.companyId)).has(role.id));
         const hidden = yield* Effect.all([
           Effect.flip(off.get(who.companyId, role.id)),
@@ -515,17 +730,67 @@ it.layer(layer)("Models", (it) => {
         ]);
         assert.isTrue(hidden.every((error) => error._tag === "ConnectionNotFound"));
 
+        // The ordinary connection reads the same either way, from the store and the API.
+        assert.deepStrictEqual(
+          (yield* off.list(who.companyId)).map((row) => row.id),
+          [warehouse]
+        );
+        assert.deepStrictEqual(
+          yield* off.get(who.companyId, warehouse),
+          yield* store.get(who.companyId, warehouse)
+        );
+        assert.deepStrictEqual(
+          yield* off.detail(who.companyId, "postgres", "warehouse"),
+          yield* store.detail(who.companyId, "postgres", "warehouse")
+        );
+        const discovered = (over?: ConnectionStore.ConnectionStore["Service"]) =>
+          api(
+            owner,
+            (client) =>
+              Effect.all([
+                client.listConnections({ query: { integrations: olderCli, all: true } }),
+                client.getIntegrationConnection({
+                  params: { integration: "postgres", handle: "warehouse" }
+                })
+              ]),
+            over
+          );
+        const [listed, shown] = yield* discovered(off);
+        assert.deepStrictEqual(listed, {
+          connections: [
+            {
+              id: warehouse,
+              handle: "warehouse",
+              integration: "postgres",
+              description: "The warehouse",
+              status: "connected",
+              hint: "patchy add postgres/warehouse"
+            }
+          ],
+          offered: [
+            { integration: "postgres", connected: true },
+            { integration: "posthog", connected: false },
+            { integration: "pidgeon", connected: false },
+            { integration: "attio", connected: false },
+            { integration: "imap", connected: false }
+          ]
+        });
+        assert.deepStrictEqual([listed, shown], yield* discovered());
+
         // Its API neither lists nor offers a role, and refuses one by handle before any lookup.
         yield* api(
           owner,
           (client) =>
             Effect.gen(function* () {
-              const listed = yield* client.listConnections({
+              const withModels = yield* client.listConnections({
                 query: { integrations: [...before, "models"].join(","), all: true }
               });
-              assert.deepStrictEqual(listed.connections, []);
+              assert.deepStrictEqual(
+                withModels.connections.map((row) => row.id),
+                [warehouse]
+              );
               assert.notInclude(
-                (listed.offered ?? []).map((offer) => offer.integration),
+                (withModels.offered ?? []).map((offer) => offer.integration),
                 "models"
               );
               const detail = yield* client.getIntegrationConnection({
@@ -539,27 +804,56 @@ it.layer(layer)("Models", (it) => {
       })
   );
 
+  it.effect("a CLI from before Models decodes what a host with Models on answers it", () =>
+    Effect.gen(function* () {
+      const { owner, role } = yield* setup("models-older-cli");
+      yield* declare(owner, "sorter", role);
+      const warehouse = yield* legacy(owner, "warehouse");
+      yield* api(owner, (client) =>
+        Effect.gen(function* () {
+          // Its listing asks for the integrations it decodes, and decodes the answer.
+          const answer = yield* client.listConnections({
+            query: { integrations: olderCli, all: true },
+            responseMode: "response-only"
+          });
+          const listed = yield* decodeOlderListing(yield* answer.json);
+          assert.deepStrictEqual(
+            listed.connections.map((row) => row.id),
+            [warehouse]
+          );
+          assert.notInclude(
+            (listed.offered ?? []).map((offer) => offer.integration),
+            "models"
+          );
+          // A bare handle is looked up in that listing, then by its integration.
+          const found = yield* client.getIntegrationConnection({
+            params: { integration: "postgres", handle: "warehouse" },
+            responseMode: "response-only"
+          });
+          assert.deepInclude(yield* decodeOlderDetail(yield* found.json), {
+            integration: "postgres",
+            handle: "warehouse"
+          });
+          // The role's handle isn't in its listing, so it asks for it as Postgres, as before
+          // other integrations, and is told there's none.
+          const missing = yield* client.getIntegrationConnection({
+            params: { integration: "postgres", handle: "triage" },
+            responseMode: "response-only"
+          });
+          assert.strictEqual(missing.status, 404);
+        })
+      );
+    })
+  );
+
   it.effect(
-    "an older release hides what it doesn't know: an old CLI, an old host and an unknown provider",
+    "the store reading only release 45's integrations, as near an older host as a test gets, hides the rest",
     () =>
       Effect.gen(function* () {
         const { owner, who, provider, role } = yield* setup("models-older");
         yield* declare(owner, "sorter", role);
-        // A CLI from before Models asks for the integrations it decodes, and Models isn't one.
-        yield* api(owner, (client) =>
-          Effect.map(
-            client.listConnections({ query: { integrations: olderCli, all: true } }),
-            (listed) => {
-              assert.deepStrictEqual(listed.connections, []);
-              assert.notInclude(
-                (listed.offered ?? []).map((offer) => offer.integration),
-                "models"
-              );
-            }
-          )
-        );
-
-        // A host from before Models reads neither, by id, handle, snapshot or declaration.
+        // This is the current store with release 45's allowlist: it shows that the filters hide
+        // what they should, not that release 45's own code does.
         const older = yield* SqlConnectionStore.knowing(before);
         assert.deepStrictEqual(yield* older.list(who.companyId), []);
         assert.isFalse((yield* older.usage(who.companyId)).has(role.id));
@@ -580,11 +874,11 @@ it.layer(layer)("Models", (it) => {
               });
               assert.strictEqual(detail.status, 404);
             }),
-          { ...older, detail: () => Effect.die("an older host looked up a role") }
+          { ...older, detail: () => Effect.die("the allowlisted store looked up a role") }
         );
 
-        // A release that knows Models but not this role's provider reads the role as unavailable,
-        // and makes or moves nothing to that provider.
+        // Knowing Models but not this role's provider, it reads the role as unavailable, and
+        // makes or moves nothing to that provider.
         const unaware = yield* SqlConnectionStore.knowing([...before, "models"]);
         const [read] = yield* unaware.list(who.companyId);
         assert.strictEqual(read?.integration, "models");

@@ -177,48 +177,20 @@ describe("what needs an admin among a company's connections", () => {
     ]);
   });
 
-  it("names a role its provider stopped while live patches use it, with the way to resume", () => {
+  it("names no model role yet, whatever stops it: no page fixes one", () => {
     expect(
       attention(
         [
           role("triage", "connected", "disconnected"),
           role("drafts", "connected", null),
-          role("summaries", "disconnected", "connected"),
-          role("spare", "connected", "disconnected"),
-          role("working", "connected", "connected")
+          role("summaries", "disconnected", "connected")
         ],
         new Map([
           ["triage", used(2)],
           ["drafts", used(1)],
-          ["summaries", used(1)],
-          ["working", used(1)]
+          ["summaries", used(1)]
         ])
       )
-    ).toEqual([
-      {
-        id: "drafts",
-        name: "models/drafts",
-        mark: { icon: "bot" },
-        problem: "Its model provider isn't available",
-        detail: "1 patch can't read it",
-        fix: { label: "Resume…", href: "/settings/integrations" }
-      },
-      {
-        id: "summaries",
-        name: "models/summaries",
-        mark: { icon: "bot" },
-        problem: "Disconnected",
-        detail: "1 patch can't read it",
-        fix: { label: "Resume…", href: "/settings/integrations" }
-      },
-      {
-        id: "triage",
-        name: "models/triage",
-        mark: { icon: "bot" },
-        problem: "Its model provider is paused",
-        detail: "2 patches can't read it",
-        fix: { label: "Resume…", href: "/settings/integrations" }
-      }
-    ]);
+    ).toEqual([]);
   });
 });
