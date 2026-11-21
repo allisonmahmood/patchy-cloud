@@ -321,25 +321,29 @@ const teamReach = Layer.effect(
               admin ||
               Teams.admits({ kind: "teams", teamIds: connection.teamIds }, person?.teamIds ?? [])
           )
-          .map((connection) => ({
-            id: connection.id,
-            label: `${connection.integration}/${connection.handle}`,
-            teamIds: connection.teamIds,
-            href: connectionPath(connection.id),
-            audienceHref: admin ? connectionPath(connection.id, "audience") : null,
-            usedBy: (usage.get(connection.id)?.usedBy ?? []).flatMap((name) => {
-              const patch = live.get(name);
-              return patch === undefined
-                ? []
-                : [
-                    {
-                      title: patch.title,
-                      href: `/patches/${encodeURIComponent(patch.name)}`,
-                      ownerId: patch.ownerUserId
-                    }
-                  ];
-            })
-          }));
+          .map((connection) => {
+            // No page shows or changes a model role yet, so its row links nowhere.
+            const page = connection.integration !== "models";
+            return {
+              id: connection.id,
+              label: `${connection.integration}/${connection.handle}`,
+              teamIds: connection.teamIds,
+              href: page ? connectionPath(connection.id) : null,
+              audienceHref: admin && page ? connectionPath(connection.id, "audience") : null,
+              usedBy: (usage.get(connection.id)?.usedBy ?? []).flatMap((name) => {
+                const patch = live.get(name);
+                return patch === undefined
+                  ? []
+                  : [
+                      {
+                        title: patch.title,
+                        href: `/patches/${encodeURIComponent(patch.name)}`,
+                        ownerId: patch.ownerUserId
+                      }
+                    ];
+              })
+            };
+          });
         return { patches: shown, connections, hidden };
       },
       Effect.provideService(SqlClient.SqlClient, sql)

@@ -273,9 +273,10 @@ const render = Effect.fn("TeamsPage.render")(function* (
         "Can build with",
         own.connections.length
           ? own.connections
-              .map(
-                (connection) =>
-                  `<a class="code" href="${escapeAttribute(connection.href)}">${escapeHtml(connection.label)}</a>`
+              .map((connection) =>
+                connection.href === null
+                  ? `<span class="code">${escapeHtml(connection.label)}</span>`
+                  : `<a class="code" href="${escapeAttribute(connection.href)}">${escapeHtml(connection.label)}</a>`
               )
               .join(", ")
           : '<span class="muted">No connections yet</span>'

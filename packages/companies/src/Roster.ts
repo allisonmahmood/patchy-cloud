@@ -23,7 +23,8 @@ export interface ReachConnection {
   /** Its `integration/handle`. */
   readonly label: string;
   readonly teamIds: readonly string[];
-  readonly href: string;
+  /** Its page, or null while it has none, as a model role doesn't yet. */
+  readonly href: string | null;
   readonly audienceHref: string | null;
   /** Live patches whose served version declares it, read for admins only. */
   readonly usedBy: readonly {

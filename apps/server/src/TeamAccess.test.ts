@@ -79,6 +79,45 @@ it.layer(
       assert.isTrue((yield* teams.list(actor)).some((found) => found.id === team.id));
     })
   );
+  it.effect("names a team's model role without linking to a page it doesn't have yet", () =>
+    Effect.gen(function* () {
+      const actor = { companyId: DEV_SEED.companyId, actorId: DEV_SEED.userId };
+      const teams = yield* Teams.Teams;
+      const team = yield* teams.create({ ...actor, name: "Model team" });
+      yield* teams.setMemberships({ ...actor, teamId: team.id, add: [DEV_SEED.userId] });
+      const sql = yield* SqlClient.SqlClient;
+      const connection = (id: string, integration: string, handle: string, audience: string) =>
+        sql`INSERT INTO connections(id, company_id, integration, handle, description, mode, status,
+            display, credentials, key_id, credential_revision, metadata_revision, created_by,
+            audience_kind)
+          VALUES (${id}, ${actor.companyId}, ${integration}, ${handle}, '', 'company', 'connected',
+            '{}', '', '', 1, 1, ${actor.actorId}, ${audience})`;
+      yield* connection("conn_team_key", "openai", "main", "company");
+      yield* connection("conn_team_role", "models", "team-triage", "teams");
+      yield* sql`INSERT INTO model_roles (connection_id, company_id, kind, provider_id, model)
+        VALUES ('conn_team_role', ${actor.companyId}, 'decision', 'conn_team_key', 'gpt-5-mini')`;
+      yield* sql`INSERT INTO connection_team_grants(connection_id, company_id, team_id)
+        VALUES ('conn_team_role', ${actor.companyId}, ${team.id})`;
+      const cookie = signedInCookies(
+        signSession({
+          sub: DEV_SEED.clerkUserId,
+          email: DEV_SEED.email,
+          name: "Owner",
+          azp: origin
+        })
+      );
+      const shown = yield* send(
+        HttpClientRequest.get(`/settings/company/teams?team=${team.id}`).pipe(
+          HttpClientRequest.setHeaders({ cookie })
+        )
+      );
+      assert.strictEqual(shown.status, 200);
+      const page = yield* shown.text;
+      assert.include(page, "models/team-triage");
+      assert.notInclude(page, "/settings/integrations/conn_team_role");
+      assert.notInclude(page, "conn_team_key");
+    })
+  );
 
   it.effect("edits a roster without script: ticks, a review at its own address, one save", () =>
     Effect.gen(function* () {
