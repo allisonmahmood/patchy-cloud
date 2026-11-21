@@ -25,6 +25,7 @@
     "test:imap": "vitest run --config vitest.imap-live.config.ts",
     "test:github": "vitest run --config vitest.github-live.config.ts",
     "test:browser": "playwright test -c playwright.tier1.config.ts --project=chromium",
+    "prototype:embed": "pnpm --filter @patchy/server... build && tsx --conditions=development test/embed-prototype/run.ts",
     "check": "bun scripts/verify.ts check",
     "verify": "bun scripts/verify.ts verify",
     "test:packed-cli-e2e": "node scripts/packed-cli-e2e.mjs",
