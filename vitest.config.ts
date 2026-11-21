@@ -8,6 +8,7 @@ export default mergeConfig(
       include: [
         "**/src/**/*.test.ts",
         "apps/docs/lib/**/*.test.ts",
+        "apps/docs/*.test.ts",
         "lint/**/*.test.ts",
         "scripts/*.test.ts"
       ]
