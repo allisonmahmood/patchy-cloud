@@ -30,7 +30,7 @@ To install the CLI yourself on macOS or Linux, run the instance's install line:
 work=$(mktemp -d) && curl -fsS 'https://cloud.patchyhq.com/install.mjs' -o "$work/install.mjs" && node "$work/install.mjs"
 ```
 
-The installer checks the release's integrity before installing it under `~/.patchy/cli`, puts the `patchy` command at `~/.local/bin/patchy`, and links the agent skill into `~/.agents/skills` and `~/.claude/skills`. Switching Node versions keeps the install. Running the line again upgrades it. On Windows, `https://cloud.patchyhq.com/llms.txt` has the PowerShell line, and the command is `patchy.cmd`.
+The installer checks the release's integrity before installing it under `~/.patchy/cli`, puts the `patchy` command at `~/.local/bin/patchy`, and links the agent skill into `~/.agents/skills` and `~/.claude/skills`. Switching Node versions keeps the install. Running the line again upgrades it. If `~/.local/bin` isn't on your `PATH`, the installer still installs everything, then stops with the `export PATH` line to add to your shell profile: add it and open a new terminal, or run `~/.local/bin/patchy` directly. On Windows, `https://cloud.patchyhq.com/llms.txt` has the PowerShell line, and the command is `patchy.cmd`.
 
 ## Sign the computer in
 
