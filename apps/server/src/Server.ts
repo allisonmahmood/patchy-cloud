@@ -312,7 +312,10 @@ const teamReach = Layer.effect(
             .filter((row) => row.patch.state === "live")
             .map((row) => [row.patch.name, row.patch])
         );
-        const connections = (yield* SqlConnectionStore.teamConnections(viewer.companyId))
+        const connections = (yield* SqlConnectionStore.teamConnections(
+          viewer.companyId,
+          store.integrations
+        ))
           .filter(
             (connection) =>
               admin ||

@@ -988,6 +988,12 @@ down` and `reset` delete those inboxes with the test key, needing no instance,
   environment, and skips without them. It notices a by-id route or the
   log host changing only when it runs; it is not monitoring and not a required
   check.
+  Models is on here and in tests: the dev runner starts the instance's server
+  with `PATCHY_MODELS=true`, as the vitest server and page harnesses do, so the
+  store keeps model providers and the roles mapped to them. Production leaves
+  the [switch](OPERATIONS.md#models) off. `packages/integrations/src/models`
+  holds the store's suite, the switch off and older releases included; no
+  provider is ever called.
 - **Execution engine and fleet.** `pnpm exec vitest run packages/execution` runs
   real workerd. Fleet hosting offline is in
   [Operations](OPERATIONS.md#exercising-the-fleet-offline); local execution

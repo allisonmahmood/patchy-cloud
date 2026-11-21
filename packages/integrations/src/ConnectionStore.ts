@@ -6,6 +6,8 @@ import {
   GithubSnapshot,
   ImapSnapshot,
   type Integration,
+  ModelRoleKind,
+  ModelsSnapshot,
   PidgeonSnapshot,
   PostHogSnapshot
 } from "@patchy/api";
@@ -26,6 +28,7 @@ import * as ImapSource from "./imap/Source.js";
 import type * as GithubAccess from "./github/Access.js";
 import * as GithubConnection from "./github/Connection.js";
 import type * as GithubSource from "./github/Source.js";
+import * as Models from "./models/Models.js";
 
 export const Description = Schema.String.check(
   Schema.isMaxLength(500),
@@ -91,6 +94,26 @@ export const GithubConnectionRow = Schema.Struct({
    */
   suspendedAt: Schema.NullOr(Schema.String)
 });
+const Status = Schema.Literals(["connected", "disconnected"]);
+/**
+ * A model role: its fixed kind, and the provider and model an admin mapped it to, which change.
+ * It holds no credential of its own; its provider does.
+ */
+export const ModelsConnection = Schema.Struct({
+  ...fields,
+  integration: Schema.Literal("models"),
+  display: Schema.Struct({}),
+  role: Schema.Struct({
+    kind: ModelRoleKind,
+    model: Schema.String,
+    providerId: Schema.String,
+    /** Its provider as this release reads it; null when this release doesn't know its integration. */
+    provider: Schema.NullOr(
+      Schema.Struct({ integration: Models.Provider, handle: Companies.Handle, status: Status })
+    )
+  })
+});
+export type ModelsConnection = typeof ModelsConnection.Type;
 /** A company connection; its integration decides what its display says. */
 export const Connection = Schema.Union([
   PostgresConnection,
@@ -98,9 +121,34 @@ export const Connection = Schema.Union([
   PidgeonConnection,
   AttioConnection,
   ImapConnection,
-  GithubConnectionRow
+  GithubConnectionRow,
+  ModelsConnection
 ]);
 export type Connection = typeof Connection.Type;
+/**
+ * Whether patches that declare it can reach it now: connected and, for a role, mapped to a
+ * provider that is connected and of an integration this release knows. A paused provider stops
+ * every role on it this way, wherever a connection's state is read.
+ */
+export const serving = (connection: Connection) =>
+  connection.status === "connected" &&
+  (connection.integration !== "models" || connection.role.provider?.status === "connected");
+
+/**
+ * A model provider: the company's key for one provider, a connection of that provider's own
+ * integration. Never a `Connection`: no builder lists, declares or reads one, and only an admin's
+ * Models changes reach it. The first of each integration is `main`.
+ */
+export const ModelProvider = Schema.Struct({
+  id: Schema.String,
+  companyId: Schema.String,
+  integration: Models.Provider,
+  handle: Companies.Handle,
+  status: Status,
+  credentialRevision: Schema.Int,
+  createdBy: Schema.String
+});
+export type ModelProvider = typeof ModelProvider.Type;
 /** Where a connection reads, in its integration's terms; credentials of one target share it. */
 export type Target = {
   readonly [C in Connection as C["integration"]]: Pick<C, "integration" | "display">;
@@ -113,7 +161,8 @@ export const Metadata = Schema.Union([
   Schema.Struct({ integration: Schema.Literal("pidgeon"), snapshot: PidgeonSnapshot }),
   Schema.Struct({ integration: Schema.Literal("attio"), snapshot: AttioSnapshot }),
   Schema.Struct({ integration: Schema.Literal("imap"), snapshot: ImapSnapshot }),
-  Schema.Struct({ integration: Schema.Literal("github"), snapshot: GithubSnapshot })
+  Schema.Struct({ integration: Schema.Literal("github"), snapshot: GithubSnapshot }),
+  Schema.Struct({ integration: Schema.Literal("models"), snapshot: ModelsSnapshot })
 ]);
 export type Metadata = typeof Metadata.Type;
 
@@ -280,7 +329,9 @@ export class ConnectionStorageFailed extends Schema.TaggedError<ConnectionStorag
       "poolCredentials",
       "drafts",
       "sends",
-      "pauseLogin"
+      "pauseLogin",
+      "providers",
+      "models"
     ]),
     cause: Schema.Redacted(Schema.Defect())
   }
@@ -328,6 +379,34 @@ export class ConnectionCutsOff extends Schema.TaggedError<ConnectionCutsOff>()(
     return `This stops ${this.patches.join(", ")} from using the connection. Nothing was changed.`;
   }
 }
+/** The host's Models switch is off, or its release has no Models: no provider or role is made. */
+export class ModelsUnavailable extends Schema.TaggedError<ModelsUnavailable>()(
+  "ModelsUnavailable",
+  {}
+) {
+  readonly code = "models_unavailable";
+  readonly status = 404;
+  override get message() {
+    return "Models isn't available on this server.";
+  }
+}
+/** A provider roles still point at, named by their handles. */
+export class ProviderInUse extends Schema.TaggedError<ProviderInUse>()("ProviderInUse", {
+  roles: Schema.Array(Schema.String)
+}) {
+  readonly code = "provider_in_use";
+  readonly status = 409;
+  override get message() {
+    return `${this.roles.map((role) => `models/${role}`).join(", ")} use this provider, so it can't be deleted. Map them to another provider or delete them first, or pause it instead.`;
+  }
+}
+export class InvalidModelId extends Schema.TaggedError<InvalidModelId>()("InvalidModelId", {}) {
+  readonly code = "invalid_model_id";
+  readonly status = 400;
+  override get message() {
+    return "Use the model's id as its provider names it, with no spaces and at most 200 characters.";
+  }
+}
 export type ResolveError =
   ConnectionAccessDenied | ConnectionNotConnected | StaleGenerated | ConnectionStorageFailed;
 export type ConnectionError =
@@ -344,6 +423,9 @@ export type ConnectionError =
   | ConnectionInUse
   | ConnectInProgress
   | ConnectionMutationUnavailable
+  | ModelsUnavailable
+  | ProviderInUse
+  | InvalidModelId
   | CredentialKeys.CredentialError
   | PostgresSource.SourceError
   | PostHogSource.SourceError
@@ -393,7 +475,8 @@ export interface Identity {
   readonly id: string;
 }
 export interface ConnectInput {
-  readonly integration: Integration;
+  /** A role is made by `createRole`, mapped to a provider, never connected on its own. */
+  readonly integration: Exclude<Integration, "models">;
   readonly companyId: string;
   readonly userId: string;
   readonly handle: string;
@@ -408,10 +491,58 @@ export interface Deleted {
   readonly connection: Connection;
 }
 
-/** Callers authorize company membership and admin actions before entering this service. */
+/** A provider an admin connects; the first of its integration is `main` unless named. */
+export interface ProviderInput {
+  readonly companyId: string;
+  readonly userId: string;
+  readonly provider: Models.Provider;
+  readonly handle?: string;
+  readonly credentials: Redacted.Redacted<string>;
+}
+/** A role an admin makes from its provider: its handle and kind never change. */
+export interface RoleInput {
+  readonly companyId: string;
+  readonly userId: string;
+  readonly handle: string;
+  readonly kind: ModelRoleKind;
+  readonly description: string;
+  readonly providerId: string;
+  readonly model: string;
+}
+/** One change to a provider or a role. */
+export type ModelsChange =
+  /** Either; pausing a provider stops every role on it, and resuming starts them again. */
+  | { readonly kind: "pause" | "resume" | "delete" }
+  /** A provider's new key; a paused provider stays paused. */
+  | { readonly kind: "replaceKey"; readonly credentials: Redacted.Redacted<string> }
+  /** A role's provider and model; patches that declare it follow from their next call. */
+  | { readonly kind: "remap"; readonly providerId: string; readonly model: string };
+/** A provider's or role's change, as its commit reports it. */
+export interface ModelsChanged {
+  readonly id: string;
+  readonly integration: Models.Provider | "models";
+  readonly change:
+    "connected" | "created" | "paused" | "resumed" | "deleted" | "key_replaced" | "remapped";
+  /**
+   * The live patches whose current version declares the role, or a role on the provider, by
+   * name: whose next call the change reaches.
+   */
+  readonly affected: ReadonlyArray<string>;
+}
+/** Runs with a Models change's commit; a refusal, a no-op or a rollback never runs it. */
+export type ModelsReport = (changed: ModelsChanged) => Effect.Effect<void>;
+
+/**
+ * Callers authorize company membership and admin actions before entering this service. Its
+ * connection reads and changes reach only the public integrations it knows, never a provider. A
+ * role, while Models is on, is read, described, given an audience and blocked to guests as any
+ * connection is; it is made, remapped, paused, resumed and deleted only by the Models methods.
+ */
 export class ConnectionStore extends Context.Service<
   ConnectionStore,
   {
+    /** The public integrations it reads: its release's, without Models while the switch is off. */
+    readonly integrations: ReadonlyArray<Integration>;
     readonly audience: (companyId: string, id: string) => Effect.Effect<Audience, ConnectionError>;
     /**
      * An admin's change; the actor is rechecked as an active admin under the company lock. Under
@@ -582,5 +713,33 @@ export class ConnectionStore extends Context.Service<
       readonly logins: number;
       readonly reply: ImapSource.Paused["reply"];
     }) => Effect.Effect<void, ConnectionStorageFailed>;
+
+    // Models. Each refuses `ModelsUnavailable` while the switch is off, and a provider of an
+    // integration this release doesn't know is not found, so no role is made or remapped to one.
+
+    /** The company's providers, by integration and handle. */
+    readonly providers: (
+      companyId: string
+    ) => Effect.Effect<ReadonlyArray<ModelProvider>, ConnectionError>;
+    /** Keeps a provider's key, sealed as every connection's credentials are. Nothing is called. */
+    readonly connectProvider: (
+      input: ProviderInput,
+      report?: ModelsReport
+    ) => Effect.Effect<ModelProvider, ConnectionError>;
+    /** A role on one of the company's providers, connected, for the company's builders. */
+    readonly createRole: (
+      input: RoleInput,
+      report?: ModelsReport
+    ) => Effect.Effect<ModelsConnection, ConnectionError>;
+    /**
+     * Changes a provider or a role under its lock and answers what it reaches. Deleting a provider
+     * is refused while a role points at it, and a role while a stored version declares it, as for
+     * every connection, so pausing is the way to stop one. A change to the state it already has
+     * changes nothing and reports nothing.
+     */
+    readonly changeModels: (
+      input: Identity & { readonly change: ModelsChange },
+      report?: ModelsReport
+    ) => Effect.Effect<ModelsChanged, ConnectionError>;
   }
 >()("@patchy/integrations/ConnectionStore") {}

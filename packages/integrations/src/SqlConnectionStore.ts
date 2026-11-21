@@ -8,6 +8,7 @@ import {
   ImapSnapshot,
   integrations,
   type Integration,
+  ModelsSnapshot,
   PidgeonSnapshot,
   PostHogSnapshot
 } from "@patchy/api";
@@ -50,10 +51,15 @@ import {
   ImapConnection,
   InvalidConnectionDescription,
   InvalidConnectionHandle,
+  InvalidModelId,
   Metadata,
+  ModelProvider,
+  ModelsConnection,
+  ModelsUnavailable,
   PidgeonConnection,
   PostgresConnection,
   PostHogConnection,
+  ProviderInUse,
   StaleGenerated,
   type ConnectInput,
   type CredentialsInput,
@@ -72,6 +78,7 @@ import * as GithubAccess from "./github/Access.js";
 import * as GithubClaims from "./github/Claims.js";
 import * as GithubConnection from "./github/Connection.js";
 import * as GithubFlows from "./github/Flows.js";
+import * as Models from "./models/Models.js";
 
 const isDescription = Schema.is(Description);
 const decodeMetadata = Schema.decodeUnknownEffect(Metadata);
@@ -81,6 +88,7 @@ const encodePidgeonSnapshot = Schema.encodeSync(Schema.fromJsonString(PidgeonSna
 const encodeAttioSnapshot = Schema.encodeSync(Schema.fromJsonString(AttioSnapshot));
 const encodeImapSnapshot = Schema.encodeSync(Schema.fromJsonString(ImapSnapshot));
 const encodeGithubSnapshot = Schema.encodeSync(Schema.fromJsonString(GithubSnapshot));
+const encodeModelsSnapshot = Schema.encodeSync(Schema.fromJsonString(ModelsSnapshot));
 const encodePostgresDisplay = Schema.encodeSync(Schema.fromJsonString(PostgresSource.Display));
 const encodePostHogDisplay = Schema.encodeSync(Schema.fromJsonString(PostHogSource.Display));
 const encodePidgeonDisplay = Schema.encodeSync(Schema.fromJsonString(PidgeonSource.Display));
@@ -101,6 +109,8 @@ const encodeSnapshot = (metadata: Metadata) => {
       return encodeImapSnapshot(metadata.snapshot);
     case "github":
       return encodeGithubSnapshot(metadata.snapshot);
+    case "models":
+      return encodeModelsSnapshot(metadata.snapshot);
   }
 };
 const encodeDisplay = (target: Target) => {
@@ -117,6 +127,9 @@ const encodeDisplay = (target: Target) => {
       return encodeImapDisplay(target.display);
     case "github":
       return encodeGithubDisplay(target.display);
+    // A role's mapping is its `model_roles` row, never display.
+    case "models":
+      return "{}";
   }
 };
 /** One mailbox login: the same host, port, security and username. */
@@ -166,8 +179,10 @@ const sameTarget = (current: Target, next: Target) =>
           : current.integration === "github"
             ? next.integration === "github" &&
               next.display.account.id === current.display.account.id
-            : next.integration === "attio" &&
-              next.display.workspace.id === current.display.workspace.id;
+            : current.integration === "attio"
+              ? next.integration === "attio" &&
+                next.display.workspace.id === current.display.workspace.id
+              : false;
 const secret = { credentials: Schema.String, keyId: Schema.String };
 const StoredConnection = Schema.Union([
   Schema.Struct({ ...PostgresConnection.fields, ...secret }),
@@ -175,7 +190,8 @@ const StoredConnection = Schema.Union([
   Schema.Struct({ ...PidgeonConnection.fields, ...secret }),
   Schema.Struct({ ...AttioConnection.fields, ...secret }),
   Schema.Struct({ ...ImapConnection.fields, ...secret }),
-  Schema.Struct({ ...GithubConnectionRow.fields, ...secret })
+  Schema.Struct({ ...GithubConnectionRow.fields, ...secret }),
+  Schema.Struct({ ...ModelsConnection.fields, ...secret })
 ]);
 type StoredConnection = typeof StoredConnection.Type;
 type StoredPidgeon = Extract<StoredConnection, { readonly integration: "pidgeon" }>;
@@ -221,6 +237,13 @@ const SnapshotDetail = Schema.Union([
     ...detailFields,
     integration: Schema.Literal("github"),
     snapshot: Schema.NullOr(GithubSnapshot)
+  }),
+  Schema.Struct({
+    ...detailFields,
+    integration: Schema.Literal("models"),
+    snapshot: Schema.NullOr(ModelsSnapshot),
+    // Its provider's state, null for a provider of an integration this release doesn't know.
+    providerStatus: Schema.NullOr(Schema.Literals(["connected", "disconnected"]))
   })
 ]);
 const Lookup = Schema.Struct({
@@ -233,15 +256,28 @@ const Lookup = Schema.Struct({
 const detached = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.flatMap(Effect.forkDetach(effect), Fiber.join);
 
-/** Every integration this release ships; `knowing` makes a store of an earlier release's. */
-export const make = Effect.suspend(() => knowing(integrations));
+/**
+ * Every integration this release ships, without Models' roles and providers while the host's
+ * switch is off; `knowing` makes a store of an earlier release's.
+ */
+export const make = Effect.gen(function* () {
+  // The launch checks the switch's value first, so an unreadable one never gets this far.
+  return yield* knowing(Models.known(yield* Models.enabled.pipe(Effect.orDie)));
+});
 
 /**
  * A store that reads only `known` integrations' rows, as the release that shipped them did. Rows of
- * integrations a later release added stay hidden, so a rollback lists and shows the rest.
+ * integrations a later release added stay hidden, so a rollback lists and shows the rest. Its
+ * connection reads take the public ones; providers are read only by the Models methods, and only
+ * while `models` is known.
  */
-export const knowing = (known: ReadonlyArray<Integration>) =>
+export const knowing = (known: ReadonlyArray<Models.Kind>) =>
   Effect.gen(function* () {
+    const readable: ReadonlyArray<Integration> = integrations.filter((kind) =>
+      known.includes(kind)
+    );
+    const models = readable.includes("models");
+    const providerKinds = models ? Models.providers.filter((kind) => known.includes(kind)) : [];
     const teamService = yield* Teams.Teams;
     const cryptography = yield* Cryptography.Cryptography;
     const sql = yield* SqlClient.SqlClient;
@@ -254,6 +290,17 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
     const githubAccess = yield* GithubAccess.Access;
     const githubFlows = yield* GithubFlows.Flows;
     const audit = yield* RuntimeLog.RuntimeLog;
+    // A provider, `p`, is of an integration this release knows, or reads as none.
+    const knownProvider =
+      providerKinds.length === 0 ? sql`false` : sql`p.integration IN ${sql.in(providerKinds)}`;
+    // A role's mapping, and its provider as this release reads it: null where it doesn't know it.
+    const role = sql`(SELECT json_build_object('kind', r.kind, 'model', r.model,
+        'providerId', r.provider_id,
+        'provider', (SELECT json_build_object('integration', p.integration, 'handle', p.handle,
+            'status', p.status)
+          FROM connections p WHERE p.company_id = r.company_id AND p.id = r.provider_id
+            AND ${knownProvider}))
+      FROM model_roles r WHERE r.connection_id = connections.id) AS "role"`;
     const columns = sql`id, company_id AS "companyId", integration, handle, description, mode, status,
     block_guests AS "blockGuests", display, credential_revision AS "credentialRevision", metadata_revision AS "metadataRevision",
     to_char(last_tested_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "lastTestedAt",
@@ -261,7 +308,8 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
     created_by AS "createdBy",
     (SELECT to_char(i.suspended_seen_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
       FROM github_installations i WHERE connections.integration = 'github'
-        AND i.installation_id = (connections.display->>'installationId')::bigint) AS "suspendedAt"`;
+        AND i.installation_id = (connections.display->>'installationId')::bigint) AS "suspendedAt"
+    ${models ? sql`, ${role}` : sql``}`;
     const safe = (operation: ConnectionStorageFailed["operation"]) => ({
       SqlError: (cause: SqlError) =>
         Effect.fail(new ConnectionStorageFailed({ operation, cause: Redacted.make(cause) })),
@@ -269,8 +317,9 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         Effect.fail(new ConnectionStorageFailed({ operation, cause: Redacted.make(cause) }))
     });
     // Rows of integrations a later release added are not this release's to read: a rollback
-    // hides them, and a lookup by id answers not found instead of failing to decode.
-    const isKnown = sql`integration IN ${sql.in(known)}`;
+    // hides them, and a lookup by id answers not found instead of failing to decode. A provider
+    // is never one of them.
+    const isKnown = sql`integration IN ${sql.in(readable)}`;
     const connectionRows = SqlSchema.findAll({
       Request: Schema.String,
       Result: Connection,
@@ -315,6 +364,13 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       c.description, c.status, c.display,
       c.metadata_revision AS revision, s.snapshot,
       to_char(s.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "takenAt"
+      ${
+        models
+          ? sql`, (SELECT p.status FROM model_roles r JOIN connections p
+              ON p.company_id = r.company_id AND p.id = r.provider_id AND ${knownProvider}
+              WHERE r.connection_id = c.id) AS "providerStatus"`
+          : sql``
+      }
       FROM connections c LEFT JOIN connection_snapshots s
         ON s.connection_id = c.id AND s.company_id = c.company_id AND s.revision = c.metadata_revision
           AND s.integration = c.integration
@@ -327,7 +383,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
     const declarations = (companyId: string) => sql`patch_versions v
     JOIN patches p ON p.id = v.patch_id
     CROSS JOIN LATERAL jsonb_each(v.manifest->'uses') AS declaration
-    WHERE p.company_id = ${companyId} AND declaration.value->>'kind' IN ${sql.in(known)}`;
+    WHERE p.company_id = ${companyId} AND declaration.value->>'kind' IN ${sql.in(readable)}`;
     // A patch is in one state: deleted, then disabled, then retired, else live.
     const live = sql`p.deleted_at IS NULL AND p.disabled_at IS NULL AND p.retired_at IS NULL`;
     const usageRows = SqlSchema.findAll({
@@ -404,6 +460,9 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
     // The current revision's immutable row supplies both metadata and its timestamp.
     const detail = Effect.fn("ConnectionStore.detail")(
       function* (companyId: string, integration: Integration, handle: string, userId?: string) {
+        // An integration this store doesn't read answers as an unknown handle, before any lookup.
+        if (!readable.includes(integration))
+          return yield* new ConnectionNotFound({ companyId, lookup: { integration, handle } });
         if (
           userId !== undefined &&
           !(yield* accessible(
@@ -447,6 +506,19 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
             ...(display.paused === undefined ? {} : { paused: { at: display.paused.at } })
           } satisfies ConnectionDetail;
         }
+        // A role reads as disconnected while its provider can't serve it, as it does in the list.
+        if (row.integration === "models") {
+          const { providerStatus, ...role } = row;
+          return {
+            ...role,
+            status:
+              role.status === "connected" && providerStatus === "connected"
+                ? "connected"
+                : "disconnected",
+            snapshot:
+              role.snapshot === null || stamp === null ? null : { ...role.snapshot, ...stamp }
+          } satisfies ConnectionDetail;
+        }
         return {
           ...row,
           snapshot: row.snapshot === null || stamp === null ? null : { ...row.snapshot, ...stamp }
@@ -472,6 +544,12 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         });
       return found.value;
     });
+    /**
+     * No such record here. The connection verbs answer it for a role too: one changes only
+     * through the Models methods.
+     */
+    const notFound = (input: { readonly companyId: string; readonly id: string }) =>
+      new ConnectionNotFound({ companyId: input.companyId, lookup: { id: input.id } });
     const lock = Effect.fn("ConnectionStore.lock")(function* (
       input: Identity,
       expected?: Pick<StoredConnection, "credentialRevision" | "metadataRevision">
@@ -1787,6 +1865,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
     const rotate = Effect.fn("ConnectionStore.rotate")(
       function* (input: CredentialsInput) {
         const current = yield* stored(input);
+        if (current.integration === "models") return yield* notFound(input);
         if (current.integration === "pidgeon") return yield* pidgeonChange(input, current);
         if (current.integration === "attio") return yield* attioReplace(input, current);
         if (current.integration === "imap") return yield* imapReplace(input, current);
@@ -1811,6 +1890,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
     const test = Effect.fn("ConnectionStore.test")(
       function* (input: Identity) {
         const current = yield* stored(input);
+        if (current.integration === "models") return yield* notFound(input);
         if (current.integration === "pidgeon") return yield* pidgeonTest(input, current);
         if (current.integration === "attio") return yield* attioTest(input, current);
         if (current.integration === "imap") return yield* imapTest(input, current);
@@ -1832,6 +1912,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       credentials?: Redacted.Redacted<string>
     ) {
       const current = yield* stored(input);
+      if (current.integration === "models") return yield* notFound(input);
       if (current.integration === "pidgeon") {
         if (credentials !== undefined) return yield* new ConnectionRetargetUnavailable({});
         return yield* pidgeonRefresh(input, current);
@@ -1885,6 +1966,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         sql.withTransaction(
           Effect.gen(function* () {
             const current = yield* lock(input);
+            if (current.integration === "models") return yield* notFound(input);
             if (current.status === "disconnected") return current;
             yield* sql`UPDATE connections SET status = 'disconnected', credential_revision = credential_revision + 1
       WHERE id = ${input.id} AND company_id = ${input.companyId}`;
@@ -1896,6 +1978,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
     const reconnect = Effect.fn("ConnectionStore.reconnect")(
       function* (input: Identity) {
         const current = yield* stored(input);
+        if (current.integration === "models") return yield* notFound(input);
         if (current.status === "connected") return yield* get(input.companyId, input.id);
         // The key was kept, so reconnecting needs no admin key: only a check that it still works.
         if (current.integration === "pidgeon")
@@ -2137,6 +2220,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
                     Effect.provideService(SqlClient.SqlClient, sql)
                   );
                 const connection = yield* lock(input);
+                if (connection.integration === "models") return yield* notFound(input);
                 // A Reconnect between the read and the lock moved it to an installation whose row
                 // this attempt never locked: refused, and a retry locks the one it names now.
                 if (
@@ -2249,7 +2333,243 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       })
     );
 
+    // ---------- Models: providers, and the roles mapped to them ----------
+
+    const providerColumns = sql`p.id, p.company_id AS "companyId", p.integration, p.handle, p.status,
+      p.credential_revision AS "credentialRevision", p.created_by AS "createdBy"`;
+    const providerRows = SqlSchema.findAll({
+      Request: Schema.String,
+      Result: ModelProvider,
+      execute: (companyId) => sql`SELECT ${providerColumns} FROM connections p
+        WHERE p.company_id = ${companyId} AND ${knownProvider} ORDER BY p.integration, p.handle`
+    });
+    const providerRow = SqlSchema.findOneOption({
+      Request: Lookup,
+      Result: ModelProvider,
+      execute: ({ companyId, id, locked }) => sql`SELECT ${providerColumns} FROM connections p
+        WHERE p.company_id = ${companyId} AND p.id = ${id} AND ${knownProvider}
+        ${locked ? sql`FOR UPDATE` : sql``}`
+    });
+    /** Live patches whose current version declares the role, or a role on the provider, by name. */
+    const affectedRows = SqlSchema.findAll({
+      Request: Schema.Struct({
+        companyId: Schema.String,
+        id: Schema.String,
+        provider: Schema.Boolean
+      }),
+      Result: Schema.Struct({ name: Schema.String }),
+      execute: ({ companyId, id, provider }) => sql`SELECT DISTINCT p.name
+        FROM ${declarations(companyId)} AND ${live} AND v.id = p.current_version_id
+          AND declaration.value->>'id' IN ${
+            provider
+              ? sql`(SELECT r.connection_id FROM model_roles r
+                  WHERE r.company_id = ${companyId} AND r.provider_id = ${id})`
+              : sql`(${id})`
+          }
+        ORDER BY p.name`
+    });
+    const providerOf = Effect.fn("ConnectionStore.providerOf")(function* (
+      input: { readonly companyId: string; readonly id: string },
+      locked = false
+    ) {
+      const found = yield* providerRow({ ...input, locked });
+      if (Option.isNone(found)) return yield* notFound(input);
+      return found.value;
+    });
+    /** A role by id, or undefined when the id names anything else. */
+    const roleOf = Effect.fn("ConnectionStore.roleOf")(function* (
+      input: { readonly companyId: string; readonly id: string },
+      locked = false
+    ) {
+      const found = yield* connectionRow({ ...input, locked });
+      const row = Option.getOrUndefined(found);
+      return row?.integration === "models" ? row : undefined;
+    });
+
+    const providers = Effect.fn("ConnectionStore.providers")(
+      function* (companyId: string) {
+        if (!models) return yield* new ModelsUnavailable({});
+        return yield* providerRows(companyId);
+      },
+      Effect.catchTags(safe("providers"))
+    );
+    const connectProvider = Effect.fn("ConnectionStore.connectProvider")(
+      function* (input: ConnectionStore.ProviderInput, report?: ConnectionStore.ModelsReport) {
+        if (!providerKinds.includes(input.provider)) return yield* new ModelsUnavailable({});
+        const handle = input.handle ?? "main";
+        if (!Companies.isHandle(handle)) return yield* new InvalidConnectionHandle({});
+        const id = yield* cryptography.internalId("conn");
+        const encrypted = yield* keys.encrypt(
+          { companyId: input.companyId, id, integration: input.provider },
+          input.credentials
+        );
+        // A provider has no description, audience or guest setting of its own: its roles do.
+        return yield* reportedTransaction(
+          Effect.gen(function* () {
+            const inserted = yield* sql`INSERT INTO connections
+              (id, company_id, integration, handle, description, mode, status, display, credentials,
+                key_id, credential_revision, metadata_revision, created_by)
+              VALUES (${id}, ${input.companyId}, ${input.provider}, ${handle}, '', 'company',
+                'connected', '{}', ${encrypted.credentials}, ${encrypted.keyId}, 1, 1, ${input.userId})
+              ON CONFLICT DO NOTHING RETURNING id`;
+            if (inserted.length === 0) return yield* new ConnectionHandleTaken({});
+            return yield* providerOf({ companyId: input.companyId, id });
+          }),
+          (provider) =>
+            report === undefined
+              ? Effect.void
+              : report({
+                  id: provider.id,
+                  integration: provider.integration,
+                  change: "connected",
+                  affected: []
+                })
+        );
+      },
+      Effect.catchTags(safe("providers"))
+    );
+    const createRole = Effect.fn("ConnectionStore.createRole")(
+      function* (input: ConnectionStore.RoleInput, report?: ConnectionStore.ModelsReport) {
+        if (!models) return yield* new ModelsUnavailable({});
+        if (!Companies.isHandle(input.handle)) return yield* new InvalidConnectionHandle({});
+        if (!isDescription(input.description)) return yield* new InvalidConnectionDescription({});
+        if (!Models.isModelId(input.model)) return yield* new InvalidModelId({});
+        const identity = { ...input, id: yield* cryptography.internalId("conn") };
+        const now = yield* Clock.currentTimeMillis;
+        return yield* reportedTransaction(
+          Effect.gen(function* () {
+            // Its provider's lock keeps it from being deleted while the role is made.
+            yield* providerOf({ companyId: input.companyId, id: input.providerId }, true);
+            // A role holds no credential; its provider does.
+            const inserted = yield* sql`INSERT INTO connections
+              (id, company_id, integration, handle, description, mode, status, display, credentials,
+                key_id, credential_revision, metadata_revision, created_by)
+              VALUES (${identity.id}, ${input.companyId}, 'models', ${input.handle},
+                ${input.description}, 'company', 'connected', '{}', '', '', 1, 1, ${input.userId})
+              ON CONFLICT DO NOTHING RETURNING id`;
+            if (inserted.length === 0) return yield* new ConnectionHandleTaken({});
+            yield* sql`INSERT INTO model_roles (connection_id, company_id, kind, provider_id, model)
+              VALUES (${identity.id}, ${input.companyId}, ${input.kind}, ${input.providerId},
+                ${input.model})`;
+            yield* writeSnapshot(
+              identity,
+              1,
+              { integration: "models", snapshot: { version: 1, kind: input.kind } },
+              now
+            );
+            const role = yield* roleOf(identity);
+            if (role === undefined) return yield* notFound(identity);
+            return role;
+          }),
+          (role) =>
+            report === undefined
+              ? Effect.void
+              : report({ id: role.id, integration: "models", change: "created", affected: [] })
+        );
+      },
+      Effect.catchTags(safe("models"))
+    );
+    const past = {
+      pause: "paused",
+      resume: "resumed",
+      delete: "deleted",
+      replaceKey: "key_replaced",
+      remap: "remapped"
+    } as const satisfies Record<ConnectionStore.ModelsChange["kind"], string>;
+    const changeModels = Effect.fn("ConnectionStore.changeModels")(
+      function* (
+        input: Identity & { readonly change: ConnectionStore.ModelsChange },
+        report?: ConnectionStore.ModelsReport
+      ) {
+        if (!models) return yield* new ModelsUnavailable({});
+        const change = input.change;
+        if (change.kind === "remap" && !Models.isModelId(change.model))
+          return yield* new InvalidModelId({});
+        // A new key is sealed before any lock is held, bound to its provider's integration.
+        const encrypted =
+          change.kind === "replaceKey"
+            ? yield* keys.encrypt(
+                { ...input, integration: (yield* providerOf(input)).integration },
+                change.credentials
+              )
+            : undefined;
+        const where = sql`WHERE id = ${input.id} AND company_id = ${input.companyId}`;
+        const outcome = yield* reportedTransaction(
+          Effect.gen(function* () {
+            const role = yield* roleOf(input, true);
+            const record: ConnectionStore.ModelsConnection | ConnectionStore.ModelProvider =
+              role ?? (yield* providerOf(input, true));
+            const affected = () =>
+              affectedRows({ ...input, provider: role === undefined }).pipe(
+                Effect.map((rows) => rows.map((row) => row.name))
+              );
+            const changed = (affected: ReadonlyArray<string>): ConnectionStore.ModelsChanged => ({
+              id: record.id,
+              integration: record.integration,
+              change: past[change.kind],
+              affected
+            });
+            const unchanged = (affected: ReadonlyArray<string>) => ({
+              changed: changed(affected),
+              reported: false
+            });
+            switch (change.kind) {
+              case "pause":
+              case "resume": {
+                const status = change.kind === "pause" ? "disconnected" : "connected";
+                if (record.status === status) return unchanged(yield* affected());
+                yield* sql`UPDATE connections SET status = ${status},
+                  credential_revision = credential_revision + 1 ${where}`;
+                break;
+              }
+              case "replaceKey":
+                // Only a provider holds a key; a paused one stays paused.
+                if (role !== undefined || encrypted === undefined) return yield* notFound(input);
+                yield* sql`UPDATE connections SET credentials = ${encrypted.credentials},
+                  key_id = ${encrypted.keyId}, credential_revision = credential_revision + 1 ${where}`;
+                break;
+              case "remap": {
+                if (role === undefined) return yield* notFound(input);
+                // The new provider's lock keeps it from being deleted while the role moves to it.
+                yield* providerOf({ companyId: input.companyId, id: change.providerId }, true);
+                if (role.role.providerId === change.providerId && role.role.model === change.model)
+                  return unchanged(yield* affected());
+                yield* sql`UPDATE model_roles SET provider_id = ${change.providerId},
+                  model = ${change.model} WHERE connection_id = ${input.id}`;
+                yield* sql`UPDATE connections SET credential_revision = credential_revision + 1 ${where}`;
+                break;
+              }
+              case "delete": {
+                if (role !== undefined) {
+                  const declared = yield* sql`SELECT 1 FROM ${declarations(input.companyId)}
+                    AND declaration.value->>'id' = ${input.id} LIMIT 1`;
+                  if (declared.length !== 0) return yield* new ConnectionInUse({});
+                } else {
+                  // Every role making or moving to it holds its lock first, so none slips in here.
+                  const roles = yield* sql<{ readonly handle: string }>`SELECT c.handle
+                    FROM model_roles r JOIN connections c ON c.id = r.connection_id
+                    WHERE r.company_id = ${input.companyId} AND r.provider_id = ${input.id}
+                    ORDER BY c.handle`;
+                  if (roles.length !== 0)
+                    return yield* new ProviderInUse({ roles: roles.map((row) => row.handle) });
+                }
+                // A role's mapping and team grants go with it; its snapshots stay.
+                yield* sql`DELETE FROM connections ${where}`;
+                return { changed: changed([]), reported: true };
+              }
+            }
+            return { changed: changed(yield* affected()), reported: true };
+          }),
+          (outcome) =>
+            outcome.reported && report !== undefined ? report(outcome.changed) : Effect.void
+        );
+        return outcome.changed;
+      },
+      Effect.catchTags(safe("models"))
+    );
+
     return ConnectionStore.ConnectionStore.of({
+      integrations: readable,
       audience,
       setAudience,
       canUse,
@@ -2279,15 +2599,23 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       readDraft,
       unsettledSends,
       sends,
-      pauseLogin
+      pauseLogin,
+      providers,
+      connectProvider,
+      createRole,
+      changeModels
     });
   });
 
 export const layer = Layer.effect(ConnectionStore.ConnectionStore, make);
 
-/** Every connection whose audience names teams, with those teams. */
+/**
+ * Every connection of the `known` integrations, a store's own, whose audience names teams, with
+ * those teams.
+ */
 export const teamConnections = Effect.fn("ConnectionStore.teamConnections")(function* (
-  companyId: string
+  companyId: string,
+  known: ReadonlyArray<Integration>
 ) {
   const sql = yield* SqlClient.SqlClient;
   return yield* sql<{
@@ -2297,6 +2625,6 @@ export const teamConnections = Effect.fn("ConnectionStore.teamConnections")(func
     readonly teamIds: readonly string[];
   }>`SELECT c.id, c.integration, c.handle, array_agg(g.team_id ORDER BY g.team_id) AS "teamIds"
     FROM connection_team_grants g JOIN connections c ON c.id = g.connection_id
-    WHERE g.company_id = ${companyId}
+    WHERE g.company_id = ${companyId} AND c.integration IN ${sql.in(known)}
     GROUP BY c.id, c.integration, c.handle ORDER BY c.integration, c.handle`;
 });

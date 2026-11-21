@@ -3,8 +3,6 @@ import {
   Connections,
   ConnectionUnavailable,
   CurrentIdentity,
-  Integration,
-  integrations,
   NotFound,
   PatchyApi,
   refuse
@@ -18,7 +16,6 @@ import * as ConnectionStore from "./ConnectionStore.js";
 import * as GithubSource from "./github/Source.js";
 
 const encodeConnections = Schema.encodeSync(Connections);
-const isIntegration = Schema.is(Integration);
 const encodeDetail = Schema.encodeSync(ConnectionDetail);
 const noStore = { headers: { "cache-control": "private, no-store" } };
 const unavailable = (error: ConnectionStore.ConnectionStorageFailed) =>
@@ -30,7 +27,11 @@ const unavailable = (error: ConnectionStore.ConnectionStorageFailed) =>
     )
   );
 
-/** Active members read safe metadata; administration remains browser-only. */
+/**
+ * Active members read safe metadata; administration remains browser-only. Only the integrations
+ * the store reads are answered and offered: a model provider never is, nor a role while Models is
+ * off, as an older release answers integrations it doesn't know.
+ */
 export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =>
   Effect.gen(function* () {
     const connections = yield* ConnectionStore.ConnectionStore;
@@ -39,15 +40,16 @@ export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =
     const detail = (integration: string, handle: string) =>
       Effect.gen(function* () {
         const identity = yield* CurrentIdentity;
-        // An unknown integration answers like an unknown handle.
-        if (!isIntegration(integration))
+        // An integration it doesn't serve answers like an unknown handle, before any lookup.
+        const known = connections.integrations.find((name) => name === integration);
+        if (known === undefined)
           return yield* new ConnectionStore.ConnectionNotFound({
             companyId: identity.company.id,
             lookup: { integration, handle }
           });
         const found = yield* connections.detail(
           identity.company.id,
-          integration,
+          known,
           handle,
           identity.user.id
         );
@@ -69,7 +71,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =
             query.integrations === undefined || query.integrations === "all"
               ? ["postgres"]
               : query.integrations.split(",");
-          const shown: ReadonlyArray<Integration> = integrations.filter(
+          const shown = connections.integrations.filter(
             (integration) => asked.includes(integration) && (integration !== "github" || github)
           );
           const rows = (yield* connections.list(identity.company.id, identity.user.id)).filter(
@@ -78,6 +80,21 @@ export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =
           return HttpServerResponse.jsonUnsafe(
             encodeConnections({
               connections: rows.map((row) => {
+                // A role whose provider is paused, or of an integration this release doesn't know,
+                // reaches nothing, so it reads as paused with its own way out.
+                const stopped =
+                  row.integration === "models" &&
+                  row.status === "connected" &&
+                  !ConnectionStore.serving(row)
+                    ? {
+                        status: "disconnected" as const,
+                        reason: "not_connected" as const,
+                        hint:
+                          row.role.provider === null
+                            ? "Its model provider isn't available on this server. Ask an administrator at /settings/integrations."
+                            : "Its model provider is paused. Ask an administrator to resume it at /settings/integrations."
+                      }
+                    : undefined;
                 // An IMAP login its mail server refused fails every call until an admin fixes it, so it says so.
                 const paused = row.integration === "imap" && row.display.paused !== undefined;
                 // A GitHub account that suspended the App refuses every call until it's unsuspended there.
@@ -96,20 +113,22 @@ export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =
                     : {}),
                   ...(paused ? { paused: true as const } : {}),
                   ...(suspended ? { suspended: true as const } : {}),
-                  ...(row.status !== "connected"
-                    ? {
-                        reason: "not_connected" as const,
-                        hint: "It's paused. Ask an administrator to resume it at /settings/integrations."
-                      }
-                    : paused
+                  ...(stopped !== undefined
+                    ? stopped
+                    : row.status !== "connected"
                       ? {
-                          hint: "Its mail server refused the password, so every call fails auth_failed. Ask an administrator to replace the password or test it at /settings/integrations."
+                          reason: "not_connected" as const,
+                          hint: "It's paused. Ask an administrator to resume it at /settings/integrations."
                         }
-                      : suspended
+                      : paused
                         ? {
-                            hint: `The account suspended Patchy Cloud on GitHub, so every call fails source_unavailable until it's unsuspended there. patchy add ${row.integration}/${row.handle} still declares it.`
+                            hint: "Its mail server refused the password, so every call fails auth_failed. Ask an administrator to replace the password or test it at /settings/integrations."
                           }
-                        : { hint: `patchy add ${row.integration}/${row.handle}` })
+                        : suspended
+                          ? {
+                              hint: `The account suspended Patchy Cloud on GitHub, so every call fails source_unavailable until it's unsuspended there. patchy add ${row.integration}/${row.handle} still declares it.`
+                            }
+                          : { hint: `patchy add ${row.integration}/${row.handle}` })
                 };
               }),
               ...(query.all
@@ -117,7 +136,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =
                     offered: shown.map((integration) => ({
                       integration,
                       connected: rows.some(
-                        (row) => row.integration === integration && row.status === "connected"
+                        (row) => row.integration === integration && ConnectionStore.serving(row)
                       )
                     }))
                   }

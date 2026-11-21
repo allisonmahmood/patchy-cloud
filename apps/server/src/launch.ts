@@ -24,7 +24,7 @@ import * as HttpServer from "effect/http/HttpServer";
 import { ClientDocumentNetwork, DemoLink, DevPersonas, Session } from "@patchy/auth";
 import { PgCompanyDatabases } from "@patchy/company-database";
 import { S3ContentStore } from "@patchy/content-store";
-import { CredentialKeys } from "@patchy/integrations";
+import { CredentialKeys, Models } from "@patchy/integrations";
 import * as Sql from "@patchy/sql";
 import { Runtime, RuntimeStream } from "@patchy/runtime";
 import * as Server from "./Server.js";
@@ -83,7 +83,8 @@ export const launch = <E>(mail: Layer.Layer<Server.MailNetwork, E>) =>
         Config.Redacted("DATABASE_URL"),
         PgCompanyDatabases.config,
         CredentialKeys.config,
-        DemoLink.config
+        DemoLink.config,
+        Models.enabled
       ]);
       if (yield* DevPersonas.enabled) yield* DevPersonas.config;
       else yield* Session.config;

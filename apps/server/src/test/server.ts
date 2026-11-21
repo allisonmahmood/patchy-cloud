@@ -53,6 +53,8 @@ export const server = (
               PATCHY_COMPANY_DB_ADMIN_URL: inject("postgres").adminUrl,
               PATCHY_COMPANY_DB_URL: inject("postgres").adminUrl,
               PATCHY_CREDENTIAL_KEYS: `test:${Buffer.alloc(32, 1).toString("base64")}`,
+              // On in tests, as in the dev runner; production leaves it off.
+              PATCHY_MODELS: "true",
               ...env
             })
           )

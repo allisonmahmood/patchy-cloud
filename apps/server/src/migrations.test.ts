@@ -233,10 +233,15 @@ it.layer(Testing.emptyLayer(release10))("the handles-per-integration upgrade", (
 
         yield* migrate(migrations);
 
+        // One handle key; the other, which a model role's company-scoped mapping references,
+        // repeats the primary key's uniqueness, so no connect can conflict on it alone.
         assert.deepStrictEqual(
           yield* sql`SELECT conname FROM pg_constraint
             WHERE conrelid = 'connections'::regclass AND contype = 'u' ORDER BY conname`,
-          [{ conname: "connections_company_id_integration_handle_key" }]
+          [
+            { conname: "connections_company_id_id_key" },
+            { conname: "connections_company_id_integration_handle_key" }
+          ]
         );
         // The same handle in another integration is a second connection; in the same one, taken.
         assert.deepStrictEqual(yield* connect("conn_duplicate", "postgres", postgres), []);

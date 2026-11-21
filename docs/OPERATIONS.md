@@ -212,6 +212,23 @@ What neither covers: a compromised **host** leaks the new key too, so fix the
 host before step 1; and a signed log URL GitHub already handed out is its own
 credential for about ten minutes, which suspension wasn't shown to cut.
 
+### Models
+
+Models, a patch's action calling an AI model on the company's own key, is built
+in parts behind one host setting, `PATCHY_MODELS`, off unless set to `true`.
+Production leaves it unset, and it isn't one of the host secret's keys. Off, the
+server keeps and reads no model provider or role, as a release before Models
+would: discovery neither lists nor offers a role, a role's detail is not found
+before any lookup, and making either is refused. The dev runner and the test
+servers turn it on. A value that isn't a boolean stops the server at launch.
+
+A provider is a connection of its provider's own integration, such as `openai`,
+holding the company's key, sealed under this keyring. A role is a `models`
+connection whose mapping to a provider and a model id is a `model_roles` row;
+its foreign key keeps a provider a role points at from being deleted. A release
+reads only the provider integrations it knows: a role mapped to one it doesn't
+know is unavailable there, and nothing is made or remapped to that provider.
+
 ### Initial credentials
 
 Startup migrates but creates no credential. For normal use, sign in at `/join`,

@@ -80,6 +80,26 @@ const pidgeon = (id: string, display: { readonly test: boolean }): ConnectionSto
   display: { email: `${id}@example.com`, inboxId: `inb_${id}`, access: "send", test: display.test }
 });
 
+/** A model role on a provider in `provider` state, or on one this release doesn't know. */
+const role = (
+  id: string,
+  status: "connected" | "disconnected",
+  provider: "connected" | "disconnected" | null
+): ConnectionStore.Connection => ({
+  ...shared,
+  id,
+  handle: id,
+  status,
+  integration: "models",
+  display: {},
+  role: {
+    kind: "decision",
+    model: "gpt-5-mini",
+    providerId: "conn_openai",
+    provider: provider === null ? null : { integration: "openai", handle: "main", status: provider }
+  }
+});
+
 describe("what needs an admin among a company's connections", () => {
   it("names a stopped connection with what it stops and its fix, and leaves choices alone", () => {
     const found = attention(
@@ -153,6 +173,51 @@ describe("what needs an admin among a company's connections", () => {
         problem: "Test key: mail stays in Pidgeon",
         detail: "2 patches use it",
         fix: { label: "Replace key…", href: "/settings/integrations/hello/rotate" }
+      }
+    ]);
+  });
+
+  it("names a role its provider stopped while live patches use it, with the way to resume", () => {
+    expect(
+      attention(
+        [
+          role("triage", "connected", "disconnected"),
+          role("drafts", "connected", null),
+          role("summaries", "disconnected", "connected"),
+          role("spare", "connected", "disconnected"),
+          role("working", "connected", "connected")
+        ],
+        new Map([
+          ["triage", used(2)],
+          ["drafts", used(1)],
+          ["summaries", used(1)],
+          ["working", used(1)]
+        ])
+      )
+    ).toEqual([
+      {
+        id: "drafts",
+        name: "models/drafts",
+        mark: { icon: "bot" },
+        problem: "Its model provider isn't available",
+        detail: "1 patch can't read it",
+        fix: { label: "Resume…", href: "/settings/integrations" }
+      },
+      {
+        id: "summaries",
+        name: "models/summaries",
+        mark: { icon: "bot" },
+        problem: "Disconnected",
+        detail: "1 patch can't read it",
+        fix: { label: "Resume…", href: "/settings/integrations" }
+      },
+      {
+        id: "triage",
+        name: "models/triage",
+        mark: { icon: "bot" },
+        problem: "Its model provider is paused",
+        detail: "2 patches can't read it",
+        fix: { label: "Resume…", href: "/settings/integrations" }
       }
     ]);
   });

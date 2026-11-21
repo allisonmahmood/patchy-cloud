@@ -4,7 +4,7 @@ import type { ProductMark } from "@patchy/core";
 import * as Effect from "effect/Effect";
 import { integrationOf } from "./ConnectionPage.js";
 import * as ConnectionStore from "./ConnectionStore.js";
-import { connectionPath } from "./ConnectionsView.js";
+import { connectionPath, indexPath } from "./ConnectionsView.js";
 
 /** A connection an admin has to act on: what's wrong, what it stops, and the one place that fixes it. */
 export interface Attention {
@@ -77,9 +77,9 @@ const providerStop = (
         ? githubStop(connection)
         : undefined;
 
-/** Whether patches that declare it can't read it now. */
+/** Whether patches that declare it can't read it now; a role, also while its provider is paused. */
 const stops = (connection: ConnectionStore.Connection) =>
-  connection.status === "disconnected" ||
+  !ConnectionStore.serving(connection) ||
   (connection.integration === "imap" && connection.display.paused !== undefined) ||
   (connection.integration === "github" && connection.suspendedAt !== null);
 
@@ -91,9 +91,10 @@ const testMode = (connection: ConnectionStore.Connection) =>
 
 /**
  * The connections among `connections` that need an admin, given who declares each: one its
- * provider stopped, one an admin disconnected while live patches still declare it, and a Pidgeon
- * test key live patches use, whose mail stays in Pidgeon. A disconnected connection or a
- * test key nothing uses was a choice, not a problem, so it isn't here. Names in order.
+ * provider stopped, one an admin disconnected while live patches still declare it, a role whose
+ * model provider an admin paused while live patches declare it, and a Pidgeon test key live
+ * patches use, whose mail stays in Pidgeon. A disconnected connection or a test key nothing uses
+ * was a choice, not a problem, so it isn't here. Names in order.
  */
 export const attention = (
   connections: ReadonlyArray<ConnectionStore.Connection>,
@@ -124,13 +125,22 @@ export const attention = (
                 fix: { label: "Replace key…", href: connectionPath(connection.id, "rotate") }
               }
             ];
-      return connection.status === "disconnected" && using > 0
+      // A role is resumed, or its provider, where Models are, under Integrations.
+      return !ConnectionStore.serving(connection) && using > 0
         ? [
             {
               ...named,
-              problem: "Disconnected",
+              problem:
+                connection.status === "disconnected"
+                  ? "Disconnected"
+                  : connection.integration === "models" && connection.role.provider === null
+                    ? "Its model provider isn't available"
+                    : "Its model provider is paused",
               ...detail,
-              fix: { label: "Reconnect…", href: connectionPath(connection.id) }
+              fix:
+                connection.integration === "models"
+                  ? { label: "Resume…", href: indexPath }
+                  : { label: "Reconnect…", href: connectionPath(connection.id) }
             }
           ]
         : [];
