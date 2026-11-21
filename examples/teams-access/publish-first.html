@@ -1,0 +1,1224 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Teams — Direction B: Create the team while publishing</title>
+    <style>
+      :root {
+        --paper: #fffdf4;
+        --white: #fffefa;
+        --ink: #12110f;
+        --muted: #69645a;
+        --line: rgba(18, 17, 15, 0.18);
+        --strong: rgba(18, 17, 15, 0.3);
+        --blue: #1263e6;
+        --green: #eff9e8;
+        --amber: #fff7e4;
+        --yellow: #ffbf35;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-padding-top: 24px;
+      }
+      body {
+        margin: 0;
+        color: var(--ink);
+        font:
+          16px/1.55 system-ui,
+          -apple-system,
+          "Segoe UI",
+          sans-serif;
+        background:
+          linear-gradient(var(--line) 1px, transparent 1px),
+          linear-gradient(90deg, var(--line) 1px, transparent 1px), var(--paper);
+        background-size: 48px 48px;
+      }
+      a {
+        color: var(--blue);
+        text-underline-offset: 3px;
+      }
+      a:focus-visible,
+      summary:focus-visible {
+        outline: 3px solid var(--blue);
+        outline-offset: 4px;
+      }
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+      h1 {
+        font-size: clamp(32px, 5vw, 58px);
+        line-height: 1.08;
+        letter-spacing: -2px;
+        max-width: 830px;
+      }
+      h2 {
+        font-size: 25px;
+        line-height: 1.25;
+        letter-spacing: -0.6px;
+      }
+      h3 {
+        font-size: 21px;
+        line-height: 1.3;
+      }
+      small,
+      .muted {
+        color: var(--muted);
+      }
+      small {
+        font-size: 13px;
+      }
+      .eyebrow {
+        font-size: 12px;
+        letter-spacing: 1.5px;
+        font-weight: 800;
+        text-transform: uppercase;
+      }
+      .wrap {
+        max-width: 1140px;
+        margin: auto;
+        padding: 48px 24px 80px;
+      }
+      .hero {
+        display: grid;
+        gap: 20px;
+        padding: 8px 0 32px;
+      }
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: center;
+      }
+      .badge {
+        padding: 4px 10px;
+        border: 1px solid var(--strong);
+        border-radius: 99px;
+        background: var(--white);
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .badge.green {
+        background: var(--green);
+      }
+      .jump {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 20px;
+        padding: 18px 0;
+        border-top: 2px solid;
+        border-bottom: 1px solid;
+      }
+      .jump a {
+        font-size: 14px;
+        font-weight: 700;
+      }
+      .cast {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px 28px;
+        padding: 20px 0;
+        font-size: 14px;
+      }
+      .cast strong {
+        display: block;
+      }
+      .step {
+        margin-top: 48px;
+        scroll-margin-top: 24px;
+      }
+      .step-head {
+        display: grid;
+        grid-template-columns: 44px 1fr;
+        gap: 12px;
+        align-items: start;
+        margin-bottom: 16px;
+      }
+      .number {
+        border: 2px solid;
+        width: 36px;
+        height: 36px;
+        display: grid;
+        place-items: center;
+        background: var(--yellow);
+        font-weight: 800;
+        border-radius: 8px;
+      }
+      .step-head p {
+        color: var(--muted);
+        font-size: 14px;
+        margin-top: 5px;
+      }
+      .window {
+        border: 1px solid var(--strong);
+        border-radius: 8px;
+        overflow: hidden;
+        background: var(--white);
+      }
+      .windowbar {
+        display: flex;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 8px;
+        padding: 11px 18px;
+        background: var(--paper);
+        border-bottom: 1px solid var(--line);
+        font-size: 12px;
+      }
+      .app {
+        display: grid;
+        grid-template-columns: 180px 1fr;
+        min-height: 360px;
+      }
+      .sidebar {
+        background: var(--paper);
+        padding: 24px 18px;
+        border-right: 1px solid var(--line);
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 22px;
+        font-size: 14px;
+        font-weight: 800;
+      }
+      .glyph {
+        width: 25px;
+        height: 25px;
+        background: #64c83f;
+        border: 2px solid;
+        border-radius: 7px;
+        box-shadow: 2px 2px 0 var(--ink);
+        transform: rotate(-5deg);
+        flex-shrink: 0;
+      }
+      .place {
+        padding: 8px 10px;
+        font-size: 13px;
+        border-radius: 6px;
+      }
+      .place.current {
+        background: #fff0c8;
+        font-weight: 750;
+      }
+      .nav-group {
+        color: var(--muted);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        margin: 20px 10px 4px;
+      }
+      .account {
+        margin-top: auto;
+        padding-top: 28px;
+        font-size: 12px;
+      }
+      .content {
+        padding: 30px;
+        min-width: 0;
+      }
+      .content > * + * {
+        margin-top: 20px;
+      }
+      .heading {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        align-items: center;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 44px;
+        padding: 8px 14px;
+        background: var(--white);
+        border: 2px solid var(--ink);
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 750;
+        line-height: 1.3;
+        color: var(--ink);
+        text-decoration: none;
+      }
+      .btn.primary {
+        background: var(--blue);
+        color: var(--white);
+      }
+      .btn.quiet {
+        border-color: transparent;
+        background: transparent;
+        color: var(--blue);
+        text-decoration: underline;
+      }
+      .btn.danger {
+        background: var(--amber);
+        color: #963c22;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+      }
+      .panel {
+        border: 1px solid var(--strong);
+        border-radius: 8px;
+        padding: 20px;
+        background: var(--white);
+      }
+      .panel > * + * {
+        margin-top: 16px;
+      }
+      .label {
+        display: block;
+        font-size: 13px;
+        font-weight: 750;
+        margin-bottom: 7px;
+      }
+      .field {
+        padding: 10px 12px;
+        border: 1px solid var(--strong);
+        border-radius: 6px;
+        background: var(--white);
+      }
+      .people {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      .person {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        padding: 13px 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .person:last-child {
+        border: 0;
+      }
+      .avatar {
+        display: grid;
+        place-items: center;
+        width: 34px;
+        height: 34px;
+        background: #cdeebb;
+        border: 1px solid var(--strong);
+        border-radius: 8px;
+        font-size: 12px;
+        font-weight: 800;
+        flex-shrink: 0;
+      }
+      .avatar.amber {
+        background: #ffe2a8;
+      }
+      .person-info {
+        flex: 1;
+        min-width: 0;
+      }
+      .person-info strong {
+        font-size: 14px;
+      }
+      .person-info small {
+        display: block;
+      }
+      .check {
+        color: #2f6a17;
+        font-weight: 800;
+      }
+      .columns {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 18px;
+      }
+      .columns > * {
+        min-width: 0;
+      }
+      .chat {
+        max-width: 720px;
+        margin: auto;
+        padding: 28px;
+        display: grid;
+        gap: 20px;
+      }
+      .message {
+        border-left: 3px solid var(--line);
+        padding-left: 16px;
+      }
+      .message p + p {
+        margin-top: 10px;
+      }
+      .speaker {
+        font-size: 12px;
+        font-weight: 800;
+        margin-bottom: 6px;
+      }
+      .question {
+        padding: 22px;
+        background: var(--paper);
+        border: 1px solid var(--strong);
+        border-radius: 8px;
+      }
+      .question > * + * {
+        margin-top: 14px;
+      }
+      .choices {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      .choice {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        border: 1px solid var(--strong);
+        border-radius: 6px;
+        padding: 16px;
+        color: var(--ink);
+        text-decoration: none;
+        background: var(--white);
+      }
+      .choice:before {
+        content: "○";
+        font-size: 19px;
+        line-height: 1.3;
+      }
+      .choice strong,
+      .choice small {
+        display: block;
+      }
+      .note {
+        padding: 14px 16px;
+        border: 1px solid var(--strong);
+        border-left: 5px solid #2f6a17;
+        background: var(--green);
+        border-radius: 8px;
+        font-size: 14px;
+      }
+      .note.refused {
+        background: var(--amber);
+        border-left-color: #963c22;
+      }
+      .note strong {
+        display: block;
+      }
+      .patch {
+        padding: 18px;
+        border: 1px solid var(--strong);
+        border-radius: 8px;
+        display: flex;
+        gap: 14px;
+        align-items: center;
+      }
+      .mark {
+        width: 42px;
+        height: 46px;
+        border: 1px solid var(--strong);
+        border-radius: 6px;
+        background: #cfe4ff;
+        display: grid;
+        place-items: center;
+        flex-shrink: 0;
+        font-size: 20px;
+      }
+      .patch strong {
+        display: block;
+      }
+      .empty {
+        padding: 36px 18px;
+        border: 1px dashed var(--strong);
+        border-radius: 8px;
+        color: var(--muted);
+        text-align: center;
+      }
+      .door {
+        padding: 44px 26px;
+        display: grid;
+        gap: 16px;
+        justify-items: start;
+        max-width: 580px;
+        margin: auto;
+      }
+      .sample {
+        padding: 24px;
+        background: var(--paper);
+      }
+      .sample ol {
+        padding-left: 20px;
+        margin: 16px 0 0;
+      }
+      .sample li {
+        padding: 6px 0;
+      }
+      .review {
+        font-size: 13px;
+        color: var(--muted);
+        margin-top: 10px;
+      }
+      .workspace {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 300px;
+        gap: 24px;
+      }
+      .workspace .chat {
+        padding: 0;
+      }
+      .team-sheet {
+        background: var(--paper);
+      }
+      .footer {
+        margin-top: 48px;
+        padding: 24px;
+        background: var(--white);
+        border: 1px solid var(--strong);
+        border-radius: 8px;
+      }
+      .footer > * + * {
+        margin-top: 16px;
+      }
+      details {
+        border-top: 1px solid var(--line);
+        padding-top: 16px;
+      }
+      summary {
+        cursor: pointer;
+        font-weight: 700;
+      }
+      details p {
+        margin-top: 12px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+      .flow {
+        font-weight: 750;
+        line-height: 2;
+      }
+      .mini-nav {
+        display: flex;
+        gap: 20px;
+        margin-bottom: 22px;
+        font-size: 13px;
+      }
+      .mini-nav b {
+        background: #fff0c8;
+        padding: 3px 8px;
+        border-radius: 5px;
+      }
+      @media (max-width: 800px) {
+        .workspace {
+          grid-template-columns: 1fr;
+        }
+        .app {
+          grid-template-columns: 140px 1fr;
+        }
+        .content {
+          padding: 22px;
+        }
+        .sidebar {
+          padding: 22px 12px;
+        }
+        .columns {
+          grid-template-columns: 1fr;
+        }
+      }
+      @media (max-width: 540px) {
+        .wrap {
+          padding: 28px 14px 48px;
+        }
+        h1 {
+          letter-spacing: -1px;
+        }
+        .app {
+          display: block;
+        }
+        .sidebar {
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+          display: flex;
+          flex-direction: row;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 5px;
+          padding: 12px;
+        }
+        .brand {
+          width: 100%;
+          margin-bottom: 8px;
+        }
+        .nav-group,
+        .sidebar .account,
+        .sidebar .secondary {
+          display: none;
+        }
+        .place {
+          padding: 6px 8px;
+        }
+        .content {
+          padding: 20px 16px;
+        }
+        .heading {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+        .choices {
+          grid-template-columns: 1fr;
+        }
+        .chat {
+          padding: 22px 16px;
+        }
+        .step {
+          margin-top: 36px;
+        }
+        .cast {
+          gap: 12px 22px;
+        }
+        .door {
+          padding: 28px 20px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="wrap">
+      <header class="hero" id="top">
+        <div class="meta">
+          <span class="eyebrow">Teams / Direction B</span
+          ><span class="badge">Static design preview</span>
+        </div>
+        <h1>Create the team while publishing</h1>
+        <p>
+          One publishing workspace. An admin makes the team beside the audience question, then
+          returns to publish.
+        </p>
+        <nav class="jump" aria-label="Storyboard">
+          <a href="#start">1 Create</a><a href="#team">2 Team</a><a href="#audience">3 Audience</a
+          ><a href="#published">4 Publish</a><a href="#discover">5 Open</a
+          ><a href="#remove">6 Remove</a><a href="#restore">7 Restore</a>
+        </nav>
+        <div class="cast">
+          <div><strong>Alex Kim</strong>Admin · Owner · On Design</div>
+          <div><strong>Maya Chen</strong>Member · On Design</div>
+          <div><strong>Robin Ellis</strong>Admin · Outside Design</div>
+        </div>
+        <small
+          >All people and content are invented. Links move between snapshots; they do not change
+          membership or publish a patch.</small
+        >
+      </header>
+      <section class="step" id="start" aria-labelledby="title-start">
+        <div class="step-head">
+          <span class="number">1</span>
+          <div>
+            <h2 id="title-start">Name a team. Add two people.</h2>
+            <p>Alex is an existing admin. Both Alex and Maya are explicitly included.</p>
+          </div>
+        </div>
+        <div class="window">
+          <div class="windowbar">
+            <span>Agent workspace / Review room</span><span>Alex Kim · Admin</span>
+          </div>
+          <div class="content workspace">
+            <div class="chat">
+              <div class="message">
+                <div class="speaker">Alex</div>
+                <p>Create Design with Maya and me. Get Review room ready to publish.</p>
+              </div>
+              <div class="message">
+                <div class="speaker">Agent</div>
+                <p>
+                  The page is ready. Create Design with these two people, then choose who can open
+                  the patch.
+                </p>
+              </div>
+              <div class="panel">
+                <span class="label">Review room</span>
+                <p class="muted">Ready to publish · Audience not set</p>
+              </div>
+            </div>
+            <aside class="panel team-sheet" aria-label="Create team preview">
+              <h3>Create team</h3>
+              <div>
+                <span class="label">Team name</span>
+                <div class="field">Design</div>
+              </div>
+              <div>
+                <span class="label">People</span>
+                <ul class="people">
+                  <li class="person">
+                    <span class="avatar">AK</span
+                    ><span class="person-info"
+                      ><strong>Alex Kim <small>You · Admin</small></strong></span
+                    ><span class="check">✓ Selected</span>
+                  </li>
+                  <li class="person">
+                    <span class="avatar amber">MC</span
+                    ><span class="person-info"><strong>Maya Chen</strong><small>Member</small></span
+                    ><span class="check">✓ Selected</span>
+                  </li>
+                </ul>
+              </div>
+              <div class="actions">
+                <a class="btn primary" href="#team">Create team</a
+                ><a class="btn quiet" href="#start">Cancel</a>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </section>
+      <section class="step" id="team" aria-labelledby="title-team">
+        <div class="step-head">
+          <span class="number">2</span>
+          <div>
+            <h2 id="title-team">The team exists. The patch is still unpublished.</h2>
+            <p>A team is a set of people. Alex remains the patch owner.</p>
+          </div>
+        </div>
+        <div class="window">
+          <div class="windowbar">
+            <span>Agent workspace / Review room</span><span>Alex Kim · Admin</span>
+          </div>
+          <div class="content workspace">
+            <div class="chat">
+              <div class="note"><strong>Design created</strong>Alex Kim and Maya Chen added.</div>
+              <h3>Review room</h3>
+              <p>Ready to publish</p>
+              <a class="btn primary" href="#audience">Continue to audience</a>
+            </div>
+            <aside class="panel team-sheet" aria-label="Team preview">
+              <div class="heading">
+                <h3>Design</h3>
+                <span class="badge">2 people</span>
+              </div>
+              <ul class="people">
+                <li class="person">
+                  <span class="avatar">AK</span
+                  ><span class="person-info"
+                    ><strong>Alex Kim <small>You · Admin</small></strong></span
+                  ><span class="check">✓ Added</span>
+                </li>
+                <li class="person">
+                  <span class="avatar amber">MC</span
+                  ><span class="person-info"><strong>Maya Chen</strong><small>Member</small></span
+                  ><a class="btn quiet" href="#remove">Remove</a>
+                </li>
+              </ul>
+              <div class="actions">
+                <a class="btn primary" href="#audience">Continue to publish</a>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </section>
+      <section class="step" id="audience" aria-labelledby="title-audience">
+        <div class="step-head">
+          <span class="number">3</span>
+          <div>
+            <h2 id="title-audience">Choose Company or Design. Nothing is preselected.</h2>
+            <p>
+              This snapshot shows an unspecified audience. If Alex already said “for Design”, the
+              agent uses that choice without asking again.
+            </p>
+          </div>
+        </div>
+        <div class="window">
+          <div class="windowbar">
+            <span>Agent workspace / First publish</span><span>Alex Kim · Admin</span>
+          </div>
+          <div class="content workspace">
+            <div class="chat">
+              <div class="message">
+                <div class="speaker">Alex</div>
+                <p>Publish Review room.</p>
+              </div>
+              <div class="message">
+                <div class="speaker">Agent</div>
+                <div class="question">
+                  <h3>Who should be able to open Review room?</h3>
+                  <div class="choices">
+                    <a class="choice" href="#company"
+                      ><span
+                        ><strong>Company</strong><small>Everyone at Juniper Studio</small></span
+                      ></a
+                    ><a class="choice" href="#published"
+                      ><span><strong>Design</strong><small>Alex Kim and Maya Chen</small></span></a
+                    >
+                  </div>
+                </div>
+              </div>
+            </div>
+            <aside class="panel team-sheet">
+              <h3>Design</h3>
+              <ul class="people">
+                <li class="person">
+                  <span class="avatar">AK</span
+                  ><span class="person-info"
+                    ><strong>Alex Kim <small>You · Admin</small></strong></span
+                  ><span class="check">✓ Added</span>
+                </li>
+                <li class="person">
+                  <span class="avatar amber">MC</span
+                  ><span class="person-info"><strong>Maya Chen</strong><small>Member</small></span
+                  ><span class="check">✓ Added</span>
+                </li>
+              </ul>
+              <small>Created by Alex Kim</small>
+            </aside>
+          </div>
+        </div>
+      </section>
+      <section class="step" id="published" aria-labelledby="title-published">
+        <div class="step-head">
+          <span class="number">4</span>
+          <div>
+            <h2 id="title-published">The first version and audience appear together.</h2>
+            <p>There is no company-wide version before this result.</p>
+          </div>
+        </div>
+        <div class="window">
+          <div class="windowbar">
+            <span>Agent conversation / Published</span><span>Alex Kim · Admin</span>
+          </div>
+          <div class="chat">
+            <div class="message">
+              <div class="speaker">Alex</div>
+              <p>Design.</p>
+            </div>
+            <div class="note">
+              <strong>Review room published · Version 1</strong>Who can open: Design — Alex Kim and
+              Maya Chen.
+            </div>
+            <div class="actions">
+              <a class="btn primary" href="#discover">View as Maya</a
+              ><a class="btn quiet" href="#outside">View as Robin</a>
+            </div>
+          </div>
+        </div>
+      </section>
+      <details class="step" id="company">
+        <summary>Alternative: Alex chooses Company</summary>
+        <p>Company is an explicit choice with its own publication result.</p>
+        <div class="window">
+          <div class="windowbar">
+            <span>Alternative / Company chosen explicitly</span><span>Alex Kim · Admin</span>
+          </div>
+          <div class="chat">
+            <div class="message">
+              <div class="speaker">Alex</div>
+              <p>Company.</p>
+            </div>
+            <div class="note">
+              <strong>Review room published · Version 1</strong>Who can open: everyone at Juniper
+              Studio.
+            </div>
+            <a class="btn quiet" href="#published">Return to Design journey</a>
+          </div>
+        </div>
+      </details>
+      <section class="step" id="discover" aria-labelledby="title-discover">
+        <div class="step-head">
+          <span class="number">5</span>
+          <div>
+            <h2 id="title-discover">Maya finds it. Robin does not.</h2>
+            <p>Robin is an admin, which does not bypass the team audience.</p>
+          </div>
+        </div>
+        <div class="columns">
+          <div>
+            <div class="window">
+              <div class="windowbar"><span>All patches</span><span>Maya Chen · Member</span></div>
+              <div class="app">
+                <aside class="sidebar" aria-label="Illustrated navigation">
+                  <div class="brand">
+                    <span class="glyph" aria-hidden="true"></span>Juniper Studio
+                  </div>
+                  <span class="place">Home</span><span class="place current">All patches</span
+                  ><span class="place secondary">Your agents</span
+                  ><span class="nav-group">Company</span><span class="place">People</span
+                  ><span class="place secondary">Integrations</span
+                  ><span class="place secondary">Agent access</span>
+                  <div class="account">Maya Chen</div>
+                </aside>
+                <div class="content">
+                  <h3>All patches</h3>
+                  <div class="patch">
+                    <span class="mark" aria-hidden="true">≡</span>
+                    <div><strong>Review room</strong><small>Design · By Alex Kim</small></div>
+                    <a class="btn quiet" href="#open">Open</a>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="review">Maya’s patch list contains Review room.</p>
+          </div>
+          <div id="outside">
+            <div class="window">
+              <div class="windowbar"><span>All patches</span><span>Robin Ellis · Admin</span></div>
+              <div class="app">
+                <aside class="sidebar" aria-label="Illustrated navigation">
+                  <div class="brand">
+                    <span class="glyph" aria-hidden="true"></span>Juniper Studio
+                  </div>
+                  <span class="place">Home</span><span class="place current">All patches</span
+                  ><span class="place secondary">Your agents</span
+                  ><span class="nav-group">Company</span><span class="place">People</span
+                  ><span class="place secondary">Integrations</span
+                  ><span class="place secondary">Agent access</span>
+                  <div class="account">Robin Ellis</div>
+                </aside>
+                <div class="content">
+                  <h3>All patches</h3>
+                  <div class="empty">No patches to show</div>
+                </div>
+              </div>
+            </div>
+            <p class="review">Robin’s list contains no Review room card.</p>
+          </div>
+          <div id="open">
+            <div class="window">
+              <div class="windowbar">
+                <span>Review room / Version 1</span><span>Maya Chen · Member</span>
+              </div>
+              <div class="sample">
+                <span class="eyebrow">Review room</span>
+                <h3>Today’s design review</h3>
+                <ol>
+                  <li>Walk through the new layout.</li>
+                  <li>Discuss the empty state.</li>
+                  <li>Agree on the next draft.</li>
+                </ol>
+              </div>
+            </div>
+            <p class="review">Maya opens the simple page. It has no data or connections.</p>
+          </div>
+          <div>
+            <div class="window">
+              <div class="windowbar">
+                <span>Direct patch link</span><span>Robin Ellis · Admin</span>
+              </div>
+              <div class="door">
+                <span class="glyph" aria-hidden="true"></span>
+                <h3>You don’t have access to this patch</h3>
+                <a class="btn" href="#outside">Back to all patches</a>
+              </div>
+            </div>
+            <p class="review">Robin follows the same direct link and gets no patch content.</p>
+          </div>
+        </div>
+      </section>
+      <section class="step" id="remove" aria-labelledby="title-remove">
+        <div class="step-head">
+          <span class="number">6</span>
+          <div>
+            <h2 id="title-remove">Remove Maya. The next request is refused.</h2>
+            <p>
+              The team people panel stays next to the patch; there is no separate permissions
+              dashboard.
+            </p>
+          </div>
+        </div>
+        <div class="window">
+          <div class="windowbar">
+            <span>Review room / Design / People</span><span>Alex Kim · Admin</span>
+          </div>
+          <div class="app">
+            <aside class="sidebar" aria-label="Illustrated navigation">
+              <div class="brand"><span class="glyph" aria-hidden="true"></span>Juniper Studio</div>
+              <span class="place">Home</span><span class="place">All patches</span
+              ><span class="place secondary">Your agents</span><span class="nav-group">Company</span
+              ><span class="place current">People</span
+              ><span class="place secondary">Integrations</span
+              ><span class="place secondary">Agent access</span>
+              <div class="account">Alex Kim</div>
+            </aside>
+            <div class="content">
+              <h3>Design</h3>
+              <ul class="people">
+                <li class="person">
+                  <span class="avatar">AK</span
+                  ><span class="person-info"
+                    ><strong>Alex Kim <small>You · Admin</small></strong></span
+                  ><span class="check">✓ Added</span>
+                </li>
+                <li class="person">
+                  <span class="avatar amber">MC</span
+                  ><span class="person-info"><strong>Maya Chen</strong><small>Member</small></span
+                  ><a class="btn quiet" href="#remove">Remove</a>
+                </li>
+              </ul>
+              <div class="panel">
+                <h3>Remove Maya Chen from Design?</h3>
+                <p>Maya will lose access to patches shared only with Design.</p>
+                <div class="actions">
+                  <a class="btn danger" href="#removed">Remove Maya</a
+                  ><a class="btn quiet" href="#team">Keep Maya</a>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div id="removed" class="step">
+          <div class="window">
+            <div class="windowbar">
+              <span>Review room / Design / People</span><span>Alex Kim · Admin</span>
+            </div>
+            <div class="app">
+              <aside class="sidebar" aria-label="Illustrated navigation">
+                <div class="brand">
+                  <span class="glyph" aria-hidden="true"></span>Juniper Studio
+                </div>
+                <span class="place">Home</span><span class="place">All patches</span
+                ><span class="place secondary">Your agents</span
+                ><span class="nav-group">Company</span><span class="place current">People</span
+                ><span class="place secondary">Integrations</span
+                ><span class="place secondary">Agent access</span>
+                <div class="account">Alex Kim</div>
+              </aside>
+              <div class="content">
+                <div class="note">
+                  <strong>Maya removed from Design</strong>1 person remains: Alex Kim.
+                </div>
+                <h3>Design</h3>
+                <div class="person">
+                  <span class="avatar">AK</span
+                  ><span class="person-info"
+                    ><strong>Alex Kim</strong><small>You · Admin</small></span
+                  >
+                </div>
+                <a class="btn primary" href="#restore">Add Maya back</a>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="columns step">
+          <div id="removed-list">
+            <div class="window">
+              <div class="windowbar">
+                <span>Next request / All patches</span><span>Maya Chen · Member</span>
+              </div>
+              <div class="app">
+                <aside class="sidebar" aria-label="Illustrated navigation">
+                  <div class="brand">
+                    <span class="glyph" aria-hidden="true"></span>Juniper Studio
+                  </div>
+                  <span class="place">Home</span><span class="place current">All patches</span
+                  ><span class="place secondary">Your agents</span
+                  ><span class="nav-group">Company</span><span class="place">People</span
+                  ><span class="place secondary">Integrations</span
+                  ><span class="place secondary">Agent access</span>
+                  <div class="account">Maya Chen</div>
+                </aside>
+                <div class="content">
+                  <h3>All patches</h3>
+                  <div class="empty">No patches to show</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div>
+            <div class="window">
+              <div class="windowbar">
+                <span>Next request / Direct patch link</span><span>Maya Chen · Member</span>
+              </div>
+              <div class="door">
+                <span class="glyph" aria-hidden="true"></span>
+                <h3>You don’t have access to this patch</h3>
+                <a class="btn" href="#removed-list">Back to all patches</a>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p class="review">
+          After removal, Maya’s next list request omits the card and her next direct-open request is
+          refused. An already rendered page is not claimed to disappear.
+        </p>
+      </section>
+      <section class="step" id="restore" aria-labelledby="title-restore">
+        <div class="step-head">
+          <span class="number">7</span>
+          <div>
+            <h2 id="title-restore">Add Maya back. Her next request works.</h2>
+            <p>Restoring team membership restores access without republishing.</p>
+          </div>
+        </div>
+        <div class="window">
+          <div class="windowbar">
+            <span>Review room / Design / People</span><span>Alex Kim · Admin</span>
+          </div>
+          <div class="app">
+            <aside class="sidebar" aria-label="Illustrated navigation">
+              <div class="brand"><span class="glyph" aria-hidden="true"></span>Juniper Studio</div>
+              <span class="place">Home</span><span class="place">All patches</span
+              ><span class="place secondary">Your agents</span><span class="nav-group">Company</span
+              ><span class="place current">People</span
+              ><span class="place secondary">Integrations</span
+              ><span class="place secondary">Agent access</span>
+              <div class="account">Alex Kim</div>
+            </aside>
+            <div class="content">
+              <div class="heading">
+                <h3>Add people to Design</h3>
+                <span class="badge">1 person</span>
+              </div>
+              <div class="person">
+                <span class="avatar amber">MC</span
+                ><span class="person-info"><strong>Maya Chen</strong><small>Member</small></span
+                ><span class="check">✓ Selected</span>
+              </div>
+              <a class="btn primary" href="#restored">Add Maya</a>
+            </div>
+          </div>
+        </div>
+        <div id="restored" class="step">
+          <div class="window">
+            <div class="windowbar"><span>Design / People</span><span>Alex Kim · Admin</span></div>
+            <div class="app">
+              <aside class="sidebar" aria-label="Illustrated navigation">
+                <div class="brand">
+                  <span class="glyph" aria-hidden="true"></span>Juniper Studio
+                </div>
+                <span class="place">Home</span><span class="place">All patches</span
+                ><span class="place secondary">Your agents</span
+                ><span class="nav-group">Company</span><span class="place current">People</span
+                ><span class="place secondary">Integrations</span
+                ><span class="place secondary">Agent access</span>
+                <div class="account">Alex Kim</div>
+              </aside>
+              <div class="content">
+                <div class="note">
+                  <strong>Maya added to Design</strong>Alex Kim and Maya Chen can open Review room.
+                </div>
+                <h3>Design</h3>
+                <ul class="people">
+                  <li class="person">
+                    <span class="avatar">AK</span
+                    ><span class="person-info"
+                      ><strong>Alex Kim <small>You · Admin</small></strong></span
+                    ><span class="check">✓ Added</span>
+                  </li>
+                  <li class="person">
+                    <span class="avatar amber">MC</span
+                    ><span class="person-info"><strong>Maya Chen</strong><small>Member</small></span
+                    ><a class="btn quiet" href="#remove">Remove</a>
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="columns step">
+          <div>
+            <div class="window">
+              <div class="windowbar">
+                <span>Next request / All patches</span><span>Maya Chen · Member</span>
+              </div>
+              <div class="app">
+                <aside class="sidebar" aria-label="Illustrated navigation">
+                  <div class="brand">
+                    <span class="glyph" aria-hidden="true"></span>Juniper Studio
+                  </div>
+                  <span class="place">Home</span><span class="place current">All patches</span
+                  ><span class="place secondary">Your agents</span
+                  ><span class="nav-group">Company</span><span class="place">People</span
+                  ><span class="place secondary">Integrations</span
+                  ><span class="place secondary">Agent access</span>
+                  <div class="account">Maya Chen</div>
+                </aside>
+                <div class="content">
+                  <h3>All patches</h3>
+                  <div class="patch">
+                    <span class="mark" aria-hidden="true">≡</span>
+                    <div><strong>Review room</strong><small>Design · By Alex Kim</small></div>
+                    <a class="btn quiet" href="#restored-open">Open</a>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div id="restored-open">
+            <div class="window">
+              <div class="windowbar">
+                <span>Review room / Version 1</span><span>Maya Chen · Member</span>
+              </div>
+              <div class="sample">
+                <span class="eyebrow">Review room</span>
+                <h3>Today’s design review</h3>
+                <ol>
+                  <li>Walk through the new layout.</li>
+                  <li>Discuss the empty state.</li>
+                  <li>Agree on the next draft.</li>
+                </ol>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+      <section class="step" aria-labelledby="republish-title">
+        <div class="step-head">
+          <span class="number">↻</span>
+          <div>
+            <h2 id="republish-title">Alex publishes again. Design stays selected.</h2>
+            <p>No repeated audience question when the audience is unchanged.</p>
+          </div>
+        </div>
+        <div class="window">
+          <div class="windowbar">
+            <span>Agent conversation / Owner publishes again</span><span>Alex Kim · Admin</span>
+          </div>
+          <div class="chat">
+            <div class="message">
+              <div class="speaker">Alex</div>
+              <p>Publish the updated Review room.</p>
+            </div>
+            <div class="note">
+              <strong>Review room published · Version 2</strong>Who can open: Design — Alex Kim and
+              Maya Chen.
+            </div>
+          </div>
+        </div>
+      </section>
+      <footer class="footer">
+        <span class="eyebrow">For the design decision</span>
+        <h3>B · Publish first</h3>
+        <p>
+          A new team can be created in the publishing context, and its people remain visible
+          alongside the audience. This saves a context switch but adds a team editor to the publish
+          workspace.
+        </p>
+        <p class="flow">
+          Create team → Choose audience → Publish → Find / open → Remove → Refuse → Restore
+        </p>
+        <details>
+          <summary>Contract and limits</summary>
+          <p>
+            This is a static storyboard for
+            <a href="https://github.com/allisonmahmood/patchy-cloud/issues/1234">#1234</a>, using
+            <a href="https://github.com/allisonmahmood/patchy-cloud/issues/1192">#1192</a> as the
+            contract. No actual access control is implemented or demonstrated. The local build is
+            #1235, after Srikar picks a direction.
+          </p>
+          <p>
+            First publish requires Company or one named team. A supplied audience satisfies the
+            choice; a missing one does not publish. Only an owner who can open the patch may publish
+            again. Removing Alex from Design would deny both open and publish; re-adding Alex is
+            recovery. Team membership grants no publishing rights to Maya.
+          </p>
+          <p>
+            No new roles, multiple-team selection, ownership handoff, connections, data resources,
+            migrations or production changes. MCP, runtime handlers, live subscriptions, shared
+            resources and guest/public access are outside this preview.
+          </p>
+        </details>
+        <a href="#top">Back to top ↑</a>
+      </footer>
+    </main>
+  </body>
+</html>
