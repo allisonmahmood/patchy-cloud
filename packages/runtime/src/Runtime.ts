@@ -697,13 +697,15 @@ export const make = (
             if (principal === null ? input.op !== "me" : principal.userId !== identity.user.id)
               return yield* new PrincipalChanged({});
           }
-          // A name the host serves nowhere is malformed; one it serves off the page list, or for
-          // another tier, is a server handler's to call.
+          // An operation the host serves off the page list, or lists for another tier, is a server
+          // handler's to call. A name the host serves nowhere stays on the metered path below, so
+          // it spends a call like any other before it answers `invalid_request`.
           const tiers = Object.hasOwn(pageOperations, input.op)
             ? pageOperations[input.op]
             : undefined;
-          if (tiers === undefined && operation === undefined) return yield* new InvalidRequest({});
-          if (tiers === undefined || !tiers.includes(version.manifest.tier))
+          if (
+            tiers === undefined ? operation !== undefined : !tiers.includes(version.manifest.tier)
+          )
             return yield* new ServerRequired();
           if (input.op !== "me" && version.manifest.tier < 2 && version.patchTier === 2)
             return yield* new ServerRequired();

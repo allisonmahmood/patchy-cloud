@@ -181,6 +181,32 @@ it.effect("refuses a page's call to a host operation that is not on the page lis
   })
 );
 
+// A name the host serves nowhere is no way around the call rate: it spends a call before it is
+// refused, and a retained document still gets its own refusal first.
+it.effect("meters a name the host serves nowhere, after the retained document's refusal", () =>
+  Effect.gen(function* () {
+    const api = yield* Fixtures.client;
+    const call = (op: string, versionId: string) =>
+      api.call({
+        payload: { ...envelope(op), versionId },
+        headers: authenticatedHeaders(),
+        responseMode: "response-only"
+      });
+    const retained = yield* call("typo.call", Fixtures.staleTier1VersionId);
+    assert.strictEqual(retained.status, 403);
+    assert.strictEqual(decodeFailure(yield* retained.json).code, "server_required");
+    // The fixtures allow three calls a minute, and the refusal above spent none of them.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const unknown = yield* call("typo.call", Fixtures.versionId);
+      assert.strictEqual(unknown.status, 400);
+      assert.strictEqual(decodeFailure(yield* unknown.json).code, "invalid_request");
+    }
+    const next = yield* call("me", Fixtures.versionId);
+    assert.strictEqual(next.status, 429);
+    assert.strictEqual(decodeFailure(yield* next.json).code, "rate_limited");
+  }).pipe(Effect.provide(Fixtures.layer()))
+);
+
 it.effect(
   "attributes integration origin, principal and size denials without trusting the envelope identity",
   () =>
