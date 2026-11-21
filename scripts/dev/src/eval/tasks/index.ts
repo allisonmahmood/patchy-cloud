@@ -2,6 +2,7 @@ import type { Task } from "../task.js";
 import brokenHandler from "./brokenHandler.js";
 import cheers from "./cheers.js";
 import kudosAgents from "./kudosAgents.js";
+import recipeBook from "./recipeBook.js";
 import spendApprovals from "./spendApprovals.js";
 import warRoom from "./warRoom.js";
 
@@ -11,5 +12,6 @@ export const TASKS: ReadonlyArray<Task> = [
   spendApprovals,
   brokenHandler,
   kudosAgents,
-  warRoom
+  warRoom,
+  recipeBook
 ];
