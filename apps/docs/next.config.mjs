@@ -1,7 +1,5 @@
 import { createMDX } from "fumadocs-mdx/next";
 
-const withMDX = createMDX();
-
 /** @type {import('next').NextConfig} */
 const config = {
   reactStrictMode: true,
@@ -29,4 +27,9 @@ const config = {
   }
 };
 
-export default withMDX(config);
+// When `next dev` stops, Next.js loads this file once more in a detached process, to send any
+// telemetry still queued (none: the scripts turn telemetry off). Fumadocs' plugin would start its
+// file watcher there, which keeps that process alive for good, so it gets the plain config.
+const flushingTelemetry = process.argv[1]?.endsWith("detached-flush.js") === true;
+
+export default flushingTelemetry ? config : createMDX()(config);
