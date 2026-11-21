@@ -346,9 +346,10 @@ const teamReach = Layer.effect(
           });
         // A role the store doesn't read while Models is off still keeps its team; only a refused
         // delete says so, to the admins who'd see it.
-        const unlisted = admin
-          ? yield* SqlConnectionStore.unlistedTeamGrants(viewer.companyId, store.integrations)
-          : new Map<string, number>();
+        const unlisted =
+          admin && !store.integrations.includes("models")
+            ? yield* SqlConnectionStore.modelRoleTeamGrants(viewer.companyId)
+            : new Map<string, number>();
         return { patches: shown, connections, hidden, unlisted };
       },
       Effect.provideService(SqlClient.SqlClient, sql)
