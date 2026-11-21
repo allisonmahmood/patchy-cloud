@@ -172,7 +172,15 @@ export const migrations: Migrations = {
   // role is a `models` connection mapped here to one provider of its own company and a model id.
   // The mapping is a reference, so a provider a role points at can't be deleted, and it goes with
   // its role. Rows of both are new integrations, which the release before this one never reads.
+  //
+  // The key the mapping references takes `connections`' exclusive lock to build, as
+  // `users_company_identity` did `users`'. Waiting for it behind a long transaction would queue
+  // every connection read behind the migration, so the step gives up after three seconds: the
+  // whole batch rolls back, the host stops before it listens, the hosts already running keep
+  // serving, and ECS starts it again, rolling the deploy back if it keeps failing. The timeout
+  // ends with the step.
   "0045_model_roles": ddl(
+    `SET LOCAL lock_timeout = '3s'`,
     `ALTER TABLE connections ADD CONSTRAINT connections_company_id_id_key UNIQUE (company_id, id)`,
     `CREATE TABLE model_roles (
       connection_id TEXT PRIMARY KEY,
@@ -183,6 +191,7 @@ export const migrations: Migrations = {
       FOREIGN KEY (company_id, connection_id) REFERENCES connections(company_id, id) ON DELETE CASCADE,
       FOREIGN KEY (company_id, provider_id) REFERENCES connections(company_id, id) ON DELETE RESTRICT
     )`,
-    `CREATE INDEX model_roles_provider ON model_roles(company_id, provider_id)`
+    `CREATE INDEX model_roles_provider ON model_roles(company_id, provider_id)`,
+    `SET LOCAL lock_timeout TO DEFAULT`
   )
 };
