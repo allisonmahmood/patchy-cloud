@@ -49,7 +49,7 @@ A handler for work outside one transaction, including file bytes, company integr
 _Avoid_: background job, transaction
 
 **Model pool**:
-The places, per company, per person and per host replica, held by actions that call a model, apart from the action slots every action takes at admission. An action moves in once, on its first model call, which frees its action slot; it keeps its place until it ends, and nothing moves back. A refused move leaves it in its action slot. Actions waiting on a model therefore never hold the slots quick actions need.
+The places, per company, per person and per host replica, held by actions that call a model, apart from the action slots every action takes at admission. An action moves in once, on its first model call, which frees its action slot; it keeps its place until it ends, and nothing moves back. A refused move leaves it in its action slot. Actions waiting on a model therefore never hold the slots quick actions need. Nothing enters it yet: no patch can call a model.
 _Avoid_: parking (freeing a slot while a call waits and taking one again after), model queue
 
 **Execution service**:

@@ -95,7 +95,9 @@ export const make = (options: { readonly replica: number }) => {
   /**
    * Takes an ordinary slot, or refuses `busy` naming the first full limit, company before viewer.
    * The check and the take happen in one step; the action's event then records each limit
-   * checked with its peak.
+   * checked with its peak. Once it starts it finishes, so a slot is never taken and then lost to
+   * an interruption; the caller owns `release` from the moment it has the slot, and so calls
+   * this where it can't be interrupted before it has arranged that.
    */
   const admit = (holder: Holder, limits: Limits): Effect.Effect<Slot, InvocationBusy> =>
     Effect.suspend(() => {
@@ -179,7 +181,7 @@ export const make = (options: { readonly replica: number }) => {
         })
       };
       return Effect.as(peaks, slot);
-    });
+    }).pipe(Effect.uninterruptible);
 
   return { admit };
 };

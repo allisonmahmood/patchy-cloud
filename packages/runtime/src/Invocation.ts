@@ -379,13 +379,18 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
             ? admission.lease.release
             : Effect.void
         );
+        // Until the owner fiber starts, nothing else lets go of what admission took: a step
+        // that fails before the fork gives the slot and the task lease back itself.
+        const abandon = Effect.suspend(() => slot?.release ?? Effect.void).pipe(
+          Effect.andThen(releaseAdmission)
+        );
         const startedAt = yield* Clock.currentTimeMillis;
         const deadline = Math.min(
           startedAt + bounds[descriptor.kind],
           parent?.capability.attempt.deadline ?? Infinity
         );
         const settlementDeadline = deadline + bounds.cleanup;
-        const id = yield* cryptography.internalId("inv");
+        const id = yield* cryptography.internalId("inv").pipe(Effect.onError(() => abandon));
         let replyDelivered = true;
         let capability: InvocationCapabilities.Capability | undefined;
         let counters: InvocationCapabilities.Counters | undefined;
@@ -957,7 +962,10 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
         // Taken with the fork, so whatever the caller holds for this work is let go when the
         // work settles, never before and never missed. Every run takes its own, nested ones
         // too: a child an action started through `ctx.run` can outlast the action.
-        const held = binding.retain === undefined ? undefined : yield* binding.retain;
+        const held =
+          binding.retain === undefined
+            ? undefined
+            : yield* binding.retain.pipe(Effect.onError(() => abandon));
         const owner = yield* Effect.forkIn(
           Effect.interruptible(run).pipe(
             Effect.provideService(DatabaseMeter.current, meter),

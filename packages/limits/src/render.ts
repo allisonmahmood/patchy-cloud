@@ -33,7 +33,9 @@ export function renderServerSkillLimits(): string {
           !id.startsWith("invites.") &&
           !id.startsWith("oauth.") &&
           !id.startsWith("mcp.") &&
-          !id.startsWith("feedback.")
+          !id.startsWith("feedback.") &&
+          // No action reaches the model pool until a patch can call a model.
+          !id.startsWith("tier2.models.")
       )
     ),
     ""

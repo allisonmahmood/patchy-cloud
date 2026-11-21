@@ -1286,6 +1286,36 @@ it.layer(services)("Invocation", (it) => {
   );
 
   it.effect(
+    "gives the action slot back when the caller's hold fails before the action starts",
+    () =>
+      Effect.gen(function* () {
+        const invocations = yield* makeInvocation(() =>
+          Effect.succeed({
+            outcome: "returned" as const,
+            reply: { ok: true as const, value: null },
+            guestMs: 1
+          })
+        );
+        const call = (retain?: Binding.Binding["Service"]["retain"]) =>
+          invocations.call(
+            { handler: "demo.action", args: {} },
+            {
+              ...binding,
+              correlationId: newInternalId("call"),
+              ...(retain === undefined ? {} : { retain })
+            }
+          );
+        // The viewer has two action slots. Two starts that die before the owner fiber exists
+        // must not keep them, or the third call would be refused busy.
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const broken = yield* call(Effect.die("The hold broke.")).pipe(Effect.exit);
+          assert.strictEqual(broken._tag, "Failure");
+        }
+        assert.deepStrictEqual(yield* call(), { ok: true, value: null });
+      })
+  );
+
+  it.effect(
     "gives an agent its own action slots beside its person's page, shares the company's, and refuses before any row",
     () =>
       Effect.gen(function* () {

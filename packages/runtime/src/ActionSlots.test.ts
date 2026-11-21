@@ -271,3 +271,36 @@ it.effect("release after the fence is idempotent and a late transfer takes nothi
     assert.strictEqual(yield* r.canAdmit(alice), "tier2.actions.viewer");
   })
 );
+
+it.effect(
+  "a released pool place is free again under the company's and the replica's limit alone",
+  () =>
+    Effect.gen(function* () {
+      // Each limit binds on its own here; the other two are far above it.
+      for (const [slots, limitId] of [
+        [replica({ models: models(1, 4) }), "tier2.models.company"],
+        [replica({ replica: 1 }), "tier2.models.replica"]
+      ] as const) {
+        const held = yield* slots.pooled(alice);
+        assert.strictEqual(yield* slots.canTransfer(bob), limitId);
+        yield* held.release;
+        assert.isNull(yield* slots.canTransfer(bob));
+      }
+    })
+);
+
+it.effect(
+  "action slots count per patch, and the company's limit refuses first when both are full",
+  () =>
+    Effect.gen(function* () {
+      const slots = replica({ actions: actions(2, 1) });
+      const first = yield* slots.admit(alice);
+      assert.strictEqual(yield* slots.canAdmit(alice), "tier2.actions.viewer");
+      // The same person on another patch has a slot of their own there.
+      const elsewhere = yield* slots.admit(person("usr_alice", { patchId: "pch_other" }));
+      assert.strictEqual(yield* slots.canAdmit(alice), "tier2.actions.company");
+      yield* first.release;
+      yield* elsewhere.release;
+      assert.isNull(yield* slots.canAdmit(alice));
+    })
+);
