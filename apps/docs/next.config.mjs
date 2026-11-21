@@ -7,6 +7,10 @@ const config = {
   reactStrictMode: true,
   // Stops `next dev` writing an AGENTS.md of its own here; the repo's agent docs live at its root.
   agentRules: false,
+  // Next.js otherwise asks the npm registry, on `dev` and `build`, whether its own version has a
+  // security advisory, and stops an agent's command once to say so. A build does the same thing
+  // whoever runs it and calls nothing outside; dependency review already watches advisories.
+  experimental: { agentUpgrade: false },
   async redirects() {
     return [{ source: "/", destination: "/docs", permanent: false }];
   },
