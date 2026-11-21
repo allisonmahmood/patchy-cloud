@@ -137,6 +137,76 @@ it.effect(
     })
 );
 
+// The host gains operations a page must not call; until one is put on the page list on purpose,
+// a forged call naming it is refused before its handler runs, whatever its kind and tier.
+it.effect("refuses a page's call to a host operation that is not on the page list", () =>
+  Effect.gen(function* () {
+    let executions = 0;
+    const added = (kind: Runtime.Handler["kind"]) => ({
+      kind,
+      run: () =>
+        Effect.sync(() => {
+          executions++;
+          return null;
+        })
+    });
+    yield* Effect.gen(function* () {
+      const api = yield* Fixtures.client;
+      for (const versionId of [
+        Fixtures.versionId,
+        Fixtures.tier1VersionId,
+        Fixtures.tier2VersionId,
+        Fixtures.staleTier1VersionId
+      ])
+        for (const op of ["added.read", "added.write", "added.integration"]) {
+          const response = yield* api.call({
+            payload: { ...envelope(op), versionId },
+            headers: authenticatedHeaders(),
+            responseMode: "response-only"
+          });
+          assert.strictEqual(response.status, 403, `${op} on ${versionId}`);
+          assert.strictEqual(decodeFailure(yield* response.json).code, "server_required");
+        }
+      assert.strictEqual(executions, 0);
+    }).pipe(
+      Effect.provide(
+        Fixtures.layer({
+          me,
+          "added.read": added("read"),
+          "added.write": added("mutation"),
+          "added.integration": added("integration")
+        })
+      )
+    );
+  })
+);
+
+// A name the host serves nowhere is no way around the call rate: it spends a call before it is
+// refused, and a retained document still gets its own refusal first.
+it.effect("meters a name the host serves nowhere, after the retained document's refusal", () =>
+  Effect.gen(function* () {
+    const api = yield* Fixtures.client;
+    const call = (op: string, versionId: string) =>
+      api.call({
+        payload: { ...envelope(op), versionId },
+        headers: authenticatedHeaders(),
+        responseMode: "response-only"
+      });
+    const retained = yield* call("typo.call", Fixtures.staleTier1VersionId);
+    assert.strictEqual(retained.status, 403);
+    assert.strictEqual(decodeFailure(yield* retained.json).code, "server_required");
+    // The fixtures allow three calls a minute, and the refusal above spent none of them.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const unknown = yield* call("typo.call", Fixtures.versionId);
+      assert.strictEqual(unknown.status, 400);
+      assert.strictEqual(decodeFailure(yield* unknown.json).code, "invalid_request");
+    }
+    const next = yield* call("me", Fixtures.versionId);
+    assert.strictEqual(next.status, 429);
+    assert.strictEqual(decodeFailure(yield* next.json).code, "rate_limited");
+  }).pipe(Effect.provide(Fixtures.layer()))
+);
+
 it.effect(
   "attributes integration origin, principal and size denials without trusting the envelope identity",
   () =>

@@ -375,6 +375,34 @@ export const handler = <
   };
 };
 
+/**
+ * What a page may name at the host, by the tier of the document it loaded. Every other operation
+ * the host serves is refused before its handler runs, so one the host gains stays out of a page's
+ * reach until it is added here. Connections, other patches' shared resources and the member
+ * directory are a tier 2 handler's to reach, never a page's, which covers retained and restored
+ * versions that declared them. A tier 2 page reaches its own tables and files through handlers
+ * too, bar file staging. `server.call` is open to tier 1 so Invocation gives its own refusal.
+ */
+const pageOperations: Readonly<Record<string, ReadonlyArray<number>>> = {
+  me: [1, 2],
+  "server.call": [1, 2],
+  "tables.get": [1],
+  "tables.getMany": [1],
+  "tables.list": [1],
+  "tables.insert": [1],
+  "tables.insertMany": [1],
+  "tables.update": [1],
+  "tables.delete": [1],
+  "files.put": [1],
+  "files.get": [1],
+  "files.list": [1],
+  "files.stat": [1],
+  "files.delete": [1],
+  "files.stage": [2],
+  "files.redeem": [2],
+  "files.discard": [2]
+} satisfies { readonly [Op in keyof typeof runtimeOperations]?: ReadonlyArray<1 | 2> };
+
 export const byteLimits = {
   rowBytes: ContractLimits.get("runtime.row.bytes"),
   batchBytes: ContractLimits.get("runtime.batch.bytes"),
@@ -669,34 +697,16 @@ export const make = (
             if (principal === null ? input.op !== "me" : principal.userId !== identity.user.id)
               return yield* new PrincipalChanged({});
           }
-          // Connections, other patches' shared resources and the member directory are reached
-          // only through tier 2 handlers, so a browser never calls them directly at any tier;
-          // that covers retained and restored versions which declared them. A tier 2 browser
-          // also reaches its own tables and files only through handlers, bar file staging.
+          // An operation the host serves off the page list, or lists for another tier, is a server
+          // handler's to call. A name the host serves nowhere stays on the metered path below, so
+          // it spends a call like any other before it answers `invalid_request`.
+          const tiers = Object.hasOwn(pageOperations, input.op)
+            ? pageOperations[input.op]
+            : undefined;
           if (
-            input.op.startsWith("shared.") ||
-            input.op.startsWith("postgres.") ||
-            input.op.startsWith("posthog.") ||
-            input.op.startsWith("pidgeon.") ||
-            input.op.startsWith("attio.") ||
-            input.op.startsWith("imap.") ||
-            input.op.startsWith("github.") ||
-            input.op.startsWith("members.") ||
-            (version.manifest.tier === 2 &&
-              input.op !== "files.redeem" &&
-              input.op !== "files.stage" &&
-              input.op !== "files.discard" &&
-              (input.op.startsWith("tables.") || input.op.startsWith("files.")))
+            tiers === undefined ? operation !== undefined : !tiers.includes(version.manifest.tier)
           )
             return yield* new ServerRequired();
-          if (
-            (input.op === "files.redeem" ||
-              input.op === "files.stage" ||
-              input.op === "files.discard") &&
-            version.manifest.tier !== 2
-          )
-            return yield* new ServerRequired();
-          if (input.op === "files.inspectUpload") return yield* new AccessDenied({});
           if (input.op !== "me" && version.manifest.tier < 2 && version.patchTier === 2)
             return yield* new ServerRequired();
           const attempt = yield* limits.consume({
