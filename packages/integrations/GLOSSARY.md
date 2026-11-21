@@ -1,6 +1,6 @@
 # Integrations
 
-The company capability for connecting outside systems without handing credentials to patches. Postgres, PostHog, Pidgeon, Attio, Email (IMAP) and GitHub connections and their discovered metadata are managed here; the `connections` API group exposes their safe metadata to active members. [Companies](../companies/GLOSSARY.md) owns membership and teams, and [Runtime](../runtime/GLOSSARY.md) uses the initiating viewer as the effective principal for connection calls, which also check that the patch's owner may build with the connection.
+The company capability for connecting outside systems without handing credentials to patches. Postgres, PostHog, Pidgeon, Attio, Email (IMAP) and GitHub connections and their discovered metadata are managed here, and, behind the **Models switch**, model providers and the model roles mapped to them; the `connections` API group exposes their safe metadata to active members. [Companies](../companies/GLOSSARY.md) owns membership and teams, and [Runtime](../runtime/GLOSSARY.md) uses the initiating viewer as the effective principal for connection calls, which also check that the patch's owner may build with the connection.
 
 ## Language
 
@@ -43,6 +43,18 @@ _Avoid_: broken, error, unhealthy
 **Unused**:
 A connection no stored version of any company patch declares, which is exactly when it can be disconnected. A connection only older versions or retired, deleted or disabled patches declare is used by no live patch, but is not unused; its row reads "None live" with how many.
 _Avoid_: idle (a statement about calls), orphaned
+
+**Model role**:
+A connection of the `models` integration, what a patch's action will ask a model through: a fixed handle and a fixed kind, **decision** (fixed questions in, probabilities out) or **text**, a description, an audience and a block-guests setting, as any connection has. An admin maps it to one **model provider** of the same company and a model id there, which may hold a slash, and remaps it at any time; patches follow from their next call, since its snapshot holds only its kind. Its own state is an admin's: connected, or paused by its own Pause. Whether it is **available**, which is what patches and discovery get, also takes its provider: a connected role is unavailable while its provider is paused, or of an integration the running release doesn't know, and discovery and detail read it as paused then, while its own state stays connected and Resume of the provider brings it back. Deleting one is refused while any stored version declares it, current or not, so pausing is how to stop one.
+_Avoid_: model (what a provider serves), prompt, agent
+
+**Model provider**:
+The company's key for one model provider, such as OpenAI: a connection of that provider's own integration (`openai`), its key sealed as every connection's credentials are. The store keeps it but never as a connection a builder sees: no listing, detail, offer, page, form, attention view, generation or declaration names one. Shown by its type; the first of a type is `main`, and a second takes a name. Pausing it stops every role on it at once and resuming starts them again; Replace key keeps a paused one paused; deleting one is refused while a role points at it.
+_Avoid_: model connection, API key (what it holds), vendor
+
+**Models switch**:
+The host setting `PATCHY_MODELS`, off unless set and off in production, on in the dev runner and in tests. Off, the server keeps and reads no model provider or role, as a release before Models would: discovery neither lists, offers nor answers a role, and neither is made.
+_Avoid_: feature flag, Models toggle
 
 **Personal connection**:
 A future connection belonging to one user rather than their company, such as that user's Gmail. Its credentials and lifetime follow the user; the access rules live in [the product](../../docs/product.md#company-and-personal-connections).

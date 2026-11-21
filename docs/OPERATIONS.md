@@ -212,6 +212,29 @@ What neither covers: a compromised **host** leaks the new key too, so fix the
 host before step 1; and a signed log URL GitHub already handed out is its own
 credential for about ten minutes, which suspension wasn't shown to cut.
 
+### Models
+
+Models, a patch's action calling an AI model on the company's own key, is built
+in parts behind one host setting, `PATCHY_MODELS`: `true` turns it on, and
+`false`, empty or unset leaves it off. Production leaves it unset, and it isn't
+one of the host secret's keys. Off, the
+server keeps and reads no model provider or role, as a release before Models
+would: discovery neither lists nor offers a role, a role's detail is not found
+before any lookup, and making either is refused. The dev runner and the test
+servers turn it on. Any other value, `1` or `yes` included, stops the server at
+launch. Turned off again after roles were made, it hides them but keeps their
+team grants: a team a role names can't be deleted, and its delete says so.
+
+A provider is a connection of its provider's own integration, such as `openai`,
+holding the company's key, sealed under this keyring. A role is a `models`
+connection whose mapping to a provider and a model id is a `model_roles` row;
+its foreign key keeps a provider a role points at from being deleted. The
+migration that adds it waits at most three seconds for `connections`' lock:
+behind a long transaction it fails, the host stops before it listens and ECS
+starts it again, rather than every connection read queueing behind it. A release
+reads only the provider integrations it knows: a role mapped to one it doesn't
+know is unavailable there, and nothing is made or remapped to that provider.
+
 ### Initial credentials
 
 Startup migrates but creates no credential. For normal use, sign in at `/join`,

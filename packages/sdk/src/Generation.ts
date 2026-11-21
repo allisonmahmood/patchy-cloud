@@ -482,7 +482,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
           client
         });
         skills.add("patchy-github");
-      } else {
+      } else if (stored.integration === "posthog") {
         // PostHog has no fixture: dev reads the real connection.
         const declared = { kind: "posthog" as const, ...resolved };
         metadata.posthog[alias] = { declaration: declared, snapshot: stored.snapshot };
@@ -499,7 +499,12 @@ export const generate = Effect.fn("Generation.generate")(function* (
           client
         });
         skills.add("patchy-posthog");
-      }
+      } else
+        // A snapshot of another integration isn't the connection declared.
+        return yield* new ConnectionNotConnected({
+          integration: declaration.kind,
+          handle: declaration.handle
+        });
       factories[alias] = `./uses/${alias}.js`;
     } else if (declaration.kind === "sharedStore") {
       const source = yield* patches

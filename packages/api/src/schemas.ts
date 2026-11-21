@@ -16,6 +16,7 @@ import { PidgeonSnapshot } from "./pidgeonSnapshot.js";
 import { AttioSnapshot } from "./attioSnapshot.js";
 import { ImapSnapshot } from "./imapSnapshot.js";
 import { GithubSnapshot } from "./githubSnapshot.js";
+import { ModelsSnapshot } from "./modelsSnapshot.js";
 import { RepoKind, RepoSnapshot, RepoSummary } from "./repo.js";
 import {
   HandlerDescriptors,
@@ -793,8 +794,21 @@ export const GenerationManifest = Schema.Struct({
   )
 }).check(distinctPrimitiveNames, memberColumnsValid, Schema.makeFilter(handlerTablesValid));
 
-/** Every integration Patchy ships; a connection's handle is unique within its integration. */
-export const integrations = ["postgres", "posthog", "pidgeon", "attio", "imap", "github"] as const;
+/**
+ * Every integration a builder can find, the public kinds; a connection's handle is unique within
+ * its integration. `models` connections are a company's model roles, off unless the host's Models
+ * switch is on. The model providers a role maps to are kept by the integrations store and are
+ * never one of these.
+ */
+export const integrations = [
+  "postgres",
+  "posthog",
+  "pidgeon",
+  "attio",
+  "imap",
+  "github",
+  "models"
+] as const;
 export const Integration = Schema.Literals(integrations);
 export type Integration = typeof Integration.Type;
 
@@ -851,6 +865,8 @@ export const ImapConnectionDetail = Schema.Struct({
   paused: Schema.optionalKey(Schema.Struct({ at: Schema.String }))
 });
 export const GithubConnectionDetail = detail("github", GithubSnapshot.fields);
+/** A model role; `disconnected` while it or its provider is paused. */
+export const ModelsConnectionDetail = detail("models", ModelsSnapshot.fields);
 /** One connection and its current metadata, in its integration's shape. */
 export const ConnectionDetail = Schema.Union([
   PostgresConnectionDetail,
@@ -858,7 +874,8 @@ export const ConnectionDetail = Schema.Union([
   PidgeonConnectionDetail,
   AttioConnectionDetail,
   ImapConnectionDetail,
-  GithubConnectionDetail
+  GithubConnectionDetail,
+  ModelsConnectionDetail
 ]);
 export type ConnectionDetail = typeof ConnectionDetail.Type;
 

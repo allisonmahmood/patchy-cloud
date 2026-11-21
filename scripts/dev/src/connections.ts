@@ -162,7 +162,8 @@ const saved = (
   connection: OfflineConnection,
   secret: string
 ): {
-  readonly target: ConnectionStore.Target;
+  // A scenario seeds no model role.
+  readonly target: Exclude<ConnectionStore.Target, { readonly integration: "models" }>;
   readonly credentials: Redacted.Redacted<string>;
   readonly metadata: ConnectionStore.Metadata;
 } => {

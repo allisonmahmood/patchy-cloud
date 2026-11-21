@@ -155,6 +155,11 @@ Done when `pnpm dev status` exits 0.
   App's settings. For pages in every GitHub state without an App, use `dense`'s
   offline `github/*` connections; check the flow itself over the suites'
   scripted GitHub (`packages/integrations/src/test/github.ts`).
+  Models is on here, `PATCHY_MODELS=true` on the instance's server, and off in
+  production: the store keeps model providers and roles. Nothing in the
+  instance's pages or the CLI makes one yet, and discovery lists a role with no
+  add hint; check them through the store's suite in
+  `packages/integrations/src/models`.
 - **Clerk sign-in, its handshake or real invitation mail.** These need
   `pnpm dev --clerk`, the person's Clerk keys and their browser; follow
   DEVELOPMENT's **Signing in with Clerk** and ask the person for each sign-in.

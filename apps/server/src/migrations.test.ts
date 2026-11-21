@@ -14,7 +14,10 @@ import {
 import { RuntimeLog } from "@patchy/runtime";
 import { migrate } from "@patchy/sql";
 import * as Testing from "@patchy/sql/testing";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -233,10 +236,15 @@ it.layer(Testing.emptyLayer(release10))("the handles-per-integration upgrade", (
 
         yield* migrate(migrations);
 
+        // One handle key; the other, which a model role's company-scoped mapping references,
+        // repeats the primary key's uniqueness, so no connect can conflict on it alone.
         assert.deepStrictEqual(
           yield* sql`SELECT conname FROM pg_constraint
             WHERE conrelid = 'connections'::regclass AND contype = 'u' ORDER BY conname`,
-          [{ conname: "connections_company_id_integration_handle_key" }]
+          [
+            { conname: "connections_company_id_id_key" },
+            { conname: "connections_company_id_integration_handle_key" }
+          ]
         );
         // The same handle in another integration is a second connection; in the same one, taken.
         assert.deepStrictEqual(yield* connect("conn_duplicate", "postgres", postgres), []);
@@ -562,5 +570,42 @@ it.layer(Testing.emptyLayer(before("0044_pidgeon_drafts")))("the Pidgeon new-API
         );
         assert.lengthOf(yield* sql`SELECT 1 FROM connection_snapshots`, 1);
       }).pipe(Effect.provide(services))
+  );
+});
+
+it.layer(Testing.emptyLayer(before("0045_model_roles")))("the model roles upgrade", (it) => {
+  it.effect(
+    "gives up waiting for the connections lock, applying nothing, and applies once it's free",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const highest = sql<{ readonly id: number }>`SELECT max(migration_id) AS id
+          FROM schema_migrations`;
+        const before = (yield* highest)[0]?.id;
+        // A long transaction that has read connections holds a lock the new key's build waits on.
+        const reading = yield* Deferred.make<void>();
+        const done = yield* Deferred.make<void>();
+        const reader = yield* sql
+          .withTransaction(
+            sql`SELECT count(*) FROM connections`.pipe(
+              Effect.andThen(Deferred.succeed(reading, undefined)),
+              Effect.andThen(Deferred.await(done))
+            )
+          )
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(reading);
+        const blocked = yield* Effect.exit(migrate(migrations));
+        assert.isTrue(Exit.isFailure(blocked));
+        assert.strictEqual((yield* highest)[0]?.id, before);
+        assert.deepStrictEqual(yield* sql`SELECT to_regclass('model_roles') AS "table"`, [
+          { table: null }
+        ]);
+        yield* Deferred.succeed(done, undefined);
+        yield* Fiber.join(reader);
+        yield* migrate(migrations);
+        assert.deepStrictEqual(yield* sql`SELECT to_regclass('model_roles')::text AS "table"`, [
+          { table: "model_roles" }
+        ]);
+      })
   );
 });

@@ -93,7 +93,8 @@ const testMode = (connection: ConnectionStore.Connection) =>
  * The connections among `connections` that need an admin, given who declares each: one its
  * provider stopped, one an admin disconnected while live patches still declare it, and a Pidgeon
  * test key live patches use, whose mail stays in Pidgeon. A disconnected connection or a
- * test key nothing uses was a choice, not a problem, so it isn't here. Names in order.
+ * test key nothing uses was a choice, not a problem, so it isn't here. Names in order. A model
+ * role is never here yet: each item has the one fix that settles it, and no page fixes a role.
  */
 export const attention = (
   connections: ReadonlyArray<ConnectionStore.Connection>,
@@ -101,6 +102,7 @@ export const attention = (
 ): ReadonlyArray<Attention> =>
   connections
     .flatMap((connection): ReadonlyArray<Attention> => {
+      if (connection.integration === "models") return [];
       const named = {
         id: connection.id,
         name: `${connection.integration}/${connection.handle}`,

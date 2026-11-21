@@ -58,7 +58,8 @@ describe("a roster change's preview", () => {
         ]
       )
     ],
-    hidden: new Map()
+    hidden: new Map(),
+    unlisted: new Map()
   };
 
   it("gives the added what at least one of them couldn't reach, leaving out retired patches", () => {
