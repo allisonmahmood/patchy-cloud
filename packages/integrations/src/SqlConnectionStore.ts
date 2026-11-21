@@ -2352,19 +2352,24 @@ export const knowing = (known: ReadonlyArray<Models.Kind>) =>
         WHERE p.company_id = ${companyId} AND p.id = ${id} AND ${knownProvider}
         ${locked ? sql`FOR UPDATE` : sql``}`
     });
-    /** Live patches whose current version declares the role, or a role on the provider, by name. */
+    /**
+     * Live patches whose current version declares the role, or a role on the provider, by name;
+     * with `connected`, only the provider's roles that aren't paused themselves.
+     */
     const affectedRows = SqlSchema.findAll({
       Request: Schema.Struct({
         companyId: Schema.String,
         id: Schema.String,
-        provider: Schema.Boolean
+        provider: Schema.Boolean,
+        connected: Schema.Boolean
       }),
       Result: Schema.Struct({ name: Schema.String }),
-      execute: ({ companyId, id, provider }) => sql`SELECT DISTINCT p.name
+      execute: ({ companyId, id, provider, connected }) => sql`SELECT DISTINCT p.name
         FROM ${declarations(companyId)} AND ${live} AND v.id = p.current_version_id
           AND declaration.value->>'id' IN ${
             provider
               ? sql`(SELECT r.connection_id FROM model_roles r
+                  ${connected ? sql`JOIN connections role ON role.id = r.connection_id AND role.status = 'connected'` : sql``}
                   WHERE r.company_id = ${companyId} AND r.provider_id = ${id})`
               : sql`(${id})`
           }
@@ -2504,8 +2509,8 @@ export const knowing = (known: ReadonlyArray<Models.Kind>) =>
               (yield* roleOf(input, true)) === undefined ? undefined : yield* roleOf(input);
             const record: ConnectionStore.ModelsConnection | ConnectionStore.ModelProvider =
               role ?? (yield* providerOf(input, true));
-            const affected = () =>
-              affectedRows({ ...input, provider: role === undefined }).pipe(
+            const affected = (connected = false) =>
+              affectedRows({ ...input, provider: role === undefined, connected }).pipe(
                 Effect.map((rows) => rows.map((row) => row.name))
               );
             const changed = (affected: ReadonlyArray<string>): ConnectionStore.ModelsChanged => ({
@@ -2514,18 +2519,28 @@ export const knowing = (known: ReadonlyArray<Models.Kind>) =>
               change: past[change.kind],
               affected
             });
-            const unchanged = (affected: ReadonlyArray<string>) => ({
-              changed: changed(affected),
-              reported: false
-            });
+            // A change to the state it already has reaches no one.
+            const unchanged = () => ({ changed: changed([]), reported: false });
             switch (change.kind) {
               case "pause":
               case "resume": {
                 const status = change.kind === "pause" ? "disconnected" : "connected";
-                if (record.status === status) return unchanged(yield* affected());
+                if (record.status === status) return unchanged();
+                // It names the patches whose role it makes unavailable or available again. A
+                // provider's own pause or resume reaches no role paused itself, and a role's
+                // reaches its patches only while its provider serves them. The provider's lock,
+                // shared, keeps its own change from landing between this read and the commit.
+                const serves =
+                  role === undefined ||
+                  (yield* sql<{ readonly status: string }>`SELECT p.status FROM connections p
+                    WHERE p.company_id = ${input.companyId} AND p.id = ${role.role.providerId}
+                      AND ${knownProvider} FOR SHARE`)[0]?.status === "connected";
                 yield* sql`UPDATE connections SET status = ${status},
                   credential_revision = credential_revision + 1 ${where}`;
-                break;
+                return {
+                  changed: changed(serves ? yield* affected(role === undefined) : []),
+                  reported: true
+                };
               }
               case "replaceKey":
                 // Only a provider holds a key; a paused one stays paused.
@@ -2545,7 +2560,7 @@ export const knowing = (known: ReadonlyArray<Models.Kind>) =>
                     yield* sql`SELECT 1 FROM connections
                       WHERE company_id = ${input.companyId} AND id = ${id} FOR UPDATE`;
                 if (role.role.providerId === change.providerId && role.role.model === change.model)
-                  return unchanged(yield* affected());
+                  return unchanged();
                 yield* sql`UPDATE model_roles SET provider_id = ${change.providerId},
                   model = ${change.model} WHERE connection_id = ${input.id}`;
                 yield* sql`UPDATE connections SET credential_revision = credential_revision + 1 ${where}`;

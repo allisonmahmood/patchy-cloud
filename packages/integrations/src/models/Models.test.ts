@@ -351,6 +351,42 @@ it.layer(layer)("Models", (it) => {
     })
   );
 
+  it.effect("a pause or resume names only the patches whose role it stops or starts", () =>
+    Effect.gen(function* () {
+      const { owner, store, who, provider, role } = yield* setup("models-reach");
+      yield* declare(owner, "sorter", role);
+      const reports: Array<string> = [];
+      const change = (id: string, kind: "pause" | "resume") =>
+        store
+          .changeModels({ ...who, id, change: { kind } }, (changed) =>
+            Effect.sync(() => void reports.push(`${changed.integration} ${changed.change}`))
+          )
+          .pipe(Effect.map((changed) => changed.affected));
+      // The role paused first: its provider's pause and resume change nothing for its patch.
+      assert.deepStrictEqual(yield* change(role.id, "pause"), ["sorter"]);
+      assert.deepStrictEqual(yield* change(provider.id, "pause"), []);
+      assert.deepStrictEqual(yield* change(provider.id, "resume"), []);
+      assert.deepStrictEqual(yield* change(role.id, "resume"), ["sorter"]);
+      // Its provider paused first: the role's own pause and resume change nothing for it.
+      assert.deepStrictEqual(yield* change(provider.id, "pause"), ["sorter"]);
+      assert.deepStrictEqual(yield* change(role.id, "pause"), []);
+      assert.deepStrictEqual(yield* change(role.id, "resume"), []);
+      assert.deepStrictEqual(yield* change(provider.id, "resume"), ["sorter"]);
+      // A change to the state it already has reports nothing, and reaches no one.
+      assert.deepStrictEqual(yield* change(provider.id, "resume"), []);
+      assert.deepStrictEqual(reports, [
+        "models paused",
+        "openai paused",
+        "openai resumed",
+        "models resumed",
+        "openai paused",
+        "models paused",
+        "models resumed",
+        "openai resumed"
+      ]);
+    })
+  );
+
   it.effect(
     "a role pauses and resumes; a new key keeps a paused provider paused and moves its revision",
     () =>
@@ -411,13 +447,15 @@ it.layer(layer)("Models", (it) => {
           .changeModels({ ...who, id: role.id, change: { kind: "delete" } }, report)
           .pipe(Effect.flip);
         assert.instanceOf(declared, ConnectionStore.ConnectionInUse);
-        // Pausing the provider, or the role, reaches the live patch that declares it.
-        for (const id of [provider.id, role.id])
-          assert.deepStrictEqual(
-            (yield* store.changeModels({ ...who, id, change: { kind: "pause" } }, report)).affected,
-            ["sorter"]
-          );
-        assert.strictEqual(reports.length, 4);
+        // Pausing the provider stops the live patch that declares its role, and says so.
+        assert.deepStrictEqual(
+          (yield* store.changeModels(
+            { ...who, id: provider.id, change: { kind: "pause" } },
+            report
+          )).affected,
+          ["sorter"]
+        );
+        assert.strictEqual(reports.length, 3);
 
         // A version that isn't any patch's current one still declares a role it keeps.
         const older = yield* store.createRole({

@@ -525,8 +525,11 @@ export interface ModelsChanged {
   readonly change:
     "connected" | "created" | "paused" | "resumed" | "deleted" | "key_replaced" | "remapped";
   /**
-   * The live patches whose current version declares the role, or a role on the provider, by
-   * name: whose next call the change reaches.
+   * The live patches whose next call the change reaches, by name. A pause or resume names those
+   * whose role it makes unavailable or available again: a provider's, those of its roles that
+   * aren't paused themselves; a role's, its own while its provider is connected. A remap names
+   * the role's, a new key those of every role on the provider, and a change to the state it
+   * already has, none.
    */
   readonly affected: ReadonlyArray<string>;
 }
