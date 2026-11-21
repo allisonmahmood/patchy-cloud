@@ -5,7 +5,13 @@ export default mergeConfig(
   postgresConfig,
   defineConfig({
     test: {
-      include: ["**/src/**/*.test.ts", "lint/**/*.test.ts", "scripts/*.test.ts"]
+      include: [
+        "**/src/**/*.test.ts",
+        "apps/docs/lib/**/*.test.ts",
+        "apps/docs/*.test.ts",
+        "lint/**/*.test.ts",
+        "scripts/*.test.ts"
+      ]
     }
   })
 );
