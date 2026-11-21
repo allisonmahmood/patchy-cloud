@@ -26,6 +26,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Random from "effect/Random";
+import * as ActionSlots from "./ActionSlots.js";
 import * as Binding from "./Binding.js";
 import * as Executor from "./Executor.js";
 import * as ExecutionLifecycle from "./ExecutionLifecycle.js";
@@ -83,18 +84,6 @@ export class ResultTooLarge extends Schema.TaggedError<ResultTooLarge>()("Result
   readonly scope = "viewer" as const;
   override get message() {
     return "The handler result exceeds its byte limit.";
-  }
-}
-export class InvocationBusy extends Schema.TaggedError<InvocationBusy>()("InvocationBusy", {
-  limitId: Schema.Literals(["tier2.actions.company", "tier2.actions.viewer"]),
-  value: Schema.Number,
-  scope: Schema.Literals(["company", "viewer"])
-}) {
-  readonly code = "busy" as const;
-  readonly status = 429;
-  readonly retryAfterSeconds = 1;
-  override get message() {
-    return "The action concurrency limit is reached. Try again shortly.";
   }
 }
 export class ExecutorBusy extends Schema.TaggedError<ExecutorBusy>()("ExecutorBusy", {
@@ -219,13 +208,9 @@ interface Options {
 }
 
 interface PlatformBehavior {
-  readonly actionLimits: (companyId: string) => Effect.Effect<
-    {
-      readonly company: OperatingLimits.EffectiveLimit;
-      readonly viewer: OperatingLimits.EffectiveLimit;
-    },
-    Runtime.RuntimeError
-  >;
+  readonly actionLimits: (
+    companyId: string
+  ) => Effect.Effect<ActionSlots.Limits, Runtime.RuntimeError>;
   readonly settleQuietQuery: (record: QueryRollups.Record) => Effect.Effect<void>;
 }
 
@@ -262,8 +247,7 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
     fileBytes: ContractLimits.get("tier2.callbacks.fileBytes")
   });
   const codecs = new WeakMap<typeof Manifest.Type, Map<string, CompiledHandler>>();
-  const companyActions = new Map<string, number>();
-  const viewerActions = new Map<string, number>();
+  const slots = ActionSlots.make({ replica: deployment.get("tier2.models.replica") });
 
   const call = Effect.fn("Invocation.call")(function* (
     args: unknown,
@@ -347,13 +331,6 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
             input.args
           ).pipe(Effect.provideService(Cryptography.Cryptography, cryptography))
         : undefined;
-    // A person's worker agent has action slots of its own beside their pages', across its clients.
-    const key = canonicalArgs([
-      binding.companyId,
-      binding.patchId,
-      viewer.user.id,
-      binding.agent === undefined ? "page" : "agent"
-    ]);
     const actionLimits =
       descriptor.kind === "action" && platform !== undefined
         ? yield* platform.actionLimits(binding.companyId)
@@ -376,48 +353,32 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
                   owners: 0
                 }
               : undefined;
-        if (actionLimits !== undefined) {
-          for (const [used, limit, limitId, limitScope] of [
-            [
-              companyActions.get(binding.companyId) ?? 0,
-              actionLimits.company.value,
-              "tier2.actions.company",
-              "company"
-            ],
-            [
-              viewerActions.get(key) ?? 0,
-              actionLimits.viewer.value,
-              "tier2.actions.viewer",
-              "viewer"
-            ]
-          ] as const) {
-            const effective = limitScope === "company" ? actionLimits.company : actionLimits.viewer;
-            yield* WideEvents.enrich({
-              limits: [
-                {
-                  limitId,
-                  value: limit,
-                  peak: Math.min(used + 1, limit),
-                  configRevision: effective.configRevision
-                }
-              ]
-            });
-            if (used >= limit) {
-              if (parent === undefined && admission !== undefined) yield* admission.lease.release;
-              return yield* new InvocationBusy({ limitId, value: limit, scope: limitScope });
-            }
-          }
-        }
+        const slot =
+          actionLimits === undefined
+            ? undefined
+            : yield* slots
+                .admit(
+                  {
+                    companyId: binding.companyId,
+                    patchId: binding.patchId,
+                    userId: viewer.user.id,
+                    caller: binding.agent === undefined ? "page" : "agent"
+                  },
+                  actionLimits
+                )
+                .pipe(
+                  Effect.tapError(() =>
+                    parent === undefined && admission !== undefined
+                      ? admission.lease.release
+                      : Effect.void
+                  )
+                );
         if (admission !== undefined) admission.owners++;
         const releaseAdmission = Effect.suspend(() =>
           admission !== undefined && --admission.owners === 0
             ? admission.lease.release
             : Effect.void
         );
-        if (actionLimits !== undefined) {
-          companyActions.set(binding.companyId, (companyActions.get(binding.companyId) ?? 0) + 1);
-          viewerActions.set(key, (viewerActions.get(key) ?? 0) + 1);
-        }
         const startedAt = yield* Clock.currentTimeMillis;
         const deadline = Math.min(
           startedAt + bounds[descriptor.kind],
@@ -986,17 +947,9 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
             })
           ),
           Effect.ensuring(
-            Effect.sync(() => {
+            Effect.suspend(() => {
               execution?.interruptUnsafe();
-              if (actionLimits === undefined) return;
-              for (const [counts, entry] of [
-                [companyActions, binding.companyId],
-                [viewerActions, key]
-              ] as const) {
-                const count = (counts.get(entry) ?? 1) - 1;
-                if (count === 0) counts.delete(entry);
-                else counts.set(entry, count);
-              }
+              return slot?.release ?? Effect.void;
             })
           ),
           Effect.ensuring(releaseAdmission)

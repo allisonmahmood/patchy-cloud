@@ -621,6 +621,9 @@ PGlite dev has one connection. It does not reproduce production connection conte
 | `subscriptions.reruns.patch` | operating | 2 | runs | patch | Simultaneous subscription re-runs per patch per host replica, within `subscriptions.reruns.company`; an override of either leaves the other unchanged | None | Yes | deployment |
 | `tier2.actions.company` | operating | 8 | actions | company | Actions in flight per company per host replica | `busy` | Yes | deployment |
 | `tier2.actions.viewer` | operating | 2 | actions | viewer | Actions in flight per viewer per patch per host replica; a person's worker agent has its own, across its clients, beside their pages' | `busy` | Yes | deployment |
+| `tier2.models.company` | operating | 24 | actions | company | Actions in the model pool per company per host replica. An action moves there from its action slots once, on its first model call, and stays until it ends; a refused move keeps its action slot | `busy` | Yes | deployment |
+| `tier2.models.viewer` | operating | 4 | actions | viewer | Actions in the model pool per person per host replica, across their patches, pages and worker agent | `busy` | Yes | deployment |
+| `tier2.models.replica` | operating | 64 | actions | host | Actions in the model pool per host replica, across companies | `busy` | No | deployment |
 | `company.admission.rate` | operating | 100 | calls/second | company | Company tier 1 operations and tier 2 calls per host replica, worker agents' calls included; excludes public me, callbacks and re-runs | `limit_exceeded` | Yes | deployment |
 | `company.admission.burst` | operating | 200 | calls | company | Company admission burst per host replica | `limit_exceeded` | Yes | deployment |
 | `execution.management.bodyBytes` | operating | 16777216 | bytes | host | Serialized private management request, including pushed bundle source | `too_large` | No | deployment |
