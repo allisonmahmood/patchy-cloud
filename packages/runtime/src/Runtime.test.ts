@@ -137,6 +137,50 @@ it.effect(
     })
 );
 
+// The host gains operations a page must not call; until one is put on the page list on purpose,
+// a forged call naming it is refused before its handler runs, whatever its kind and tier.
+it.effect("refuses a page's call to a host operation that is not on the page list", () =>
+  Effect.gen(function* () {
+    let executions = 0;
+    const added = (kind: Runtime.Handler["kind"]) => ({
+      kind,
+      run: () =>
+        Effect.sync(() => {
+          executions++;
+          return null;
+        })
+    });
+    yield* Effect.gen(function* () {
+      const api = yield* Fixtures.client;
+      for (const versionId of [
+        Fixtures.versionId,
+        Fixtures.tier1VersionId,
+        Fixtures.tier2VersionId,
+        Fixtures.staleTier1VersionId
+      ])
+        for (const op of ["added.read", "added.write", "added.integration"]) {
+          const response = yield* api.call({
+            payload: { ...envelope(op), versionId },
+            headers: authenticatedHeaders(),
+            responseMode: "response-only"
+          });
+          assert.strictEqual(response.status, 403, `${op} on ${versionId}`);
+          assert.strictEqual(decodeFailure(yield* response.json).code, "server_required");
+        }
+      assert.strictEqual(executions, 0);
+    }).pipe(
+      Effect.provide(
+        Fixtures.layer({
+          me,
+          "added.read": added("read"),
+          "added.write": added("mutation"),
+          "added.integration": added("integration")
+        })
+      )
+    );
+  })
+);
+
 it.effect(
   "attributes integration origin, principal and size denials without trusting the envelope identity",
   () =>
