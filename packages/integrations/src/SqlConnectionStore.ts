@@ -2637,6 +2637,23 @@ export const knowing = (known: ReadonlyArray<Models.Kind>) =>
 export const layer = Layer.effect(ConnectionStore.ConnectionStore, make);
 
 /**
+ * By team, how many grants name a connection of an integration outside `known`, a store's own:
+ * one no page lists, such as a model role while Models is off. They still keep the team.
+ */
+export const unlistedTeamGrants = Effect.fn("ConnectionStore.unlistedTeamGrants")(function* (
+  companyId: string,
+  known: ReadonlyArray<Integration>
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const rows = yield* sql<{ readonly teamId: string; readonly count: number }>`SELECT
+      g.team_id AS "teamId", count(*)::int AS count
+    FROM connection_team_grants g JOIN connections c ON c.id = g.connection_id
+    WHERE g.company_id = ${companyId} AND c.integration NOT IN ${sql.in(known)}
+    GROUP BY g.team_id`;
+  return new Map(rows.map((row) => [row.teamId, row.count] as const));
+});
+
+/**
  * Every connection of the `known` integrations, a store's own, whose audience names teams, with
  * those teams.
  */

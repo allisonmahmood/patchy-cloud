@@ -222,7 +222,8 @@ server keeps and reads no model provider or role, as a release before Models
 would: discovery neither lists nor offers a role, a role's detail is not found
 before any lookup, and making either is refused. The dev runner and the test
 servers turn it on. Any other value, `1` or `yes` included, stops the server at
-launch.
+launch. Turned off again after roles were made, it hides them but keeps their
+team grants: a team a role names can't be deleted, and its delete says so.
 
 A provider is a connection of its provider's own integration, such as `openai`,
 holding the company's key, sealed under this keyring. A role is a `models`

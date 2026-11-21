@@ -40,9 +40,19 @@ export interface Reach {
   readonly connections: readonly ReachConnection[];
   /** By team, how many patches naming it the viewer can't see. */
   readonly hidden: ReadonlyMap<string, number>;
+  /**
+   * By team, how many model roles name it that this host doesn't show, while its Models switch is
+   * off. They still keep it from being deleted; only that refusal names them, for admins.
+   */
+  readonly unlisted: ReadonlyMap<string, number>;
 }
 
-export const nothing: Reach = { patches: [], connections: [], hidden: new Map() };
+export const nothing: Reach = {
+  patches: [],
+  connections: [],
+  hidden: new Map(),
+  unlisted: new Map()
+};
 
 /** A person as a roster change reads them: active or not, and every team they are recorded on. */
 export interface Person {

@@ -444,7 +444,11 @@ const render = Effect.fn("TeamsPage.render")(function* (
       };
     case "delete": {
       const unseen = reach.hidden.get(selected.id) ?? 0;
-      if (refused === undefined && own.patches.length + own.connections.length + unseen === 0)
+      const unlisted = reach.unlisted.get(selected.id) ?? 0;
+      if (
+        refused === undefined &&
+        own.patches.length + own.connections.length + unseen + unlisted === 0
+      )
         return {
           ...page,
           overlay: dialog({
@@ -507,9 +511,19 @@ const render = Effect.fn("TeamsPage.render")(function* (
           closeHref: here,
           size: "lg",
           body: `<p class="prose">${escapeHtml(
-            counts.length
-              ? `Take ${selected.name} off ${listed(counts)} first.`
-              : "Patches or connections use this team. Change their audiences first."
+            [
+              ...(counts.length
+                ? [`Take ${selected.name} off ${listed(counts)} first.`]
+                : unlisted
+                  ? []
+                  : ["Patches or connections use this team. Change their audiences first."]),
+              // Models is off on this host, so no page shows these roles or changes them.
+              ...(unlisted
+                ? [
+                    `${unlisted === 1 ? "A model role uses" : `${unlisted} model roles use`} it too. ${unlisted === 1 ? "Its audience" : "Their audiences"} can be changed once Models is on.`
+                  ]
+                : [])
+            ].join(" ")
           )}</p>${items.length ? rows(items, true) : ""}`,
           foot: linkButton("Close", here)
         })
