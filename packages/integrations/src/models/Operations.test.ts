@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off -- a closed local port shows what the real fetch transport reports when refused.
+import { createServer as createNetServer } from "node:net";
 import { assert, describe, it } from "@effect/vitest";
 import { CURRENT_RELEASE, RuntimeFailure, WIRE_VERSION } from "@patchy/api";
 import * as GuestProtocol from "@patchy/api/guest";
@@ -15,6 +17,7 @@ import * as Logger from "effect/Logger";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -832,6 +835,42 @@ it.layer(layer, { excludeTestServices: true, timeout: 60_000 })("model calls", (
         SELECT outcome, outcome_code FROM runtime_calls
         WHERE company_id = ${scene.owner.company.id} AND op = 'models.generate'`;
       assert.deepStrictEqual(row, { outcome: "failure", outcome_code: "access_denied" });
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect("journal a refused connection as a failure, nothing sent", () =>
+    Effect.gen(function* () {
+      const scene = yield* setup();
+      const sql = yield* SqlClient.SqlClient;
+      const port = yield* Effect.callback<number>((resume) => {
+        const probe = createNetServer();
+        probe.listen(0, "127.0.0.1", () => {
+          const address = probe.address();
+          probe.close(() =>
+            resume(
+              Effect.succeed(typeof address === "object" && address !== null ? address.port : 0)
+            )
+          );
+        });
+      });
+      // The real fetch, at a port nobody listens on.
+      const refused = yield* relay(scene, {
+        sent: [],
+        source: Source.makeAt(`http://127.0.0.1:${port}/v1`).pipe(
+          Effect.provide(FetchHttpClient.layer)
+        )
+      });
+      const reply = yield* refused.send("models.generate", generateArgs());
+      assert.deepInclude(reply, {
+        ok: false,
+        code: "source_unavailable",
+        details: { sent: false, reason: "unreachable" }
+      });
+      yield* Effect.sleep("100 millis");
+      const [row] = yield* sql<{ readonly outcome: string; readonly outcome_code: string }>`
+        SELECT outcome, outcome_code FROM runtime_calls
+        WHERE company_id = ${scene.owner.company.id} AND op = 'models.generate'`;
+      assert.deepStrictEqual(row, { outcome: "failure", outcome_code: "source_unavailable" });
     }).pipe(Effect.scoped)
   );
 

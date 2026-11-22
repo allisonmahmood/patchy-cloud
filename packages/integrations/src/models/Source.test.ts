@@ -928,6 +928,31 @@ describe("OpenAI's transport", () => {
     }).pipe(Effect.scoped)
   );
 
+  it.live("says nothing was sent when the connection is refused, through the real fetch", () =>
+    Effect.gen(function* () {
+      // A port that was free a moment ago: nobody listens there.
+      const port = yield* Effect.callback<number>((resume) => {
+        const probe = createServer();
+        probe.listen(0, "127.0.0.1", () => {
+          const address = probe.address();
+          probe.close(() =>
+            resume(
+              Effect.succeed(typeof address === "object" && address !== null ? address.port : 0)
+            )
+          );
+        });
+      });
+      const source = yield* Source.makeAt(`http://127.0.0.1:${port}/v1`).pipe(
+        Effect.provide(FetchHttpClient.layer)
+      );
+      const call = yield* dispatch();
+      const error = failed(yield* Effect.exit(source.generate(target, generateArgs(), call)));
+      assert.strictEqual(error.code, "source_unavailable");
+      assert.deepStrictEqual(error.details, { sent: false, reason: "unreachable" });
+      assert.isFalse(call.attempt.sent);
+    })
+  );
+
   it.effect("relays OpenAI's 400 for a schema it rejects as invalid_request, sent", () =>
     Effect.gen(function* () {
       const fake = provider(() =>

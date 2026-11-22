@@ -40,6 +40,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -249,6 +250,43 @@ const retryAfter = (value: string | undefined, now: number) => {
  * never surfaces an interim 1xx; any status a `Response` can't carry is refused before rebuilding.
  */
 const bodyless = new Set([204, 205, 304]);
+
+/**
+ * Codes the runtime's fetch reports, on the error or one of its causes, for a failure before any
+ * byte of the request was written: the name didn't resolve, the connection was refused, or the
+ * server's certificate failed verification during the handshake. Node puts the code on the
+ * error's cause and Bun on the error itself; both use these. The list is deliberately
+ * conservative: anything else, a reset, a timeout or a handshake that failed another way
+ * included, may have come after the request left, so it stays ambiguous and counts as sent.
+ */
+const beforeWrite = new Set([
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "ECONNREFUSED",
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+  "CERT_HAS_EXPIRED",
+  "CERT_NOT_YET_VALID",
+  "ERR_TLS_CERT_ALTNAME_INVALID"
+]);
+/** Every code on an error, its causes and an aggregate's errors, a few levels deep. */
+const codesOf = (error: unknown, depth = 0): ReadonlyArray<string> => {
+  if (depth > 6 || !Predicate.isObject(error)) return [];
+  const own = "code" in error && typeof error.code === "string" ? [error.code] : [];
+  const inner =
+    "errors" in error && Array.isArray(error.errors)
+      ? error.errors.flatMap((item: unknown) => codesOf(item, depth + 1))
+      : [];
+  return [...own, ...inner, ...("cause" in error ? codesOf(error.cause, depth + 1) : [])];
+};
+/** Whether a transport failure proves the request was never written. */
+const neverWritten = (error: HttpClientError.HttpClientError) => {
+  if (error.reason._tag !== "TransportError") return false;
+  const codes = codesOf(error.reason.cause);
+  return codes.length > 0 && codes.every((code) => beforeWrite.has(code));
+};
 
 /** A transport failure carrying nothing; the refusal it stands for waits in the wire. */
 const withheld = (request: HttpClientRequest.HttpClientRequest) =>
@@ -556,7 +594,14 @@ export const makeAt = Effect.fn("ModelsSource.make")(function* (apiUrl: string) 
               Effect.flatMap(prepared, (request) =>
                 Effect.suspend(() => {
                   dispatch.attempt.sent = true;
-                  return http.execute(request);
+                  return http.execute(request).pipe(
+                    // A failure that proves nothing was written leaves the call unsent.
+                    Effect.tapError((error) =>
+                      Effect.sync(() => {
+                        if (neverWritten(error)) dispatch.attempt.sent = false;
+                      })
+                    )
+                  );
                 })
               ),
             (request: HttpClientRequest.HttpClientRequest) => Effect.succeed(request)
