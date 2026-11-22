@@ -209,9 +209,11 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
     /** The handler was given the call; before that, nothing was sent. */
     started: boolean;
     /**
-     * A model call's refusal as last given, with the status and operation it is stored under:
-     * `callback` stores the final one once, after byte charging, as the guest receives it.
+     * A model call's refusal as prepared, with the status and operation it is stored under,
+     * carried unchanged through byte charging: `callback` stores the final one once, as the
+     * guest receives it. Only a new reply, such as the byte limit's, takes new ones.
      */
+    refusal?: GuestProtocol.CallbackReply;
     status?: number;
     operation?: string;
   }
@@ -242,10 +244,15 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
       // A model call's refusal may yet be replaced by the call tree's byte limit, so it is stored
       // once, by `callback`, when the reply the guest receives is known.
       if (modelCall) {
+        // The journal path hands its prepared refusal back as a result, which comes here again
+        // with the default status: the one prepared keeps its own.
+        if (call.refusal === reply) return reply;
         const { operation, ...failure } = reply;
+        const given = operation === undefined ? reply : failure;
+        call.refusal = given;
         call.status = status;
         call.operation = operation ?? integration;
-        return operation === undefined ? reply : failure;
+        return given;
       }
       // The same refusal can pass twice; only a copy that names an operation is new.
       if (reply.operation === undefined)
