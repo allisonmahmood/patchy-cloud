@@ -60,6 +60,7 @@ class Target extends Schema.Class<Target>("Fleet.Target")({
   wakes: Schema.Number,
   coldStart: Schema.Number,
   spares: Schema.Number,
+  readySpares: Schema.Number,
   waiting: Schema.Number
 }) {}
 class Rollout extends Schema.Class<Rollout>("Fleet.Rollout")({
@@ -168,9 +169,11 @@ export const make = Effect.gen(function* () {
       FROM execution_binding_history WHERE company_id = ${company} ORDER BY binding_epoch`
   });
   /**
-   * Binds a spare to `company` with its two clocks as given, or answers its live binding. With
-   * `capacity`, it takes a spare only as that allows. The spares it counts stay locked until it
-   * commits, so concurrent claims never count the same one.
+   * Binds a spare to `company` with its two clocks as given, or answers its live binding, clearing
+   * any recorded pool wait for `company`. With `capacity`, it takes a spare only as that allows.
+   * On an empty-pool miss with `waitUntil`, it records or extends the company's wait inside the
+   * same per-company claim transaction so concurrent claims and misses never race. The spares it
+   * counts stay locked until it commits, so concurrent claims never count the same one.
    */
   const claim = Effect.fn("FleetStore.claim")(function* (
     company: string,
@@ -178,7 +181,8 @@ export const make = Effect.gen(function* () {
     now: number,
     waited: number,
     clocks: Clocks,
-    capacity?: Capacity
+    capacity?: Capacity,
+    waitUntil?: number
   ) {
     yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`execution/claim/${company}`}, 0))`;
     const existing = yield* findCompany(company);
@@ -199,7 +203,14 @@ export const make = Effect.gen(function* () {
       WHERE task_id = (SELECT task_id FROM ready ORDER BY requested_at LIMIT 1)
         AND (SELECT count(*) FROM ready) > ${reserve} AND ${room}
       RETURNING ${taskColumns}`.pipe(Effect.flatMap(decodeTasks));
-    if (!spare[0]) return undefined;
+    if (!spare[0]) {
+      if (waitUntil !== undefined)
+        yield* sql`INSERT INTO execution_pool_waits (company_id, until)
+          VALUES (${company}, ${waitUntil})
+          ON CONFLICT (company_id) DO UPDATE SET until = EXCLUDED.until
+          WHERE execution_pool_waits.until < EXCLUDED.until`;
+      return undefined;
+    }
     const claimed = yield* sql`INSERT INTO execution_bindings
       (company_id, task_id, owner_id, state, bound_at, last_activity_at, idle_since, agent_activity_at, spare_wait_ms)
       VALUES (${company}, ${spare[0].taskId}, ${owner}, 'claiming', ${now}, ${clocks.lastActivityAt},
@@ -502,14 +513,26 @@ export const make = Effect.gen(function* () {
   }) => sql`UPDATE execution_tasks
     SET started_at = ${task.startedAt}, ready_at = ${task.readyAt}, state = 'spare'
     WHERE task_id = ${task.taskId} AND state = 'starting'`;
-  const recordWait = (company: string, until: number) =>
-    sql`INSERT INTO execution_pool_waits (company_id, until)
-    SELECT ${company}, ${until}
-    WHERE NOT EXISTS (
-      SELECT 1 FROM execution_bindings
-      WHERE company_id = ${company} AND state IN ('claiming', 'active')
-    )
-    ON CONFLICT (company_id) DO UPDATE SET until = GREATEST(execution_pool_waits.until, EXCLUDED.until)`;
+  /**
+   * Fences up to `excess` ready spares of `revision`, newest first, whose readiness predates
+   * `readyBefore`. `FOR UPDATE SKIP LOCKED` lets concurrent claims take a spare without racing the
+   * fence.
+   */
+  const trimSpares = (revision: string, excess: number, readyBefore: number) =>
+    excess <= 0
+      ? Effect.succeed([] as readonly string[])
+      : sql<{ readonly taskId: string }>`WITH picked AS (
+          SELECT task_id FROM execution_tasks
+          WHERE state = 'spare'
+            AND deployment_revision = ${revision}
+            AND ready_at IS NOT NULL
+            AND ready_at <= ${readyBefore}
+          ORDER BY requested_at DESC LIMIT ${excess}
+          FOR UPDATE SKIP LOCKED
+        )
+        UPDATE execution_tasks t SET state = 'stopping'
+        FROM picked WHERE t.task_id = picked.task_id AND t.state = 'spare'
+        RETURNING t.task_id AS "taskId"`.pipe(Effect.map((rows) => rows.map((row) => row.taskId)));
   const sweepWaits = (now: number) => sql`DELETE FROM execution_pool_waits WHERE until <= ${now}`;
   const target = (now: number, window: number, revision: string) =>
     sql`SELECT
@@ -518,6 +541,8 @@ export const make = Effect.gen(function* () {
       AND requested_at >= ${now - window}), 0)::double precision AS "coldStart",
     (SELECT count(*)::integer FROM execution_tasks WHERE state IN ('starting', 'spare')
       AND deployment_revision = ${revision}) AS spares,
+    (SELECT count(*)::integer FROM execution_tasks WHERE state = 'spare'
+      AND deployment_revision = ${revision}) AS "readySpares",
     (SELECT count(*)::integer FROM execution_pool_waits w
       WHERE w.until > ${now}
         AND NOT EXISTS (
@@ -630,7 +655,7 @@ export const make = Effect.gen(function* () {
     retireDeployment,
     reserve,
     ready,
-    recordWait,
+    trimSpares,
     sweepWaits,
     target,
     pendingEvents,

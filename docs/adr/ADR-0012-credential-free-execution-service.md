@@ -353,8 +353,12 @@ One replica's housekeeping lease replenishes the pool, releases idle companies,
 reconciles lost tasks and retires superseded deployments. The target is
 `ceil(max(2, wakes / 900000 ms * measured cold-start ms)) + waiting`, where
 `waiting` counts distinct companies currently waiting on an empty pool (for the
-current revision only, never staged revisions before promotion), with every live
-or draining task counted against the fleet budget. The initial budget is 100 tasks,
+current revision only, never staged revisions before promotion, recorded inside
+the per-company claim transaction on a miss and cleared on claim), with every
+live or draining task counted against the fleet budget. Surplus ready spares of
+the current revision above target (such as spares launched for callers who
+abandoned before readiness) are fenced newest-first after `execution.pool.wait`
+unused and drained, while never trimming below the target. The initial budget is 100 tasks,
 the pass interval five seconds and the lease fifteen seconds. These values come
 from the limits registry, not another timer or counter convention.
 Measured cold start spans the durable task request through readiness, including

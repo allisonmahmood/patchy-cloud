@@ -427,10 +427,35 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
       const replenish = Effect.gen(function* () {
         yield* Deferred.await(inventoryRecorded);
         const rollout = yield* store.rollout;
+        const window = config.get("execution.pool.wakeWindow");
+        const grace = config.get("execution.pool.wait");
+        // Reclaim surplus ready spares of the current revision once their retry grace passes,
+        // before staged replenishment reserves slots, so an abandoned burst cannot block promotion.
+        if (rollout.currentRevision !== null) {
+          const currentNow = yield* Clock.currentTimeMillis;
+          const currentMeasured = yield* store.target(currentNow, window, rollout.currentRevision);
+          const currentTarget =
+            Math.ceil(
+              Math.max(minimumSpares, (currentMeasured.wakes / window) * currentMeasured.coldStart)
+            ) + currentMeasured.waiting;
+          const excess = currentMeasured.readySpares - currentTarget;
+          if (excess > 0) {
+            yield* guard;
+            const trimmed = yield* store.trimSpares(
+              rollout.currentRevision,
+              excess,
+              currentNow - grace
+            );
+            yield* Effect.forEach(
+              trimmed,
+              (taskId) => isolate(taskId, drainTask(taskId, "deployment")),
+              { concurrency: 8, discard: true }
+            );
+          }
+        }
         const revisions = [...new Set([rollout.stagedRevision, rollout.currentRevision])];
         for (const revision of revisions) {
           if (revision === null) continue;
-          const window = config.get("execution.pool.wakeWindow");
           const measured = yield* store.target(yield* Clock.currentTimeMillis, window, revision);
           const baseline = Math.ceil(
             Math.max(
@@ -614,7 +639,11 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
           )
         );
         yield* guard;
-        yield* store.sweepWaits(yield* Clock.currentTimeMillis);
+        yield* store.sweepWaits(yield* Clock.currentTimeMillis).pipe(
+          Effect.catchTags({
+            SqlError: () => Effect.logWarning("Execution pool wait sweep failed")
+          })
+        );
         const rollout = yield* store.rollout;
         if (
           rollout.currentRevision === null &&
@@ -677,7 +706,8 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
   /**
    * The company's admissible binding, claiming a spare for `caller` when it has none and
    * waiting for a launched one when the pool is empty, until the search's one
-   * `execution.pool.wait` runs out. It records how it found the server on `search`. A
+   * `execution.pool.wait` runs out. An empty-pool miss records the company's wait inside `claim`
+   * so housekeeping counts it across replicas. It records how it found the server on `search`. A
    * prewarm's work is refused at once instead: its prewarm already claimed what it could.
    */
   const find = Effect.fn("Fleet.find")(
@@ -693,7 +723,6 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
       if (search.found === "bound") search.found = "spare";
       return yield* Effect.gen(function* () {
         let claimed: FleetStore.Binding | undefined;
-        let waitRecorded = false;
         while (true) {
           const wake = changed;
           const now = yield* Clock.currentTimeMillis;
@@ -702,17 +731,12 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
             options.replicaId,
             now,
             now - search.startedAt,
-            FleetStore.clocksOf(caller, now)
+            FleetStore.clocksOf(caller, now),
+            undefined,
+            until
           );
-          if (claimed === undefined) {
-            search.found = "launch";
-            if (!waitRecorded) {
-              yield* store.recordWait(companyId, until);
-              waitRecorded = true;
-            }
-          }
+          if (claimed === undefined) search.found = "launch";
           if (claimed) {
-            waitRecorded = false;
             if (!(yield* store.isAdmissibleTask(claimed.taskId))) {
               yield* fence(claimed, "deployment").pipe(
                 Effect.catchTags({ TaskProviderError: () => Effect.void })

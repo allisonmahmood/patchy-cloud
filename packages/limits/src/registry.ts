@@ -1435,7 +1435,7 @@ export const registry = {
     unit: "tasks",
     scope: "host",
     measure:
-      "Global spare floor; target is ceil(max(floor, wake rate times measured cold start)) plus waiting companies, within fleet budget",
+      "Global spare floor; target is ceil(max(floor, wake rate times measured cold start)) plus waiting companies (current revision only), within fleet budget",
     refusal: null,
     overridable: false
   },

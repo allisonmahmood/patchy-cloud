@@ -1769,6 +1769,25 @@ it.layer(services)("host fleet controller", (it) => {
           7
         );
         assert.deepStrictEqual(yield* sql`SELECT company_id FROM execution_pool_waits`, []);
+        // Follow-up pass with 0 waiting and 1 spare launches 1 more to restore floor (capped at 7? already 7 -> 0 more).
+        // Release one binding so the floor check can run cleanly without double-counting.
+        assert.isTrue(yield* left.housekeeping());
+        assert.strictEqual(
+          (yield* provider.list).filter((task) => task.state === "running").length,
+          7
+        );
+        // A stale wait row for an already-bound company is cleared when `claim` returns it.
+        yield* sql`INSERT INTO execution_pool_waits (company_id, until)
+          VALUES (${waiters[0]}, ${(yield* Clock.currentTimeMillis) + 60_000})`;
+        const existing = yield* store.claim(
+          waiters[0],
+          "waiting-burst-right",
+          yield* Clock.currentTimeMillis,
+          0,
+          FleetStore.clocksOf("page", yield* Clock.currentTimeMillis)
+        );
+        assert.strictEqual(existing?.taskId, bindings[0]!.taskId);
+        assert.deepStrictEqual(yield* sql`SELECT company_id FROM execution_pool_waits`, []);
       }).pipe(
         Effect.scoped,
         Effect.provide(
@@ -1783,32 +1802,132 @@ it.layer(services)("host fleet controller", (it) => {
   );
 
   it.effect(
-    "records a wait once per search, launches baseline plus waiting without double-counting, and clears stale waits on existing claims",
+    "re-records a waiter's demand after another replica's binding is fenced before the next poll",
     () =>
       Effect.gen(function* () {
-        const { sql, provider, companyId, left, right } = yield* setupMemory("waiting-exact");
+        const { sql, provider, companyId, left, right } = yield* setupMemory("waiting-interleave");
         const store = yield* FleetStore.make;
-        const fill = "cmp_fleet_waiting_exact_fill";
-        const waiters = [
-          "cmp_fleet_waiting_exact_1",
-          "cmp_fleet_waiting_exact_2",
-          "cmp_fleet_waiting_exact_3"
-        ] as const;
-        for (const company of [fill, ...waiters])
-          yield* sql`INSERT INTO companies(id, handle, name) VALUES (${company}, ${company}, 'Fleet exact')`;
+        const fill = "cmp_fleet_waiting_interleave_fill";
+        const target = "cmp_fleet_waiting_interleave_target";
+        for (const company of [fill, target])
+          yield* sql`INSERT INTO companies(id, handle, name) VALUES (${company}, ${company}, 'Fleet interleave')`;
         yield* left.ensureBinding(companyId);
         yield* left.ensureBinding(fill);
         const now = yield* Clock.currentTimeMillis;
-        assert.isDefined(yield* store.lease("waiting-exact-left", "waiting-exact", now, 15_000));
-        const observed = yield* recordStatements(right.ensureBinding(waiters[0])).pipe(
-          Effect.forkChild
+        assert.isDefined(
+          yield* store.lease("waiting-interleave-left", "waiting-interleave", now, 15_000)
         );
-        const duplicate = yield* right.ensureBinding(waiters[0]).pipe(Effect.forkChild);
-        const others = yield* Effect.forEach(waiters.slice(1), (company) =>
+        // Track polls on replica A (`right`) with a barrier after a peer claim+fence clears the wait.
+        let pollsAfterFence = 0;
+        let fencedPeer = false;
+        const repolled = yield* Deferred.make<void>();
+        const watchPolls: Statement.Transformer = (statement) => {
+          const text = statement.compile()[0];
+          if (fencedPeer && /execution_pool_waits/.test(text)) {
+            pollsAfterFence++;
+            return Deferred.succeed(repolled, undefined).pipe(Effect.as(statement));
+          }
+          return Effect.succeed(statement);
+        };
+        const waiter = yield* right
+          .ensureBinding(target)
+          .pipe(Effect.provideService(Statement.CurrentTransformer, watchPolls), Effect.forkChild);
+        yield* phase(
+          "replica A records initial wait",
+          Effect.gen(function* () {
+            while (true) {
+              const rows = yield* sql`SELECT company_id FROM execution_pool_waits
+                WHERE company_id = ${target}`;
+              if (rows.length === 1) return;
+              yield* TestClock.withLive(Effect.sleep(5));
+            }
+          })
+        );
+        // Replica B (`left`) gets a spare, claims it for `target` (deleting the wait row), and then
+        // its binding is fenced and stopped before replica A's next poll.
+        const spareTask = yield* provider.start({
+          taskId: "peer-spare-task",
+          deploymentRevision: "waiting-interleave"
+        });
+        yield* sql`INSERT INTO execution_tasks (task_id, deployment_revision, state, requested_at, started_at, ready_at)
+          VALUES (${spareTask.taskId}, 'waiting-interleave', 'spare', ${now}, ${spareTask.startedAt}, ${spareTask.readyAt})`;
+        const peerBinding = (yield* store.claim(
+          target,
+          "waiting-interleave-left",
+          now,
+          0,
+          FleetStore.clocksOf("page", now)
+        ))!;
+        assert.isDefined(peerBinding);
+        assert.deepStrictEqual(yield* sql`SELECT company_id FROM execution_pool_waits`, []);
+        yield* store.fence(peerBinding, "deployment");
+        yield* store.stopped(spareTask.taskId, now, "deployment");
+        fencedPeer = true;
+        // Drive replica A's poll loop until the barrier confirms it polled after the fence.
+        yield* phase(
+          "replica A polls again and re-records its wait",
+          Effect.gen(function* () {
+            while (pollsAfterFence === 0) {
+              yield* TestClock.adjust(50);
+              yield* TestClock.withLive(Effect.sleep(5));
+            }
+            yield* Deferred.await(repolled);
+          })
+        );
+        assert.strictEqual(
+          (yield* store.target(yield* Clock.currentTimeMillis, 900_000, "waiting-interleave"))
+            .waiting,
+          1
+        );
+        yield* Fiber.interrupt(waiter);
+      }).pipe(Effect.scoped),
+    30_000
+  );
+
+  it.effect(
+    "reclaims surplus spares from an abandoned burst after grace so a staged revision can promote under a tight budget",
+    () =>
+      Effect.gen(function* () {
+        const { sql, provider, companyId, left, right } = yield* setupMemory("waiting-abandon-old");
+        const store = yield* FleetStore.make;
+        const fill = "cmp_fleet_waiting_abandon_fill";
+        const waiters = [
+          "cmp_fleet_waiting_abandon_1",
+          "cmp_fleet_waiting_abandon_2",
+          "cmp_fleet_waiting_abandon_3",
+          "cmp_fleet_waiting_abandon_4"
+        ] as const;
+        for (const company of [fill, ...waiters])
+          yield* sql`INSERT INTO companies(id, handle, name) VALUES (${company}, ${company}, 'Fleet abandon')`;
+        // Budget is 6, minimumSpares is 2: 2 bound tasks leave 4 budget slots.
+        yield* left.ensureBinding(companyId);
+        yield* left.ensureBinding(fill);
+        const now = yield* Clock.currentTimeMillis;
+        assert.isDefined(
+          yield* store.lease("waiting-abandon-old-left", "waiting-abandon-old", now, 15_000)
+        );
+        // Delay spare starts so all 4 budget slots are reserved while the burst is waiting, then
+        // interrupt the waiters before those tasks become ready.
+        const releaseStarts = yield* Deferred.make<void>();
+        const started = yield* Queue.unbounded<string>();
+        const delayedProvider = TaskProvider.TaskProvider.of({
+          ...provider,
+          start: (input) =>
+            Queue.offer(started, input.taskId).pipe(
+              Effect.andThen(Deferred.await(releaseStarts)),
+              Effect.andThen(provider.start(input))
+            )
+        });
+        const launcher = yield* Fleet.make({
+          replicaId: "waiting-abandon-old-left",
+          deploymentRevision: "waiting-abandon-old",
+          automaticHousekeeping: false
+        }).pipe(Effect.provideService(TaskProvider.TaskProvider, delayedProvider));
+        const pending = yield* Effect.forEach(waiters, (company) =>
           right.ensureBinding(company).pipe(Effect.forkChild)
         );
         yield* phase(
-          "three distinct waiting companies record demand",
+          "all four waiters register demand",
           Effect.gen(function* () {
             while (true) {
               const rows = yield* sql<{ total: number }>`
@@ -1818,53 +1937,52 @@ it.layer(services)("host fleet controller", (it) => {
             }
           })
         );
-        // Let the waiters poll several 50 ms cycles while the pool is still empty.
-        for (let poll = 0; poll < 5; poll++) {
-          yield* TestClock.adjust(50);
-          yield* TestClock.withLive(Effect.sleep(5));
-        }
-        // Launches baseline (2) + waiting (3) = 5 spares in one pass.
-        assert.isTrue(yield* left.housekeeping());
-        const settle = <A, E>(fiber: Fiber.Fiber<A, E>) =>
-          Effect.gen(function* () {
-            while (fiber.pollUnsafe() === undefined) {
-              yield* TestClock.adjust(50);
-              yield* TestClock.withLive(Effect.sleep(5));
-            }
-            return yield* Fiber.join(fiber);
-          });
-        const first = yield* phase("first waiter settles", settle(observed));
-        const dup = yield* phase("duplicate waiter settles", settle(duplicate));
-        yield* phase("remaining waiters settle", Effect.forEach(others, settle));
-        assert.strictEqual(dup.taskId, first.result.taskId);
-        const waitInserts = first.statements.filter(({ text }) =>
-          /^INSERT INTO execution_pool_waits\b/.test(text)
+        const replenishFiber = yield* launcher.housekeeping().pipe(Effect.forkChild);
+        // Wait for all 4 remaining budget slots to start launching (total 6/6 live).
+        yield* phase(
+          "burst fills all four remaining budget slots",
+          Effect.forEach([0, 1, 2, 3], () => Queue.take(started))
         );
-        assert.lengthOf(waitInserts, 1);
-        assert.deepStrictEqual(yield* sql`SELECT company_id FROM execution_pool_waits`, []);
-        assert.strictEqual(
-          (yield* provider.list).filter((task) => task.state === "running").length,
-          7
-        );
-        // A follow-up pass sees 0 waiting and 2 ready spares, launching nothing more.
-        assert.isTrue(yield* left.housekeeping());
-        assert.strictEqual(
-          (yield* provider.list).filter((task) => task.state === "running").length,
-          7
-        );
-        // A stale wait row for an already-bound company is cleared when `claim` returns it.
-        yield* sql`INSERT INTO execution_pool_waits (company_id, until)
-          VALUES (${waiters[0]}, ${(yield* Clock.currentTimeMillis) + 60_000})`;
-        const existing = yield* store.claim(
-          waiters[0],
-          "waiting-exact-right",
-          yield* Clock.currentTimeMillis,
-          0,
-          FleetStore.clocksOf("page", yield* Clock.currentTimeMillis)
-        );
-        assert.strictEqual(existing?.taskId, first.result.taskId);
-        assert.deepStrictEqual(yield* sql`SELECT company_id FROM execution_pool_waits`, []);
-      }).pipe(Effect.scoped),
+        // Callers abandon before the spares become ready.
+        yield* Effect.forEach(pending, Fiber.interrupt);
+        yield* Deferred.succeed(releaseStarts, undefined);
+        assert.isTrue(yield* Fiber.join(replenishFiber));
+        // All 4 burst tasks are now ready spares on `old`, filling the 6-task budget completely.
+        const readyAfterBurst = yield* sql<{ total: number }>`
+          SELECT count(*)::integer AS total FROM execution_tasks
+          WHERE deployment_revision = 'waiting-abandon-old' AND state = 'spare'`;
+        assert.strictEqual(readyAfterBurst[0]!.total, 4);
+        // Stage a new revision; while waits have not yet expired (or grace has not elapsed),
+        // the 4 spares stay warm.
+        const candidate = yield* Fleet.make({
+          replicaId: "waiting-abandon-candidate",
+          deploymentRevision: "waiting-abandon-new",
+          automaticHousekeeping: false
+        }).pipe(Effect.provideService(TaskProvider.TaskProvider, provider));
+        assert.isTrue(yield* candidate.stageDeployment("waiting-abandon-new"));
+        // Expire both the waits and the `execution.pool.wait` (40 s) grace window after readiness.
+        yield* TestClock.adjust(40_000);
+        assert.isTrue(yield* candidate.housekeeping());
+        // Housekeeping trimmed 2 surplus `old` spares (keeping floor=2) and warmed 2 `new` spares.
+        assert.isTrue(yield* candidate.promoteDeployment("waiting-abandon-new"));
+        const liveByRevision = yield* sql<{ deployment_revision: string; total: number }>`
+          SELECT deployment_revision, count(*)::integer AS total
+          FROM execution_tasks WHERE state = 'spare'
+          GROUP BY deployment_revision ORDER BY deployment_revision`;
+        assert.deepStrictEqual(liveByRevision, [
+          { deployment_revision: "waiting-abandon-new", total: 2 },
+          { deployment_revision: "waiting-abandon-old", total: 2 }
+        ]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromUnknown({
+              PATCHY_LIMITS_JSON: '{"execution.fleet.budget":6,"execution.pool.spares":2}'
+            })
+          )
+        )
+      ),
     30_000
   );
 
@@ -1892,11 +2010,18 @@ it.layer(services)("host fleet controller", (it) => {
           .pipe(Effect.flip);
         assert.strictEqual(refused.code, "busy");
         assert.deepStrictEqual(yield* sql`SELECT company_id FROM execution_pool_waits`, []);
-        // Duplicate wait updates only move the deadline forward.
+        // Duplicate wait updates inside `claim` only move the deadline forward.
         const now = yield* Clock.currentTimeMillis;
-        yield* store.recordWait(cold, now + 1_000);
-        yield* store.recordWait(cold, now + 500);
-        yield* store.recordWait(cold, now + 2_000);
+        const clocks = FleetStore.clocksOf("page", now);
+        assert.isUndefined(
+          yield* store.claim(cold, "waiting-expiry-left", now, 0, clocks, undefined, now + 1_000)
+        );
+        assert.isUndefined(
+          yield* store.claim(cold, "waiting-expiry-left", now, 0, clocks, undefined, now + 500)
+        );
+        assert.isUndefined(
+          yield* store.claim(cold, "waiting-expiry-left", now, 0, clocks, undefined, now + 2_000)
+        );
         assert.deepStrictEqual(yield* sql`SELECT company_id, until FROM execution_pool_waits`, [
           { company_id: cold, until: now + 2_000 }
         ]);
@@ -1921,10 +2046,70 @@ it.layer(services)("host fleet controller", (it) => {
   );
 
   it.effect(
-    "does not inflate a staged revision's spares with waiting companies before promotion",
+    "does not inflate a staged revision's spares before promotion or during initial bootstrap",
     () =>
       Effect.gen(function* () {
-        const { sql, provider, companyId, left, right } = yield* setupMemory("waiting-staged-old");
+        // First-deployment bootstrap (`currentRevision === null`): waiting companies do not inflate
+        // the unpromoted bootstrap revision beyond minimumSpares.
+        yield* TestClock.setTime(1_000_000);
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`TRUNCATE execution_deployments, execution_housekeeping, execution_breakers, execution_pool_waits CASCADE`;
+        yield* sql`INSERT INTO execution_rollout(singleton) VALUES (true)`;
+        const bootstrapProvider = MemoryTasks.make();
+        const bootstrapHost = yield* Fleet.make({
+          replicaId: "waiting-bootstrap-host",
+          deploymentRevision: "waiting-bootstrap-v1",
+          automaticHousekeeping: false
+        }).pipe(Effect.provideService(TaskProvider.TaskProvider, bootstrapProvider));
+        const bootstrapReader = yield* Fleet.make({
+          replicaId: "waiting-bootstrap-reader",
+          deploymentRevision: "waiting-bootstrap-v1",
+          automaticHousekeeping: false
+        }).pipe(Effect.provideService(TaskProvider.TaskProvider, bootstrapProvider));
+        const bootstrapStore = yield* FleetStore.make;
+        // Hold the lease on `bootstrapHost` so `bootstrapReader`'s waiters queue before the pass.
+        assert.isDefined(
+          yield* bootstrapStore.lease(
+            "waiting-bootstrap-host",
+            "waiting-bootstrap-v1",
+            yield* Clock.currentTimeMillis,
+            15_000
+          )
+        );
+        const bootWaiters = [
+          "cmp_fleet_waiting_boot_1",
+          "cmp_fleet_waiting_boot_2",
+          "cmp_fleet_waiting_boot_3"
+        ] as const;
+        for (const company of bootWaiters)
+          yield* sql`INSERT INTO companies(id, handle, name) VALUES (${company}, ${company}, 'Fleet boot')
+            ON CONFLICT (id) DO NOTHING`;
+        const bootPending = yield* Effect.forEach(bootWaiters, (company) =>
+          bootstrapReader.ensureBinding(company).pipe(Effect.forkChild)
+        );
+        yield* phase(
+          "bootstrap waiters register demand",
+          Effect.gen(function* () {
+            while (true) {
+              const rows = yield* sql<{ total: number }>`
+                SELECT count(*)::integer AS total FROM execution_pool_waits`;
+              if (rows[0]!.total === bootWaiters.length) return;
+              yield* TestClock.withLive(Effect.sleep(5));
+            }
+          })
+        );
+        // First pass warms only minimumSpares (2) and promotes `waiting-bootstrap-v1`.
+        assert.isTrue(yield* bootstrapHost.housekeeping());
+        assert.strictEqual(
+          (yield* bootstrapProvider.list).filter(
+            (task) => task.deploymentRevision === "waiting-bootstrap-v1"
+          ).length,
+          2
+        );
+        yield* Effect.forEach(bootPending, Fiber.interrupt);
+
+        // Live currentRevision with a staged candidate: staged gets floor (2), current gets floor + waiting.
+        const { provider, companyId, left, right } = yield* setupMemory("waiting-staged-old");
         const fill = "cmp_fleet_waiting_staged_fill";
         const waiters = [
           "cmp_fleet_waiting_staged_1",
