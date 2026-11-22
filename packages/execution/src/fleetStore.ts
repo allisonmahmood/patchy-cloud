@@ -514,25 +514,29 @@ export const make = Effect.gen(function* () {
     SET started_at = ${task.startedAt}, ready_at = ${task.readyAt}, state = 'spare'
     WHERE task_id = ${task.taskId} AND state = 'starting'`;
   /**
-   * Fences up to `excess` ready spares of `revision`, newest first, whose readiness predates
-   * `readyBefore`. `FOR UPDATE SKIP LOCKED` lets concurrent claims take a spare without racing the
-   * fence.
+   * Fences ready spares of `revision` beyond the oldest `keep` unclaimed ready spares, newest
+   * first, whose readiness predates `readyBefore`. Locking inside the same statement ensures a
+   * concurrent claim can never make trimming dip below `keep`.
    */
-  const trimSpares = (revision: string, excess: number, readyBefore: number) =>
-    excess <= 0
-      ? Effect.succeed([] as readonly string[])
-      : sql<{ readonly taskId: string }>`WITH picked AS (
-          SELECT task_id FROM execution_tasks
-          WHERE state = 'spare'
-            AND deployment_revision = ${revision}
-            AND ready_at IS NOT NULL
-            AND ready_at <= ${readyBefore}
-          ORDER BY requested_at DESC LIMIT ${excess}
-          FOR UPDATE SKIP LOCKED
-        )
-        UPDATE execution_tasks t SET state = 'stopping'
-        FROM picked WHERE t.task_id = picked.task_id AND t.state = 'spare'
-        RETURNING t.task_id AS "taskId"`.pipe(Effect.map((rows) => rows.map((row) => row.taskId)));
+  const trimSpares = (revision: string, keep: number, readyBefore: number) =>
+    sql<{ readonly taskId: string }>`WITH locked AS (
+        SELECT task_id, requested_at, ready_at
+        FROM execution_tasks
+        WHERE state = 'spare' AND deployment_revision = ${revision}
+        ORDER BY requested_at ASC
+        FOR UPDATE SKIP LOCKED
+      ), ranked AS (
+        SELECT task_id, ready_at, row_number() OVER (ORDER BY requested_at ASC) AS rank
+        FROM locked
+      )
+      UPDATE execution_tasks t SET state = 'stopping'
+      FROM ranked
+      WHERE t.task_id = ranked.task_id
+        AND t.state = 'spare'
+        AND ranked.rank > ${keep}
+        AND ranked.ready_at IS NOT NULL
+        AND ranked.ready_at <= ${readyBefore}
+      RETURNING t.task_id AS "taskId"`.pipe(Effect.map((rows) => rows.map((row) => row.taskId)));
   const sweepWaits = (now: number) => sql`DELETE FROM execution_pool_waits WHERE until <= ${now}`;
   const target = (now: number, window: number, revision: string) =>
     sql`SELECT

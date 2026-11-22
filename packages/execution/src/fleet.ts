@@ -424,49 +424,43 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
       }).pipe(Effect.catchTags({ SchemaError: Effect.die }));
       const replenishLock = yield* Semaphore.make(1);
       const inventoryRecorded = yield* Deferred.make<void>();
+      const window = config.get("execution.pool.wakeWindow");
+      const grace = config.get("execution.pool.wait");
+      const targetOf = (
+        measured: { readonly wakes: number; readonly coldStart: number; readonly waiting: number },
+        isCurrent: boolean
+      ) => {
+        const baseline = Math.ceil(
+          Math.max(minimumSpares, isCurrent ? (measured.wakes / window) * measured.coldStart : 0)
+        );
+        return isCurrent ? baseline + measured.waiting : baseline;
+      };
+      // Reclaim surplus ready spares of the current revision once their retry grace passes. Runs
+      // beside `replenish` so slow provider stops never block reservations using free budget slots.
+      const trimSurplus = Effect.gen(function* () {
+        yield* Deferred.await(inventoryRecorded);
+        const rollout = yield* store.rollout;
+        if (rollout.currentRevision === null) return;
+        const currentNow = yield* Clock.currentTimeMillis;
+        const measured = yield* store.target(currentNow, window, rollout.currentRevision);
+        const keep = targetOf(measured, true);
+        if (measured.readySpares <= keep) return;
+        yield* guard;
+        const trimmed = yield* store.trimSpares(rollout.currentRevision, keep, currentNow - grace);
+        yield* Effect.forEach(
+          trimmed,
+          (taskId) => isolate(taskId, drainTask(taskId, "deployment")),
+          { concurrency: 8, discard: true }
+        );
+      });
       const replenish = Effect.gen(function* () {
         yield* Deferred.await(inventoryRecorded);
         const rollout = yield* store.rollout;
-        const window = config.get("execution.pool.wakeWindow");
-        const grace = config.get("execution.pool.wait");
-        // Reclaim surplus ready spares of the current revision once their retry grace passes,
-        // before staged replenishment reserves slots, so an abandoned burst cannot block promotion.
-        if (rollout.currentRevision !== null) {
-          const currentNow = yield* Clock.currentTimeMillis;
-          const currentMeasured = yield* store.target(currentNow, window, rollout.currentRevision);
-          const currentTarget =
-            Math.ceil(
-              Math.max(minimumSpares, (currentMeasured.wakes / window) * currentMeasured.coldStart)
-            ) + currentMeasured.waiting;
-          const excess = currentMeasured.readySpares - currentTarget;
-          if (excess > 0) {
-            yield* guard;
-            const trimmed = yield* store.trimSpares(
-              rollout.currentRevision,
-              excess,
-              currentNow - grace
-            );
-            yield* Effect.forEach(
-              trimmed,
-              (taskId) => isolate(taskId, drainTask(taskId, "deployment")),
-              { concurrency: 8, discard: true }
-            );
-          }
-        }
         const revisions = [...new Set([rollout.stagedRevision, rollout.currentRevision])];
         for (const revision of revisions) {
           if (revision === null) continue;
           const measured = yield* store.target(yield* Clock.currentTimeMillis, window, revision);
-          const baseline = Math.ceil(
-            Math.max(
-              minimumSpares,
-              revision === rollout.currentRevision
-                ? (measured.wakes / window) * measured.coldStart
-                : 0
-            )
-          );
-          const target =
-            revision === rollout.currentRevision ? baseline + measured.waiting : baseline;
+          const target = targetOf(measured, revision === rollout.currentRevision);
           const reserved: string[] = [];
           for (let count = measured.spares; count < target; count++) {
             yield* guard;
@@ -627,7 +621,7 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
         );
       });
       const work = Effect.gen(function* () {
-        yield* Effect.all([reconcileTasks, reconcileBindings, replenish], {
+        yield* Effect.all([reconcileTasks, reconcileBindings, trimSurplus, replenish], {
           concurrency: "unbounded"
         }).pipe(
           // Slow or unhealthy bindings must not prevent subsequent spare replenishment.

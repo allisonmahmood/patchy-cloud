@@ -1196,9 +1196,9 @@ release, and promotion stages and promotes its revision. Its task sizes, fleet
 budget and spare floor come back with it, and its promotion needs its floor of
 ready spares inside its own budget. Every live task counts against that budget:
 bound boxes, draining tasks and the newer release's spares (housekeeping trims
-surplus current-revision spares above target after `execution.pool.wait`, but
-never trims below the current revision's floor). Going back to a smaller budget can
-therefore stall promotion with no company bound; when it does,
+surplus current-revision spares above the active host's target after
+`execution.pool.wait`, never trimming below that target). Going back to a smaller
+budget can therefore stall promotion with no company bound; when it does,
 [free budget for the promotion](#freeing-budget-for-a-promotion).
 
 Migrations do not roll back. Each release must work against the schema the next
@@ -1262,7 +1262,8 @@ the PR's Release impact answers
 Releases before the full-vCPU fleet have a budget of 15 tasks and a floor of two
 spares, so a rollback to one is where this bites, but any promotion can stall
 the same way: every live task counts against the staged release's budget, and
-housekeeping never trims the current revision's spares below its floor. The run's promote step
+housekeeping never trims the current revision's spares below the active host's
+target. The run's promote step
 fails after five minutes, and the promote task's log says `Deployment revision
 <sha> did not reach <n> ready spares in time; it stays staged.` Count on the
 platform database, with the staged release's budget and floor for `<budget>` and
