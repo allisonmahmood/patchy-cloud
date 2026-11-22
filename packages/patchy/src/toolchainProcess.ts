@@ -38,7 +38,8 @@ const encodeAliases = Schema.encodeSync(
       pidgeon: Schema.Array(Schema.String),
       attio: Schema.Array(Schema.String),
       imap: Schema.Array(Schema.String),
-      github: Schema.Array(Schema.String)
+      github: Schema.Array(Schema.String),
+      models: Schema.Record(Schema.String, Schema.Literals(["decision", "text"]))
     })
   )
 );

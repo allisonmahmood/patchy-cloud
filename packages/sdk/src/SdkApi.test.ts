@@ -38,7 +38,7 @@ import type { Snapshot } from "@patchy/api/postgres-snapshot";
 import { Analytics } from "@patchy/analytics";
 import { Teams, Looks } from "@patchy/companies";
 import { Patches } from "@patchy/patches";
-import { ConnectionStore } from "@patchy/integrations";
+import { ConnectionStore, SqlConnectionStore } from "@patchy/integrations";
 import { ContentStore, FilesystemContentStore } from "@patchy/content-store";
 import { ConnectionStoreDev } from "@patchy/integrations/dev";
 import * as Tables from "../../primitives/src/Tables.js";
@@ -811,6 +811,7 @@ it.layer(layer)("SDK company generation", (it) => {
         attio: {},
         imap: {},
         github: {},
+        models: {},
         shared: {}
       });
       assert.isFalse(output.files.some(({ path }) => path.startsWith("fixtures/")));
@@ -911,6 +912,7 @@ it.layer(layer)("SDK company generation", (it) => {
           attio: {},
           imap: {},
           github: {},
+          models: {},
           shared: {}
         });
         for (const path of [
@@ -1067,6 +1069,72 @@ it.layer(layer)("SDK company generation", (it) => {
       assert.deepInclude(index.skills, {
         name: "patchy-pidgeon",
         path: ".agents/skills/patchy-pidgeon/SKILL.md"
+      });
+    })
+  );
+
+  it.effect("generates a model role's client by its kind only while Models is on", () =>
+    Effect.gen(function* () {
+      const switched = (on: boolean) =>
+        SqlConnectionStore.make.pipe(
+          Effect.provide(
+            ConfigProvider.layer(ConfigProvider.fromUnknown(on ? { PATCHY_MODELS: "true" } : {}))
+          )
+        );
+      const store = yield* switched(true);
+      const admin = Fixtures.identities.admin;
+      const who = { companyId: admin.company.id, userId: admin.user.id };
+      const provider = yield* store.connectProvider({
+        ...who,
+        provider: "openai",
+        credentials: Redacted.make("sk-generation")
+      });
+      const roles = yield* Effect.forEach(
+        [
+          { handle: "triage", kind: "decision" as const, model: "gpt-6-luna" },
+          { handle: "writer", kind: "text" as const, model: "gpt-5-mini" }
+        ],
+        (role) => store.createRole({ ...who, ...role, description: "", providerId: provider.id })
+      );
+      const request = generateRequest({
+        ...Fixtures.manifest,
+        tier: 2,
+        uses: {
+          triage: { kind: "models", handle: "triage" },
+          writer: { kind: "models", handle: "writer" }
+        }
+      });
+      const api = yield* sdkOver(Layer.succeed(ConnectionStore.ConnectionStore, store));
+      const output = yield* api.generate({ payload: request });
+      const file = (path: string) => output.files.find((item) => item.path === path)?.contents;
+      assert.include(
+        file("patchy/_generated/uses/triage.ts"),
+        "export type Client = DecisionClient;"
+      );
+      assert.include(file("patchy/_generated/uses/writer.ts"), "export type Client = TextClient;");
+      assert.include(file("patchy/_generated/context/triage.md"), "Kind: decision");
+      assert.include(file("patchy/_generated/server.ts"), "uses/writer");
+      const index = JSON.parse(file("patchy/_generated/index.json")!);
+      assert.deepStrictEqual(
+        index.uses.map((use: { readonly alias: string; readonly modelKind?: string }) => [
+          use.alias,
+          use.modelKind
+        ]),
+        [
+          ["triage", "decision"],
+          ["writer", "text"]
+        ]
+      );
+      assert.deepStrictEqual(output.metadata.models.triage, {
+        declaration: { kind: "models", handle: "triage", id: roles[0]!.id, revision: 1 },
+        snapshot: { version: 1, kind: "decision" }
+      });
+      // With the switch off, the role isn't there to resolve.
+      const off = yield* sdkOver(
+        Layer.succeed(ConnectionStore.ConnectionStore, yield* switched(false))
+      );
+      assert.include(yield* Effect.flip(off.generate({ payload: request })), {
+        code: "connection_not_connected"
       });
     })
   );

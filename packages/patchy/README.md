@@ -431,6 +431,10 @@ export default defineConfig({
 });
 ```
 
+`models(handle)` declares one of the company's model roles, a tier 2 action's
+`decide` for a decision role or `generate` for a text role. It resolves only on an
+instance whose Models switch is on, which production's isn't yet.
+
 `table(description, columns, options?)` and `files(description, options?)` require a
 nonblank description. Say what one row or object represents, its identifying
 keys, and units where relevant, such as integer cents or elapsed seconds.
@@ -1016,6 +1020,8 @@ when such a declaration exists, never argv, the environment, state files or
 and the rest of dev keeps working. Pidgeon's sends, replies and triage never leave
 the daemon: each is checked as the host checks it, answered with ids starting
 `dev_`, and written to `dev.log` with its recipients and subject.
+`patchy dev` refuses a model role declaration with `invalid_manifest`: it has no door to
+one yet, so publish the patch to try its role.
 Shared tables need `fixtures/shared-<alias>.sql`
 and use cumulative source definitions, including retained ref targets whose
 declaration was omitted from the source's current manifest. Missing files fail naming the

@@ -19,6 +19,8 @@ import {
   AttioDeclaration,
   ImapDeclaration,
   GithubDeclaration,
+  ModelRoleKind,
+  ModelsDeclaration,
   SharedTableDeclaration,
   SharedStoreDeclaration,
   sharedStoreId,
@@ -135,6 +137,10 @@ const configSchema = Schema.Struct({
         handle: GithubDeclaration.fields.handle
       }),
       Schema.Struct({
+        kind: ModelsDeclaration.fields.kind,
+        handle: ModelsDeclaration.fields.handle
+      }),
+      Schema.Struct({
         kind: SharedStoreDeclaration.fields.kind,
         patchId: SharedStoreDeclaration.fields.patchId,
         store: SharedStoreDeclaration.fields.store
@@ -161,10 +167,13 @@ const generatedIndexSchema = Schema.Struct({
         AttioDeclaration,
         ImapDeclaration,
         GithubDeclaration,
+        ModelsDeclaration,
         SharedTableDeclaration,
         SharedStoreDeclaration
       ]),
-      revision: PostgresDeclaration.fields.revision
+      revision: PostgresDeclaration.fields.revision,
+      /** A model role's kind, from its snapshot; the build hands it to the guest. */
+      modelKind: Schema.optionalKey(ModelRoleKind)
     })
   )
 });
@@ -366,6 +375,19 @@ export async function executeConfig(
 }
 
 /**
+ * Each declared model role's kind, by alias, from a generated index's JSON source, as the build
+ * hands them to the guest: a decision role's client has `decide` alone and a text role's
+ * `generate`. Read once `resolveStamps` has accepted the same source.
+ */
+export const modelKinds = (source: string): Readonly<Record<string, ModelRoleKind>> => {
+  const kinds: Record<string, ModelRoleKind> = {};
+  for (const stamp of decodeIndex(source).uses)
+    if (stamp.declaration.kind === "models" && stamp.modelKind !== undefined)
+      kinds[stamp.alias] = stamp.modelKind;
+  return kinds;
+};
+
+/**
  * Stamps an evaluated config from a generated index's JSON source. Refuses, as
  * StaleGenerated, an index from another release or manifest version, and stamps
  * that no longer match the config's declarations.
@@ -415,6 +437,10 @@ export const resolveStamps = (config: UnresolvedManifest, source: string): Execu
         (generated.kind !== "imap" || declaration.handle !== generated.handle)) ||
       (declaration.kind === "github" &&
         (generated.kind !== "github" || declaration.handle !== generated.handle)) ||
+      (declaration.kind === "models" &&
+        (generated.kind !== "models" ||
+          declaration.handle !== generated.handle ||
+          stamp.modelKind === undefined)) ||
       (declaration.kind === "sharedStore" &&
         (generated.kind !== "sharedStore" ||
           declaration.patchId !== generated.patchId ||

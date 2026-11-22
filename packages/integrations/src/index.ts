@@ -37,5 +37,6 @@ export * as Models from "./models/Models.js";
 export * as ModelsSource from "./models/Source.js";
 export * as ModelsAdmission from "./models/Admission.js";
 export * as ModelsOperations from "./models/Operations.js";
+export * as ModelsGenerate from "./models/Generate.js";
 export { migrations } from "./migrations.js";
 export * as PatchVisibility from "./PatchVisibility.js";

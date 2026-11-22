@@ -87,6 +87,7 @@ it.live(
           attio: {},
           imap: {},
           github: {},
+          models: {},
           shared: {}
         }
       };

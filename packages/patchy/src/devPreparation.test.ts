@@ -355,6 +355,7 @@ it.layer(NodeServices.layer)("DevPreparation.prepare", (it) => {
         attio: {},
         imap: {},
         github: {},
+        models: {},
         shared: {}
       });
     })

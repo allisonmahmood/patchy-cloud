@@ -97,6 +97,12 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
         const refused = lowerTierUses(unresolved);
         if (refused !== undefined) return yield* refused;
         for (const [alias, declaration] of Object.entries(unresolved.uses)) {
+          // Dev has no door to a model role yet, and inventing a model's answers would mislead.
+          if (declaration.kind === "models")
+            return yield* new LocalError({
+              code: "invalid_manifest",
+              message: `patchy dev can't call model roles yet, so it can't run "${alias}". Publish the patch to try its role.`
+            });
           // PostHog, Pidgeon, Attio, IMAP and GitHub have no fixture: dev reads the real connection.
           if (
             declaration.kind === "members" ||

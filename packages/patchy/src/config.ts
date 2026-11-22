@@ -299,6 +299,14 @@ export const github = <const Handle extends string>(handle: Handle) => ({
   kind: "github" as const,
   handle
 });
+/**
+ * One of the company's model roles, by its handle: a decision role, whose client has `decide`, or
+ * a text role, whose client has `generate`. An admin maps it to a provider and a model.
+ */
+export const models = <const Handle extends string>(handle: Handle) => ({
+  kind: "models" as const,
+  handle
+});
 export const sharedTable = <const Patch extends string, const Table extends string>(
   patchId: Patch,
   table: Table
@@ -323,6 +331,7 @@ export type Declaration =
   | { readonly kind: "attio"; readonly handle: string }
   | { readonly kind: "imap"; readonly handle: string }
   | { readonly kind: "github"; readonly handle: string }
+  | { readonly kind: "models"; readonly handle: string }
   | { readonly kind: "sharedTable"; readonly patchId: string; readonly table: string }
   | { readonly kind: "sharedStore"; readonly patchId: string; readonly store: string }
   | { readonly kind: "members" };

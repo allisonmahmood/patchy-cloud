@@ -363,10 +363,9 @@ describe("wire schemas", () => {
 });
 
 describe("Models declarations", () => {
-  // A request is decoded before the host's Models switch is read, so this holds either way: a
-  // stored version may declare a role, which the host reads, while publishing refuses one and
-  // generation doesn't resolve one yet.
-  it("refuses a provider anywhere, and a role in a generation request", () => {
+  // A request is decoded before the host's Models switch is read, so this holds either way: the
+  // host refuses a role it can't resolve, and a stored version's role reads with the switch off.
+  it("reads a role in a manifest and a generation request, and refuses a provider in either", () => {
     const declaring = (kind: string) => ({
       ...manifest,
       tier: 2,
@@ -376,7 +375,7 @@ describe("Models declarations", () => {
       const decode = Schema.decodeUnknownExit(schema);
       expect(decode(declaring("postgres"))._tag).toBe("Success");
       expect(decode(declaring("openai"))._tag).toBe("Failure");
-      expect(decode(declaring("models"))._tag).toBe(schema === Manifest ? "Success" : "Failure");
+      expect(decode(declaring("models"))._tag).toBe("Success");
     }
   });
 });

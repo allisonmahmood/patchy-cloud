@@ -78,6 +78,7 @@ it.live(
           attio: {},
           imap: {},
           github: {},
+          models: {},
           shared: {
             contacts: {
               declaration,
@@ -206,6 +207,7 @@ it.live(
           attio: {},
           imap: {},
           github: {},
+          models: {},
           shared: {
             everyone: { declaration: everyone, tables, uses: {} },
             sales: { declaration: sales, tables, uses: {}, companyWide: false }
@@ -309,6 +311,7 @@ it.live(
           attio: {},
           imap: {},
           github: {},
+          models: {},
           shared: {
             assets: {
               declaration: assets,
@@ -459,6 +462,7 @@ it.live(
           attio: {},
           imap: {},
           github: {},
+          models: {},
           shared: {
             contacts: {
               declaration,
@@ -588,6 +592,7 @@ it.live(
           attio: {},
           imap: {},
           github: {},
+          models: {},
           shared: {
             contacts: {
               declaration,
@@ -711,6 +716,7 @@ it.live(
           attio: {},
           imap: {},
           github: {},
+          models: {},
           shared: {}
         }
       };
@@ -884,6 +890,7 @@ it.live(
           attio: {},
           imap: {},
           github: {},
+          models: {},
           shared: {}
         }
       };
