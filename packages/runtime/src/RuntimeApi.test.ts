@@ -771,7 +771,7 @@ it.effect("staging preserves browser admission, tier gates and private adoption"
     }
     for (const [op, args, code] of [
       ["files.put", { store: "docs", name: "a", upload }, "invalid_request"],
-      ["files.inspectUpload", { upload }, "access_denied"]
+      ["files.inspectUpload", { upload }, "server_required"]
     ] as const) {
       const response = yield* api.call({
         payload: {
