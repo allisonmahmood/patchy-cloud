@@ -966,8 +966,10 @@ down` and `reset` delete those inboxes with the test key, needing no instance,
   Model calls go to a fake provider: the dev runner's supervisor starts it on
   loopback (`packages/integrations/src/models/Fake.ts`) and hands its address to
   `scripts/dev/src/server.ts` as `PATCHY_DEV_MODELS_URL`, so no dev instance
-  reaches a real provider; production's `start.ts` brings OpenAI's one address
-  and has no way to another. The fake answers OpenAI's Responses and Decisions
+  reaches a real provider, and exempts loopback from any proxy in the server's
+  environment, since Bun's fetch would otherwise send even a loopback call
+  through one; production's `start.ts` brings OpenAI's one address and has no way
+  to another. The fake answers OpenAI's Responses and Decisions
   calls in their documented shapes, from the input, and a marker in the input,
   such as `[fake:hang]` or `[fake:rate]`, asks for each other way a call ends;
   the module's header lists them. Each request is a `[models]` line in

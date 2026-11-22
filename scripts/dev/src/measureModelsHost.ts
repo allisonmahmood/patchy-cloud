@@ -19,7 +19,11 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import { directLoopback } from "./directLoopback.js";
 
+// Every request here is to loopback, and none goes through a proxy the shell names.
+// oxlint-disable-next-line no-restricted-properties -- sets the exemption Bun's fetch reads; reads nothing.
+Object.assign(process.env, directLoopback);
 const flag = (name: string, fallback: number) => {
   const at = process.argv.indexOf(`--${name}`);
   return at === -1 ? fallback : Number(process.argv[at + 1]);

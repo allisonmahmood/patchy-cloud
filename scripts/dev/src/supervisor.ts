@@ -35,6 +35,7 @@ import {
 import { DATABASE_NAME, Plan, signInOf } from "./plan.js";
 import { alive } from "./process.js";
 import { PG_FLAGS, PG_PASSWORD, PG_USER } from "./postgres.js";
+import { directLoopback } from "./directLoopback.js";
 import { bun, realNode } from "./runtimes.js";
 import { loadScenario, seedScenario } from "./scenario.js";
 import { FAILED, layout, writeEnv, writePlan } from "./state.js";
@@ -320,8 +321,11 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
           // Models stay off in production until they're done; here they're on, against the fake.
           PATCHY_MODELS: "true",
           PATCHY_DEV_MODELS_URL: models.url,
-          // As production's hosts and execution tasks: the local executor runs in this process.
-          BUN_CONFIG_MAX_HTTP_REQUESTS: "512"
+          // Bun's outbound request limit raised past its 256, which production leaves alone: the
+          // local executor's invokes and callbacks share this one process with the server's own.
+          BUN_CONFIG_MAX_HTTP_REQUESTS: "512",
+          // The fake and the local executor are on loopback: no proxy a `.env` names sits between.
+          ...directLoopback
         },
         extendEnv: false,
         stdin: "ignore",
