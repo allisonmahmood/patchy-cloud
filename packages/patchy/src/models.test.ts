@@ -161,6 +161,32 @@ it("sends nothing still waiting once the action ends", async () => {
   assert.strictEqual(sent, 4);
 });
 
+it("sends nothing still waiting once a handler throws, while its diagnostics are written", async () => {
+  let sent = 0;
+  const reply = await action(
+    async (ctx) => {
+      for (let row = 0; row < 10; row++)
+        void ctx.connections.writer!.generate!({ input: `row ${row}`, maxOutputTokens: 16 }).catch(
+          () => undefined
+        );
+      throw new Error("The handler failed after starting its rows.");
+    },
+    async (callback) => {
+      // The diagnostic log takes longer than the running calls, which settle meanwhile.
+      if (callback.op === "log") {
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        return { ok: true, value: null };
+      }
+      sent++;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return { ok: true, value: { text: "x", usage } };
+    }
+  );
+  assert.deepInclude(reply, { ok: false, code: "handler_failed" });
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.strictEqual(sent, 4);
+});
+
 it("hands each refusal to the handler with its code, its limit and whether it was sent", async () => {
   const refusals = [
     { code: "timeout", limitId: "models.cutoff", details: { sent: true } },

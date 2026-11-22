@@ -531,11 +531,17 @@ export function createGuest(
                 call
               )
             : input.args;
-        reply = decodeReply({
-          ok: true,
-          value: await entry.handler(context as never, args as Readonly<Record<string, Json>>)
-        });
+        let value: unknown;
+        try {
+          value = await entry.handler(context as never, args as Readonly<Record<string, Json>>);
+        } finally {
+          // The handler is done: model calls still waiting are never sent, even while its
+          // diagnostics and logs are written.
+          scheduler.end();
+        }
+        reply = decodeReply({ ok: true, value });
       } catch (error) {
+        scheduler.end();
         reply = errorReply(error);
         if (!reply.ok && reply.source === "patchy" && reply.code === "handler_failed") {
           // Diagnostics travel only to the private, bounded invocation log.
@@ -554,8 +560,6 @@ export function createGuest(
           }
         }
       }
-      // Model calls still waiting are never sent once the handler is done.
-      scheduler.end();
       let logFailure: Failure | undefined;
       // log() is synchronous to handlers, but its callbacks belong to this invocation's reply.
       for (let index = 0; index < pendingLogs.length; index++) {
