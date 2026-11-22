@@ -1316,7 +1316,7 @@ export const registry = {
     unit: "bytes",
     scope: "viewer",
     measure:
-      "Encoded arguments of one model call, checked by the host's callback gateway once the callback is read; nothing past it is queued or sent",
+      "Encoded arguments of one model call, refused before sending by the execution task's loader, before reading by its proxy when the declared length passes it, and as it is read by its proxy and the host; nothing past it is queued or sent",
     refusal: "too_large",
     overridable: false
   },

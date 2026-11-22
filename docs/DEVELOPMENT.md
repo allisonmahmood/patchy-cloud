@@ -973,8 +973,9 @@ down` and `reset` delete those inboxes with the test key, needing no instance,
   the module's header lists them. Each request is a `[models]` line in
   `dev.log`, without its content. The offline suites use the same fake: the
   test server sends model calls to a loopback port nothing listens on unless a
-  suite starts it, and `apps/server/src/ModelCalls.test.ts` runs every way a
-  call ends through workerd to the page. `pnpm dev up models` seeds the
+  suite starts it, and `apps/server/src/ModelCalls.test.ts` runs calls through
+  workerd to the page: answers, the fake's failures, the model pool's `busy`,
+  and the execution task's own `busy` and `too_large`. `pnpm dev up models` seeds the
   provider and roles straight into the database, as the store writes them,
   with an invented key.
   GitHub is GitHub itself, through the development App, "Patchy Cloud Dev". Its

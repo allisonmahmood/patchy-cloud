@@ -87,13 +87,6 @@ export interface ExecutedManifest {
           readonly id: string;
           readonly revision: number;
         })
-      // A model role, which a stored version may declare; config can't name one yet.
-      | {
-          readonly kind: "models";
-          readonly handle: string;
-          readonly id: string;
-          readonly revision: number;
-        }
     >
   >;
 }
