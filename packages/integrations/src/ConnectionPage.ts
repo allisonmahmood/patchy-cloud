@@ -106,7 +106,13 @@ interface IntegrationPage {
     Record<Result, string | ((connection: ConnectionStore.Connection) => string)>
   >;
 }
-const pages: { readonly [K in Integration]: IntegrationPage } = {
+/** The integrations these pages connect and show. A model role isn't shown here, nor its provider. */
+type PageIntegration = Exclude<Integration, "models">;
+export type PageConnection = Exclude<
+  ConnectionStore.Connection,
+  { readonly integration: "models" }
+>;
+const pages: { readonly [K in PageIntegration]: IntegrationPage } = {
   postgres: PostgresPage,
   posthog: PostHogPage,
   pidgeon: PidgeonPage,
@@ -120,17 +126,37 @@ const pages: { readonly [K in Integration]: IntegrationPage } = {
  */
 const offered = Effect.gen(function* () {
   const github = Option.isSome((yield* GithubSource.Source).app);
-  return integrations.filter((integration) => integration !== "github" || github);
+  return integrations.filter(
+    (integration): integration is PageIntegration =>
+      integration !== "models" && (integration !== "github" || github)
+  );
 });
 /**
  * A connection's integration as the pages name and mark it: wearing the logo of the provider the
  * connection reaches where Patchy knows it, such as Gmail's for a mailbox on Gmail's server.
  */
-export const integrationOf = (connection: ConnectionStore.Connection): View.Integration =>
+export const integrationOf = (connection: PageConnection): View.Integration =>
   connection.integration === "imap"
     ? { ...ImapPage.integration, mark: ImapPage.mark(connection) }
     : pages[connection.integration].integration;
 const isIntegration = Schema.is(Integration);
+const isPageIntegration = (value: string): value is PageIntegration =>
+  isIntegration(value) && value !== "models";
+const isPageConnection = (connection: ConnectionStore.Connection): connection is PageConnection =>
+  connection.integration !== "models";
+/** A connection these pages show, by id; a role isn't found here. */
+const pageConnection = Effect.fn("ConnectionPage.pageConnection")(function* (
+  viewer: RequireSession.Viewer["Service"],
+  id: string
+) {
+  const connection = yield* (yield* ConnectionStore.ConnectionStore).get(viewer.company.id, id);
+  if (!isPageConnection(connection))
+    return yield* new ConnectionStore.ConnectionNotFound({
+      companyId: viewer.company.id,
+      lookup: { id }
+    });
+  return connection;
+});
 
 /** What a connection's page and row say about it, in its integration's words. */
 interface About {
@@ -149,7 +175,7 @@ interface About {
  * server refused name whose check or login it was, from `people`.
  */
 const about = (
-  connection: ConnectionStore.Connection,
+  connection: PageConnection,
   people: ReadonlyMap<string, string>,
   now: number
 ): About => {
@@ -202,7 +228,9 @@ const about = (
   }
 };
 /** What a snapshot lets patches read, in its integration's words. */
-const readsOf = (metadata: ConnectionStore.Metadata) =>
+const readsOf = (
+  metadata: Exclude<ConnectionStore.Metadata, { readonly integration: "models" }>
+) =>
   metadata.integration === "postgres"
     ? PostgresPage.reads(metadata.snapshot)
     : metadata.integration === "posthog"
@@ -295,7 +323,7 @@ const filters = (query: URLSearchParams): View.Filters => {
 };
 
 const row = (
-  connection: ConnectionStore.Connection,
+  connection: PageConnection,
   usage: ReadonlyMap<string, ConnectionStore.Usage>,
   people: ReadonlyMap<string, string>,
   now: number
@@ -316,8 +344,8 @@ const row = (
 
 /** The word for replacing an integration's credentials, by its key: "Replace key". */
 const rotateLabel = (integration: string) =>
-  isIntegration(integration) ? pages[integration].actions.rotate : "Replace key";
-const offersOf = (shown: ReadonlyArray<Integration>) =>
+  isPageIntegration(integration) ? pages[integration].actions.rotate : "Replace key";
+const offersOf = (shown: ReadonlyArray<PageIntegration>) =>
   shown.map((integration) => pages[integration].offer);
 
 /**
@@ -349,7 +377,7 @@ const index = Effect.fn("ConnectionPage.index")(function* (
   // Admins see every connection and every patch using it; members, what they can build with and
   // the patches they can open.
   const reader = admin ? undefined : viewer.user.id;
-  const connections = yield* store.list(viewer.company.id, reader);
+  const connections = (yield* store.list(viewer.company.id, reader)).filter(isPageConnection);
   const usage = yield* store.usage(viewer.company.id, reader);
   const now = yield* Clock.currentTimeMillis;
   // Members can see connection status, but must never read the call log. An admin's last call is
@@ -391,10 +419,10 @@ const catalogue = Effect.fn("ConnectionPage.catalogue")(function* (
 ) {
   // Members count only the connections they can build with, as on Integrations itself.
   const reader = viewer.role === "admin" ? undefined : viewer.user.id;
-  const connections = yield* (yield* ConnectionStore.ConnectionStore).list(
+  const connections = (yield* (yield* ConnectionStore.ConnectionStore).list(
     viewer.company.id,
     reader
-  );
+  )).filter(isPageConnection);
   const now = yield* Clock.currentTimeMillis;
   const admins = viewer.role === "admin" ? [] : ((yield* directory(viewer))?.admins ?? []);
   return {
@@ -464,7 +492,7 @@ const githubSignIn = Effect.fn("ConnectionPage.githubSignIn")(function* (
 
 const connectForm = Effect.fn("ConnectionPage.connectForm")(function* (
   viewer: RequireSession.Viewer["Service"],
-  integration: Integration,
+  integration: PageIntegration,
   given: Submitted = {},
   notice?: View.Notice,
   /** The boxes GitHub's form had ticked, which a refusal or a filter keeps. */
@@ -477,7 +505,9 @@ const connectForm = Effect.fn("ConnectionPage.connectForm")(function* (
       lookup: { integration, handle: "" }
     });
   const submitted = given;
-  const connections = yield* (yield* ConnectionStore.ConnectionStore).list(viewer.company.id);
+  const connections = (yield* (yield* ConnectionStore.ConnectionStore).list(
+    viewer.company.id
+  )).filter(isPageConnection);
   const github =
     integration === "github" ? yield* githubSignIn(viewer, "connect", null) : undefined;
   const shown = notice ?? github?.problem;
@@ -511,7 +541,7 @@ const connectionView = Effect.fn("ConnectionPage.connectionView")(function* (
   id: string
 ) {
   const store = yield* ConnectionStore.ConnectionStore;
-  const connection = yield* store.get(viewer.company.id, id);
+  const connection = yield* pageConnection(viewer, id);
   // A member reads only the connections they can build with, and the patches they can open.
   const reader = viewer.role === "admin" ? undefined : viewer.user.id;
   if (reader !== undefined && !(yield* store.canUse(viewer.company.id, id, reader)))
@@ -611,11 +641,16 @@ const connectionPage = Effect.fn("ConnectionPage.connectionPage")(function* (
   const reads =
     tab === "overview"
       ? yield* store.snapshot(viewer.company.id, id, connection.metadataRevision).pipe(
-          Effect.map((metadata) => ({
-            ...readsOf(metadata),
-            revision: connection.metadataRevision,
-            foundAt: connection.lastDiscoveredAt
-          })),
+          // These pages show no role, so no snapshot here is a role's.
+          Effect.map((metadata) =>
+            metadata.integration === "models"
+              ? null
+              : {
+                  ...readsOf(metadata),
+                  revision: connection.metadataRevision,
+                  foundAt: connection.lastDiscoveredAt
+                }
+          ),
           Effect.catchTags({ ConnectionNotFound: () => Effect.succeed(null) })
         )
       : null;
@@ -878,13 +913,13 @@ export const read = Effect.fn("ConnectionPage.read")(function* (
     case "index": {
       // A disconnected connection's integration may have its own words for what that did.
       const named = query.get("integration");
-      const page = named !== null && isIntegration(named) ? pages[named] : undefined;
+      const page = named !== null && isPageIntegration(named) ? pages[named] : undefined;
       return yield* index(viewer, query, done && result(page, done));
     }
     case "catalogue":
       return yield* catalogue(viewer);
     case "connect":
-      if (!isIntegration(target.integration))
+      if (!isPageIntegration(target.integration))
         return yield* new ConnectionStore.ConnectionNotFound({
           companyId: viewer.company.id,
           lookup: { integration: target.integration, handle: "" }
@@ -1041,7 +1076,7 @@ const withTicks = (
 
 const connect = Effect.fn("ConnectionPage.connect")(function* (
   viewer: RequireSession.Viewer["Service"],
-  integration: Integration
+  integration: PageIntegration
 ) {
   const page = pages[integration];
   const form = yield* formBody;
@@ -1145,8 +1180,19 @@ const act = Effect.fn("ConnectionPage.act")(function* (
     const store = yield* ConnectionStore.ConnectionStore;
     const input = { companyId: viewer.company.id, userId: viewer.user.id, id };
     let integration: Integration | undefined;
+    // The store's lifecycle verbs find no role, but it would change a role's settings. With Models
+    // on, these pages refuse a role first, since they show none; off, the store finds no role, so
+    // nothing more is read.
+    if (
+      (kind === "audience" ||
+        kind === "description" ||
+        kind === "block-guests" ||
+        kind === "allow-guests") &&
+      store.integrations.includes("models")
+    )
+      yield* pageConnection(viewer, id);
     if (kind === "rotate" || kind === "retarget" || kind === "access") {
-      const current = yield* store.get(viewer.company.id, id);
+      const current = yield* pageConnection(viewer, id);
       // Replacing credentials keeps where they point; pointing elsewhere names it anew.
       const credentials = pages[current.integration].credentials(
         current.integration === "github" ? withTicks(submitted, form) : submitted,
@@ -1225,7 +1271,7 @@ export const submit = Effect.fn("ConnectionPage.submit")(function* (
     return yield* connectionPage(viewer, change.id, "overview", forbidden);
   }
   if (change.kind !== "connect") return yield* act(viewer, change.id, change.kind);
-  if (!isIntegration(change.integration))
+  if (!isPageIntegration(change.integration))
     return yield* new ConnectionStore.ConnectionNotFound({
       companyId: viewer.company.id,
       lookup: { integration: change.integration, handle: "" }

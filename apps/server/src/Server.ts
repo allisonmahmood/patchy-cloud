@@ -312,32 +312,45 @@ const teamReach = Layer.effect(
             .filter((row) => row.patch.state === "live")
             .map((row) => [row.patch.name, row.patch])
         );
-        const connections = (yield* SqlConnectionStore.teamConnections(viewer.companyId))
+        const connections = (yield* SqlConnectionStore.teamConnections(
+          viewer.companyId,
+          store.integrations
+        ))
           .filter(
             (connection) =>
               admin ||
               Teams.admits({ kind: "teams", teamIds: connection.teamIds }, person?.teamIds ?? [])
           )
-          .map((connection) => ({
-            id: connection.id,
-            label: `${connection.integration}/${connection.handle}`,
-            teamIds: connection.teamIds,
-            href: connectionPath(connection.id),
-            audienceHref: admin ? connectionPath(connection.id, "audience") : null,
-            usedBy: (usage.get(connection.id)?.usedBy ?? []).flatMap((name) => {
-              const patch = live.get(name);
-              return patch === undefined
-                ? []
-                : [
-                    {
-                      title: patch.title,
-                      href: `/patches/${encodeURIComponent(patch.name)}`,
-                      ownerId: patch.ownerUserId
-                    }
-                  ];
-            })
-          }));
-        return { patches: shown, connections, hidden };
+          .map((connection) => {
+            // No page shows or changes a model role yet, so its row links nowhere.
+            const page = connection.integration !== "models";
+            return {
+              id: connection.id,
+              label: `${connection.integration}/${connection.handle}`,
+              teamIds: connection.teamIds,
+              href: page ? connectionPath(connection.id) : null,
+              audienceHref: admin && page ? connectionPath(connection.id, "audience") : null,
+              usedBy: (usage.get(connection.id)?.usedBy ?? []).flatMap((name) => {
+                const patch = live.get(name);
+                return patch === undefined
+                  ? []
+                  : [
+                      {
+                        title: patch.title,
+                        href: `/patches/${encodeURIComponent(patch.name)}`,
+                        ownerId: patch.ownerUserId
+                      }
+                    ];
+              })
+            };
+          });
+        // A role the store doesn't read while Models is off still keeps its team; only a refused
+        // delete says so, to the admins who'd see it.
+        const unlisted =
+          admin && !store.integrations.includes("models")
+            ? yield* SqlConnectionStore.modelRoleTeamGrants(viewer.companyId)
+            : new Map<string, number>();
+        return { patches: shown, connections, hidden, unlisted };
       },
       Effect.provideService(SqlClient.SqlClient, sql)
     );

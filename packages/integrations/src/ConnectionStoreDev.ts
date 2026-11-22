@@ -1,3 +1,4 @@
+import { integrations } from "@patchy/api";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ConnectionStore from "./ConnectionStore.js";
@@ -86,11 +87,18 @@ export const layer = (metadata: ReadonlyArray<DevConnection> = []) => {
           integration: kept.integration,
           snapshot: { ...kept.snapshot, ...stamp }
         });
+      case "models":
+        return Effect.succeed({
+          ...base,
+          integration: kept.integration,
+          snapshot: { ...kept.snapshot, ...stamp }
+        });
     }
   };
   return Layer.succeed(
     ConnectionStore.ConnectionStore,
     ConnectionStore.ConnectionStore.of({
+      integrations,
       list,
       get: (companyId, id) => {
         const item = metadata.find(
@@ -164,7 +172,12 @@ export const layer = (metadata: ReadonlyArray<DevConnection> = []) => {
       unsettledSends: () => Effect.succeed(0),
       sends: () => Effect.succeed(0),
       // Dev reads a real mailbox through the instance's dev door, whose own store pauses it.
-      pauseLogin: () => Effect.void
+      pauseLogin: () => Effect.void,
+      // Models are an admin's, on the instance.
+      providers: unavailable,
+      connectProvider: unavailable,
+      createRole: unavailable,
+      changeModels: unavailable
     })
   );
 };

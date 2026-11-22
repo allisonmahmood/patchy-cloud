@@ -305,7 +305,9 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
           PATCHY_COMPANY_DB_URL: plan.databaseUrl,
           PATCHY_STORAGE_DIR: files.storageDir,
           PATCHY_PUBLIC_BASE_URL: plan.apiUrl,
-          PATCHY_DEV_MAILBOXES: files.mailboxes
+          PATCHY_DEV_MAILBOXES: files.mailboxes,
+          // Models stay off in production until they're done; here they're on.
+          PATCHY_MODELS: "true"
         },
         extendEnv: false,
         stdin: "ignore",
