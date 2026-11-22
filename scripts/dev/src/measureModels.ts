@@ -122,15 +122,49 @@ const rssOf = async (pid: number) => {
   }));
   return Number(stdout.trim()) * 1024;
 };
-/** How long one outbound request from this process takes to come back, median of five. */
+/**
+ * How long one outbound request from this process takes to come back, as a health probe's would:
+ * the median of five, each given up after `probeTimeoutMs` on its own, so a probe queued behind a
+ * full pool is counted as such instead of waiting for the load to change.
+ */
+const probeTimeoutMs = 2_000;
 const wait = async () => {
   const times: number[] = [];
+  let timedOut = 0;
   for (let i = 0; i < 5; i++) {
     const started = performance.now();
-    await fetch(host.url.replace("/callback", "/ping")).then((response) => response.text());
-    times.push(performance.now() - started);
+    const answered = await fetch(host.url.replace("/callback", "/ping"), {
+      signal: AbortSignal.timeout(probeTimeoutMs)
+    })
+      .then((response) => response.text())
+      .then(
+        () => true,
+        () => false
+      );
+    if (answered) times.push(performance.now() - started);
+    else timedOut++;
   }
-  return Math.round(times.sort((a, b) => a - b)[2]! * 10) / 10;
+  const sorted = times.sort((a, b) => a - b);
+  return {
+    outboundWaitMs:
+      timedOut >= 3
+        ? `over ${probeTimeoutMs}`
+        : Math.round(sorted[Math.floor(sorted.length / 2)]! * 10) / 10,
+    probesTimedOut: timedOut
+  };
+};
+/** Runs `work` up to `limitMs`: its time, or that it hadn't finished. */
+const timed = async (work: Promise<unknown>, limitMs: number) => {
+  const started = performance.now();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const finished = await Promise.race([
+    work.then(() => true),
+    new Promise<false>((resolve) => {
+      timer = setTimeout(() => resolve(false), limitMs);
+    })
+  ]);
+  clearTimeout(timer);
+  return finished ? Math.round(performance.now() - started) : `over ${limitMs}`;
 };
 /** Bun's full collection, so a phase's RSS is what its live work holds. */
 const collect = () => {
@@ -140,9 +174,12 @@ const collect = () => {
 };
 const mib = (bytes: number) => Math.round((bytes / 2 ** 20) * 10) / 10;
 /**
- * Until `target` calls are held, or the count stops growing for a second: past the process's
- * outbound request limit, the rest wait inside Bun and never reach the host.
+ * Until `target` calls are held, or the count stops growing for `stallMs`: past the process's
+ * outbound request limit, the rest wait inside Bun and never reach the host. Three seconds, since
+ * a first round's calls can land more than a second apart, as a burst of new connections that TCP
+ * retries does; with one, a first round on macOS stopped at 130 to 201 of 256 with room to spare.
  */
+const stallMs = 3_000;
 const settle = async (target: number) => {
   const started = performance.now();
   let last = -1;
@@ -151,7 +188,7 @@ const settle = async (target: number) => {
     if (host.held() !== last) {
       last = host.held();
       since = performance.now();
-    } else if (performance.now() - since > 1_000) break;
+    } else if (performance.now() - since > stallMs) break;
     await new Promise((done) => setTimeout(done, 5));
   }
   return Math.round(performance.now() - started);
@@ -210,23 +247,34 @@ await Effect.runPromise(
           }
         })
       );
-    const sample = async (phase: string, extra: Record<string, unknown> = {}) =>
-      process.stdout.write(
-        `${JSON.stringify({
-          phase,
-          calls,
-          bodyBytes: body,
-          answerBytes,
-          permits,
-          maxHttpRequests,
-          supervisorRssMiB: mib(process.memoryUsage.rss()),
-          supervisorSockets: await sockets(process.pid),
-          workerdRssMiB: mib(await rssOf(workerd)),
-          workerdSockets: await sockets(workerd),
-          outboundWaitMs: await wait(),
-          ...extra
-        })}\n`
-      );
+    /**
+     * One phase's line. A phase measured under load says how many calls the host held before and
+     * after it was sampled; a count that moved fails the run rather than mix two loads.
+     */
+    const sample = async (phase: string, extra: Record<string, unknown> = {}, steady = false) => {
+      const heldBefore = host.held();
+      const line = {
+        phase,
+        calls,
+        bodyBytes: body,
+        answerBytes,
+        permits,
+        maxHttpRequests,
+        supervisorRssMiB: mib(process.memoryUsage.rss()),
+        supervisorSockets: await sockets(process.pid),
+        workerdRssMiB: mib(await rssOf(workerd)),
+        workerdSockets: await sockets(workerd),
+        ...(await wait()),
+        ...extra,
+        heldBefore,
+        heldAfter: host.held()
+      };
+      if (steady && line.heldAfter !== heldBefore)
+        throw new Error(
+          `The held calls moved from ${heldBefore} to ${line.heldAfter} during ${phase}`
+        );
+      process.stdout.write(`${JSON.stringify(line)}\n`);
+    };
     yield* Effect.promise(async () => {
       collect();
       await sample("baseline");
@@ -235,14 +283,13 @@ await Effect.runPromise(
         invoke("demo.models", { body })
       );
       const heldMs = await settle(Math.min(calls, permits));
-      await sample("held", { heldAtHost: host.held(), heldMs });
-      // Ordinary callbacks meanwhile, from one more action.
-      const started = performance.now();
-      await invoke("demo.ordinary", { count: ordinary });
-      await sample("ordinary", {
-        ordinaryCallbacks: ordinary,
-        ordinaryMs: Math.round(performance.now() - started)
-      });
+      await sample("held", { heldMs }, true);
+      // Ordinary callbacks meanwhile, from one more action, given up on after ten seconds.
+      const heldBeforeOrdinary = host.held();
+      const ordinaryMs = await timed(invoke("demo.ordinary", { count: ordinary }), 10_000);
+      if (host.held() !== heldBeforeOrdinary)
+        throw new Error("The held calls moved while ordinary callbacks passed");
+      await sample("ordinary", { ordinaryCallbacks: ordinary, ordinaryMs }, true);
       // Answers: every held call answered at once.
       let peak = process.memoryUsage.rss();
       const watch = setInterval(() => {

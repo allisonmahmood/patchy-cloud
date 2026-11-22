@@ -241,57 +241,88 @@ egress needs that address; the execution service reaches nothing new. The dev
 runner's entrypoint sends them to its fake provider on loopback instead, and the
 test server to a loopback port nothing listens on (DEVELOPMENT's fake provider).
 Three process settings bound them on the host, read from `PATCHY_LIMITS_JSON`
-like every operating limit: `models.outbound.host` (provider requests in flight
-in one server process, 32), `models.outbound.provider` (per provider record in
-one process, 16) and `models.queue.waiting` (calls waiting for both, 256). Every
-model call in a process passes the one admission queue they bound; today that is
-published actions' calls, and `patchy dev`'s door and an admin's test call will
-join them when those land. An execution task holds its model calls to
-`models.execution.inFlight` (32) at its callback proxy, past which a call is
-refused `busy` with nothing sent; that refusal never reaches the host, so a
-handler that relays it gets `handler_failed`, and the process report's peak is
-where it shows. A model call from an execution task of an older release, whose
-proxy holds no such permit, is refused by the host with nothing sent.
+like every operating limit and left at their registry values in production:
+`models.outbound.host` (provider requests in flight in one server process, 32),
+`models.outbound.provider` (per provider record in one process, 16) and
+`models.queue.waiting` (calls waiting for both, 256). Every model call in a
+process passes the one admission queue they bound; today that is published
+actions' calls, and `patchy dev`'s door and an admin's test call will join them
+when those land. An execution task holds its model calls to
+`models.execution.inFlight` (32, its registry value) at its callback proxy. Its
+loader refuses a call whose arguments pass `models.ingress.bytes` before sending
+it; its proxy refuses a declared length past that before taking a permit or
+reading, then closes the connection, takes a permit before reading any other
+call's body, and past its permits refuses `busy` with nothing sent. The refusals
+the task gave an attempt's model calls, at most 32, go back to the host with the
+attempt's reply, so a handler that relays one reaches the page as that refusal,
+with its code, limit and `sent: false`; a patch that writes the same words itself
+gets `handler_failed`. A model call from an execution task of an older release,
+whose proxy holds no such permit, is refused by the host with nothing sent.
 
-`apps/infra` sets these in the task definitions with Bun's outbound request
-limit and the open-file limit: hosts get `"models.outbound.host": 32` and
-execution tasks `"models.execution.inFlight": 32` in `PATCHY_LIMITS_JSON`, both
-get `BUN_CONFIG_MAX_HTTP_REQUESTS=512` and `nofile` 65535, and the dev runner's
-server the same Bun limit. They were chosen from measurements on a Mac mini
-(Apple silicon, Bun 1.4.4), not on the 1 vCPU, 2 GiB Fargate task, so each
-leans low, and every request held open is a loopback one there:
+`apps/infra` gives hosts' and execution tasks' containers `nofile` 65535 and
+leaves Bun's outbound request limit (`BUN_CONFIG_MAX_HTTP_REQUESTS`) at its
+default of 256; the dev runner raises it to 512 for the server it starts. What
+follows separates what was measured from what is derived, and says what must be
+measured before production's switch goes on.
+
+**Measured** on a Mac mini (Apple silicon, macOS, Bun 1.4.4), every request on
+loopback, with `scripts/dev/src/measureModels.ts` (a real supervisor and workerd,
+as an execution task runs them, with a stand-in host) and
+`scripts/dev/src/measureModelsHost.ts` (a host's provider requests, to the fake).
+Their probes are each given up after two seconds on their own, and a phase whose
+held count moved while it was sampled fails the run instead of mixing two loads.
 
 - Bun runs 256 fetches at once per process and queues the rest until one ends.
-  With 256 held open, a 257th, as a health probe would be, waited past three
-  seconds; at 255, or with the limit at 512, it answered in 6 ms. An execution
-  task's invokes into workerd, its callbacks to the host and its workerd probes
-  share that limit, and so do a host's invokes, provider requests and fleet
-  management calls. Counting the requests the other limits already admit, an
-  execution task holds about 300 at full load and 370 while four hosts deploy, a
-  host about 350; 512 leaves each at least 140 for probes and management. Each
-  held request costs about 0.15 MiB and two sockets, which `nofile` 65535 covers
-  many times over (Fargate's own default is the same; older platforms' soft limit
-  was 1024).
-- A model call held at the execution task's proxy, its input near the 1 MiB cap
-  and its answer 16 KiB, costs the supervisor about 4 MiB and its workerd about
-  4.4 MiB; with a 1 KiB input, 0.13 and 0.17 MiB. At 32 such calls the two grew
-  by 140 MiB each, under a fifth of the 1.5 GiB residency budget, and one version's
-  workerd stayed at 190 MiB, far from the 512 MiB at which a process is killed.
-  Near 96 at once in one version, workerd crossed that line and was killed.
-  Answering every held call at once drained in 6 ms for 64 small answers and 90 ms
-  for 64 answers of 1 MiB; dropping every connection to the host at once ended all
-  64 in 5 ms, and their permits were all back within 80 ms. Ordinary callbacks
-  passed in 10 to 13 ms for 32 and about 50 ms for 256 while model calls were held.
-  32 calls is eight actions running four each, where the host lets 96 per company
-  through each replica, so one company's heavy use can meet the proxy's refusal.
+  With 255 held open another answered in 6 ms; with 256 or 300 open it was still
+  waiting at three seconds; with the limit at 512 and 300 open, 6 ms.
+- Past that limit the load doesn't hold still. With 256 model calls allowed and
+  Bun's default, 134 to 194 reached the stand-in host before the count stopped;
+  with 320, 176 had arrived after three still seconds and 304 by the end of the
+  next sample, so that run gives no probe figure. With the limit at 512, 253 to
+  256 of 256 arrived in the first round and every one in later rounds.
+- A model call held at the execution task's proxy with a 1 KiB input costs the
+  supervisor about 0.13 MiB and workerd 0.18 MiB, and about three sockets in the
+  supervisor and two in workerd, which `nofile` 65535 covers many times over
+  (Fargate's own default is the same; older platforms' soft limit was 1024).
+  With an input near the 1 MiB cap and a 16 KiB answer, 3.9 to 4.2 MiB and 4.6
+  MiB: at 32 held the supervisor stood at 180 MiB and workerd at 193 MiB (from 55
+  and 47), at 64 at 324 and 342 MiB. With 1 MiB answers, answering 32 at once
+  took the supervisor to 346 MiB, and workerd stood at 392 MiB after three rounds
+  of 32, keeping what its heap grew to; at 64, 533 and 632 MiB, past the 512 MiB
+  at which the supervisor ends a process.
+- Answering every held call at once drained 64 small answers in 6 ms and 64 of
+  1 MiB in 72 ms. Dropping every connection to the host at once ended 64 calls in
+  4 to 11 ms, and every permit was back within 13 ms for small inputs and 76 ms
+  for inputs near the cap. Ordinary callbacks passed in 8 to 13 ms for 32 and 43
+  ms for 256 while model calls were held.
 - A provider request in flight from a host, its input near the cap, costs the
-  host about 6 MiB, so 32 at once stay under 200 MiB of its 2 GiB; with a 2 KB
-  input, under 0.1 MiB.
+  host about 6 MiB (16, 64 and 128 at once: 228, 568 and 1,005 MiB from about
+  120); with a 2 KB input, 0.07 MiB.
 
-`scripts/dev/src/measureModels.ts` (an execution task's proxy, with a stand-in
-host) and `scripts/dev/src/measureModelsHost.ts` (a host's provider requests, to
-the fake) take these again, under Bun, one configuration per run; each file says
-how.
+**Derived** from those and the registry, not measured:
+
+- An execution task's invokes into workerd, its callbacks to the host and its
+  probes of its workerd processes share Bun's 256. With Models off, one company
+  bound to a task, four host replicas (as during a deploy) each running
+  `tier2.actions.company` (8) actions with `tier2.callbacks.outstanding` (8)
+  callbacks open, the task holds 256 callback requests and 32 invokes: 288, past
+  the limit before counting queries, mutations or probes. **At Bun's default, a
+  probe can queue behind ordinary requests today.** Models adds up to 32 held
+  model calls per task.
+- Raising the limit to 512 would leave that load room by this count, but the
+  count is an estimate, not a reserve, so production doesn't set it.
+- 32 model calls held at the proxy is eight actions running four each, where the
+  host lets 96 per company through each replica, so one company's heavy use can
+  meet the proxy's `busy`.
+- 32 provider requests near the cap cost a host about 190 MiB of its 2 GiB.
+
+**To measure on the deployed task sizes** (1 vCPU, 2 GiB Fargate on Linux, for
+hosts and execution tasks) before production's switch goes on: workerd's and the
+supervisor's memory over repeated rounds of `models.execution.inFlight` calls
+near the input cap, against the 512 MiB line; a probe's wait at the ordinary
+load above with and without 32 held model calls, at Bun's default and at a raised
+limit, to choose one; and a host's memory at `models.outbound.host` provider
+requests. Each script's header says how to run it.
 
 ### Initial credentials
 
@@ -1257,6 +1288,12 @@ bound boxes, draining tasks and the newer release's spares, which housekeeping
 never trims while that release is current. Going back to a smaller budget can
 therefore stall promotion with no company bound; when it does,
 [free budget for the promotion](#freeing-budget-for-a-promotion).
+
+With Models on, roll back no further than the release that brought hosted model
+calls and the refusals above (#1493): it is the oldest release Models may be on
+with, since an earlier execution task holds no model call to a permit and an
+earlier host reads a call's whole body before refusing it. To go back past it,
+switch Models off first, then roll back as above.
 
 Migrations do not roll back. Each release must work against the schema the next
 one leaves, so roll back only to a release that accepts the current schema. It

@@ -76,9 +76,12 @@ await Effect.runPromise(
     yield* Effect.promise(async () => {
       while (fake.open() < calls && performance.now() - started < holdMs - 500)
         await new Promise((done) => setTimeout(done, 10));
+      // Sampled only while every open call stays open: a count that moved fails the run.
       const open = fake.open();
       const held = process.memoryUsage.rss();
       const tcp = await sockets();
+      if (fake.open() !== open)
+        throw new Error(`The open calls moved from ${open} to ${fake.open()} while sampled`);
       const exits = await pending;
       collect();
       process.stdout.write(

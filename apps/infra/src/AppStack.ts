@@ -209,19 +209,8 @@ export class AppStack extends Stack {
           essential: true,
           user: "0",
           command: ["bun", "dist/exec.js"],
-          // Measured for model calls (docs/OPERATIONS.md, Models): a held call with a near-1 MiB
-          // input costs about 4 MiB in the supervisor and 4 in its workerd, so 32 at once stay a
-          // fifth of the residency budget and under a process's kill line. Bun runs 256 fetches
-          // at once and queues the rest, health probes included; the supervisor's invokes, its
-          // callbacks to the host and its probes share that cap, so it gets 512. Each open request
-          // holds about two sockets; the open-file limit is stated, not left to the platform.
-          environment: [
-            {
-              name: "PATCHY_LIMITS_JSON",
-              value: this.toJsonString({ "models.execution.inFlight": 32 })
-            },
-            { name: "BUN_CONFIG_MAX_HTTP_REQUESTS", value: "512" }
-          ],
+          // Each open request holds about two sockets; the open-file limit is stated, not left to
+          // the platform's default (docs/OPERATIONS.md, Models).
           ulimits: [{ name: "nofile", softLimit: 65535, hardLimit: 65535 }],
           linuxParameters: { capabilities: { drop: execDroppedCapabilities } },
           portMappings: [{ containerPort: port.management, protocol: "tcp" }],
@@ -338,15 +327,8 @@ export class AppStack extends Stack {
         // quota is raised (docs/OPERATIONS.md, Production).
         PATCHY_LIMITS_JSON: this.toJsonString({
           "execution.fleet.budget": 24,
-          "execution.pool.spares": 3,
-          // A provider request with a near-1 MiB input costs a host about 6 MiB: 32 at once is
-          // under 200 MiB of its 2 GiB (docs/OPERATIONS.md, Models).
-          "models.outbound.host": 32
+          "execution.pool.spares": 3
         }),
-        // Bun runs 256 fetches at once and queues the rest. A host's long requests are an invoke
-        // per running invocation, its provider requests and the fleet's management calls, which
-        // past 256 would queue behind them (docs/OPERATIONS.md, Models).
-        BUN_CONFIG_MAX_HTTP_REQUESTS: "512",
         // Four hosts during a rolling deploy must fit Neon's connection limit;
         // raise it with the compute (docs/OPERATIONS.md, Production).
         PATCHY_COMPANY_DB_MAX_BACKENDS: "64",

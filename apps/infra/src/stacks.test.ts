@@ -123,14 +123,7 @@ it("rolls hosts out beside the promoted release, back if they cannot start, and 
         Match.objectLike({
           Name: "exec",
           User: "0",
-          // Process settings only: no credential, secret or AWS setting.
-          Environment: [
-            {
-              Name: "PATCHY_LIMITS_JSON",
-              Value: JSON.stringify({ "models.execution.inFlight": 32 })
-            },
-            { Name: "BUN_CONFIG_MAX_HTTP_REQUESTS", Value: "512" }
-          ],
+          Environment: Match.absent(),
           Secrets: Match.absent()
         })
       ]
@@ -153,11 +146,7 @@ it("gives hosts and company boxes a full vCPU, and the fleet 24 boxes with three
         Environment: Match.arrayWith([
           {
             Name: "PATCHY_LIMITS_JSON",
-            Value: JSON.stringify({
-              "execution.fleet.budget": 24,
-              "execution.pool.spares": 3,
-              "models.outbound.host": 32
-            })
+            Value: JSON.stringify({ "execution.fleet.budget": 24, "execution.pool.spares": 3 })
           }
         ])
       })
@@ -165,18 +154,28 @@ it("gives hosts and company boxes a full vCPU, and the fleet 24 boxes with three
   });
 });
 
-it("gives hosts and company boxes the outbound requests and open files their measured load needs", () => {
-  // Chosen from measurements (docs/OPERATIONS.md, Models).
+it("pins hosts' and company boxes' open files, and leaves Bun's outbound requests at its own", () => {
+  // Bun's outbound limit stays its default until it is measured on the deployed task size
+  // (docs/OPERATIONS.md, Models).
   for (const family of ["patchy-production-host", "patchy-production-exec"])
     template.hasResourceProperties("AWS::ECS::TaskDefinition", {
       Family: family,
       ContainerDefinitions: [
         Match.objectLike({
-          Environment: Match.arrayWith([{ Name: "BUN_CONFIG_MAX_HTTP_REQUESTS", Value: "512" }]),
           Ulimits: [{ Name: "nofile", SoftLimit: 65535, HardLimit: 65535 }]
         })
       ]
     });
+  template.hasResourceProperties("AWS::ECS::TaskDefinition", {
+    Family: "patchy-production-host",
+    ContainerDefinitions: [
+      Match.objectLike({
+        Environment: Match.not(
+          Match.arrayWith([Match.objectLike({ Name: "BUN_CONFIG_MAX_HTTP_REQUESTS" })])
+        )
+      })
+    ]
+  });
 });
 
 it("lets only this repository's production environment assume the deploy role", () => {
