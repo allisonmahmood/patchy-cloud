@@ -60,19 +60,24 @@ interface TextRequest {
   /** Required: 16 to `models.generate.maxOutputTokens`. */
   readonly maxOutputTokens: number;
 }
+/** A typed output's schema: a `t.object(...)`, whose root is always an object. */
+type ObjectSchema = SchemaInput & { toJSON(): { readonly kind: "object" } };
 export interface TextClient {
-  /** Text, at most `maxOutputTokens` long. */
-  generate(request: TextRequest): Promise<{ readonly text: string; readonly usage: ModelUsage }>;
   /**
    * A value of `output`'s shape: a `t.object(...)` of text, integer, number, boolean, enum,
-   * nullable, object and array fields, all required.
+   * nullable, object and array fields, all required. First, so a typed request held in a
+   * variable is never taken for a text one.
    */
-  generate<const S extends SchemaInput>(
+  generate<const S extends ObjectSchema>(
     request: TextRequest & { readonly output: S }
   ): Promise<{
     readonly value: InferDescriptor<DescriptorOf<S>, Config>;
     readonly usage: ModelUsage;
   }>;
+  /** Text, at most `maxOutputTokens` long. */
+  generate(
+    request: TextRequest & { readonly output?: never }
+  ): Promise<{ readonly text: string; readonly usage: ModelUsage }>;
 }
 
 type Call = (op: string, args: Readonly<Record<string, unknown>>) => Promise<unknown>;
