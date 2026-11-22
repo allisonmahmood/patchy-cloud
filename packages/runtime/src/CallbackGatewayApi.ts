@@ -54,6 +54,12 @@ class CallbackFileTooLarge extends Schema.TaggedError<CallbackFileTooLarge>()(
     return "The callback file body exceeds its byte limit.";
   }
 }
+/** A marked model call's arguments past `models.ingress.bytes`, refused as they are read. */
+class ModelCallTooLarge extends Schema.TaggedError<ModelCallTooLarge>()("ModelCallTooLarge", {}) {
+  override get message() {
+    return GuestProtocol.modelIngressTooLarge.error;
+  }
+}
 class CallbackBudgetExceeded extends Schema.TaggedError<CallbackBudgetExceeded>()(
   "CallbackBudgetExceeded",
   {
@@ -106,6 +112,11 @@ const privateHost = (host: string, explicit: boolean) => {
 };
 const json = (reply: GuestProtocol.CallbackReply) =>
   HttpServerResponse.jsonUnsafe(reply, { headers: { "cache-control": "no-store" } });
+const isModelCall = (op: string | undefined): op is "models.decide" | "models.generate" =>
+  op === "models.decide" || op === "models.generate";
+/** A refusal given before the capability is known: a model call's says nothing was sent. */
+const said = (modelCall: string | undefined, failure: RuntimeFailure): RuntimeFailure =>
+  modelCall === undefined ? failure : { ...failure, details: { ...failure.details, sent: false } };
 const invalid: RuntimeFailure = {
   ok: false,
   source: "patchy",
@@ -119,18 +130,26 @@ export const make = Effect.gen(function* () {
   const capabilities = yield* InvocationCapabilities.InvocationCapabilities;
   const byteLimit = yield* ContractLimits.get("tier2.callbacks.bytes");
   const fileLimit = yield* ContractLimits.get("tier2.callbacks.fileBytes");
+  const modelsInFlight = yield* ContractLimits.get("models.calls.inFlight");
   return Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
+    // Classified before anything can refuse it, so a model call's every refusal before its
+    // handler says nothing was sent. The mark is the execution task's, checked against the call
+    // once it is read.
+    const marked = request.headers["x-patchy-model-call"];
+    const modelCall = isModelCall(marked) ? marked : undefined;
     if (request.method !== "POST" || request.url.split("?")[0] !== "/callback")
-      return json(invalid);
+      return json(said(modelCall, invalid));
     const authorization = request.headers.authorization ?? "";
     if (!authorization.startsWith("Bearer "))
-      return json({
-        ok: false,
-        source: "patchy",
-        code: "access_denied",
-        error: "An invocation capability is required."
-      });
+      return json(
+        said(modelCall, {
+          ok: false,
+          source: "patchy",
+          code: "access_denied",
+          error: "An invocation capability is required."
+        })
+      );
     const token = authorization.slice(7);
     const identity = yield* Effect.result(
       decodeIdentity({
@@ -139,26 +158,63 @@ export const make = Effect.gen(function* () {
         processGeneration: request.headers["x-patchy-process-generation"]
       })
     );
-    if (identity._tag === "Failure") return json(invalid);
+    if (identity._tag === "Failure") return json(said(modelCall, invalid));
     const resolved = yield* Effect.result(capabilities.resolve(token, identity.success));
-    if (resolved._tag === "Failure") return json(resolved.failure.failure);
+    if (resolved._tag === "Failure") return json(said(modelCall, resolved.failure.failure));
     const capability = resolved.success;
-    const countRefusal = capabilities.chargeCallback(capability);
-    if (countRefusal !== undefined) return json(countRefusal);
+    // A marked call's refusals are kept once, said unsent, by the gateway; others as they were.
+    const stored = modelCall === undefined;
+    const refuse = (failure: RuntimeFailure, status: number) =>
+      modelCall === undefined
+        ? Effect.succeed(capabilities.rememberRefusal(capability, failure, status))
+        : gateway.refuseModelCall(capability, modelCall, failure, status);
+    const countRefusal = capabilities.chargeCallback(capability, { stored });
+    if (countRefusal !== undefined)
+      return json(
+        modelCall === undefined
+          ? countRefusal
+          : yield* gateway.refuseModelCall(capability, modelCall, countRefusal, 429)
+      );
+    // A marked call takes one of its action's places for running model calls before it is read,
+    // so a fifth is refused before it costs a read or a callback's place.
+    const place = modelCall === undefined ? undefined : gateway.modelPlace(capability);
+    if (modelCall !== undefined && place === undefined)
+      return json(
+        yield* gateway.refuseModelCall(
+          capability,
+          modelCall,
+          {
+            ok: false,
+            source: "patchy",
+            error: "This action has the model calls running it may, so nothing was sent.",
+            ...limitRefusal("models.calls.inFlight", modelsInFlight, 1)
+          },
+          429
+        )
+      );
     const raw = request.headers["x-patchy-callback"];
     const available = Math.max(0, byteLimit - capability.tree.bytes);
-    const maxBytes = raw === undefined ? available : Math.min(fileLimit, available);
+    // A marked call is read no further than a model call's arguments may go.
+    const modelCap = modelCall === undefined ? Infinity : GuestProtocol.modelIngressLimit.value;
+    const maxBytes = Math.min(
+      raw === undefined ? available : Math.min(fileLimit, available),
+      modelCap
+    );
     const overflow = (bytes: number) =>
-      raw !== undefined && fileLimit <= available
-        ? new CallbackFileTooLarge({ maxBytes: fileLimit })
-        : new CallbackBudgetExceeded({ failure: capabilities.chargeBytes(capability, bytes)! });
+      modelCap <= available && maxBytes === modelCap
+        ? new ModelCallTooLarge()
+        : raw !== undefined && fileLimit <= available
+          ? new CallbackFileTooLarge({ maxBytes: fileLimit })
+          : new CallbackBudgetExceeded({
+              failure: capabilities.chargeBytes(capability, bytes, { stored })!
+            });
     const reply = yield* capabilities
       .execute(
         capability,
         Effect.gen(function* () {
           if (raw !== undefined) {
             const metadataBytes = Buffer.byteLength(raw);
-            const failure = capabilities.chargeBytes(capability, metadataBytes);
+            const failure = capabilities.chargeBytes(capability, metadataBytes, { stored });
             if (failure !== undefined) {
               yield* closeAfterAnswer;
               return yield* new CallbackBudgetExceeded({ failure });
@@ -193,7 +249,7 @@ export const make = Effect.gen(function* () {
                 yield* closeAfterAnswer;
                 return yield* overflow(chunk.byteLength);
               }
-              const failure = capabilities.chargeBytes(capability, chunk.byteLength);
+              const failure = capabilities.chargeBytes(capability, chunk.byteLength, { stored });
               if (failure !== undefined) {
                 yield* closeAfterAnswer;
                 return yield* new CallbackBudgetExceeded({ failure });
@@ -233,29 +289,31 @@ export const make = Effect.gen(function* () {
       .pipe(
         Effect.flatMap((callback) =>
           gateway.callback(token, identity.success, callback, {
-            modelCall: request.headers["x-patchy-model-call"]
+            modelCall: marked,
+            ...(place === undefined ? {} : { place })
           })
         ),
         Effect.catchTags({
-          CapabilityRefused: (error) =>
-            Effect.succeed(capabilities.rememberRefusal(capability, error.failure, 403)),
-          MalformedCallback: () =>
-            Effect.succeed(capabilities.rememberRefusal(capability, invalid, 400)),
+          CapabilityRefused: (error) => refuse(error.failure, 403),
+          MalformedCallback: () => refuse(invalid, 400),
+          ModelCallTooLarge: () => refuse(GuestProtocol.modelIngressTooLarge, 413),
           CallbackFileTooLarge: (error) =>
-            Effect.succeed(
-              capabilities.rememberRefusal(
-                capability,
-                {
-                  ok: false,
-                  source: "patchy",
-                  error: error.message,
-                  ...limitRefusal("tier2.callbacks.fileBytes", error.maxBytes)
-                },
-                413
-              )
+            refuse(
+              {
+                ok: false,
+                source: "patchy",
+                error: error.message,
+                ...limitRefusal("tier2.callbacks.fileBytes", error.maxBytes)
+              },
+              413
             ),
-          CallbackBudgetExceeded: (error) => Effect.succeed(error.failure)
-        })
+          CallbackBudgetExceeded: (error) =>
+            modelCall === undefined
+              ? Effect.succeed(error.failure)
+              : gateway.refuseModelCall(capability, modelCall, error.failure, 429)
+        }),
+        // The place goes back with the request unless the call's work took it over.
+        Effect.ensuring(Effect.sync(() => place?.release()))
       );
     if (reply.ok && "body" in reply)
       return HttpServerResponse.uint8Array(reply.body.bytes, {

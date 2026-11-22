@@ -177,6 +177,22 @@ export interface Wire {
    * also says the loader reads every reply a model call can get.
    */
   readonly modelCall: string | undefined;
+  /** The action's model place the listener took for a marked call before reading it. */
+  readonly place?: ModelPlace;
+}
+
+/**
+ * One of an action's places for a running model call, taken before its callback is read. The
+ * request holds it until it hands it to the call's work as that work is forked; the work's exit
+ * gives it back then, and the request does if it ends first. It is given back once.
+ */
+export interface ModelPlace {
+  /** The work takes it over; from then only the work's exit gives it back. */
+  readonly handOff: () => true;
+  /** Given back once, by whichever holds it. */
+  readonly give: () => void;
+  /** The request's own end: gives it back unless the work took it over. */
+  readonly release: () => void;
 }
 
 export class CallbackGateway extends Context.Service<
@@ -187,6 +203,21 @@ export class CallbackGateway extends Context.Service<
       attempt: InvocationCapabilities.AttemptIdentity,
       input: GuestProtocol.Callback,
       wire?: Wire
+    ) => Effect.Effect<GuestProtocol.CallbackReply>;
+    /**
+     * One of the action's places for a running model call, or none while it runs as many as it
+     * may: the private listener takes it for a marked call before reading the call.
+     */
+    readonly modelPlace: (capability: InvocationCapabilities.Capability) => ModelPlace | undefined;
+    /**
+     * A marked model call's refusal given before the gateway sees the call, as the private
+     * listener's: said unsent, kept once with its status and operation, and recorded.
+     */
+    readonly refuseModelCall: (
+      capability: InvocationCapabilities.Capability,
+      operation: string,
+      failure: RuntimeFailure,
+      status: number
     ) => Effect.Effect<GuestProtocol.CallbackReply>;
   }
 >()("@patchy/runtime/CallbackGateway") {}
@@ -712,22 +743,26 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
           : run;
     // A model call holds one of the action's places for running calls from the moment its work
     // is handed off until that work's fiber exits, not until the page's request stops waiting.
+    // One the listener took before reading the call is handed off as it is.
+    const place = wire?.place;
     const result = yield* Effect.exit(
       capabilities.execute(
         capability,
         operationRun,
-        model
-          ? {
-              take: () => {
-                if (capability.counters.modelsInFlight >= limits.modelsInFlight) return false;
-                capability.counters.modelsInFlight++;
-                return true;
-              },
-              give: () => {
-                capability.counters.modelsInFlight--;
+        !model
+          ? undefined
+          : place !== undefined
+            ? { take: place.handOff, give: place.give }
+            : {
+                take: () => {
+                  if (capability.counters.modelsInFlight >= limits.modelsInFlight) return false;
+                  capability.counters.modelsInFlight++;
+                  return true;
+                },
+                give: () => {
+                  capability.counters.modelsInFlight--;
+                }
               }
-            }
-          : undefined
       )
     );
     let reply: GuestProtocol.CallbackReply;
@@ -787,21 +822,25 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
     if (isModelCall(input.op) && capability !== undefined && !reply.ok && reply.source === "patchy")
       capabilities.rememberRefusal(capability, reply, call.status ?? 503, call.operation);
     // A model call refused before its handler ran is still an attempt the host saw: one record.
-    if (
-      !isModelCall(input.op) ||
-      reply.ok ||
-      call.started ||
-      capability === undefined ||
-      Option.isNone(wide)
-    )
+    if (!isModelCall(input.op) || reply.ok || call.started || capability === undefined)
       return reply;
+    yield* recordUnsent(capability, input.op, input.args?.connection, reply);
+    return reply;
+  });
+  /** The record of a model call refused before its handler ran: nothing was sent. */
+  const recordUnsent = (
+    capability: InvocationCapabilities.Capability,
+    op: string,
+    connection: unknown,
+    reply: GuestProtocol.CallbackReply
+  ) => {
+    if (Option.isNone(wide) || reply.ok) return Effect.void;
     const { binding } = capability;
-    const alias = typeof input.args?.connection === "string" ? input.args.connection : undefined;
     const declared =
-      alias !== undefined && Object.hasOwn(binding.manifest.uses, alias)
-        ? binding.manifest.uses[alias]
+      typeof connection === "string" && Object.hasOwn(binding.manifest.uses, connection)
+        ? binding.manifest.uses[connection]
         : undefined;
-    yield* capability.observe(
+    return capability.observe(
       wide.value.withEvent(
         {
           type: "model",
@@ -809,7 +848,7 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
           patchId: binding.patchId,
           versionId: binding.versionId,
           door: "published",
-          modelKind: input.op === "models.decide" ? "decision" : "text",
+          modelKind: op === "models.decide" ? "decision" : "text",
           sent: false,
           outcome: "failure",
           ...(reply.source === "patchy" ? { code: reply.code } : {}),
@@ -819,9 +858,41 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
         Effect.void
       )
     );
-    return reply;
+  };
+  const modelPlace = (capability: InvocationCapabilities.Capability): ModelPlace | undefined => {
+    if (capability.counters.modelsInFlight >= limits.modelsInFlight) return undefined;
+    capability.counters.modelsInFlight++;
+    let given = false;
+    let handedOff = false;
+    const give = () => {
+      if (given) return;
+      given = true;
+      capability.counters.modelsInFlight--;
+    };
+    return {
+      handOff: () => {
+        handedOff = true;
+        return true;
+      },
+      give,
+      release: () => {
+        if (!handedOff) give();
+      }
+    };
+  };
+  const refuseModelCall = Effect.fn("CallbackGateway.refuseModelCall")(function* (
+    capability: InvocationCapabilities.Capability,
+    operation: string,
+    failure: RuntimeFailure,
+    status: number
+  ): Effect.fn.Return<GuestProtocol.CallbackReply> {
+    const given = unsent(failure);
+    if (!given.ok && given.source === "patchy")
+      capabilities.rememberRefusal(capability, given, status, operation);
+    yield* recordUnsent(capability, operation, undefined, given);
+    return given;
   });
-  return CallbackGateway.of({ callback });
+  return CallbackGateway.of({ callback, modelPlace, refuseModelCall });
 });
 
 export const layer = (handlers: Readonly<Record<string, Runtime.Handler>>) =>

@@ -2,7 +2,9 @@ import { assert, it } from "@effect/vitest";
 import { FilePutUpload, RuntimeCode, RuntimeFailure } from "@patchy/api";
 import { ContractLimits } from "@patchy/limits";
 import * as Testing from "@patchy/sql/testing";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as CallbackGateway from "./CallbackGateway.js";
@@ -392,6 +394,138 @@ it.layer(
   );
 
   it.effect(
+    "a marked model call refused by the shared count or byte budget says nothing was sent, once",
+    () =>
+      Effect.gen(function* () {
+        const capabilities = yield* InvocationCapabilities.make;
+        const gateway = yield* CallbackGateway.make({
+          "tables.get": { kind: "read", run: () => Effect.succeed(null) },
+          "models.generate": {
+            kind: "integration",
+            fence: "action",
+            connectionId: () => "role",
+            run: () =>
+              Effect.succeed({ text: "ok", usage: { inputTokens: null, outputTokens: null } })
+          }
+        }).pipe(Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities));
+        const listener = yield* CallbackGatewayApi.listen().pipe(
+          Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities),
+          Effect.provideService(CallbackGateway.CallbackGateway, gateway)
+        );
+        const send = (capability: InvocationCapabilities.Capability, input: string) =>
+          fetchJson(listener.url, {
+            method: "POST",
+            headers: {
+              ...headers(capability),
+              "content-type": "application/json",
+              "x-patchy-model-call": "models.generate"
+            },
+            body: JSON.stringify({ op: "models.generate", args: { connection: "writer", input } })
+          });
+        // Past the call tree's bytes: refused as it is read, nothing sent.
+        const budgeted = yield* Fixtures.issue(capabilities, { kind: "action" });
+        const overBudget = yield* send(budgeted, "x".repeat(200));
+        assert.deepInclude(overBudget, {
+          code: "limit_exceeded",
+          limitId: "tier2.callbacks.bytes",
+          details: { sent: false }
+        });
+        // Past the invocation's callbacks: refused before it is read, nothing sent.
+        const counted = yield* Fixtures.issue(capabilities, { kind: "action" });
+        yield* send(counted, "first");
+        const overCount = yield* send(counted, "second");
+        assert.deepInclude(overCount, {
+          code: "limit_exceeded",
+          limitId: "tier2.callbacks.count",
+          details: { sent: false }
+        });
+        // Each kept once, as the guest got it, with the operation it relays under.
+        for (const [capability, refusal, status] of [
+          [budgeted, overBudget, 429],
+          [counted, overCount, 429]
+        ] as const)
+          assert.deepStrictEqual(
+            capability.refusals.map(({ failure, status, operation }) => ({
+              failure,
+              status,
+              operation
+            })),
+            [{ failure: refusal, status, operation: "models.generate" }]
+          );
+      }).pipe(
+        Effect.scoped,
+        Effect.provideService(ContractLimits.overrides, {
+          "tier2.callbacks.count": 1,
+          "tier2.callbacks.bytes": 150
+        })
+      )
+  );
+
+  it.effect(
+    "a fifth marked model call is refused its place before its body is read, and a place comes back",
+    () =>
+      Effect.gen(function* () {
+        const capabilities = yield* InvocationCapabilities.make;
+        const release = yield* Deferred.make<void>();
+        const allRunning = yield* Deferred.make<void>();
+        let running = 0;
+        const gateway = yield* CallbackGateway.make({
+          "models.generate": {
+            kind: "integration",
+            fence: "action",
+            connectionId: () => "role",
+            run: () =>
+              Effect.gen(function* () {
+                if (++running === 4) yield* Deferred.succeed(allRunning, undefined);
+                yield* Deferred.await(release);
+                return { text: "ok", usage: { inputTokens: null, outputTokens: null } };
+              })
+          }
+        }).pipe(Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities));
+        const listener = yield* CallbackGatewayApi.listen().pipe(
+          Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities),
+          Effect.provideService(CallbackGateway.CallbackGateway, gateway)
+        );
+        const capability = yield* Fixtures.issue(capabilities, { kind: "action" });
+        const marked = {
+          ...headers(capability),
+          "content-type": "application/json",
+          "x-patchy-model-call": "models.generate"
+        };
+        const call = (body: string) =>
+          fetchJson(listener.url, { method: "POST", headers: marked, body });
+        const generate = JSON.stringify({
+          op: "models.generate",
+          args: { connection: "writer", input: "x" }
+        });
+        const four = yield* Effect.forEach([1, 2, 3, 4], () => call(generate), {
+          concurrency: "unbounded"
+        }).pipe(Effect.forkChild);
+        yield* Deferred.await(allRunning);
+        // Its body declared and never sent: only a refusal given before reading can answer it.
+        const head = [
+          "POST /callback HTTP/1.1",
+          "host: 127.0.0.1",
+          ...Object.entries(marked).map(([name, value]) => `${name}: ${value}`)
+        ].join("\n");
+        const fifth = yield* Effect.promise(() =>
+          stalledUpload(Number(new URL(listener.url).port), head, { declared: 100 })
+        );
+        assert.strictEqual(fifth.status, 200);
+        assert.deepInclude(JSON.parse(fifth.body), {
+          code: "busy",
+          limitId: "models.calls.inFlight",
+          details: { sent: false }
+        });
+        yield* Deferred.succeed(release, undefined);
+        assert.isTrue((yield* Fiber.join(four)).every((reply) => reply.ok === true));
+        // A call refused after taking its place, before its handler, gives the place back.
+        assert.deepInclude(yield* call("{"), { code: "invalid_request", details: { sent: false } });
+        assert.strictEqual(capability.counters.modelsInFlight, 0);
+      }).pipe(Effect.scoped, Effect.provideService(ContractLimits.overrides, {}))
+  );
+
+  it.effect(
     "public or wildcard callback binds stay refused even with private-interface opt-in",
     () =>
       Effect.gen(function* () {
@@ -404,7 +538,9 @@ it.layer(
       }).pipe(
         Effect.scoped,
         Effect.provideService(CallbackGateway.CallbackGateway, {
-          callback: () => Effect.succeed({ ok: true, value: null })
+          callback: () => Effect.succeed({ ok: true, value: null }),
+          modelPlace: () => undefined,
+          refuseModelCall: () => Effect.die("no model call reaches this listener")
         }),
         Effect.provide(InvocationCapabilities.layer)
       )
