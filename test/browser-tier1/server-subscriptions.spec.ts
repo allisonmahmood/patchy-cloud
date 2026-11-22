@@ -446,7 +446,8 @@ test("authorised handles display blob images, reauthorise and queue trusted shel
   expect(await loads(urls[0]!)).toBe(true);
 
   const downloads: string[] = [];
-  page.on("download", (download) => downloads.push(download.suggestedFilename()));
+  // macOS reports a download's name decomposed, é as e and its accent.
+  page.on("download", (download) => downloads.push(download.suggestedFilename().normalize()));
   const cards = page.locator(".shell-corner");
   for (const filename of ["", "../report.svg", "folder//report.svg", "x".repeat(513)]) {
     expect(
@@ -478,7 +479,8 @@ test("authorised handles display blob images, reauthorise and queue trusted shel
   const defaultDownloadEvent = page.waitForEvent("download");
   await cards.getByRole("button", { name: "Download", exact: true }).click();
   const defaultDownload = await defaultDownloadEvent;
-  expect(defaultDownload.suggestedFilename()).toBe(filename);
+  // macOS reports a download's name decomposed, é as e and its accent.
+  expect(defaultDownload.suggestedFilename().normalize()).toBe(filename);
   expect(await readFile((await defaultDownload.path())!, "utf8")).toBe(content);
   await expect(cards).toBeHidden();
   await frame.evaluate(async (handle) => {

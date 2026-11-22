@@ -101,7 +101,8 @@ window.download = client.download; window.outcome = "idle";`,
     const handedOff = page.waitForEvent("download");
     await cards.getByRole("button", { name: "Download", exact: true }).click();
     const file = await handedOff;
-    expect(file.suggestedFilename()).toBe("résumé.csv");
+    // macOS reports a download's name decomposed, é as e and its accent.
+    expect(file.suggestedFilename().normalize()).toBe("résumé.csv");
     expect(await readFile((await file.path())!, "utf8")).toBe("name\r\nÉlodie");
     await expect
       .poll(() => content.evaluate(() => (window as unknown as DownloadWindow).outcome))

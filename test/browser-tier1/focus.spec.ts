@@ -678,13 +678,21 @@ const pageHtml = async (body: string, script: string) =>
 
 type Tab = readonly ["Tab" | "Shift+Tab", string];
 /**
+ * Tab as it stops on every control. WebKit keeps Safari's defaults on a Mac, where plain Tab skips
+ * buttons, checkboxes and links and Option+Tab is the Tab that stops on them.
+ */
+const tab = (page: Page, key: Tab[0]) =>
+  page.keyboard.press(
+    page.context().browser()?.browserType().name() === "webkit" ? `Alt+${key}` : key
+  );
+/**
  * Presses each key in turn; after each, focus is on its element in the patch's frame, and the frame
  * still has it.
  */
 async function tabsTo(page: Page, steps: ReadonlyArray<Tab>) {
   const view = page.frameLocator("#patch");
   for (const [key, selector] of steps) {
-    await page.keyboard.press(key);
+    await tab(page, key);
     await expect(view.locator(selector)).toBeFocused();
     await expect(page.locator("#patch")).toBeFocused();
   }
@@ -729,8 +737,8 @@ test("Tab stays inside a modal dialog of a page on the generated client, and Esc
       .evaluateAll((dialogs: HTMLDialogElement[]) => dialogs.reverse().forEach((d) => d.close()));
   // The browser moves focus for a Tab the helper leaves alone, exactly as without it: nothing took
   // the key.
-  const leftAlone = async (key: "Tab" | "Shift+Tab") => {
-    await page.keyboard.press(key);
+  const leftAlone = async (key: Tab[0]) => {
+    await tab(page, key);
     expect(
       await view
         .locator("body")
@@ -815,10 +823,15 @@ test("Tab stays inside a modal dialog of a page on the generated client, and Esc
     await view.locator("#close").focus();
     await tabsTo(page, [["Tab", "#title"]]);
     const shell = page.locator("#shell-after");
+    // Safari focuses no button a click presses, so there Patchy's page itself keeps focus.
+    const shellHasFocus = () =>
+      browserName === "webkit"
+        ? expect(page.locator("#patch")).not.toBeFocused()
+        : expect(shell).toBeFocused();
     await shell.click();
-    await expect(shell).toBeFocused();
+    await shellHasFocus();
     await settled(page);
-    await expect(shell).toBeFocused();
+    await shellHasFocus();
     await closeOpen();
   });
 
@@ -933,7 +946,9 @@ test("Tab stays inside a modal dialog of a page on the generated client, and Esc
 
   await test.step("from the control that opened a popover in the dialog", async () => {
     await view.locator("#open-popped").click();
-    await view.locator("#popped-invoker").click();
+    // From the keyboard, as Safari's click focuses no button.
+    await view.locator("#popped-invoker").focus();
+    await page.keyboard.press("Enter");
     await expect(view.locator("#tip")).toBeVisible();
     await expect(view.locator("#popped-invoker")).toBeFocused();
     await leftAlone("Tab");

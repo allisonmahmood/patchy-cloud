@@ -78,16 +78,40 @@ test("a refused submission draws the dialog again, and closing it skips the subm
 
 test("in a history at its longest, closing a dialog drawn again still reaches its opener", async ({
   page,
-  instance
+  instance,
+  browserName
 }) => {
   await page.goto(`${instance.origin}/~ui/index?page=2`);
-  // A browser keeps 50 entries: past that a new one drops the oldest, and the count stays.
-  await page.evaluate(() => {
-    for (let entry = 0; entry < 60; entry++) history.pushState(null, "");
-  });
+  // A browser keeps 50 entries, or 100 in WebKit: past that a new one drops the oldest, and the
+  // count stays. Ten go in at a time until ten more leave the count where it was. Firefox trims
+  // the history only after the task that grew it, so each ten reads the count first; WebKit
+  // refuses more than 100 pushes in ten seconds, so a refused ten goes again later, and only
+  // ten that all went in can show the history full.
+  let before: number | undefined;
+  await expect
+    .poll(
+      async () => {
+        const [length, refused] = await page.evaluate(() => {
+          const length = history.length;
+          try {
+            for (let entry = 0; entry < 10; entry++) history.pushState(null, "");
+            return [length, false] as const;
+          } catch {
+            return [length, true] as const;
+          }
+        });
+        const full = length === before;
+        before = refused ? undefined : length;
+        return full;
+      },
+      { timeout: 30_000 }
+    )
+    .toBe(true);
   const length = await page.evaluate(() => history.length);
+  const entry = () => page.evaluate(() => navigation.currentEntry?.key);
   const opener = page.getByRole("main").getByRole("link", { name: "New patch" });
   await loadDialog(page, () => opener.click());
+  const entries = [await entry()];
   const dialog = page.getByRole("dialog", { name: "Invite people" });
   for (let refusal = 0; refusal < 2; refusal++) {
     await loadDialog(page, () => page.getByRole("button", { name: "Send invites" }).click());
@@ -95,8 +119,13 @@ test("in a history at its longest, closing a dialog drawn again still reaches it
       "aria-invalid",
       "true"
     );
+    entries.push(await entry());
   }
   expect(await page.evaluate(() => history.length)).toBe(length);
+  // Each drawing took an entry of its own without growing the history, so the dialog counted
+  // fewer than it took, and its close has to keep going. Firefox replaces the dialog's entry
+  // instead, so there it counted right.
+  if (browserName !== "firefox") expect(new Set(entries).size).toBe(entries.length);
   await page.keyboard.press("Escape");
   await expect(page).toHaveURL(/\/~ui\/index\?page=2$/);
   await expect(dialog).toHaveCount(0);
@@ -190,7 +219,8 @@ test("with script, Show reveals a secret, Copy appears and a fragment opens its 
 
 test("a name's hint follows what is typed, and a pressed submit says Testing… and takes no second", async ({
   page,
-  instance
+  instance,
+  browserName
 }) => {
   await page.goto(`${instance.origin}/~ui/flow`);
   const hint = page.locator("#g-f-name-hint");
@@ -210,7 +240,10 @@ test("a name's hint follows what is typed, and a pressed submit says Testing… 
     if (route.request().method() !== "POST") return route.fallback();
     posts.push(route.request().postData() ?? "");
     await held;
-    await route.fulfill({ status: 303, headers: { location: "/~ui/flow" } });
+    // Playwright's WebKit can't answer with a redirect, so there the post gets the page itself.
+    if (browserName === "webkit")
+      await route.fulfill({ response: await page.request.get(`${instance.origin}/~ui/flow`) });
+    else await route.fulfill({ status: 303, headers: { location: "/~ui/flow" } });
   });
   const pressed = await page.evaluate(() => {
     const button = document.querySelector<HTMLButtonElement>("button[data-pending]")!;
@@ -360,8 +393,10 @@ test("on a phone, a dialog breaks a long unbroken name and keeps Close on screen
 
 test("in forced colours, a logo keeps its white square, so a dark theme can't hide it", async ({
   page,
-  instance
+  instance,
+  browserName
 }) => {
+  test.skip(browserName === "webkit", "Playwright's WebKit can't emulate forced colours.");
   await page.goto(`${instance.origin}/~ui`);
   const logo = page.locator(".im-logo").first();
   const letters = page.locator(".im:not(.im-logo)").first();
