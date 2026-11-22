@@ -258,6 +258,11 @@ const bodyless = new Set([204, 205, 304]);
  * error's cause and Bun on the error itself; both use these. The list is deliberately
  * conservative: anything else, a reset, a timeout or a handshake that failed another way
  * included, may have come after the request left, so it stays ambiguous and counts as sent.
+ *
+ * It reads the one failure fetch reports. A runtime that resends a request by itself hides the
+ * first attempt: Node's fetch resends after a 421, so an origin that read the request, answered
+ * 421 and then stopped listening would be reported here as unsent. Bun, which production runs,
+ * does not resend a POST. No provider behaves that way; it is the known limit of asking fetch.
  */
 const beforeWrite = new Set([
   "ENOTFOUND",
@@ -271,21 +276,27 @@ const beforeWrite = new Set([
   "CERT_NOT_YET_VALID",
   "ERR_TLS_CERT_ALTNAME_INVALID"
 ]);
-/** Every code on an error, its causes and an aggregate's errors, a few levels deep. */
-const codesOf = (error: unknown, depth = 0): ReadonlyArray<string> => {
-  if (depth > 6 || !Predicate.isObject(error)) return [];
-  const own = "code" in error && typeof error.code === "string" ? [error.code] : [];
-  const inner =
-    "errors" in error && Array.isArray(error.errors)
-      ? error.errors.flatMap((item: unknown) => codesOf(item, depth + 1))
-      : [];
-  return [...own, ...inner, ...("cause" in error ? codesOf(error.cause, depth + 1) : [])];
+/**
+ * Every code on an error, its causes and an aggregate's errors. `undefined` when it can't all be
+ * read: a member of an aggregate that carries no code, or a chain deeper than a few levels.
+ */
+const codesOf = (error: unknown, depth = 0): ReadonlyArray<string> | undefined => {
+  if (!Predicate.isObject(error)) return [];
+  if (depth > 6) return undefined;
+  const codes = "code" in error && typeof error.code === "string" ? [error.code] : [];
+  for (const member of "errors" in error && Array.isArray(error.errors) ? error.errors : []) {
+    const inner = codesOf(member, depth + 1);
+    if (inner === undefined || inner.length === 0) return undefined;
+    codes.push(...inner);
+  }
+  const cause = "cause" in error ? codesOf(error.cause, depth + 1) : [];
+  return cause === undefined ? undefined : [...codes, ...cause];
 };
 /** Whether a transport failure proves the request was never written. */
 const neverWritten = (error: HttpClientError.HttpClientError) => {
   if (error.reason._tag !== "TransportError") return false;
   const codes = codesOf(error.reason.cause);
-  return codes.length > 0 && codes.every((code) => beforeWrite.has(code));
+  return codes !== undefined && codes.length > 0 && codes.every((code) => beforeWrite.has(code));
 };
 
 /** A transport failure carrying nothing; the refusal it stands for waits in the wire. */

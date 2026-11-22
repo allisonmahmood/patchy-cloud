@@ -8,6 +8,7 @@ import * as Exit from "effect/Exit";
 import * as Redacted from "effect/Redacted";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Errors from "./Errors.js";
 import * as Source from "./Source.js";
@@ -951,6 +952,42 @@ describe("OpenAI's transport", () => {
       assert.deepStrictEqual(error.details, { sent: false, reason: "unreachable" });
       assert.isFalse(call.attempt.sent);
     })
+  );
+
+  it.effect(
+    "counts a failure as sent unless every part of it is known to come before writing",
+    () =>
+      Effect.gen(function* () {
+        const refused = Object.assign(new Error("refused"), { code: "ECONNREFUSED" });
+        // Each fails the transport; only the first proves nothing was written.
+        for (const [cause, sent] of [
+          [new AggregateError([refused, refused]), false],
+          [new AggregateError([refused, new Error("no code")]), true],
+          [
+            new AggregateError([
+              refused,
+              Object.assign(new Error("reset"), { code: "ECONNRESET" })
+            ]),
+            true
+          ],
+          [new Error("no code at all"), true]
+        ] as const) {
+          const client = HttpClient.make((request) =>
+            Effect.fail(
+              new HttpClientError.HttpClientError({
+                reason: new HttpClientError.TransportError({ request, cause })
+              })
+            )
+          );
+          const source = yield* Source.make.pipe(
+            Effect.provideService(HttpClient.HttpClient, client)
+          );
+          const call = yield* dispatch();
+          const error = failed(yield* Effect.exit(source.generate(target, generateArgs(), call)));
+          assert.strictEqual(error.code, "source_unavailable");
+          assert.deepStrictEqual(error.details, { sent, reason: "unreachable" }, String(cause));
+        }
+      })
   );
 
   it.effect("relays OpenAI's 400 for a schema it rejects as invalid_request, sent", () =>
