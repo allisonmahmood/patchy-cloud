@@ -158,7 +158,9 @@ it.effect("refuses a page's call to a host operation that is not on the page lis
         Fixtures.tier2VersionId,
         Fixtures.staleTier1VersionId
       ])
-        for (const op of ["added.read", "added.write", "added.integration"]) {
+        // The last is in the wire contract and served by no handler here: a host that leaves an
+        // operation out answers as one that serves it.
+        for (const op of ["added.read", "added.write", "added.integration", "members.list"]) {
           const response = yield* api.call({
             payload: { ...envelope(op), versionId },
             headers: authenticatedHeaders(),
@@ -204,6 +206,32 @@ it.effect("meters a name the host serves nowhere, after the retained document's 
     const next = yield* call("me", Fixtures.versionId);
     assert.strictEqual(next.status, 429);
     assert.strictEqual(decodeFailure(yield* next.json).code, "rate_limited");
+  }).pipe(Effect.provide(Fixtures.layer()))
+);
+
+// A made-up name is unknown whatever it resembles: an integration's or a primitive's prefix
+// earns it no other answer, and neither does a key every object inherits.
+it.effect("answers a made-up name as unknown on either tier, and meters it", () =>
+  Effect.gen(function* () {
+    const api = yield* Fixtures.client;
+    const call = (op: string, versionId: string) =>
+      api.call({
+        payload: { ...envelope(op), versionId },
+        headers: authenticatedHeaders(),
+        responseMode: "response-only"
+      });
+    for (const [op, versionId] of [
+      ["postgres.nope", Fixtures.tier1VersionId],
+      ["tables.nope", Fixtures.tier2VersionId],
+      ["toString", Fixtures.tier2VersionId]
+    ] as const) {
+      const unknown = yield* call(op, versionId);
+      assert.strictEqual(unknown.status, 400, op);
+      assert.strictEqual(decodeFailure(yield* unknown.json).code, "invalid_request");
+    }
+    // Those three were the minute's three calls.
+    const next = yield* call("me", Fixtures.tier1VersionId);
+    assert.strictEqual(next.status, 429);
   }).pipe(Effect.provide(Fixtures.layer()))
 );
 

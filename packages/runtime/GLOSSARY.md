@@ -21,7 +21,7 @@ The tier of the version a patch currently serves, distinct from the tier of a do
 _Avoid_: declared tier, loaded tier
 
 **Server required**:
-The refusal of a direct operation when a tier 2 document must use handlers, or when a lower-tier document belongs to a patch currently serving tier 2. The latter keeps only its identity read until the patch serves a lower tier again.
+The refusal of a direct operation that only a server handler may call: any operation outside the page operations of the document's tier, so a tier 2 document must use handlers. A lower-tier document of a patch currently serving tier 2 is refused the same way, and keeps only its identity read until the patch serves a lower tier again.
 _Avoid_: revoked, permission lost
 
 **Invocation admission**:

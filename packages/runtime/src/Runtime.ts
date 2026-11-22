@@ -697,14 +697,17 @@ export const make = (
             if (principal === null ? input.op !== "me" : principal.userId !== identity.user.id)
               return yield* new PrincipalChanged({});
           }
-          // An operation the host serves off the page list, or lists for another tier, is a server
-          // handler's to call. A name the host serves nowhere stays on the metered path below, so
-          // it spends a call like any other before it answers `invalid_request`.
+          // An operation off the page list, or listed for another tier, is a server handler's to
+          // call, whether this host serves it or only the wire contract names it. A name neither
+          // knows stays on the metered path below, so it spends a call like any other before it
+          // answers `invalid_request`.
           const tiers = Object.hasOwn(pageOperations, input.op)
             ? pageOperations[input.op]
             : undefined;
           if (
-            tiers === undefined ? operation !== undefined : !tiers.includes(version.manifest.tier)
+            tiers === undefined
+              ? operation !== undefined || Object.hasOwn(runtimeOperations, input.op)
+              : !tiers.includes(version.manifest.tier)
           )
             return yield* new ServerRequired();
           if (input.op !== "me" && version.manifest.tier < 2 && version.patchTier === 2)
