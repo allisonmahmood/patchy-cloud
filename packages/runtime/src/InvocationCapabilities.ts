@@ -469,7 +469,9 @@ export const make = Effect.gen(function* () {
             Effect.flatMap((exit): Effect.Effect<A, E | CapabilityRefused> => {
               if (entry.reason !== undefined)
                 return Effect.fail(new CapabilityRefused({ reason: entry.reason }));
-              return Exit.isSuccess(exit) ? Effect.succeed(exit.value) : Effect.failCause(exit.cause);
+              return Exit.isSuccess(exit)
+                ? Effect.succeed(exit.value)
+                : Effect.failCause(exit.cause);
             }),
             Effect.raceFirst(
               Deferred.await(entry.ended).pipe(

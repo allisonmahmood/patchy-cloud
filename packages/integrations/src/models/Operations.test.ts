@@ -720,30 +720,39 @@ it.layer(layer, { excludeTestServices: true, timeout: 60_000 })("model calls", (
     };
   });
 
-  it.effect("say nothing was sent when the door refuses and the reply can't fit the call tree", () =>
-    Effect.gen(function* () {
-      const scene = yield* setup();
-      const limit = 64 * 1024 * 1024;
-      const args = generateArgs();
-      const requestBytes = new TextEncoder().encode(
-        JSON.stringify({ op: "models.generate", args })
-      ).byteLength;
-      const tight = yield* relay(scene, scripted(() => text("never")), {
-        treeBytes: limit - requestBytes - 40,
-        reauthorize: Effect.fail(new Runtime.SessionExpired({}))
-      });
-      assert.deepInclude(yield* tight.send("models.generate", args), {
-        ok: false,
-        details: { sent: false }
-      });
-    }).pipe(Effect.scoped)
+  it.effect(
+    "say nothing was sent when the door refuses and the reply can't fit the call tree",
+    () =>
+      Effect.gen(function* () {
+        const scene = yield* setup();
+        const limit = 64 * 1024 * 1024;
+        const args = generateArgs();
+        const requestBytes = new TextEncoder().encode(
+          JSON.stringify({ op: "models.generate", args })
+        ).byteLength;
+        const tight = yield* relay(
+          scene,
+          scripted(() => text("never")),
+          {
+            treeBytes: limit - requestBytes - 40,
+            reauthorize: Effect.fail(new Runtime.SessionExpired({}))
+          }
+        );
+        assert.deepInclude(yield* tight.send("models.generate", args), {
+          ok: false,
+          details: { sent: false }
+        });
+      }).pipe(Effect.scoped)
   );
 
   it.effect("record a model call refused for its file body before the handler runs", () =>
     Effect.gen(function* () {
       events.length = 0;
       const scene = yield* setup();
-      const action = yield* relay(scene, scripted(() => text("never")));
+      const action = yield* relay(
+        scene,
+        scripted(() => text("never"))
+      );
       const reply = yield* action.send("models.generate", generateArgs(), {
         bytes: new Uint8Array([1, 2, 3]),
         contentType: "application/octet-stream"
@@ -760,10 +769,14 @@ it.layer(layer, { excludeTestServices: true, timeout: 60_000 })("model calls", (
   it.effect("end a model call whose door is slow at its cut-off, nothing sent", () =>
     Effect.gen(function* () {
       const scene = yield* setup();
-      const slow = yield* relay(scene, scripted(() => text("never")), {
-        deadlineMs: 2_600,
-        reauthorize: Effect.sleep("3 seconds").pipe(Effect.as(scene.binding().identity!))
-      });
+      const slow = yield* relay(
+        scene,
+        scripted(() => text("never")),
+        {
+          deadlineMs: 2_600,
+          reauthorize: Effect.sleep("3 seconds").pipe(Effect.as(scene.binding().identity!))
+        }
+      );
       const started = Date.now();
       const reply = yield* slow.send("models.generate", generateArgs());
       assert.deepInclude(reply, {

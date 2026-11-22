@@ -835,9 +835,15 @@ describe("OpenAI calls at their edges", () => {
         })
       );
       const source = yield* Source.make.pipe(Effect.provideService(HttpClient.HttpClient, client));
-      const error = failed(yield* Effect.exit(source.generate(target, generateArgs(), yield* dispatch())));
+      const error = failed(
+        yield* Effect.exit(source.generate(target, generateArgs(), yield* dispatch()))
+      );
       assert.strictEqual(error.code, "source_unavailable");
-      assert.deepStrictEqual(error.details, { sent: true, reason: "provider", upstreamStatus: 103 });
+      assert.deepStrictEqual(error.details, {
+        sent: true,
+        reason: "provider",
+        upstreamStatus: 103
+      });
     })
   );
 
