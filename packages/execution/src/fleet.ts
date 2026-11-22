@@ -441,22 +441,32 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
             )
           );
           const reserved: string[] = [];
+          const budget = config.get("execution.fleet.budget");
+          let budgetExhausted = false;
           for (let count = measured.spares; count < target; count++) {
             yield* guard;
             const taskId = yield* random.uuidV4();
-            if (
-              !(yield* store.reserve(
-                taskId,
-                revision,
-                options.replicaId,
-                lease.leaseEpoch,
-                yield* Clock.currentTimeMillis,
-                config.get("execution.fleet.budget")
-              ))
-            )
+            const outcome = yield* store.reserve(
+              taskId,
+              revision,
+              options.replicaId,
+              lease.leaseEpoch,
+              yield* Clock.currentTimeMillis,
+              budget
+            );
+            if (outcome !== "reserved") {
+              budgetExhausted = outcome === "budget";
               break;
+            }
             reserved.push(taskId);
           }
+          if (budgetExhausted)
+            yield* Effect.logWarning("Execution fleet budget exhausted", {
+              revision,
+              budget,
+              target,
+              spares: measured.spares + reserved.length
+            });
           yield* Effect.forEach(
             reserved,
             (taskId) =>
@@ -776,11 +786,20 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
   }, Effect.orDie);
   const lifecycle = ExecutionLifecycle.ExecutionLifecycle.of({
     connect: Effect.fn("Fleet.connect")(function* (companyId) {
+      const now = yield* Clock.currentTimeMillis;
+      const search: Search = { startedAt: now, found: "bound" };
+      const searched = Effect.flatMap(Clock.currentTimeMillis, (end) =>
+        WideEvents.enrich({ companyBind: search.found, bindWaitMs: Math.max(0, end - now) })
+      );
       yield* Effect.acquireRelease(
         activity.hold(FleetStore.companyLock(companyId)).pipe(Effect.mapError(lifecycleFailure)),
         (unlock) => releaseActivity(companyId, unlock)
       ).pipe(Effect.asVoid);
-      yield* ensure(companyId);
+      yield* find(companyId, "page", search).pipe(
+        Effect.onExit((exit) =>
+          Exit.isSuccess(exit) || search.until !== undefined ? searched : Effect.void
+        )
+      );
       // After the bind, so a binding an agent claimed meanwhile still starts the documents' clock.
       yield* store
         .touch(companyId, yield* Clock.currentTimeMillis)

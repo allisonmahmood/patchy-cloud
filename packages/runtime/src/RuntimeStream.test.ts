@@ -1212,7 +1212,10 @@ const fleetStreams = Effect.fnUntraced(function* (
     revision: 0,
     gated: false,
     releasing: undefined as Deferred.Deferred<void> | undefined,
-    landing: undefined as Deferred.Deferred<void> | undefined
+    landing: undefined as Deferred.Deferred<void> | undefined,
+    onConnect: undefined as
+      | ((companyId: string) => Effect.Effect<void, ExecutionLifecycle.LifecycleError, Scope.Scope>)
+      | undefined
   };
   const events = yield* WideEvents.make.pipe(
     Effect.provideService(WideEvents.Sink, {
@@ -1270,7 +1273,7 @@ const fleetStreams = Effect.fnUntraced(function* (
     }),
     Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
       prewarm: () => Effect.die("Nothing here prewarms."),
-      connect: () =>
+      connect: (companyId) =>
         Effect.gen(function* () {
           yield* Effect.acquireRelease(
             Effect.sync(() => {
@@ -1290,6 +1293,7 @@ const fleetStreams = Effect.fnUntraced(function* (
                 )
               )
           );
+          if (fleet.onConnect !== undefined) return yield* fleet.onConnect(companyId);
           if (!fleet.gated) return;
           const attempt = yield* Deferred.make<void>();
           yield* Queue.offer(attempts, attempt);
@@ -1378,7 +1382,7 @@ const fleetStreams = Effect.fnUntraced(function* (
         ? Effect.void
         : Effect.andThen(Queue.take(changes), settle(counts))
     );
-  return { streams, fleet, attempts, recorded, connect, update, until, answer, settle };
+  return { streams, events, fleet, attempts, recorded, connect, update, until, answer, settle };
 });
 
 it.layer(layer)("document activity", (it) => {
@@ -1703,5 +1707,138 @@ it.layer(layer)("document activity", (it) => {
       const forgotten = yield* host.connect("returning_document", document.generation);
       assert.strictEqual(forgotten.opened, "starting");
     }).pipe(Effect.scoped)
+  );
+
+  it.effect(
+    "records startup companyBind and bindWaitMs on stream events without reactivation overwriting them",
+    () =>
+      Effect.gen(function* () {
+        const host = yield* fleetStreams();
+        const takeStream = (generation: string) =>
+          Effect.gen(function* () {
+            while (true) {
+              const event = yield* Queue.take(host.recorded);
+              if (event.type === "stream" && event.eventId === generation) return event;
+            }
+          });
+        // Warm startup (`bound`), goes idle, then background reactivation (`startup === false`)
+        // runs outside any event and must neither overwrite startup bind wait nor leak onto the
+        // subscription request event.
+        let calls = 0;
+        host.fleet.onConnect = () => {
+          calls++;
+          return calls === 1
+            ? WideEvents.enrich({ companyBind: "bound", bindWaitMs: 0 })
+            : WideEvents.enrich({ companyBind: "launch", bindWaitMs: 999 });
+        };
+        const warm = yield* host.connect("bind_telemetry_warm");
+        assert.deepStrictEqual(yield* warm.next, { type: "ready" });
+        yield* host.settle({ company: 1, versions: 1 });
+        yield* TestClock.adjust(window);
+        yield* host.settle({ company: 0, versions: 0 });
+        yield* host.events.withEvent(
+          { type: "request" },
+          host.update(warm, { sequence: 1, type: "subscribe", subscription: items })
+        );
+        yield* host.settle({ company: 1, versions: 1, connects: 2 });
+        let updateRequest: WideEvents.RequestEvent | undefined;
+        while (updateRequest === undefined) {
+          const next = yield* Queue.take(host.recorded);
+          if (next.type === "request") updateRequest = next;
+        }
+        assert.notProperty(updateRequest, "companyBind");
+        assert.notProperty(updateRequest, "bindWaitMs");
+        yield* Scope.close(warm.scope, Exit.void);
+        const warmSummary = yield* takeStream(warm.generation);
+        assert.include(warmSummary, {
+          outcome: "success",
+          companyBind: "bound",
+          bindWaitMs: 0,
+          idled: 1,
+          reactivated: 1
+        });
+
+        // Spare startup records `spare` and its wait.
+        host.fleet.onConnect = () => WideEvents.enrich({ companyBind: "spare", bindWaitMs: 125 });
+        const spare = yield* host.connect("bind_telemetry_spare");
+        assert.deepStrictEqual(yield* spare.next, { type: "ready" });
+        yield* Scope.close(spare.scope, Exit.void);
+        assert.include(yield* takeStream(spare.generation), {
+          outcome: "success",
+          companyBind: "spare",
+          bindWaitMs: 125
+        });
+
+        // Launch startup refused by connect's own execution.pool.wait error records bind wait and refusal.
+        host.fleet.onConnect = () =>
+          WideEvents.enrich({ companyBind: "launch", bindWaitMs: 40_000 }).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new ExecutionLifecycle.LifecycleError({
+                  code: "busy",
+                  status: 503,
+                  retryAfterSeconds: 1,
+                  limitId: "execution.pool.wait",
+                  scope: "company",
+                  value: 40_000
+                })
+              )
+            )
+          );
+        const refused = yield* host.connect("bind_telemetry_refused");
+        const refusedFrame = yield* refused.next;
+        assert.strictEqual(refusedFrame.type, "start_failed");
+        yield* Scope.close(refused.scope, Exit.void);
+        assert.include(yield* takeStream(refused.generation), {
+          outcome: "refused",
+          code: "busy",
+          limitId: "execution.pool.wait",
+          companyBind: "launch",
+          bindWaitMs: 40_000
+        });
+
+        // Launch startup interrupted by RuntimeStream's outer timeoutOption still records bind wait
+        // from connect's onExit and refusal on the stream event.
+        host.fleet.onConnect = () =>
+          Effect.gen(function* () {
+            const startedAt = yield* Clock.currentTimeMillis;
+            return yield* Effect.never.pipe(
+              Effect.onExit(() =>
+                Effect.flatMap(Clock.currentTimeMillis, (end) =>
+                  WideEvents.enrich({ companyBind: "launch", bindWaitMs: end - startedAt })
+                )
+              )
+            );
+          });
+        const timedOut = yield* host.connect("bind_telemetry_timeout");
+        const frameFiber = yield* timedOut.next.pipe(Effect.forkChild);
+        yield* TestClock.adjust("40 seconds");
+        assert.strictEqual((yield* Fiber.join(frameFiber)).type, "start_failed");
+        yield* Scope.close(timedOut.scope, Exit.void);
+        assert.include(yield* takeStream(timedOut.generation), {
+          outcome: "refused",
+          code: "busy",
+          limitId: "execution.pool.wait",
+          companyBind: "launch",
+          bindWaitMs: 40_000
+        });
+
+        // An idle reconnect opens directly into ready without binding, leaving bind wait unset.
+        host.fleet.onConnect = () => WideEvents.enrich({ companyBind: "bound", bindWaitMs: 0 });
+        const initial = yield* host.connect("bind_telemetry_idle_reconnect");
+        assert.deepStrictEqual(yield* initial.next, { type: "ready" });
+        yield* TestClock.adjust(window);
+        yield* host.settle({ company: 0, versions: 0 });
+        const idleReconnect = yield* host.connect(
+          "bind_telemetry_idle_reconnect",
+          initial.generation
+        );
+        assert.strictEqual(idleReconnect.opened, "ready");
+        yield* Scope.close(idleReconnect.scope, Exit.void);
+        const idleSummary = yield* takeStream(idleReconnect.generation);
+        assert.strictEqual(idleSummary.outcome, "success");
+        assert.notProperty(idleSummary, "companyBind");
+        assert.notProperty(idleSummary, "bindWaitMs");
+      }).pipe(Effect.scoped)
   );
 });

@@ -3,6 +3,7 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -395,6 +396,9 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
       const queue = yield* Queue.make<Uint8Array, Cause.Done>();
       const done = yield* Deferred.make<void>();
       const lifecycleClosed = yield* Deferred.make<void>();
+      const streamEvent =
+        yield* Deferred.make<<A, E, R>(work: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>>();
+      const startupSettled = yield* Deferred.make<void>();
       const scope = yield* Scope.Scope;
       const now = yield* Clock.currentTimeMillis;
       // A patch id names one company's patch, so it scopes the browser's document id alone.
@@ -431,6 +435,14 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
       let peakBuffered = buffered;
       let bytes = 0;
       let closeReason: string | undefined;
+      let startupHold: Fiber.Fiber<void> | undefined;
+      let startFailure:
+        | {
+            readonly outcome: "refused" | "failure";
+            readonly code: string;
+            readonly limitId?: string;
+          }
+        | undefined;
       let executionReady = loaded.manifest.tier !== 2;
       // Whether the generation has decided how it starts; activity before then only counts.
       let started = false;
@@ -530,11 +542,15 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
           activity.owner = undefined;
           idled++;
         });
+      const settleStartup = Effect.sync(() => {
+        Deferred.doneUnsafe(startupSettled, Effect.void);
+      });
       /**
        * Holds the company task and keeps the version warm for one owner, until the window passes
        * with no activity or the generation ends. The generation's startup hold settles held
-       * calls with `ready` or `start_failed`; a background re-hold sends nothing, warms nothing,
-       * and on failure leaves the next activity to retry.
+       * calls with `ready` or `start_failed` and records its bind wait on the `stream` event; a
+       * background re-hold sends nothing, warms nothing, runs outside any event, and on failure
+       * leaves the next activity to retry.
        */
       const hold = (
         fleet: ExecutionLifecycle.ExecutionLifecycle["Service"],
@@ -542,76 +558,89 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
         owner: Owner,
         startup: boolean
       ) =>
-        Effect.gen(function* () {
-          const { wait } = yield* operatingLimits.getMany({
-            companyId: identity.companyId,
-            limits: { wait: "execution.pool.wait" }
-          });
-          yield* fleet.connect(identity.companyId).pipe(
-            Effect.timeoutOption(wait.value),
-            Effect.flatMap((connected) =>
-              Option.isSome(connected)
-                ? Effect.void
-                : Effect.fail(
-                    new ExecutionLifecycle.LifecycleError({
-                      code: "busy",
-                      status: 503,
-                      retryAfterSeconds: 1,
-                      limitId: "execution.pool.wait",
-                      scope: "company",
-                      value: wait.value
-                    })
-                  )
-            )
-          );
-          if (closeReason !== undefined) return;
-          if (startup) {
-            executionReady = true;
-            entry.send({ type: "ready" });
-          }
-          // The version loads while the client boots. A reconnect, reauthentication or resume
-          // names its previous generation and only keeps the version warm, as does a document
-          // that comes back from idle: a document warms once, so its renewals never reload a
-          // version evicted under pressure.
-          if (Option.isSome(connectedVersions))
-            yield* connectedVersions.value.connect(loaded, {
-              warm: startup && request.headers["x-patchy-generation"] === undefined,
-              idle: () => owner.idle
+        WideEvents.detach(
+          Effect.gen(function* () {
+            const { wait } = yield* operatingLimits.getMany({
+              companyId: identity.companyId,
+              limits: { wait: "execution.pool.wait" }
             });
-          if (startup) yield* documentSubscriptions.reconcile("ready");
-          return yield* Effect.never;
-        }).pipe(
-          Effect.catch((error) =>
-            Effect.sync(() => {
-              if (startup && closeReason === undefined)
-                entry.send({
-                  type: "start_failed",
-                  code: "busy",
-                  retryAfter: "retryAfterSeconds" in error ? (error.retryAfterSeconds ?? 1) : 1,
-                  ...("scope" in error && error.scope !== undefined ? { scope: error.scope } : {}),
-                  ...("limitId" in error && error.limitId !== undefined
-                    ? { limitId: error.limitId }
-                    : {}),
-                  ...("value" in error && error.value !== undefined ? { value: error.value } : {})
-                });
-            })
-          ),
-          Effect.raceFirst(untilIdle(activity, owner)),
-          Effect.raceFirst(Deferred.await(lifecycleClosed)),
-          Effect.scoped,
-          Effect.ensuring(
-            Effect.suspend(() => {
-              if (activity.owner === owner) activity.owner = undefined;
-              // A startup the window outlasted still settles held calls: an idle document is ready.
-              if (!owner.idle || executionReady || closeReason !== undefined) return Effect.void;
+            const connect = fleet.connect(identity.companyId);
+            yield* (startup ? (yield* Deferred.await(streamEvent))(connect) : connect).pipe(
+              Effect.timeoutOption(wait.value),
+              Effect.flatMap((connected) =>
+                Option.isSome(connected)
+                  ? Effect.void
+                  : Effect.fail(
+                      new ExecutionLifecycle.LifecycleError({
+                        code: "busy",
+                        status: 503,
+                        retryAfterSeconds: 1,
+                        limitId: "execution.pool.wait",
+                        scope: "company",
+                        value: wait.value
+                      })
+                    )
+              )
+            );
+            if (startup) yield* settleStartup;
+            if (closeReason !== undefined) return;
+            if (startup) {
               executionReady = true;
               entry.send({ type: "ready" });
-              return documentSubscriptions.reconcile("ready");
-            })
-          ),
-          Effect.forkIn(scope),
-          Effect.asVoid
-        );
+            }
+            // The version loads while the client boots. A reconnect, reauthentication or resume
+            // names its previous generation and only keeps the version warm, as does a document
+            // that comes back from idle: a document warms once, so its renewals never reload a
+            // version evicted under pressure.
+            if (Option.isSome(connectedVersions))
+              yield* connectedVersions.value.connect(loaded, {
+                warm: startup && request.headers["x-patchy-generation"] === undefined,
+                idle: () => owner.idle
+              });
+            if (startup) yield* documentSubscriptions.reconcile("ready");
+            return yield* Effect.never;
+          }).pipe(
+            Effect.catch((error) =>
+              Effect.sync(() => {
+                if (startup && closeReason === undefined) {
+                  startFailure = {
+                    outcome: error.code === "source_unavailable" ? "failure" : "refused",
+                    code: error.code,
+                    ...("limitId" in error && error.limitId !== undefined
+                      ? { limitId: error.limitId }
+                      : {})
+                  };
+                  entry.send({
+                    type: "start_failed",
+                    code: "busy",
+                    retryAfter: "retryAfterSeconds" in error ? (error.retryAfterSeconds ?? 1) : 1,
+                    ...("scope" in error && error.scope !== undefined
+                      ? { scope: error.scope }
+                      : {}),
+                    ...("limitId" in error && error.limitId !== undefined
+                      ? { limitId: error.limitId }
+                      : {}),
+                    ...("value" in error && error.value !== undefined ? { value: error.value } : {})
+                  });
+                }
+              })
+            ),
+            Effect.raceFirst(untilIdle(activity, owner)),
+            Effect.raceFirst(Deferred.await(lifecycleClosed)),
+            Effect.ensuring(startup ? settleStartup : Effect.void),
+            Effect.scoped,
+            Effect.ensuring(
+              Effect.suspend(() => {
+                if (activity.owner === owner) activity.owner = undefined;
+                // A startup the window outlasted still settles held calls: an idle document is ready.
+                if (!owner.idle || executionReady || closeReason !== undefined) return Effect.void;
+                executionReady = true;
+                entry.send({ type: "ready" });
+                return documentSubscriptions.reconcile("ready");
+              })
+            )
+          )
+        ).pipe(Effect.forkIn(scope));
       const entry: Entry = {
         companyId: identity.companyId,
         patchId: input.patchId,
@@ -638,7 +667,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
           const owner: Owner = { idle: false };
           activity.owner = owner;
           reactivated++;
-          return hold(execution, activity, owner, false);
+          return hold(execution, activity, owner, false).pipe(Effect.asVoid);
         }
       };
       const disconnect = Effect.sync(() => {
@@ -678,7 +707,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
         () => disconnect
       ).pipe(Effect.onError(() => disconnect));
       const admittedDocuments = viewers.get(viewerKey)!;
-      yield* events
+      const eventFiber = yield* events
         .withEvent(
           {
             type: "stream",
@@ -690,16 +719,25 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
             tier: loaded.manifest.tier,
             documentId: input.documentId
           },
-          Deferred.await(done).pipe(
+          Effect.gen(function* () {
+            yield* Deferred.succeed(streamEvent, yield* WideEvents.capture);
+            yield* Deferred.await(done);
+          }).pipe(
             Effect.ensuring(
-              Effect.flatMap(Clock.currentTimeMillis, (now) => {
+              Effect.gen(function* () {
                 // Closed before its totals are read, so a check settling later reports itself.
                 close("disconnected");
+                // Let an interrupted startup bind finish recording `companyBind` and `bindWaitMs`
+                // before the stream event closes, without waiting for scope release.
+                if (startupHold !== undefined)
+                  yield* Effect.raceFirst(Deferred.await(startupSettled), Fiber.await(startupHold));
+                const now = yield* Clock.currentTimeMillis;
                 const activity = entry.activity;
-                return WideEvents.enrich({
+                yield* WideEvents.enrich({
                   ...documentSubscriptions.metrics(),
                   bytes,
                   closeReason: closeReason ?? "disconnected",
+                  ...startFailure,
                   ...(activity === undefined ? {} : { idled, reactivated }),
                   limits: [
                     {
@@ -730,7 +768,8 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
             )
           )
         )
-        .pipe(Effect.forkIn(scope, { startImmediately: true }));
+        .pipe(Effect.forkIn(rootScope, { startImmediately: true }));
+      yield* Effect.addFinalizer(() => disconnect.pipe(Effect.andThen(Fiber.await(eventFiber))));
       yield* withPatch(
         input.patchId,
         Effect.suspend(() =>
@@ -749,7 +788,9 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
               const owner: Owner = { idle: false };
               activity.owner = owner;
               entry.send({ type: "starting" });
-              return hold(execution, activity, owner, true);
+              return Effect.map(hold(execution, activity, owner, true), (fiber) => {
+                startupHold = fiber;
+              });
             }
             // An idle document's reconnect opens dispatch without binding its company or warming.
             executionReady = true;

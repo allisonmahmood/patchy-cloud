@@ -98,6 +98,9 @@ export interface Capacity {
   readonly budget: number;
 }
 
+/** What a spare reservation came to: reserved, lease lost, fleet at budget, or revision inactive. */
+export type ReserveOutcome = "reserved" | "lease_lost" | "budget" | "retired";
+
 export const companyLock = (companyId: string) => `execution/company/${companyId}`;
 /** Held while a prewarm holds the company's task: it defers release without moving a clock. */
 export const prewarmLock = (companyId: string) => `execution/prewarm/${companyId}`;
@@ -479,7 +482,7 @@ export const make = Effect.gen(function* () {
       WHERE owner_id = ${owner} AND lease_epoch = ${epoch} AND expires_at > ${now} FOR UPDATE`.pipe(
       Effect.flatMap(decodeLeases)
     );
-    if (!held[0]) return false;
+    if (!held[0]) return "lease_lost" as const;
     const rows =
       yield* sql`INSERT INTO execution_tasks(task_id, deployment_revision, state, requested_at)
       SELECT ${taskId}, ${revision}, 'starting', ${now}
@@ -488,7 +491,17 @@ export const make = Effect.gen(function* () {
         AND EXISTS (SELECT 1 FROM execution_rollout WHERE singleton
           AND (current_revision = ${revision} OR staged_revision = ${revision}))
       RETURNING ${taskColumns}`.pipe(Effect.flatMap(decodeTasks));
-    return rows.length === 1;
+    if (rows.length === 1) return "reserved" as const;
+    const exhausted = yield* sql`SELECT (
+        EXISTS (SELECT 1 FROM execution_deployments WHERE revision = ${revision} AND NOT retired)
+        AND EXISTS (SELECT 1 FROM execution_rollout WHERE singleton
+          AND (current_revision = ${revision} OR staged_revision = ${revision}))
+        AND (SELECT count(*) FROM execution_tasks WHERE state <> 'stopped') >= ${budget}
+      ) AS acquired`.pipe(
+      Effect.flatMap(decodeFlags),
+      Effect.map((result) => result[0]!.acquired)
+    );
+    return (exhausted ? "budget" : "retired") as ReserveOutcome;
   }, sql.withTransaction);
   const ready = (task: {
     taskId: string;

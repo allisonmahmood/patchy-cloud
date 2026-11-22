@@ -18,6 +18,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
@@ -997,6 +998,202 @@ it.layer(services)("host fleet controller", (it) => {
         assert.include(event, { outcome: "interrupted", companyBind: "launch" });
         assert.isAbove(event.bindWaitMs ?? 0, 0);
       }).pipe(Effect.scoped),
+    30_000
+  );
+
+  it.effect(
+    "says how a stream connect found its company's server and how long it waited, a refused or interrupted wait included",
+    () =>
+      Effect.gen(function* () {
+        const { companyId, provider, left, sql } = yield* setupMemory("connect-found", false);
+        const captured = yield* recording;
+        const connect = (company: string, host = left) =>
+          Effect.gen(function* () {
+            const exit = yield* captured.events
+              .withEvent(
+                { type: "stream", tier: 2 },
+                host.lifecycle.connect(company).pipe(Effect.scoped)
+              )
+              .pipe(Effect.exit);
+            const event = yield* captured.take;
+            if (event.type !== "stream") return assert.fail(`a ${event.type} event`);
+            return {
+              found: event.companyBind,
+              waitedMs: event.bindWaitMs,
+              exit
+            };
+          });
+        // The pool starts empty, so the first open waits for a launched task.
+        const first = yield* phase("first connect", connect(companyId));
+        assert.include(first, { found: "launch" });
+        assert.isTrue(Exit.isSuccess(first.exit));
+        // The company is now bound, so the next open finds it warm.
+        const warm = yield* connect(companyId);
+        assert.include(warm, { found: "bound", waitedMs: 0 });
+        assert.isTrue(Exit.isSuccess(warm.exit));
+        // Another company claims the remaining ready spare.
+        const other = "cmp_fleet_connect_found_other";
+        yield* sql`INSERT INTO companies(id, handle, name) VALUES (${other}, ${other}, 'Fleet connect found')`;
+        const spare = yield* connect(other);
+        assert.include(spare, { found: "spare" });
+        assert.isTrue(Exit.isSuccess(spare.exit));
+        // A host whose launch never arrives refuses the next cold open at execution.pool.wait.
+        const stalled = yield* Fleet.make({
+          replicaId: "connect-found-stalled",
+          deploymentRevision: "connect-found",
+          automaticHousekeeping: false
+        }).pipe(
+          Effect.provideService(
+            TaskProvider.TaskProvider,
+            TaskProvider.TaskProvider.of({ ...provider, start: () => Effect.never })
+          )
+        );
+        const cold = "cmp_fleet_connect_found_cold";
+        yield* sql`INSERT INTO companies(id, handle, name) VALUES (${cold}, ${cold}, 'Fleet connect cold')`;
+        const refused = yield* connect(cold, stalled).pipe(Effect.forkChild);
+        const gaveUp = Effect.gen(function* () {
+          while (refused.pollUnsafe() === undefined) {
+            yield* TestClock.adjust(500);
+            yield* TestClock.withLive(Effect.sleep(5));
+          }
+          return yield* Fiber.join(refused);
+        });
+        const refusal = yield* phase("refused connect", gaveUp);
+        assert.include(refusal, { found: "launch" });
+        assert.isTrue(Exit.isFailure(refusal.exit));
+        assert.oneOf(refusal.waitedMs, [40_000, 40_500]);
+        // An interrupted wait (outer timeout or client disconnect) still records bind wait.
+        const gone = "cmp_fleet_connect_found_gone";
+        yield* sql`INSERT INTO companies(id, handle, name) VALUES (${gone}, ${gone}, 'Fleet connect gone')`;
+        const abandoned = yield* captured.events
+          .withEvent(
+            { type: "stream", tier: 2 },
+            stalled.lifecycle.connect(gone).pipe(Effect.scoped)
+          )
+          .pipe(Effect.forkChild);
+        for (let step = 0; step < 10; step++) {
+          yield* TestClock.adjust(500);
+          yield* TestClock.withLive(Effect.sleep(5));
+        }
+        yield* Fiber.interrupt(abandoned);
+        const event = yield* captured.take;
+        if (event.type !== "stream") return assert.fail(`a ${event.type} event`);
+        assert.include(event, { outcome: "interrupted", companyBind: "launch" });
+        assert.isAbove(event.bindWaitMs ?? 0, 0);
+      }).pipe(Effect.scoped),
+    30_000
+  );
+
+  it.effect(
+    "logs fleet budget exhaustion once per pass when budget blocks reservation, never on lease loss or retired revision",
+    () =>
+      Effect.gen(function* () {
+        const logs: Array<{ readonly message: unknown; readonly level: string }> = [];
+        const captureLogs = Logger.layer([
+          Logger.make((entry) => {
+            logs.push({ message: entry.message, level: entry.logLevel });
+          })
+        ]);
+        const budgetWarnings = () =>
+          logs.filter(
+            (entry) =>
+              entry.level === "Warn" &&
+              Array.isArray(entry.message) &&
+              entry.message[0] === "Execution fleet budget exhausted"
+          );
+        const { companyId, bundle, left, sql } = yield* setupMemory("budget-warn");
+        const store = yield* FleetStore.make;
+        // Budget is 2 and minimumSpares is 2; binding one company leaves 1 spare and 0 headroom.
+        const admission = yield* left.lifecycle.acquire(companyId, bundle.patchId, "page");
+        yield* left.housekeeping().pipe(Effect.provide(captureLogs));
+        const warnings = budgetWarnings();
+        assert.strictEqual(warnings.length, 1);
+        assert.deepStrictEqual(warnings[0]!.message, [
+          "Execution fleet budget exhausted",
+          { revision: "budget-warn", budget: 2, target: 2, spares: 1 }
+        ]);
+        // Direct store.reserve distinguishes lease loss and retired revision from budget exhaustion.
+        yield* TestClock.adjust(15_000);
+        const now = yield* Clock.currentTimeMillis;
+        assert.strictEqual(
+          yield* store.reserve("res-lease-lost", "budget-warn", "other-owner", 999, now, 2),
+          "lease_lost"
+        );
+        const lease = (yield* store.lease("budget-warn-direct", "budget-warn", now, 15_000))!;
+        assert.strictEqual(
+          yield* store.reserve(
+            "res-budget",
+            "budget-warn",
+            "budget-warn-direct",
+            lease.leaseEpoch,
+            now,
+            2
+          ),
+          "budget"
+        );
+        assert.strictEqual(
+          yield* store.reserve(
+            "res-retired",
+            "missing-revision",
+            "budget-warn-direct",
+            lease.leaseEpoch,
+            now,
+            10
+          ),
+          "retired"
+        );
+        yield* sql`DELETE FROM execution_housekeeping WHERE owner_id = 'budget-warn-direct'`;
+        yield* admission.release;
+        // If the revision is retired right before INSERT INTO execution_tasks, replenish must not
+        // log a budget exhaustion warning.
+        logs.length = 0;
+        let retiredOnce = false;
+        const retireBeforeReserve: Statement.Transformer = (statement) =>
+          retiredOnce || !/^\s*INSERT INTO execution_tasks\b/.test(statement.compile()[0])
+            ? Effect.succeed(statement)
+            : Effect.sync(() => {
+                retiredOnce = true;
+              }).pipe(
+                Effect.andThen(store.retireDeployment("budget-warn").pipe(Effect.orDie)),
+                Effect.as(statement)
+              );
+        yield* left
+          .housekeeping()
+          .pipe(
+            Effect.provide(captureLogs),
+            Effect.provideService(Statement.CurrentTransformer, retireBeforeReserve),
+            Effect.result
+          );
+        assert.isTrue(retiredOnce);
+        assert.strictEqual(budgetWarnings().length, 0);
+        // Re-register and expire the lease right before reserve's FOR UPDATE lease check: no budget warning.
+        yield* sql`UPDATE execution_deployments SET retired = false WHERE revision = 'budget-warn'`;
+        yield* sql`UPDATE execution_rollout SET current_revision = 'budget-warn' WHERE singleton`;
+        let expiredOnce = false;
+        const expireBeforeReserve: Statement.Transformer = (statement) =>
+          expiredOnce ||
+          !/^\s*SELECT lease_epoch AS "leaseEpoch" FROM execution_housekeeping\b/.test(
+            statement.compile()[0]
+          )
+            ? Effect.succeed(statement)
+            : Effect.sync(() => {
+                expiredOnce = true;
+              }).pipe(
+                Effect.andThen(
+                  sql`UPDATE execution_housekeeping SET expires_at = 0`.pipe(Effect.orDie)
+                ),
+                Effect.as(statement)
+              );
+        yield* left
+          .housekeeping()
+          .pipe(
+            Effect.provide(captureLogs),
+            Effect.provideService(Statement.CurrentTransformer, expireBeforeReserve),
+            Effect.result
+          );
+        assert.isTrue(expiredOnce);
+        assert.strictEqual(budgetWarnings().length, 0);
+      }).pipe(Effect.scoped, Effect.provide(fleetBudget)),
     30_000
   );
 
