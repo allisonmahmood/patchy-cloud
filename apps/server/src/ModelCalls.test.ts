@@ -229,9 +229,47 @@ const refusal = (body: unknown) => {
   return JSON.parse(JSON.stringify({ code, limitId, retryAfter, details, operation })) as unknown;
 };
 
+/**
+ * Runs `effect` with a proxy named at a port nothing listens on, in both spellings Bun reads.
+ * Bun's fetch would hand even a loopback request to it unless loopback is exempt, as the Bun
+ * lane's setup and the dev runner make it; Node's fetch reads no proxy from the environment.
+ */
+const behindDeadProxy = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      // oxlint-disable-next-line no-restricted-properties -- sets the proxy Bun's fetch reads; reads no setting.
+      const env = process.env;
+      const before = { HTTP_PROXY: env.HTTP_PROXY, http_proxy: env.http_proxy };
+      env.HTTP_PROXY = env.http_proxy = "http://127.0.0.1:9";
+      return { env, before };
+    }),
+    () => effect,
+    ({ env, before }) =>
+      Effect.sync(() => {
+        for (const [name, value] of Object.entries(before))
+          if (value === undefined) delete env[name];
+          else env[name] = value;
+      })
+  );
+
 it.layer(suite, { excludeTestServices: true, timeout: "120 seconds" })(
   "model calls end to end",
   (it) => {
+    it.effect.runIf(process.versions.bun !== undefined)(
+      "reaches the fake on loopback with a proxy named that nothing answers",
+      () =>
+        Effect.gen(function* () {
+          const patch = yield* published("proxied");
+          const text = yield* behindDeadProxy(
+            ask(patch, "generate", "The printer on floor two is out of toner")
+          );
+          assert.strictEqual(text.status, 200);
+          assert.deepInclude((text.body as { value: unknown }).value, {
+            text: 'Read 9 words, starting "the printer on floor two".'
+          });
+        }),
+      60_000
+    );
     it.effect(
       "answers a decision, a short text and a typed value from the fake provider",
       () =>
