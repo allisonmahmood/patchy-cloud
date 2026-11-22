@@ -249,14 +249,15 @@ process passes the one admission queue they bound; today that is published
 actions' calls, and `patchy dev`'s door and an admin's test call will join them
 when those land. An execution task holds its model calls to
 `models.execution.inFlight` (32, its registry value) at its callback proxy. Its
-loader refuses a call whose arguments pass `models.ingress.bytes` before sending
-it; its proxy refuses a declared length past that before taking a permit or
-reading, then closes the connection, takes a permit before reading any other
-call's body, and past its permits refuses `busy` with nothing sent. The refusals
-the task gave an attempt's model calls, at most 32, go back to the host with the
-attempt's reply, so a handler that relays one reaches the page as that refusal,
-with its code, limit and `sent: false`; a patch that writes the same words itself
-gets `handler_failed`. A model call from an execution task of an older release,
+loader refuses a call framed with a file, or whose arguments pass
+`models.ingress.bytes`, before sending it; its proxy refuses a declared length
+past that before taking a permit or reading, then closes the connection, takes a
+permit before reading any other call's body, and past its permits refuses `busy`
+with nothing sent. The refusals the task gave an attempt's model calls, at most
+32, go back to the host with the attempt's reply, so a handler that relays one
+reaches the page as that refusal, with its code, limit, `sent: false` and the
+operation it was given, unless two operations were given the same one; a patch
+that writes the same words itself gets `handler_failed`. A model call from an execution task of an older release,
 whose proxy holds no such permit, is refused by the host with nothing sent.
 
 `apps/infra` gives hosts' and execution tasks' containers `nofile` 65535 and
@@ -266,20 +267,33 @@ follows separates what was measured from what is derived, and says what must be
 measured before production's switch goes on.
 
 **Measured** on a Mac mini (Apple silicon, macOS, Bun 1.4.4), every request on
-loopback, with `scripts/dev/src/measureModels.ts` (a real supervisor and workerd,
-as an execution task runs them, with a stand-in host) and
-`scripts/dev/src/measureModelsHost.ts` (a host's provider requests, to the fake).
-Their probes are each given up after two seconds on their own, and a phase whose
+loopback and none through a proxy, with `scripts/dev/src/measureModels.ts` (a
+real supervisor and workerd, as an execution task runs them, with a stand-in
+host) and `scripts/dev/src/measureModelsHost.ts` (a host's provider requests, to
+the fake). Only `measureModels.ts` probes: an outbound request from its own
+process, five per phase, each given up after two seconds, a timed-out one counted
+in the median as at least that and any other failure counted apart. A phase whose
 held count moved while it was sampled fails the run instead of mixing two loads.
 
 - Bun runs 256 fetches at once per process and queues the rest until one ends.
-  With 255 held open another answered in 6 ms; with 256 or 300 open it was still
-  waiting at three seconds; with the limit at 512 and 300 open, 6 ms.
-- Past that limit the load doesn't hold still. With 256 model calls allowed and
-  Bun's default, 134 to 194 reached the stand-in host before the count stopped;
-  with 320, 176 had arrived after three still seconds and 304 by the end of the
-  next sample, so that run gives no probe figure. With the limit at 512, 253 to
-  256 of 256 arrived in the first round and every one in later rounds.
+  An earlier, separate check (a Bun script holding fetches open to a loopback
+  server and timing one more, given up after three seconds) found: with 255 open
+  another answered in 6 ms; with 256 or 300 open it was still waiting at three
+  seconds; with the limit at 512 and 300 open, 6 ms.
+- Past that limit, calls wait inside the process. At Bun's default, 288 and 320
+  model calls allowed, the calls reaching the stand-in host stopped near 256 less
+  the actions' invokes in flight (184 of 288 beside 72 invokes, 176 to 186 of 320
+  beside 80) and stayed there at least three seconds. In most runs the rest then
+  arrived while the next phase was sampled, which fails the run; in one run of
+  320, and one of 256 with 256 ordinary callbacks, the supervisor ended its
+  workerd process instead, for a cause those runs didn't record (the script now
+  prints it). With 256 allowed, a first round held 133 to 198 at the default and
+  167 to 256 at 512, for reasons these runs don't show; later rounds held 158 to
+  192 at the default and all 256 at 512.
+- `measureModels.ts`'s probe answered with a median of 0.1 ms, none timed out
+  and none failed, in every phase of every run that finished, 256 calls at Bun's
+  default included; the runs past the limit at the default failed before
+  reporting one.
 - A model call held at the execution task's proxy with a 1 KiB input costs the
   supervisor about 0.13 MiB and workerd 0.18 MiB, and about three sockets in the
   supervisor and two in workerd, which `nofile` 65535 covers many times over
