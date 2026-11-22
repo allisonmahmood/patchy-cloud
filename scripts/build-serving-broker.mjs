@@ -11,7 +11,11 @@ const result = await build({
   write: false,
   format: "iife",
   platform: "browser",
-  target: ["chrome120", "firefox120"],
+  // Syntax targets: esbuild lowers syntax for these browsers, never runtime APIs. Safari 16.4 is
+  // the oldest that parses the shared schemas' lookbehind, which esbuild can't lower. What the
+  // shell and the SDK call, such as `Promise.withResolvers`, asks for current browsers anyway,
+  // Safari 17.4 and later.
+  target: ["chrome120", "firefox120", "safari16.4"],
   conditions: ["development"],
   minify: true,
   legalComments: "none",

@@ -78,9 +78,13 @@ const drawsRing = (locator: Locator) =>
 
 for (const fixture of LOOK_FIXTURES) {
   test(`the ${fixture} look's specimen shows its states, fits a phone and makes no request`, async ({
-    page
+    page,
+    browserName
   }) => {
     const requests = await openPreview(page, lookFixtureDir(fixture));
+    // Tab as it stops on every control. WebKit keeps Safari's defaults on a Mac, where plain Tab
+    // skips links and checkboxes and Option+Tab is the Tab that stops on them.
+    const tab = browserName === "webkit" ? "Alt+Tab" : "Tab";
 
     // The states row shows hover and keyboard focus at rest, as the look styles them.
     const resting = await look(page, ".state button >> text=Resting");
@@ -98,7 +102,7 @@ for (const fixture of LOOK_FIXTURES) {
     expect(await look(page, ".state button:disabled")).toBe(disabled);
 
     // Real keyboard focus is visible: the first Tab lands on the first link and draws a ring.
-    await page.keyboard.press("Tab");
+    await page.keyboard.press(tab);
     const policy = page.getByRole("link", { name: "spending policy" });
     await expect(policy).toBeFocused();
     expect(await drawsRing(policy)).toBe(true);
@@ -108,7 +112,7 @@ for (const fixture of LOOK_FIXTURES) {
     const border = () => invalid.evaluate((element) => getComputedStyle(element).borderColor);
     const invalidBorder = await border();
     await page.getByLabel("Focused field").focus();
-    await page.keyboard.press("Tab");
+    await page.keyboard.press(tab);
     await expect(invalid).toBeFocused();
     expect(await border()).toBe(invalidBorder);
 
@@ -129,7 +133,7 @@ for (const fixture of LOOK_FIXTURES) {
       })
     ).toEqual({ narrower: true, sameLine: true });
     await page.getByLabel("Reason").focus();
-    await page.keyboard.press("Tab");
+    await page.keyboard.press(tab);
     await expect(checkbox).toBeFocused();
     expect(await drawsRing(checkbox)).toBe(true);
 

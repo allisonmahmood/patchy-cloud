@@ -86,9 +86,13 @@ The generated client uses `patchy/client` internally and re-exports
 the page's topmost modal dialog when the dialog is plain: ordinary containers
 and text, with buttons, links, selects, checkboxes, summaries, one-line inputs
 and elements with `tabindex="0"`, and nothing that scrolls, pops over, or adds,
-hides or reorders stops, while no popover is open in the page. A richer dialog
-keeps the browser's own Tab, which can leave the patch's frame, as `showModal()`
-alone lets it.
+hides or reorders stops, while no popover is open in the page. In Safari and
+Chromium-based browsers on a Mac, Option+Tab, Safari's Tab to every control,
+wraps the same way; Firefox on a Mac doesn't move focus by Option+Tab. That
+holds under Safari's and macOS's default keyboard settings, which a page can't
+read; with either changed, Tab or Option+Tab can still leave the dialog. A richer
+dialog keeps the browser's own Tab, which can leave the patch's frame, as
+`showModal()` alone lets it.
 Tooling and type-only imports do not enter the page graph. An off-SDK import,
 including one hidden by an alias or removed by tree shaking, is local exit 1,
 `import_refused`. Its message names the package, importer and allowed entries,

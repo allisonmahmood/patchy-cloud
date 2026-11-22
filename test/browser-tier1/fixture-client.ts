@@ -45,7 +45,7 @@ const harness: FixtureWindow["harness"] = {
     await client.files.assets!.put(
       "active.html",
       new TextEncoder().encode(
-        "<!doctype html><script>top.location='https://example.invalid'</script><p>download bytes</p>"
+        "<!doctype html><script>document.documentElement.dataset.ran='1';top.location='https://example.invalid'</script><p>download bytes</p>"
       ),
       { contentType: "text/html" }
     );

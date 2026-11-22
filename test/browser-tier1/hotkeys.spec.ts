@@ -12,9 +12,19 @@ import type { Instance } from "./instance.js";
 // behaving as a dialog.
 // Pressing a key as another layout reports it, composing with an input method, dragging a touch
 // and reading the accessibility tree all go through Chromium's DevTools protocol. Playwright has
-// no such door into Firefox, so those steps run in Chromium alone.
+// no such door into Firefox or WebKit, so those steps run in Chromium alone.
 const needsCdp = (browserName: string) =>
   [browserName !== "chromium", "Needs Chromium's DevTools protocol."] as const;
+// The browser's platform is this machine's, and WebKit runs on a Mac: there Mod is ⌘ and the
+// sheet shows a Mac's keys, elsewhere Ctrl and words. `ControlOrMeta` presses Mod on either.
+// Pages that stand in for a Mac elsewhere say so.
+const onMac = process.platform === "darwin";
+const mod = onMac ? "⌘" : "Ctrl";
+const tabKey = onMac ? "⇥" : "Tab";
+// Tab as it stops on every control. WebKit keeps Safari's defaults on a Mac, where plain Tab skips
+// buttons and Option+Tab is the Tab that stops on them.
+const tabEvery = (browserName: string, key: "Tab" | "Shift+Tab" = "Tab") =>
+  browserName === "webkit" ? `Alt+${key}` : key;
 const packageRoot = fileURLToPath(new URL("../../packages/patchy", import.meta.url));
 const source = `import { render, useEffect, useState } from "patchy/preact";
 import { createClient } from "patchy/client";
@@ -478,7 +488,7 @@ test("patchy/hotkeys fires in the published frame across fields, scopes, layouts
   await test.step("a single key waits in a text field while Mod+Enter fires there", async () => {
     await view.locator("#text").focus();
     await page.keyboard.press("l");
-    await page.keyboard.press("Control+Enter");
+    await page.keyboard.press("ControlOrMeta+Enter");
     await expect(view.locator("#text")).toHaveValue("l");
     await firedNext(frame, ["Mod+Enter"]);
   });
@@ -590,8 +600,8 @@ test("patchy/hotkeys fires in the published frame across fields, scopes, layouts
     ).toEqual(["Escape untouched", "Enter untouched", "Enter untouched"]);
   });
 
-  await test.step("formatHotkey shows Ctrl here and ⌘ on a Mac, where Mod is ⌘", async () => {
-    await expect(view.locator("#mod-k")).toHaveText("Ctrl+K");
+  await test.step("formatHotkey shows Ctrl away from a Mac and ⌘ on one, where Mod is ⌘", async () => {
+    await expect(view.locator("#mod-k")).toHaveText(onMac ? "⌘ K" : "Ctrl+K");
     const mac = await context.newPage();
     await mac.addInitScript(() => {
       Object.defineProperty(Navigator.prototype, "platform", { get: () => "MacIntel" });
@@ -723,7 +733,8 @@ test("a conflict warning waits for every hook's update, so siblings swapping key
 
 test("the sheet opens by ? or its button, lists by group with its own rows last, runs what it lists and closes like a dialog", async ({
   page,
-  instance
+  instance,
+  browserName
 }) => {
   const patch = await publish(instance, sheet);
   expect((await page.goto(patch.address))?.status()).toBe(200);
@@ -751,10 +762,10 @@ test("the sheet opens by ? or its button, lists by group with its own rows last,
     expect(listed).toEqual([
       [
         "Navigation",
-        ["Go home: G H", "Go to timeline: G T", "Show shortcuts: ?", "Show shortcuts: Ctrl /"]
+        ["Go home: G H", "Go to timeline: G T", "Show shortcuts: ?", `Show shortcuts: ${mod} /`]
       ],
       ["Tasks", ["Create task: C T"]],
-      ["General", ["Next: L", "Tab then A: Tab A"]]
+      ["General", ["Next: L", `Tab then A: ${tabKey} A`]]
     ]);
   });
 
@@ -768,17 +779,17 @@ test("the sheet opens by ? or its button, lists by group with its own rows last,
       "Go to timelineGthenT",
       "Create taskCthenT",
       "NextL",
-      "Tab then ATabthenA"
+      `Tab then A${tabKey}thenA`
     ]);
     for (const command of await commands.all()) {
-      await page.keyboard.press("Tab");
+      await page.keyboard.press(tabEvery(browserName));
       await expect(command).toBeFocused();
     }
-    await page.keyboard.press("Tab");
+    await page.keyboard.press(tabEvery(browserName));
     await expect(close).toBeFocused();
-    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.press(tabEvery(browserName, "Shift+Tab"));
     await expect(commands.last()).toBeFocused();
-    await page.keyboard.press("Tab");
+    await page.keyboard.press(tabEvery(browserName));
     await expect(close).toBeFocused();
   });
 
@@ -803,11 +814,13 @@ test("the sheet opens by ? or its button, lists by group with its own rows last,
   });
 
   await test.step("its button opens it, and its close button or a click outside closes it", async () => {
+    // Safari's click focuses no button, so there focus goes back to the page itself.
+    const back = browserName === "webkit" ? view.locator("body") : opener;
     await opener.click();
     await expect(close).toBeFocused();
     await close.click();
     await expect(dialog).toBeHidden();
-    await expect(opener).toBeFocused();
+    await expect(back).toBeFocused();
     await page.keyboard.press("j");
     await firedNext(frame, ["J"]);
     await opener.click();
@@ -815,7 +828,7 @@ test("the sheet opens by ? or its button, lists by group with its own rows last,
     // The dialog is the scrim around the card; its corner is outside the card.
     await dialog.click({ position: { x: 4, y: 4 } });
     await expect(dialog).toBeHidden();
-    await expect(opener).toBeFocused();
+    await expect(back).toBeFocused();
     await page.keyboard.press("j");
     await firedNext(frame, ["J"]);
   });
@@ -862,7 +875,8 @@ test("the sheet opens by ? or its button, lists by group with its own rows last,
     await expect(close).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(dialog).toBeHidden();
-    await expect(item).toBeFocused();
+    // Safari's click focuses no button, so there focus goes back to the page itself.
+    await expect(browserName === "webkit" ? view.locator("body") : item).toBeFocused();
   });
 });
 
@@ -1154,7 +1168,7 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
     await page.keyboard.press("Home");
     await expect(view.locator("#editor")).toHaveValue("a");
     // whileTyping: false holds the editor's own Mod+K back, so the page's takes it.
-    await page.keyboard.press("Control+k");
+    await page.keyboard.press("ControlOrMeta+k");
     await firedNext(frame, ["editor Enter", "editor Escape", "editor ArrowDown", "page Mod+K"]);
     await view.locator("#list").focus();
     await page.keyboard.press("Enter");
@@ -1198,16 +1212,21 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
     await view.locator("#field").focus();
     await frame.evaluate(() => (window as unknown as Arrived).arrived.splice(0));
     for (const key of [
-      "Control+a",
-      "Control+z",
-      "Control+Backspace",
-      "Control+ArrowLeft",
+      "ControlOrMeta+a",
+      "ControlOrMeta+z",
+      "ControlOrMeta+Backspace",
+      "ControlOrMeta+ArrowLeft",
       "Shift+Home",
       "l",
       "Enter"
-    ])
+    ]) {
       await page.keyboard.press(key);
-    await page.keyboard.press("Control+k");
+      // On a Mac, ⌘Z undoes the page's last typing, which WebKit runs together across fields,
+      // and takes focus to the field it undid, so focus comes back here after it.
+      if (browserName === "webkit" && key === "ControlOrMeta+z")
+        await view.locator("#field").focus();
+    }
+    await page.keyboard.press("ControlOrMeta+k");
     await firedNext(frame, ["page Mod+K"]);
     await arrivedNext([
       "a untouched",
@@ -1227,12 +1246,17 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
     await view.locator("#readonly").focus();
     await page.keyboard.press("l");
     await page.keyboard.press("ArrowRight");
-    await page.keyboard.press("Control+a");
-    await page.keyboard.press("Control+k");
+    await page.keyboard.press("ControlOrMeta+a");
+    await page.keyboard.press("ControlOrMeta+k");
     await firedNext(frame, ["page L", "page Mod+K"]);
     await arrivedNext(["ArrowRight untouched", "a untouched"]);
     await view.locator("#body").focus();
-    for (const key of ["Control+a", "Control+z", "Control+Backspace", "ArrowRight"])
+    for (const key of [
+      "ControlOrMeta+a",
+      "ControlOrMeta+z",
+      "ControlOrMeta+Backspace",
+      "ArrowRight"
+    ])
       await page.keyboard.press(key);
     await firedNext(frame, ["page Mod+A", "page Mod+Z", "page Mod+Backspace", "page ArrowRight"]);
     await frame.evaluate(() => (window as unknown as Arrived).arrived.splice(0));
@@ -1298,9 +1322,10 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
   await test.step("from rich text, the sheet puts focus and the selection back as it closes", async () => {
     const rich = view.locator("#rich");
     await rich.focus();
-    await page.keyboard.press("End");
+    // End on a Mac scrolls; ⌘→ goes to the line's end.
+    await page.keyboard.press(onMac ? "Meta+ArrowRight" : "End");
     for (let step = 0; step < 5; step++) await page.keyboard.press("Shift+ArrowLeft");
-    await page.keyboard.press("Control+/");
+    await page.keyboard.press("ControlOrMeta+/");
     await expect(sheet).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(sheet).toBeHidden();
@@ -1316,7 +1341,7 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
 
   // A drag that starts or ends on the scrim clicks the dialog itself, as a tap on the scrim does.
   await test.step("a drag selecting a label out onto the scrim, or one from the scrim into the card, leaves the sheet open", async () => {
-    await page.keyboard.press("Control+/");
+    await page.keyboard.press("ControlOrMeta+/");
     await expect(sheet).toBeVisible();
     const label = (await sheet.locator("li.hotkey-row > .hotkey-label").last().boundingBox())!;
     const scrim = (await sheet.boundingBox())!;
@@ -1366,7 +1391,7 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
     await expect(notes).toBeFocused();
     await page.keyboard.type("hello world");
     for (let step = 0; step < 5; step++) await page.keyboard.press("Shift+ArrowLeft");
-    await page.keyboard.press("Control+/");
+    await page.keyboard.press("ControlOrMeta+/");
     await expect(sheet).toBeVisible();
     const listed = await frame.evaluate(() =>
       [...document.querySelectorAll(".hotkey-group")].map((group) => [
@@ -1411,12 +1436,12 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
 
   await test.step("Tab goes through the sheet's commands, which run by Space or a click", async () => {
     const notes = view.locator("#notes");
-    await page.keyboard.press("Control+/");
+    await page.keyboard.press("ControlOrMeta+/");
     await expect(sheet.getByRole("button", { name: "Close", exact: true })).toBeFocused();
     const commands = sheet.locator(".hotkey-command");
     // The setting's row, then the dialog's Close, then Priority 5.
     for (const index of [0, 1, 2]) {
-      await page.keyboard.press("Tab");
+      await page.keyboard.press(tabEvery(browserName));
       await expect(commands.nth(index)).toBeFocused();
     }
     await page.keyboard.press("Space");
@@ -1429,7 +1454,7 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
       ])
     ).toEqual([6, 11]);
     await firedNext(frame, ["dialog P 5"]);
-    await page.keyboard.press("Control+/");
+    await page.keyboard.press("ControlOrMeta+/");
     await sheet.locator(".hotkey-command", { hasText: "Assign to me" }).click();
     await expect(sheet).toBeHidden();
     await expect(notes).toBeFocused();
@@ -1439,7 +1464,7 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
   });
 
   await test.step("Escape closes only the sheet, even as a command's step, and a dialog's own button opens it", async () => {
-    await page.keyboard.press("Control+/");
+    await page.keyboard.press("ControlOrMeta+/");
     await expect(sheet).toBeVisible();
     // G Escape is Leave's, but in the sheet Escape is the sheet's at every step.
     await page.keyboard.press("g");
@@ -1450,13 +1475,16 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
     await view.locator("#dialog-shortcuts").click();
     await expect(sheet.locator(".hotkey-group h3").first()).toHaveText("Create task");
     await page.keyboard.press("Escape");
-    await expect(view.locator("#dialog-shortcuts")).toBeFocused();
+    // Safari's click focuses no button, so there focus goes back to the page itself.
+    await expect(
+      view.locator(browserName === "webkit" ? "body" : "#dialog-shortcuts")
+    ).toBeFocused();
     await firedNext(frame, []);
   });
 
   await test.step("a command that opens another dialog keeps the focus it gives", async () => {
     await view.locator("#notes").focus();
-    await page.keyboard.press("Control+/");
+    await page.keyboard.press("ControlOrMeta+/");
     await page.keyboard.press("t");
     await expect(view.locator("#date")).toBeFocused();
     await page.keyboard.press("Escape");
@@ -1465,7 +1493,7 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
 
   await test.step("a command that removes the focused field leaves focus with its dialog", async () => {
     await view.locator("#notes").focus();
-    await page.keyboard.press("Control+/");
+    await page.keyboard.press("ControlOrMeta+/");
     await page.keyboard.press("d");
     await expect(view.locator("#notes")).toHaveCount(0);
     await expect(view.locator("#create")).toBeFocused();
@@ -1480,7 +1508,7 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
     await page.keyboard.press("r");
     const field = view.locator("#native-field");
     await expect(field).toBeFocused();
-    await page.keyboard.press("Control+/");
+    await page.keyboard.press("ControlOrMeta+/");
     await expect(sheet).toBeVisible();
     await page.keyboard.press("s");
     await expect(sheet).toBeHidden();
@@ -1492,14 +1520,14 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
 
   await test.step("a command that opens another modal, or closes its own and leaves it mounted, is still announced", async () => {
     const field = view.locator("#native-field");
-    await page.keyboard.press("Control+/");
+    await page.keyboard.press("ControlOrMeta+/");
     await expect(sheet).toBeVisible();
     await page.keyboard.press("o");
     await expect(view.locator("#confirm-field")).toBeFocused();
     await statusesAre(["Open another"]);
     await page.keyboard.press("Escape");
     await expect(field).toBeFocused();
-    await page.keyboard.press("Control+/");
+    await page.keyboard.press("ControlOrMeta+/");
     await expect(sheet).toBeVisible();
     await page.keyboard.press("h");
     await expect(view.locator("#native")).toBeHidden();
@@ -1654,7 +1682,7 @@ test("with single-key shortcuts off, character shortcuts stand down while Mod ch
   });
 
   await test.step("Mod+K, Escape and a key within an element still fire", async () => {
-    await page.keyboard.press("Control+k");
+    await page.keyboard.press("ControlOrMeta+k");
     await page.keyboard.press("Escape");
     await view.locator("#panel").focus();
     await page.keyboard.press("j");
@@ -1662,7 +1690,7 @@ test("with single-key shortcuts off, character shortcuts stand down while Mod ch
   });
 
   await test.step("Mod+/ opens the sheet ahead of a narrower binding that would take it", async () => {
-    await page.keyboard.press("Control+/");
+    await page.keyboard.press("ControlOrMeta+/");
     await expect(sheet).toBeVisible();
     await firedNext(frame, []);
   });
@@ -1673,15 +1701,15 @@ test("with single-key shortcuts off, character shortcuts stand down while Mod ch
     await view.locator("#body").focus();
     // G starts both G Mod+/ and G Escape, which mix keys, so the setting doesn't stop them.
     await page.keyboard.press("g");
-    await page.keyboard.press("Control+/");
+    await page.keyboard.press("ControlOrMeta+/");
     await expect(sheet).toBeVisible();
-    await page.keyboard.press("Control+/");
+    await page.keyboard.press("ControlOrMeta+/");
     await expect(sheet).toBeHidden();
     // G Escape started over as the sheet opened, so Escape is the page's own.
     await page.keyboard.press("Escape");
     await firedNext(frame, ["Escape"]);
     await view.locator("#panel").focus();
-    await page.keyboard.press("Control+/");
+    await page.keyboard.press("ControlOrMeta+/");
     await expect(sheet).toBeVisible();
   });
 
@@ -1692,9 +1720,9 @@ test("with single-key shortcuts off, character shortcuts stand down while Mod ch
       "button | Next in panel | J | on",
       "button | Assign to me | A | off, key off",
       "button | Go home | G H | off, key off",
-      "button | Find a deal | Ctrl K | on",
+      `button | Find a deal | ${mod} K | on`,
       "row | Show shortcuts | ? | off, key off",
-      "row | Show shortcuts | Ctrl / | on"
+      `row | Show shortcuts | ${mod} / | on`
     ]);
     await expect(sheet.getByRole("button", { name: /^Assign to me.*key off$/ })).toBeVisible();
     // Its copies of page-wide character shortcuts stand down there too; a within key doesn't.
@@ -1734,7 +1762,7 @@ test("the sheet's row asks Patchy, waits past the reply deadline, then comes bac
     (window as unknown as StubWindow).answer = { value: true, after: 40_000 };
   });
   await view.locator("#body").focus();
-  await page.keyboard.press("Control+/");
+  await page.keyboard.press("ControlOrMeta+/");
   await sheet.getByRole("button", { name: "Single-key shortcuts: Off" }).click();
   // The shell's own dialog asks the viewer; the sheet steps aside meanwhile. The ask crosses to the
   // stand-in shell on its port, so it can land after the sheet has hidden.
@@ -1766,18 +1794,18 @@ for (const client of [true, false])
     await view.locator("#body").focus();
     await page.keyboard.press("a");
     await page.keyboard.press("l");
-    await page.keyboard.press("Control+k");
+    await page.keyboard.press("ControlOrMeta+k");
     await expect(sheet).toBeHidden();
     await firedNext(frame, ["Mod+K"]);
     // A custom opener still leaves Mod+/ to open it.
-    await page.keyboard.press("Control+/");
+    await page.keyboard.press("ControlOrMeta+/");
     await expect(sheet).toBeVisible();
     expect(await sheetRows(frame)).toEqual([
       ...(client ? ["button | Single-key shortcuts | Off | on"] : []),
       "button | Assign to me | A | off, key off",
-      "button | Find a deal | Ctrl K | on",
+      `button | Find a deal | ${mod} K | on`,
       "row | Show shortcuts | L | off, key off",
-      "row | Show shortcuts | Ctrl / | on"
+      `row | Show shortcuts | ${mod} / | on`
     ]);
   });
 
@@ -1798,8 +1826,8 @@ test("under a shell that doesn't name the frame, as a public patch's doesn't, ev
   expect(await sheetRows(frame)).toEqual([
     "button | Assign to me | A | on",
     "button | Go home | G H | on",
-    "button | Find a deal | Ctrl K | on",
+    `button | Find a deal | ${mod} K | on`,
     "row | Show shortcuts | ? | on",
-    "row | Show shortcuts | Ctrl / | on"
+    `row | Show shortcuts | ${mod} / | on`
   ]);
 });

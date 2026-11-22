@@ -1,19 +1,21 @@
 name: Install a Playwright browser
 description: >-
-  Installs Playwright's Chromium, or Firefox when asked, restoring it from the
-  Actions cache when this runner image and Playwright version already have it.
-  Use after `pnpm install`.
+  Installs Playwright's Chromium, or Firefox or WebKit when asked, restoring it
+  from the Actions cache when this runner image and Playwright version already
+  have it. Use after `pnpm install`.
 
 inputs:
   browser:
-    description: "`chromium`, or `firefox` for the tier 1 suite's Firefox project."
+    description: "`chromium`, or `firefox` or `webkit` for the tier 1 suite's project of that name."
     default: chromium
 
 runs:
   using: composite
   steps:
     # Chromium's entry holds the whole browser folder, as it always has, and keeps its key and
-    # path, so its cache stays warm. Firefox's holds only Firefox, which is all its job runs.
+    # path, so its cache stays warm. Firefox's and WebKit's hold only that browser, which is all
+    # its job runs. Playwright keeps browsers in the user's cache folder, which macOS keeps under
+    # Library.
     - name: Key the cache on the browser, runner image and Playwright version
       id: key
       shell: bash
@@ -22,8 +24,9 @@ runs:
       run: |
         version=$(pnpm exec playwright --version | cut -d' ' -f2)
         echo "key=playwright-$BROWSER-$ImageOS-$RUNNER_ARCH-$version" >> "$GITHUB_OUTPUT"
-        if [ "$BROWSER" = chromium ]; then path='~/.cache/ms-playwright'
-        else path="~/.cache/ms-playwright/$BROWSER-*"; fi
+        if [ "$RUNNER_OS" = macOS ]; then cache='~/Library/Caches/ms-playwright'
+        else cache='~/.cache/ms-playwright'; fi
+        if [ "$BROWSER" = chromium ]; then path="$cache"; else path="$cache/$BROWSER-*"; fi
         echo "path=$path" >> "$GITHUB_OUTPUT"
 
     - name: Restore the browser
@@ -37,7 +40,8 @@ runs:
     # already has every library Playwright's Chromium loads; Playwright names any
     # that go missing when it launches. The rest of `--with-deps` is xvfb and
     # extra fonts, which the headless suites don't need, and fetching them from a
-    # slow apt mirror pushed jobs past their time limit.
+    # slow apt mirror pushed jobs past their time limit. WebKit's job runs on
+    # macOS, which needs no system packages for it.
     # No `--only-shell` either: the browser job runs desktop Chromium, the other
     # suites Playwright's headless shell, and Chromium's one cache entry holds both.
     - name: Download Chromium
@@ -45,10 +49,12 @@ runs:
       shell: bash
       run: pnpm exec playwright install chromium
 
-    - name: Download Firefox
-      if: inputs.browser == 'firefox' && steps.restore.outputs.cache-hit != 'true'
+    - name: Download ${{ inputs.browser == 'webkit' && 'WebKit' || 'Firefox' }}
+      if: inputs.browser != 'chromium' && steps.restore.outputs.cache-hit != 'true'
       shell: bash
-      run: pnpm exec playwright install firefox
+      env:
+        BROWSER: ${{ inputs.browser }}
+      run: pnpm exec playwright install "$BROWSER"
 
     # Saved now rather than at the end of the job, so a failing test still
     # leaves the browser for the next run.
