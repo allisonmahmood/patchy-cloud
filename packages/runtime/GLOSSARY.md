@@ -56,6 +56,10 @@ _Avoid_: parking (freeing a slot while a call waits and taking one again after),
 Where a model call stops: its fence is its action's own deadline, not the 15-second integration deadline. After its final check, immediately before the request reaches the transport, a call with less than `models.send.floor` (two seconds) left is not sent, and a call waiting for capacity gives up early enough to keep that floor. The whole call, store reads and checks included, ends `models.cutoff` (one second) before the deadline, closing a sent request's connection, so the handler hears why. Unsent, it answers `timeout` with `sent: false`; cut off after the request reached the transport, `timeout` with `sent: true`, and the provider may still charge.
 _Avoid_: model timeout, deadline (the action's)
 
+**Model permit**:
+An execution task's place for one model call at its callback proxy, at most `models.execution.inFlight` at once across the task's processes. The loader marks a model call with its operation; the proxy takes a permit before reading the call's body, refuses past the limit `busy` with nothing sent, and gives the permit back as the call ends, the guest's request closing first included. The host refuses a model call that arrives without the mark, which only a task of an older release sends.
+_Avoid_: model slot (an action's place in the model pool), callback permit (the host's eight per invocation)
+
 **Execution service**:
 The credential-free side of the deployment that runs handler code and reaches Patchy only through callbacks.
 _Avoid_: sandbox (the browser's), worker (an engine term), lambda
