@@ -129,32 +129,43 @@ const rssOf = async (pid: number) => {
 /**
  * How long one outbound request from this process takes to come back, as a health probe's would:
  * the median of five, each given up after `probeTimeoutMs` on its own, so a probe queued behind a
- * full pool is counted as such instead of waiting for the load to change.
+ * full pool counts in the median as waiting at least that long instead of being left out. A probe
+ * that fails any other way is counted apart and left out of the median.
  */
 const probeTimeoutMs = 2_000;
 const wait = async () => {
-  const times: number[] = [];
+  const waits: number[] = [];
   let timedOut = 0;
+  let failed = 0;
   for (let i = 0; i < 5; i++) {
     const started = performance.now();
-    const answered = await fetch(host.url.replace("/callback", "/ping"), {
+    const outcome = await fetch(host.url.replace("/callback", "/ping"), {
       signal: AbortSignal.timeout(probeTimeoutMs)
     })
       .then((response) => response.text())
       .then(
-        () => true,
-        () => false
+        () => "answered" as const,
+        (error: unknown) =>
+          error instanceof DOMException && error.name === "TimeoutError"
+            ? ("timedOut" as const)
+            : ("failed" as const)
       );
-    if (answered) times.push(performance.now() - started);
-    else timedOut++;
+    if (outcome === "answered") waits.push(performance.now() - started);
+    else if (outcome === "timedOut") {
+      timedOut++;
+      waits.push(Infinity);
+    } else failed++;
   }
-  const sorted = times.sort((a, b) => a - b);
+  const median = waits.sort((a, b) => a - b)[Math.floor(waits.length / 2)];
   return {
     outboundWaitMs:
-      timedOut >= 3
-        ? `over ${probeTimeoutMs}`
-        : Math.round(sorted[Math.floor(sorted.length / 2)]! * 10) / 10,
-    probesTimedOut: timedOut
+      median === undefined
+        ? "no probe answered or timed out"
+        : median === Infinity
+          ? `over ${probeTimeoutMs}`
+          : Math.round(median * 10) / 10,
+    probesTimedOut: timedOut,
+    probesFailed: failed
   };
 };
 /** Runs `work` up to `limitMs`: its time, or that it hadn't finished. */
@@ -229,27 +240,45 @@ await Effect.runPromise(
     const generation = bound.processGeneration;
     const workerd = (yield* supervisor.stats({ bindingEpoch: 1 })).processes[0]!.pid;
     let serial = 0;
+    /** Why the supervisor ended its process, from the report it files once the process is gone. */
+    const ended = Effect.gen(function* () {
+      for (let attempt = 0; attempt < 40; attempt++) {
+        const { reports } = yield* Effect.orDie(supervisor.stats({ bindingEpoch: 1 }));
+        if (reports.length > 0) return reports.map((report) => report.cause).join(", ");
+        yield* Effect.sleep(50);
+      }
+      return "no reported cause";
+    });
+    /** One action's call; if the supervisor ended its process, the run fails saying why. */
     const invoke = (handler: string, args: Record<string, number>) =>
       Effect.runPromise(
-        supervisor.invoke({
-          bindingEpoch: 1,
-          request: {
-            wire: 1,
-            binding,
-            processGeneration: generation,
-            invocationId: `inv_${++serial}`,
-            attemptId: "attempt",
-            deadline: Date.now() + 60_000,
-            handler,
-            args,
-            viewer: {
-              user: { id: "usr_m", name: "M", email: "m@example.test" },
-              company: { id: "com_measure", name: "M", handle: "m" },
-              admin: false
-            },
-            callback: { url: host.url, capability: "capability" }
-          }
-        })
+        supervisor
+          .invoke({
+            bindingEpoch: 1,
+            request: {
+              wire: 1,
+              binding,
+              processGeneration: generation,
+              invocationId: `inv_${++serial}`,
+              attemptId: "attempt",
+              deadline: Date.now() + 60_000,
+              handler,
+              args,
+              viewer: {
+                user: { id: "usr_m", name: "M", email: "m@example.test" },
+                company: { id: "com_measure", name: "M", handle: "m" },
+                admin: false
+              },
+              callback: { url: host.url, capability: "capability" }
+            }
+          })
+          .pipe(
+            Effect.catchTag("SupervisorError", (error) =>
+              Effect.flatMap(ended, (cause) =>
+                Effect.die(new Error(`${error.message} The process ended for: ${cause}.`))
+              )
+            )
+          )
       );
     /**
      * One phase's line. A phase measured under load says how many calls the host held before and
