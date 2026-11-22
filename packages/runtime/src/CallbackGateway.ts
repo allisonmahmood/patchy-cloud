@@ -240,7 +240,8 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
       return capabilities.rememberRefusal(capability, failure, status, operation);
     };
     if (!transportCharged) {
-      const refusal = capabilities.chargeCallback(capability);
+      // A model call's refusal is remembered once, as it is given, marked unsent.
+      const refusal = capabilities.chargeCallback(capability, { stored: !modelCall });
       if (refusal !== undefined) return modelCall ? remember(refusal, 429) : refusal;
     }
     const decoded = yield* Effect.result(decodeCallback(input));
@@ -284,7 +285,9 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
         (request.body?.bytes.byteLength ?? 0);
     if (request.body !== undefined && request.body.bytes.byteLength > limits.fileBytes)
       return remember(bounded("tier2.callbacks.fileBytes", limits.fileBytes), 413);
-    const bytesRefusal = capabilities.chargeBytes(capability, requestBytes);
+    const bytesRefusal = capabilities.chargeBytes(capability, requestBytes, {
+      stored: !modelCall
+    });
     if (bytesRefusal !== undefined) return modelCall ? remember(bytesRefusal, 429) : bytesRefusal;
     if (!allowed(capability.kind, request.op))
       return remember(
@@ -413,20 +416,33 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
           ? { modelPool: capability.modelPool }
           : {})
       });
+      /**
+       * The handler's work, marking the call started as it is entered: past every check, the
+       * effect's own included, so a call fenced before it still reads as unsent.
+       */
+      const entered = <A, E, R>(work: Effect.Effect<A, E, R>) =>
+        Effect.suspend(() => {
+          call.started = true;
+          return work;
+        });
       const execute = Effect.gen(function* (): Effect.fn.Return<
         GuestProtocol.CallbackReply,
         Runtime.RuntimeError | InvocationCapabilities.CapabilityRefused
       > {
         if (viewerAuthority(request.op)) {
-          // A model call's door is asked within its cut-off, as the rest of the call is.
+          // A model call's door is asked within its cut-off, as the rest of the call is: what is
+          // left is measured as the door is entered, and nothing is left refuses at once.
+          const cutoff = () =>
+            Effect.fail(new Runtime.Timeout({ deadlineMs, limitId: "models.cutoff" }));
           const identity = yield* handler.fence === "action"
-            ? capability.binding.reauthorize.pipe(
-                Effect.timeoutOrElse({
-                  duration: Math.max(0, capability.attempt.deadline - limits.modelCutoff - now),
-                  orElse: () =>
-                    Effect.fail(new Runtime.Timeout({ deadlineMs, limitId: "models.cutoff" }))
-                })
-              )
+            ? Effect.flatMap(Clock.currentTimeMillis, (entered) => {
+                const left = capability.attempt.deadline - limits.modelCutoff - entered;
+                return left <= 0
+                  ? cutoff()
+                  : capability.binding.reauthorize.pipe(
+                      Effect.timeoutOrElse({ duration: left, orElse: cutoff })
+                    );
+              })
             : capability.binding.reauthorize;
           if (
             identity.company.id !== binding.companyId ||
@@ -446,11 +462,12 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
                   )
                 : yield* new Runtime.InvalidRequest({})
               : { ...request.args, contentType: request.body.contentType };
-          call.started = true;
           const value = yield* perform(
-            handler
-              .run(args, request.body?.bytes)
-              .pipe(Effect.provideService(Binding.Binding, binding))
+            entered(
+              handler
+                .run(args, request.body?.bytes)
+                .pipe(Effect.provideService(Binding.Binding, binding))
+            )
           );
           return {
             ok: true,
@@ -461,9 +478,10 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
         }
         if (request.body !== undefined) return yield* new Runtime.InvalidRequest({});
         if (handler.transport === "bytes-get") {
-          call.started = true;
           const body = yield* perform(
-            handler.run(request.args).pipe(Effect.provideService(Binding.Binding, binding))
+            entered(
+              handler.run(request.args).pipe(Effect.provideService(Binding.Binding, binding))
+            )
           );
           capability.counters.peakFileBytes = Math.max(
             capability.counters.peakFileBytes,
@@ -473,9 +491,8 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
             return remember(bounded("tier2.callbacks.fileBytes", limits.fileBytes), 413);
           return { ok: true, body };
         }
-        call.started = true;
         const value = yield* perform(
-          handler.run(request.args).pipe(Effect.provideService(Binding.Binding, binding))
+          entered(handler.run(request.args).pipe(Effect.provideService(Binding.Binding, binding)))
         );
         return {
           ok: true,
@@ -533,7 +550,16 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
             : Option.none();
           const reply = Exit.isSuccess(result) ? result.value : undefined;
           if (Exit.isFailure(result)) capability.mutation.value?.abort(result.cause);
+          // A model call refused before its handler ran, or one that says it sent nothing, has a
+          // known outcome: it failed, and no provider was asked.
+          const unsent =
+            modelCall &&
+            (!call.started ||
+              (Option.isSome(failure) &&
+                "details" in failure.value &&
+                failure.value.details?.sent === false));
           const uncertain =
+            !unsent &&
             Exit.isFailure(result) &&
             (Cause.hasInterrupts(result.cause) ||
               Cause.hasDies(result.cause) ||
@@ -669,7 +695,8 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
     // A model call that reached its handler has an outcome a provider may have charged for, so
     // its reply is counted against the call tree's bytes but never replaced by that limit.
     const responseRefusal = capabilities.chargeBytes(capability, responseBytes, {
-      counted: modelCall && call.started
+      counted: modelCall && call.started,
+      stored: !modelCall
     });
     // A model call's final refusal, whatever produced it, says nothing was sent before it is
     // stored for relaying.

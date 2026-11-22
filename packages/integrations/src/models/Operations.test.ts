@@ -4,7 +4,7 @@ import * as GuestProtocol from "@patchy/api/guest";
 import { DEV_SEED } from "@patchy/auth/seed";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { Binding, Runtime } from "@patchy/runtime/core";
-import { ActionSlots, CallbackGateway, InvocationCapabilities } from "@patchy/runtime";
+import { ActionSlots, CallbackGateway, InvocationCapabilities, RuntimeLog } from "@patchy/runtime";
 import { OperatingLimits } from "@patchy/limits";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
@@ -677,6 +677,8 @@ it.layer(layer, { excludeTestServices: true, timeout: 60_000 })("model calls", (
       readonly treeBytes?: number;
       readonly modelPool?: Binding.Binding["Service"]["modelPool"];
       readonly reauthorize?: Binding.Binding["Service"]["reauthorize"];
+      /** How long the callback journal takes to open each call's row. */
+      readonly journalMs?: number;
       readonly store?: (
         store: ConnectionStore.ConnectionStore["Service"]
       ) => ConnectionStore.ConnectionStore["Service"];
@@ -687,8 +689,14 @@ it.layer(layer, { excludeTestServices: true, timeout: 60_000 })("model calls", (
       Effect.provideService(ConnectionStore.ConnectionStore, options.store?.(store) ?? store)
     );
     const capabilities = yield* InvocationCapabilities.make;
+    const journal = yield* RuntimeLog.RuntimeLog;
     const gateway = yield* CallbackGateway.make(made).pipe(
-      Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities)
+      Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities),
+      Effect.provideService(RuntimeLog.RuntimeLog, {
+        ...journal,
+        begin: (input) =>
+          Effect.sleep(options.journalMs ?? 0).pipe(Effect.andThen(journal.begin(input)))
+      })
     );
     const capability = yield* capabilities.issue({
       binding: {
@@ -763,6 +771,29 @@ it.layer(layer, { excludeTestServices: true, timeout: 60_000 })("model calls", (
         modelEvents().map((event) => [event.code, event.sent]),
         ["invalid_request", false]
       );
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect("time a slow door from its own start, and journal it as a failure, nothing sent", () =>
+    Effect.gen(function* () {
+      const scene = yield* setup();
+      const sql = yield* SqlClient.SqlClient;
+      // 2.6 s left, 800 ms of it spent opening the journal row: the door has until 1.6 s.
+      const slow = yield* relay(scene, scripted(() => text("never")), {
+        deadlineMs: 2_600,
+        journalMs: 800,
+        reauthorize: Effect.sleep("3 seconds").pipe(Effect.as(scene.binding().identity!))
+      });
+      const started = Date.now();
+      const reply = yield* slow.send("models.generate", generateArgs());
+      const elapsed = Date.now() - started;
+      assert.deepInclude(reply, { ok: false, code: "timeout", details: { sent: false } });
+      assert.isAbove(elapsed, 1_400);
+      assert.isBelow(elapsed, 1_900, "the cut-off, not the cut-off plus the journal write");
+      const [row] = yield* sql<{ readonly outcome: string; readonly outcome_code: string }>`
+        SELECT outcome, outcome_code FROM runtime_calls
+        WHERE company_id = ${scene.owner.company.id} AND op = 'models.generate'`;
+      assert.deepStrictEqual(row, { outcome: "failure", outcome_code: "timeout" });
     }).pipe(Effect.scoped)
   );
 
