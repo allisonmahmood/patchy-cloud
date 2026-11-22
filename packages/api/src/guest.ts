@@ -22,8 +22,8 @@ export const callbackFileTooLarge = {
 /** What one model call's arguments may take, refused before they are read or sent anywhere. */
 export const modelIngressLimit = limitRefusal("models.ingress.bytes");
 /**
- * The refusal of a model call past `models.ingress.bytes`: the loader gives it before sending, the
- * proxy before reading and the host after, all in these words, with nothing sent.
+ * The refusal of a model call past `models.ingress.bytes`, with nothing sent: the loader gives it
+ * before sending, and the host as it reads, in these words.
  */
 export const modelIngressTooLarge = {
   ok: false,
@@ -31,6 +31,15 @@ export const modelIngressTooLarge = {
   error: "The model call exceeds models.ingress.bytes, so nothing was sent.",
   ...modelIngressLimit,
   details: { sent: false }
+} as const satisfies RuntimeFailure;
+/**
+ * The execution task's proxy's own refusal of a model call past the cap, before or as it reads:
+ * only a loader that didn't measure the call sends one, so its words say where it was stopped.
+ */
+export const modelIngressAtProxy = {
+  ...modelIngressTooLarge,
+  error:
+    "The model call exceeds models.ingress.bytes at the execution task's proxy, so nothing was sent."
 } as const satisfies RuntimeFailure;
 /** The status a page sees for a refusal an execution task gave, by its code. */
 export const refusalStatus = (code: RuntimeFailure["code"]): number =>

@@ -516,7 +516,8 @@ it.layer(permitSuite, { excludeTestServices: true, timeout: "120 seconds" })(
           const busy = yield* ask(patch, "pair", "second");
           assert.strictEqual(busy.status, 429);
           assert.deepStrictEqual(busy.body, { ...taskBusy, operation: "models.generate" });
-          // Arguments past models.ingress.bytes: refused before they leave the task.
+          // Arguments past models.ingress.bytes: refused by the loader, before they leave
+          // workerd, in its own words.
           const large = yield* ask(patch, "oversized", "");
           assert.strictEqual(large.status, 413);
           assert.deepStrictEqual(refusal(large.body), {
@@ -524,6 +525,9 @@ it.layer(permitSuite, { excludeTestServices: true, timeout: "120 seconds" })(
             limitId: "models.ingress.bytes",
             details: { sent: false },
             operation: "models.generate"
+          });
+          assert.include(large.body as object, {
+            error: "The model call exceeds models.ingress.bytes, so nothing was sent."
           });
           // The same words from patch code, with no call behind them, are the patch's own failure.
           const claimed = yield* callHandler(yield* fabricating, "demo.claim", {});

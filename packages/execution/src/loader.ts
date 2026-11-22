@@ -349,6 +349,17 @@ export class Callbacks extends WorkerEntrypoint<Environment, AttemptReference> {
         unsent(model, refusal("invalid_request", "Malformed callback."))
       );
     }
+    // A model call is JSON alone: framed with a file, its arguments would ride in a header the
+    // size check below never measures.
+    if (model && operation.body !== undefined)
+      return recorded(
+        first,
+        modelOp,
+        unsent(
+          model,
+          refusal("invalid_request", "A model call carries no file, so nothing was sent.")
+        )
+      );
     if (
       operation.body !== undefined &&
       operation.body.bytes.byteLength > GuestProtocol.callbackFileLimit.value

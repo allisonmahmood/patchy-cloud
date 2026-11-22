@@ -601,7 +601,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
       // connection closes after, so nothing more of it is taken.
       if (model && declared !== undefined && declared > GuestProtocol.modelIngressLimit.value) {
         yield* closeAfterAnswer;
-        return refuse(GuestProtocol.modelIngressTooLarge, 413);
+        return refuse(GuestProtocol.modelIngressAtProxy, 413);
       }
       const proxied = Effect.gen(function* () {
         // A request body over the limit stops being read; its 413 closes the connection.
@@ -657,7 +657,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
           CallbackBodyTooLarge: () =>
             Effect.succeed(
               model
-                ? refuse(GuestProtocol.modelIngressTooLarge, 413)
+                ? refuse(GuestProtocol.modelIngressAtProxy, 413)
                 : HttpServerResponse.jsonUnsafe(GuestProtocol.callbackFileTooLarge, { status: 413 })
             ),
           // A model call's outcome is unknown; any other call's answer is as it always was.

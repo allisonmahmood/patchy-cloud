@@ -20,15 +20,19 @@ import * as Supervisor from "./supervisor.js";
 import { NodeCryptography } from "@patchy/core";
 
 /**
- * A guest that makes the calls it is told to, all at once, and answers with every reply. `leave`
- * starts them and returns a moment later without their replies, as a handler that drops its
- * promises does.
+ * A guest that makes the calls it is told to, all at once, and answers with every reply; a call
+ * with `file` carries that many bytes as a file body, as a raw callback can. `leave` starts them
+ * and returns a moment later without their replies, as a handler that drops its promises does.
  */
 const source = `
 export default { async fetch(request, env, ctx) {
   const input = await request.json();
   if (input.type === "describe") return Response.json({ ok: true, handlers: {} });
-  const calls = input.args.calls.map((call) => ctx.props.callbacks.call(call));
+  const calls = input.args.calls.map(({ file, ...call }) => ctx.props.callbacks.call(
+    file === undefined
+      ? call
+      : { ...call, body: { bytes: new Uint8Array(file), contentType: "application/octet-stream" } }
+  ));
   if (input.handler === "demo.leave") {
     await new Promise((resolve) => setTimeout(resolve, 300));
     return Response.json({ ok: true, value: "returned" });
@@ -136,6 +140,7 @@ const invoke = (
   calls: ReadonlyArray<{
     readonly op: string;
     readonly args: GuestProtocol.Invoke["args"][string];
+    readonly file?: number;
   }>,
   options: { readonly handler?: string; readonly deadlineMs?: number } = {}
 ) => {
@@ -151,7 +156,11 @@ const invoke = (
       attemptId: "attempt_one",
       deadline: Date.now() + (options.deadlineMs ?? 20_000),
       handler: options.handler ?? "demo.calls",
-      args: { calls: calls.map(({ op, args }) => ({ op, args })) },
+      args: {
+        calls: calls.map(({ op, args, file }): GuestProtocol.Invoke["args"][string] =>
+          file === undefined ? { op, args } : { op, args, file }
+        )
+      },
       viewer: {
         user: { id: "usr_models", name: "Reader", email: "reader@example.test" },
         company: { id: "com_models", name: "Example", handle: "example" },
@@ -432,6 +441,40 @@ const tooLarge = {
   value: registry["models.ingress.bytes"].default,
   details: { sent: false }
 };
+/** The proxy's own, in its own words: only a loader that didn't measure the call meets it. */
+const atProxy = {
+  ...tooLarge,
+  error:
+    "The model call exceeds models.ingress.bytes at the execution task's proxy, so nothing was sent."
+};
+
+it.live(
+  "refuses a model call framed with a file body before sending it, its arguments unmeasured",
+  () =>
+    Effect.gen(function* () {
+      const target = yield* host;
+      target.release();
+      const supervisor = yield* make(target, 4);
+      const loaded = yield* bindVersion(supervisor, "ver_framed");
+      const large = "x".repeat(registry["models.ingress.bytes"].default);
+      const answered = replies(
+        yield* invoke(supervisor, loaded, target, "inv_framed", [
+          { ...generate(large), file: 16 },
+          ordinary()
+        ])
+      );
+      expect(answered[0]).toEqual({
+        ok: false,
+        source: "patchy",
+        code: "invalid_request",
+        error: "A model call carries no file, so nothing was sent.",
+        details: { sent: false }
+      });
+      expect(answered[1]).toEqual({ ok: true, value: null });
+      expect(target.seen).toEqual([{ op: "tables.get", marked: undefined }]);
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+  20_000
+);
 
 it.live(
   "returns the refusals the task itself gave a model call with the attempt's reply",
@@ -527,7 +570,7 @@ it.live(
         declared: registry["models.ingress.bytes"].default + 1
       });
       expect(declared.status).toBe(413);
-      expect(declared.body).toEqual(tooLarge);
+      expect(declared.body).toEqual(atProxy);
       expect(declared.headers.connection).toBe("close");
       target.release();
       yield* Fiber.join(holding);
@@ -542,7 +585,7 @@ it.live(
         size: registry["models.ingress.bytes"].default / 2
       });
       expect(streamed.status).toBe(413);
-      expect(streamed.body).toEqual(tooLarge);
+      expect(streamed.body).toEqual(atProxy);
       expect(streamed.headers.connection).toBe("close");
       target.release();
       yield* Fiber.join(streaming);
