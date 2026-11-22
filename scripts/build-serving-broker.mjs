@@ -11,7 +11,7 @@ const result = await build({
   write: false,
   format: "iife",
   platform: "browser",
-  target: ["chrome120", "firefox120"],
+  target: ["chrome120", "firefox120", "safari16"],
   conditions: ["development"],
   minify: true,
   legalComments: "none",

@@ -460,8 +460,8 @@ const tellScript = `(() => {
   // Where focus goes back on close, and whether it waits for the switcher to give it up.
   let opener = null;
   let awaiting = false;
-  // Whether the panel is open, as its toggle events last said. WebKit hides it under a modal
-  // dialog, such as the switcher's, without one, so the switcher's close settles that.
+  // Whether the panel is open, as its toggle events last said. WebKit hides it under the switcher's
+  // modal dialog without one, so there the switcher's close settles it.
   let shown = false;
   const drawn = (html) => {
     const template = document.createElement("template");
@@ -523,9 +523,11 @@ const tellScript = `(() => {
     opener = invoker;
     if (invoker.dataset.kind) pick(invoker.dataset.kind);
   });
+  // The switcher gives focus up as it closes. In WebKit, which hid the panel under it without a
+  // toggle, the panel's close settles now too, with no switcher left to wait for and no tap.
   window.addEventListener("patchy:switcher-closed", () => {
-    if (shown && !panel.matches(":popover-open")) return closed();
-    if (!awaiting) return;
+    if (shown && !panel.matches(":popover-open")) settle();
+    else if (!awaiting) return;
     awaiting = false;
     if (lost()) giveBack();
   });
@@ -554,8 +556,8 @@ const tellScript = `(() => {
     panel.setAttribute("aria-busy", "true");
     const sentAt = state;
     const answered = await post(form);
-    // A close since then settled it.
-    if (sentAt !== state) return;
+    // A close since then settled it, or the switcher hid the panel, and its close will.
+    if (sentAt !== state || !panel.matches(":popover-open")) return;
     pending = null;
     panel.removeAttribute("aria-busy");
     clear();
@@ -589,7 +591,8 @@ const tellScript = `(() => {
     const menu = document.getElementById("app-menu");
     if (event.target instanceof Element && event.target.closest('[data-tell="done"]') && menu?.matches(":popover-open")) menu.hidePopover();
   });
-  const closed = () => {
+  // Drops what was in flight, keeping the draft and the note, or readies the panel after a send.
+  const settle = () => {
     shown = false;
     state++;
     const inFlight = pending !== null;
@@ -604,16 +607,19 @@ const tellScript = `(() => {
       answer.replaceChildren();
     }
     if (inFlight) showUnsure();
-    if (lost()) giveBack();
-    else awaiting = true;
-    afterPress();
   };
   panel.addEventListener("toggle", (event) => {
     if (event.newState === "open") {
       shown = true;
       awaiting = false;
       if (!compose().hidden) compose().elements.namedItem("text").focus();
-    } else if (shown) closed();
+      return;
+    }
+    if (!shown) return;
+    settle();
+    if (lost()) giveBack();
+    else awaiting = true;
+    afterPress();
   });
 })();
 `;

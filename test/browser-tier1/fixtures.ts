@@ -52,25 +52,24 @@ export const test = base.extend<
 });
 /**
  * WebKit fires a patch page's load before its frame's, where Chromium's and Firefox's wait for it,
- * so there a `goto` that waits for load also waits for the patch's frame, unless the page has none
- * or leaves it, as for a notice.
+ * so there a `goto` that waits for load also waits for the frame `iframe#patch` holds to load its
+ * content. A page without that frame returns at once, and so does one whose shell takes the frame
+ * away as it leaves, for a notice or a fresh load.
  */
 function waitsForFrame(page: Page) {
   const goto = page.goto.bind(page);
   page.goto = async (url, options) => {
     const response = await goto(url, options);
     if ((options?.waitUntil ?? "load") !== "load") return response;
-    const content = () => page.frames().find((frame) => frame.url().includes("/~content/"));
-    const framed = () =>
-      page
-        .locator("#patch")
-        .count()
-        .then((count) => count > 0)
-        .catch(() => true);
-    await expect.poll(async () => content() !== undefined || !(await framed())).toBe(true);
-    await content()
-      ?.waitForLoadState("load")
-      .catch(() => {});
+    // A shell already leaving takes its document, and the query with it.
+    const holder = await page.$("iframe#patch").catch(() => null);
+    const frame = await holder?.contentFrame();
+    if (!frame) return response;
+    try {
+      await frame.waitForURL(/\/~content\//, { waitUntil: "load" });
+    } catch (error) {
+      if (!frame.isDetached()) throw error;
+    }
     return response;
   };
 }

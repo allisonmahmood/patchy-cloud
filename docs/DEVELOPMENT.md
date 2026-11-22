@@ -24,7 +24,7 @@ and offers start, stop, environment and **Check** actions; import them once from
 | Command                 | Runs                                                                                       | When                                  |
 | ----------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------- |
 | `pnpm check`            | format, lint, typecheck (tests included), the infrastructure synth and the offline tests   | while working; a few minutes          |
-| `pnpm verify`           | `check`, then every acceptance suite CI runs except live Clerk                             | before calling a change ready to ship |
+| `pnpm verify`           | `check`, then every acceptance suite CI requires except live Clerk                         | before calling a change ready to ship |
 | `pnpm verify --changed` | the same, skipping the acceptance suites when only docs, agent files or the runner changed | docs and runner changes               |
 
 `pnpm verify` mirrors CI's jobs: `test (bun)` (`pnpm test:bun`, the offline
@@ -63,10 +63,11 @@ leaves it out, because it rehearses commits against the commit production runs. 
 the Deploy runs with `gh`; `--live <sha>` rehearses against another commit.
 
 CI pins every job to a runner image, `ubuntu-24.04` except `install`'s
-`macos-15` and `windows-2025`, and every job that runs the repository's code
-to an exact Node patch. Bump the patches by hand in every workflow under
-`.github/workflows/` that pins one, like the server image: Node 24 moves with the
-`node:24-slim` digest in `apps/server/Dockerfile`, which builds the image.
+`macos-15` and `windows-2025` and `browser-webkit`'s `macos-15`, and every job
+that runs the repository's code to an exact Node patch. Bump the patches by
+hand in every workflow under `.github/workflows/` that pins one, like the server
+image: Node 24 moves with the `node:24-slim` digest in `apps/server/Dockerfile`,
+which builds the image.
 Bun is pinned once, as the `bun: runtime:<version>` devDependency in
 `package.json`, and `pnpm install` downloads it with the lockfile's hashes. It is a
 devDependency rather than `devEngines.runtime` because npm, which the packed CLI

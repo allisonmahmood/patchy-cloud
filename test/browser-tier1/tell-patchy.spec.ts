@@ -67,6 +67,76 @@ test("closing the panel gives focus back to Tell Patchy, after the switcher took
   await expect(foot(page)).toBeFocused();
 });
 
+// The switcher hides the panel as it opens. Chromium and Firefox say so with the panel's toggle;
+// WebKit says nothing, so there the panel settles as the switcher closes. Either way it ends the same.
+test("a send answered while the switcher is open opens again with the draft kept and the note", async ({
+  page,
+  instance
+}) => {
+  const switcher = page.getByRole("dialog", { name: "Go to" });
+  await page.goto(`${instance.origin}/`);
+  await foot(page).click();
+  await field(page).fill("Postgres connection encrypted with RSA");
+
+  let release = () => {};
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route("**/feedback", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    await held;
+    await route.continue();
+  });
+  // Settles once the panel's script has read the answer and done what it does with it.
+  const read = page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        const text = Response.prototype.text;
+        Response.prototype.text = function (this: Response) {
+          const url = this.url;
+          return text.call(this).finally(() => {
+            if (url.endsWith("/feedback")) setTimeout(resolve);
+          });
+        };
+      })
+  );
+  await panel(page).getByRole("button", { name: "Send" }).click();
+  await page.keyboard.press("ControlOrMeta+Shift+K");
+  await expect(switcher).toBeVisible();
+  release();
+  await read;
+  await page.keyboard.press("Escape");
+  await expect(switcher).toBeHidden();
+
+  await foot(page).click();
+  await expect(panel(page).getByText("Patchy couldn’t confirm that")).toBeVisible();
+  await expect(panel(page).getByText(/^Request sent:/)).toHaveCount(0);
+  await expect(field(page)).toHaveValue("Postgres connection encrypted with RSA");
+});
+
+test("a switcher opened from outside the open panel leaves the next switcher's focus alone", async ({
+  page,
+  instance
+}) => {
+  const switcher = page.getByRole("dialog", { name: "Go to" });
+  const search = page.locator("#app-search");
+  await page.goto(`${instance.origin}/`);
+  await foot(page).click();
+  await expect(field(page)).toBeFocused();
+  await search.focus();
+  await page.keyboard.press("ControlOrMeta+Shift+K");
+  await expect(switcher).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(switcher).toBeHidden();
+  await expect(search).toBeFocused();
+
+  // Later, from nothing focused, the switcher has nothing of the panel's to give back.
+  await search.blur();
+  await page.keyboard.press("ControlOrMeta+Shift+K");
+  await expect(switcher).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(switcher).toBeHidden();
+  await expect(page.locator("body")).toBeFocused();
+});
+
 test("Ask for an integration picks Request after Feedback was chosen: in place with script, at the composer's address without", async ({
   browser,
   page,

@@ -303,7 +303,8 @@ returning; a passive effect's cleanup runs after the dialog has left the page.
 
 Tab wraps in a plain modal dialog: in the one on top, Tab from its last control goes to its
 first, Shift+Tab from its first goes to its last, and a dialog with no controls keeps focus on
-itself. On a Mac, Option+Tab, Safari's Tab to every control, wraps too.
+itself. In Safari and Chromium-based browsers on a Mac, Option+Tab, Safari's Tab to every
+control, wraps too; Firefox on a Mac doesn't move focus by Option+Tab.
 A plain dialog holds only ordinary containers and text, such as divs, paragraphs,
 headings, labels, lists, tables, images and drawing-only SVG, and controls Tab stops on once:
 buttons, links, selects, checkboxes, `<details>` with their own `<summary>` first, one-line text,

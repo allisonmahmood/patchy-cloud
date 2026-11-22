@@ -9,7 +9,8 @@
  * Tab from its last stop goes to its first, Shift+Tab from its first to its last, and a dialog with
  * no stops keeps focus. Anything richer keeps the browser's own Tab, out of the frame included.
  *
- * On a Mac, Option+Tab is a Tab too: Safari and Chromium move focus by it there. Under Safari's
+ * On a desktop Mac, Option+Tab is a Tab too in Safari and Chromium, which move focus by it there;
+ * Firefox there doesn't, so it keeps the browser's (`movesByOptionTab`). Under Safari's
  * defaults it stops on every control, as this counts stops, while plain Tab stops only on text
  * fields and selects; past the last of those it goes round Patchy's page, which holds none, and
  * back into the dialog.
@@ -174,12 +175,27 @@ const wrapTo = (
   return backward ? last : first;
 };
 
-// Whether Option+Tab moves focus: on a Mac, as TanStack Hotkeys tells one, in Safari and Chromium.
-// Firefox ignores it, as every browser ignores Alt+Tab elsewhere, where it's the system's window
-// switcher and seldom reaches the page.
-const optionTabs = (): boolean =>
-  /mac/i.test(`${navigator.platform} ${navigator.userAgent}`) &&
-  !navigator.userAgent.includes("Firefox/");
+/** What `movesByOptionTab` reads of the browser. Only Chromium has `userAgentData`. */
+export type OptionTabBrowser = Pick<Navigator, "platform" | "userAgent" | "maxTouchPoints"> & {
+  readonly userAgentData?: { readonly platform: string };
+};
+
+/**
+ * Whether Option+Tab moves focus: in Safari and Chromium on a desktop Mac. Firefox there ignores
+ * it, and elsewhere Alt+Tab is the system's window switcher. Narrower than the Mac that TanStack
+ * Hotkeys and the switcher read Mod from, which is right for ⌘ but also takes an iPhone, whose
+ * agent says "like Mac OS X", and an iPad asking for desktop pages, which says "MacIntel" but
+ * takes touch.
+ */
+export const movesByOptionTab = ({
+  platform,
+  userAgent,
+  maxTouchPoints,
+  userAgentData
+}: OptionTabBrowser): boolean =>
+  /^mac/i.test(userAgentData?.platform || platform) &&
+  maxTouchPoints <= 1 &&
+  !userAgent.includes("Firefox/");
 
 // The Tab being dispatched, for `decide` at the end of its way.
 let pending: KeyboardEvent | undefined;
@@ -204,7 +220,7 @@ const decide = (event: KeyboardEvent): void => {
 // added during the capture runs as the key bubbles back to the window, after those there before it.
 const note = (event: KeyboardEvent): void => {
   if (event.key !== "Tab" || event.isComposing || event.ctrlKey || event.metaKey) return;
-  if (event.altKey && !optionTabs()) return;
+  if (event.altKey && !movesByOptionTab(navigator)) return;
   pending = event;
   window.removeEventListener("keydown", decide);
   window.addEventListener("keydown", decide);
@@ -215,9 +231,9 @@ let installed = false;
 /**
  * Keeps Tab and Shift+Tab inside the page's topmost modal dialog, the one focus is in, when the
  * dialog is plain: from its last tab stop to its first, from its first to its last, and on itself
- * when it has none, and on a Mac by Option+Tab too. Everywhere else the browser moves focus. A Tab
- * that something on the page took with `preventDefault()` is left to it. Once per document;
- * outside a browser it does nothing.
+ * when it has none, and by Option+Tab too where that moves focus (`movesByOptionTab`). Everywhere
+ * else the browser moves focus. A Tab that something on the page took with `preventDefault()` is
+ * left to it. Once per document; outside a browser it does nothing.
  */
 export function keepTabInModals(): void {
   if (installed || typeof document === "undefined") return;

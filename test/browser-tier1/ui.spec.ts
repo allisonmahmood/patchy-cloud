@@ -78,14 +78,16 @@ test("a refused submission draws the dialog again, and closing it skips the subm
 
 test("in a history at its longest, closing a dialog drawn again still reaches its opener", async ({
   page,
-  instance
+  instance,
+  browserName
 }) => {
   await page.goto(`${instance.origin}/~ui/index?page=2`);
   // A browser keeps 50 entries, or 100 in WebKit: past that a new one drops the oldest, and the
   // count stays. Ten go in at a time until ten more leave the count where it was. Firefox trims
   // the history only after the task that grew it, so each ten reads the count first; WebKit
-  // refuses more than 100 pushes in ten seconds, so a refused ten goes again later.
-  let counted = -1;
+  // refuses more than 100 pushes in ten seconds, so a refused ten goes again later, and only
+  // ten that all went in can show the history full.
+  let before: number | undefined;
   await expect
     .poll(
       async () => {
@@ -98,16 +100,18 @@ test("in a history at its longest, closing a dialog drawn again still reaches it
             return [length, true] as const;
           }
         });
-        const full = length === counted;
-        if (!refused) counted = length;
+        const full = length === before;
+        before = refused ? undefined : length;
         return full;
       },
       { timeout: 30_000 }
     )
     .toBe(true);
   const length = await page.evaluate(() => history.length);
+  const entry = () => page.evaluate(() => navigation.currentEntry?.key);
   const opener = page.getByRole("main").getByRole("link", { name: "New patch" });
   await loadDialog(page, () => opener.click());
+  const entries = [await entry()];
   const dialog = page.getByRole("dialog", { name: "Invite people" });
   for (let refusal = 0; refusal < 2; refusal++) {
     await loadDialog(page, () => page.getByRole("button", { name: "Send invites" }).click());
@@ -115,8 +119,13 @@ test("in a history at its longest, closing a dialog drawn again still reaches it
       "aria-invalid",
       "true"
     );
+    entries.push(await entry());
   }
   expect(await page.evaluate(() => history.length)).toBe(length);
+  // Each drawing took an entry of its own without growing the history, so the dialog counted
+  // fewer than it took, and its close has to keep going. Firefox replaces the dialog's entry
+  // instead, so there it counted right.
+  if (browserName !== "firefox") expect(new Set(entries).size).toBe(entries.length);
   await page.keyboard.press("Escape");
   await expect(page).toHaveURL(/\/~ui\/index\?page=2$/);
   await expect(dialog).toHaveCount(0);

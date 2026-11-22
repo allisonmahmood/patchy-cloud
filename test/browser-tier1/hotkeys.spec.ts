@@ -1220,10 +1220,11 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
       "l",
       "Enter"
     ]) {
-      // On a Mac, ⌘Z undoes the page's last typing, which WebKit runs together across fields,
-      // and takes focus to the field it undid, so each key starts in this one.
-      await view.locator("#field").focus();
       await page.keyboard.press(key);
+      // On a Mac, ⌘Z undoes the page's last typing, which WebKit runs together across fields,
+      // and takes focus to the field it undid, so focus comes back here after it.
+      if (browserName === "webkit" && key === "ControlOrMeta+z")
+        await view.locator("#field").focus();
     }
     await page.keyboard.press("ControlOrMeta+k");
     await firedNext(frame, ["page Mod+K"]);
