@@ -2359,6 +2359,31 @@ it.layer(publishLayer)("publish attempts", (it) => {
     })
   );
 
+  it.effect("refuses to publish a model role declaration until roles are declarable", () =>
+    Effect.gen(function* () {
+      const api = yield* client.pipe(Effect.provide(Fixtures.as(admin)));
+      const patches = yield* Patches.Patches;
+      const before = yield* patches.countQuotaPatches(admin.user.id);
+      const response = yield* api.publish({
+        payload: publishRequest({
+          html: html("Declares a role"),
+          manifest: {
+            ...Fixtures.manifest,
+            uses: {
+              triage: { kind: "models" as const, handle: "triage", id: "conn_role", revision: 1 }
+            }
+          }
+        }),
+        responseMode: "response-only"
+      });
+      assert.strictEqual(response.status, 422);
+      const body = yield* response.json;
+      assert.include(body, { code: "invalid_manifest" });
+      assert.include(JSON.stringify(body), "model role");
+      assert.strictEqual(yield* patches.countQuotaPatches(admin.user.id), before);
+    })
+  );
+
   it.effect("recovers a stored attempt even after the publishing machine is rate limited", () =>
     Effect.gen(function* () {
       const api = yield* client.pipe(

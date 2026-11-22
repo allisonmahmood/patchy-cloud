@@ -2190,11 +2190,9 @@ export const make = Effect.gen(function* () {
         declaration.kind === "pidgeon" ||
         declaration.kind === "attio" ||
         declaration.kind === "imap" ||
-        declaration.kind === "github" ||
-        declaration.kind === "models"
+        declaration.kind === "github"
       ) {
         // Resolving refuses a connection that isn't there; one gone since can't be built with.
-        // A role resolves only while the Models switch is on: off, the store reads none.
         yield* connections.resolve(companyId, declaration);
         if (
           !(yield* connections
@@ -2204,6 +2202,9 @@ export const make = Effect.gen(function* () {
           return yield* new ConnectionStore.ConnectionAccessDenied();
         continue;
       }
+      // Publishing refuses a model role before it gets here; nothing resolves one yet.
+      if (declaration.kind === "models")
+        return yield* new ConnectionStore.ConnectionNotConnected({});
       const resource =
         declaration.kind === "sharedTable"
           ? { table: declaration.table }

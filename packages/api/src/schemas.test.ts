@@ -364,7 +364,7 @@ describe("wire schemas", () => {
 
 describe("Models declarations", () => {
   // A request is decoded before the host's Models switch is read, so this holds either way: a
-  // stored version may declare a role, which only resolves at publish with the switch on, while
+  // stored version may declare a role, which the host reads, while publishing refuses one and
   // generation doesn't resolve one yet.
   it("refuses a provider anywhere, and a role in a generation request", () => {
     const declaring = (kind: string) => ({

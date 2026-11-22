@@ -615,8 +615,7 @@ export const GithubDeclaration = Schema.Struct({
 });
 /**
  * A company model role: a decision role or a text role, which an admin maps to a provider and a
- * model. Publishing one is refused while the host's Models switch is off, as the store reads no
- * role then.
+ * model. A host reads one a stored version declares; publishing one is refused for now.
  */
 export const ModelsDeclaration = Schema.Struct({
   ...PostgresDeclaration.fields,
