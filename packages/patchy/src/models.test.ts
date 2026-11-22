@@ -3,7 +3,7 @@ import { assert, it } from "@effect/vitest";
 import { limitRefusal } from "@patchy/api";
 import { t, type Config } from "./config.js";
 import { createGuest } from "./guest.js";
-import { IN_FLIGHT, PER_ACTION } from "./models.js";
+import { IN_FLIGHT, PER_ACTION, type TextClient } from "./models.js";
 import { bindServer } from "./server.js";
 
 /**
@@ -73,6 +73,40 @@ it("gives a decision role only decide and a text role only generate", async () =
     async () => ({ ok: true, value: null })
   );
   assert.deepStrictEqual(reply, { ok: true, value: { triage: ["decide"], writer: ["generate"] } });
+});
+
+it("sends a typed output as its descriptor and types the value it answers", async () => {
+  let sent: unknown;
+  const reply = await action(
+    async (ctx) => {
+      const writer = ctx.connections.writer as unknown as TextClient;
+      const { value } = await writer.generate({
+        input: "Refund please",
+        maxOutputTokens: 64,
+        output: t.object({ team: t.enum(["billing", "technical"]), steps: t.integer() })
+      });
+      const team: "billing" | "technical" = value.team;
+      const steps: number = value.steps;
+      return { team, steps };
+    },
+    async (callback) => {
+      sent = callback.args;
+      return { ok: true, value: { value: { team: "billing", steps: 2 }, usage } };
+    }
+  );
+  assert.deepStrictEqual(sent, {
+    connection: "writer",
+    input: "Refund please",
+    maxOutputTokens: 64,
+    output: {
+      kind: "object",
+      fields: {
+        team: { kind: "enum", values: ["billing", "technical"] },
+        steps: { kind: "integer" }
+      }
+    }
+  });
+  assert.deepStrictEqual(reply, { ok: true, value: { team: "billing", steps: 2 } });
 });
 
 it("runs a call per row four at a time across every alias, holding the rest unsent", async () => {

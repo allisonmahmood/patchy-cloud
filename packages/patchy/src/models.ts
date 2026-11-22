@@ -1,5 +1,6 @@
-import type { Json } from "./config.js";
+import type { Config, DescriptorOf, Json, SchemaInput } from "./config.js";
 import { PatchyError } from "./clientError.js";
+import type { InferDescriptor } from "./server.js";
 
 /**
  * A model role's client in a tier 2 action: `decide` on a decision role, `generate` on a text
@@ -53,18 +54,25 @@ export interface DecisionClient {
   }>;
 }
 
+interface TextRequest {
+  readonly instructions?: string;
+  readonly input: Json;
+  /** Required: 16 to `models.generate.maxOutputTokens`. */
+  readonly maxOutputTokens: number;
+}
 export interface TextClient {
-  generate(request: {
-    readonly instructions?: string;
-    readonly input: Json;
-    /** Required: 16 to `models.generate.maxOutputTokens`. */
-    readonly maxOutputTokens: number;
-    /** A handler descriptor whose root is an object, for an answer of that shape. */
-    readonly output?: Json;
-  }): Promise<
-    | { readonly text: string; readonly usage: ModelUsage }
-    | { readonly value: Json; readonly usage: ModelUsage }
-  >;
+  /** Text, at most `maxOutputTokens` long. */
+  generate(request: TextRequest): Promise<{ readonly text: string; readonly usage: ModelUsage }>;
+  /**
+   * A value of `output`'s shape: a `t.object(...)` of text, integer, number, boolean, enum,
+   * nullable, object and array fields, all required.
+   */
+  generate<const S extends SchemaInput>(
+    request: TextRequest & { readonly output: S }
+  ): Promise<{
+    readonly value: InferDescriptor<DescriptorOf<S>, Config>;
+    readonly usage: ModelUsage;
+  }>;
 }
 
 type Call = (op: string, args: Readonly<Record<string, unknown>>) => Promise<unknown>;
@@ -139,11 +147,16 @@ export function createModelsClient(
             questions: request.questions
           })) as Awaited<ReturnType<DecisionClient["decide"]>>
       }
-    : {
-        generate: async (request) =>
-          (await scheduler.run("models.generate", {
+    : // One implementation answers both overloads: the host's answer has the shape asked for.
+      ({
+        generate: (request: TextRequest & { readonly output?: SchemaInput }) =>
+          scheduler.run("models.generate", {
             connection,
-            ...request
-          })) as Awaited<ReturnType<TextClient["generate"]>>
-      };
+            ...(request.instructions === undefined ? {} : { instructions: request.instructions }),
+            input: request.input,
+            maxOutputTokens: request.maxOutputTokens,
+            // A schema crosses the wire as its descriptor.
+            ...(request.output === undefined ? {} : { output: request.output.toJSON() })
+          })
+      } as TextClient);
 }
