@@ -5,7 +5,8 @@ import { loadDialog } from "./dialog.js";
 test("an owner shares a page from its menu, and the guest opens it from Home and removes it", async ({
   page,
   context,
-  instance
+  instance,
+  browserName
 }) => {
   const patch = await instance.publish();
   const title = "Tier one acceptance";
@@ -21,12 +22,20 @@ test("an owner shares a page from its menu, and the guest opens it from Home and
   await expect(page).toHaveURL(`${instance.origin}/patches?share=${patch.name}`);
   await expect(dialog.getByRole("status")).toHaveText(`Shared ${title} with Jo Rivera`);
   await expect(dialog.getByText("guest@pine.example · Pine Studio")).toBeVisible();
+  // The redrawn dialog's script records that it took a later entry. Back before it has run would
+  // stay on the earlier one, as WebKit under load showed.
+  await page.waitForLoadState("domcontentloaded");
   // The invitation came back to the dialog's own address, which takes a new history entry in
   // Chromium and replaces the dialog's in Firefox. Back and Close both reach the list either way.
   const actions = page.getByRole("button", { name: `Actions for ${title}` });
   await page.goBack({ waitUntil: "commit" });
   await expect(page).toHaveURL(`${instance.origin}/patches`);
   await expect(page.getByRole("dialog")).toHaveCount(0);
+  // Where the dialog kept its first entry, Back passes through it on to the list, which gives
+  // focus back to the menu's button once it is shown. Forward before then would find that still
+  // pending and close the dialog again, as WebKit under load showed. Firefox replaced the entry,
+  // so Back lands on the list itself.
+  if (browserName !== "firefox") await expect(actions).toBeFocused();
   await loadDialog(page, () => page.goForward());
   await expect(dialog.getByText("guest@pine.example · Pine Studio")).toBeVisible();
   await dialog.getByRole("link", { name: "Close", exact: true }).last().click();
