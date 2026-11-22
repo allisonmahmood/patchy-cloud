@@ -1129,6 +1129,13 @@ it.layer(layer)("SDK company generation", (it) => {
         declaration: { kind: "models", handle: "triage", id: roles[0]!.id, revision: 1 },
         snapshot: { version: 1, kind: "decision" }
       });
+      // A role whose provider is paused reaches nothing, so it doesn't generate, as discovery
+      // calls it unavailable and publish refuses it.
+      yield* store.changeModels({ ...who, id: provider.id, change: { kind: "pause" } });
+      assert.include(yield* Effect.flip(api.generate({ payload: request })), {
+        code: "connection_not_connected"
+      });
+      yield* store.changeModels({ ...who, id: provider.id, change: { kind: "resume" } });
       // With the switch off, the role isn't there to resolve.
       const off = yield* sdkOver(
         Layer.succeed(ConnectionStore.ConnectionStore, yield* switched(false))

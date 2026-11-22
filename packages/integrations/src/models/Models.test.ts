@@ -608,7 +608,7 @@ it.layer(layer)("Models", (it) => {
             // No patch can declare a role yet, so its hint offers no add.
             assert.deepInclude(listed.connections[0], {
               status: "connected",
-              hint: "No patch can declare a model role yet."
+              hint: 'Declare it in patchy.config.ts as models("triage"), then run patchy refresh.'
             });
             assert.deepStrictEqual(
               listed.offered?.map((offer) => offer.integration),

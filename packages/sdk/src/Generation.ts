@@ -380,12 +380,13 @@ export const generate = Effect.fn("Generation.generate")(function* (
       declaration.kind === "github" ||
       declaration.kind === "models"
     ) {
-      // A role is listed only while the host's Models switch is on, so it resolves only then.
+      // A role is listed only while the host's Models switch is on, so it resolves only then,
+      // and only while its provider serves it too: as discovery reads it and publish checks it.
       const connection = available.find(
         (entry) =>
           entry.integration === declaration.kind &&
           entry.handle === declaration.handle &&
-          entry.status === "connected"
+          ConnectionStore.serving(entry)
       );
       if (connection === undefined)
         return yield* new ConnectionNotConnected({
