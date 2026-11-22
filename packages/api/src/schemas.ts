@@ -613,6 +613,15 @@ export const GithubDeclaration = Schema.Struct({
   ...PostgresDeclaration.fields,
   kind: Schema.Literal("github")
 });
+/**
+ * A company model role: a decision role or a text role, which an admin maps to a provider and a
+ * model. Publishing one is refused while the host's Models switch is off, as the store reads no
+ * role then.
+ */
+export const ModelsDeclaration = Schema.Struct({
+  ...PostgresDeclaration.fields,
+  kind: Schema.Literal("models")
+});
 /** A company connection a version declares, bound to its identity and metadata revision. */
 export const ConnectionDeclaration = Schema.Union([
   PostgresDeclaration,
@@ -620,7 +629,8 @@ export const ConnectionDeclaration = Schema.Union([
   PidgeonDeclaration,
   AttioDeclaration,
   ImapDeclaration,
-  GithubDeclaration
+  GithubDeclaration,
+  ModelsDeclaration
 ]);
 export type ConnectionDeclaration = typeof ConnectionDeclaration.Type;
 /** Stable shared-table identity; a patch name never participates in resolution. */
@@ -713,6 +723,7 @@ export const Manifest = Schema.Struct({
       AttioDeclaration,
       ImapDeclaration,
       GithubDeclaration,
+      ModelsDeclaration,
       SharedTableDeclaration,
       SharedStoreDeclaration,
       MembersDeclaration

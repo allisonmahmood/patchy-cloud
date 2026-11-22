@@ -17,6 +17,7 @@ import { pidgeonOperations } from "./pidgeon.js";
 import { attioOperations } from "./attio.js";
 import { imapOperations } from "./imap.js";
 import { githubOperations } from "./github.js";
+import { modelsOperations } from "./models.js";
 import { limitRefusalFields } from "./limits.js";
 import { HandlerKind, HandlerName } from "./handlers.js";
 
@@ -380,6 +381,7 @@ export const runtimeOperations = {
   ...attioOperations,
   ...imapOperations,
   ...githubOperations,
+  ...modelsOperations,
   "server.call": {
     request: Schema.Struct({ op: Schema.Literal("server.call"), args: ServerCall }),
     response: Schema.suspend(() => ServerCallReply),
@@ -664,7 +666,11 @@ export const RuntimeCode = Schema.Literals([
   "source_rate_limited",
   "idempotency_conflict",
   "auth_failed",
-  "mailbox_reset"
+  "mailbox_reset",
+  // A text call's model reached its maxOutputTokens before it finished, and a model declined to
+  // answer a call; every other way a model call refuses reuses a code above.
+  "output_truncated",
+  "model_refused"
 ]).annotate({ identifier: "RuntimeCode" });
 export type RuntimeCode = typeof RuntimeCode.Type;
 

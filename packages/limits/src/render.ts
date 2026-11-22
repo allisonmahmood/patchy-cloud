@@ -34,8 +34,9 @@ export function renderServerSkillLimits(): string {
           !id.startsWith("oauth.") &&
           !id.startsWith("mcp.") &&
           !id.startsWith("feedback.") &&
-          // No action reaches the model pool until a patch can call a model.
-          !id.startsWith("tier2.models.")
+          // A builder learns Models' limits with its skill, once a patch can declare a role.
+          !id.startsWith("tier2.models.") &&
+          !id.startsWith("models.")
       )
     ),
     ""

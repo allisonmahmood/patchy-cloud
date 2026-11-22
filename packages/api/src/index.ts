@@ -17,6 +17,7 @@ export * from "./imapSnapshot.js";
 export * from "./github.js";
 export * from "./githubSnapshot.js";
 export * from "./modelsSnapshot.js";
+export * from "./models.js";
 export * from "./devRead.js";
 export * from "./limits.js";
 export * from "./handlers.js";
