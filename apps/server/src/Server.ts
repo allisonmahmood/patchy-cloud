@@ -142,6 +142,11 @@ export type DocumentNetwork = ClientDocumentNetwork.ClientDocumentNetwork;
  * loopback one only the dev runner and tests provide.
  */
 export type MailNetwork = ImapNetwork.Network;
+/**
+ * Where model calls go, which the launcher brings as well: OpenAI's one address from production's
+ * entrypoint, or the fake only the dev runner and tests provide.
+ */
+export type ModelProviders = ModelsSource.Source;
 
 /** The port the server listens on. */
 export const port = Config.Int("PORT").pipe(Config.withDefault(3000));
@@ -462,8 +467,9 @@ const services = Layer.mergeAll(
           Layer.provideMerge(Github.layer.pipe(Layer.provide(CredentialKeys.layer)))
         )
       ),
-      // One model source and one admission queue per process, which every door's model calls pass.
-      Layer.provideMerge(Layer.mergeAll(ModelsSource.layer, ModelsAdmission.layer)),
+      // One admission queue per process, which every door's model calls pass, to the launcher's
+      // model providers.
+      Layer.provideMerge(ModelsAdmission.layer),
       Layer.provideMerge(Tables.layer),
       Layer.provideMerge(Analytics.layer),
       Layer.provideMerge(Inventory.layer),

@@ -766,8 +766,25 @@ export const makeAt = Effect.fn("ModelsSource.make")(function* (apiUrl: string) 
   return Source.of({ decide, generate });
 });
 
-/** OpenAI at its one address; `makeAt` exists for tests of the transport against a local server. */
+/** OpenAI at its one address; `makeAt` serves a local server, such as the dev runner's fake. */
 export const make = makeAt(OPENAI_URL);
 
-/** OpenAI over the process's fetch. */
+/** OpenAI over the process's fetch: what production's entrypoint brings. */
 export const layer = Layer.effect(Source, make).pipe(Layer.provide(FetchHttpClient.layer));
+
+/**
+ * A provider at a loopback address instead, over the process's fetch: the dev runner's fake, or a
+ * test's. Anything but plain HTTP to a loopback host is refused, so this can't send a key away.
+ */
+export const layerAt = (apiUrl: string) =>
+  Layer.effect(
+    Source,
+    Effect.suspend(() => {
+      const url = URL.parse(apiUrl);
+      return url !== null &&
+        url.protocol === "http:" &&
+        ["127.0.0.1", "[::1]", "localhost"].includes(url.hostname)
+        ? makeAt(apiUrl)
+        : Effect.die(new Error("A model provider other than OpenAI must be on loopback."));
+    })
+  ).pipe(Layer.provide(FetchHttpClient.layer));

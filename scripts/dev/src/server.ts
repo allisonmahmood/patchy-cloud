@@ -6,6 +6,9 @@
  *
  * `PATCHY_DEV_MAILBOXES` names the file listing them, which is read again for every session, so
  * a mailbox added to a running instance works at once. A missing file means none.
+ *
+ * Model calls go to `PATCHY_DEV_MODELS_URL`, the fake model provider the supervisor runs on
+ * loopback, so a dev instance never reaches a real one; without it, to OpenAI as in production.
  */
 // @effect-diagnostics nodeBuiltinImport:off -- the network seam asks synchronously, once per session.
 import { readFileSync } from "node:fs";
@@ -14,7 +17,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { ImapNetwork } from "@patchy/integrations";
+import { ImapNetwork, ModelsSource } from "@patchy/integrations";
 import { launch } from "@patchy/server/launch";
 
 const decode = Schema.decodeUnknownOption(
@@ -32,6 +35,11 @@ launch(
   Layer.unwrap(
     Effect.map(Config.option(Config.String("PATCHY_DEV_MAILBOXES")), (file) =>
       ImapNetwork.loopback(Option.isSome(file) ? listed(file.value) : () => [])
+    )
+  ),
+  Layer.unwrap(
+    Effect.map(Config.option(Config.String("PATCHY_DEV_MODELS_URL")), (url) =>
+      Option.isSome(url) ? ModelsSource.layerAt(url.value) : ModelsSource.layer
     )
   )
 );

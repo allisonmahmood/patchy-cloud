@@ -8,8 +8,9 @@
  * Object Storage or on a plain-HTTP public origin, and `PATCHY_ENVIRONMENT=production` refuses
  * Clerk's test keys.
  *
- * Where mailboxes are reached is the launcher's: `start.ts` brings production's network, and the
- * dev runner's entrypoint its loopback mailboxes. Nothing a host reads chooses between them.
+ * Where mailboxes are reached, and where model calls go, are the launcher's: `start.ts` brings
+ * production's network and OpenAI's address, and the dev runner's entrypoint its loopback
+ * mailboxes and its fake provider. Nothing a host reads chooses between them.
  */
 // @effect-diagnostics nodeBuiltinImport:off -- the Node server is Node's to create.
 import { createServer } from "node:http";
@@ -41,7 +42,10 @@ const httpServer = Layer.unwrap(
   )
 );
 
-const server = <E>(mail: Layer.Layer<Server.MailNetwork, E>) =>
+const server = <E, F>(
+  mail: Layer.Layer<Server.MailNetwork, E>,
+  models: Layer.Layer<Server.ModelProviders, F>
+) =>
   Layer.effectDiscard(
     Effect.gen(function* () {
       const streams = yield* RuntimeStream.RuntimeStream;
@@ -67,7 +71,7 @@ const server = <E>(mail: Layer.Layer<Server.MailNetwork, E>) =>
     })
   ).pipe(
     Layer.provideMerge(Server.layer),
-    Layer.provide([Sql.layer, ClientDocumentNetwork.layer, mail, NodeCryptography.layer]),
+    Layer.provide([Sql.layer, ClientDocumentNetwork.layer, mail, models, NodeCryptography.layer]),
     Layer.provide(httpServer)
   );
 
@@ -76,7 +80,10 @@ const server = <E>(mail: Layer.Layer<Server.MailNetwork, E>) =>
  * missing Clerk key (or personas secret) or public origin behind a connection error, then runs
  * the server until a signal.
  */
-export const launch = <E>(mail: Layer.Layer<Server.MailNetwork, E>) =>
+export const launch = <E, F>(
+  mail: Layer.Layer<Server.MailNetwork, E>,
+  models: Layer.Layer<Server.ModelProviders, F>
+) =>
   NodeRuntime.runMain(
     Effect.gen(function* () {
       yield* Config.all([
@@ -93,6 +100,6 @@ export const launch = <E>(mail: Layer.Layer<Server.MailNetwork, E>) =>
         (yield* Config.String("NODE_ENV").pipe(Config.withDefault("development"))) === "production"
       )
         yield* S3ContentStore.config;
-      return yield* Layer.launch(server(mail));
+      return yield* Layer.launch(server(mail, models));
     })
   );
