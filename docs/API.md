@@ -375,7 +375,7 @@ Responses:
 
 ### `GET /api/connections/:integration/:handle`
 
-Read one company connection by its integration and exact handle, for any active member. The current immutable snapshot includes its revision and ISO takenAt timestamp, including when the connection is disconnected. A missing snapshot is null, never an empty database. Unknown integrations, unknown handles and another company's connections answer the same 404. Never returns credentials or business rows. Responses are private, no-store.
+Read one company connection by its integration and exact handle, for any active member. The current immutable snapshot includes its revision and ISO takenAt timestamp, including when the connection is disconnected. A missing snapshot is null, never an empty database. Unknown integrations, unknown handles and another company's connections answer the same 404, and so does a model role while the host's Models switch is off. A model role reads disconnected while it or its provider is paused. Never returns credentials or business rows. Responses are private, no-store.
 
 Responses:
 

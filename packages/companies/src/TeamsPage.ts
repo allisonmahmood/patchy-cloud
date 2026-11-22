@@ -520,7 +520,7 @@ const render = Effect.fn("TeamsPage.render")(function* (
               // Models is off on this host, so no page shows these roles or changes them.
               ...(unlisted
                 ? [
-                    `${unlisted === 1 ? "A model role uses" : `${unlisted} model roles use`} it too. ${unlisted === 1 ? "Its audience" : "Their audiences"} can be changed once Models is on.`
+                    `${unlisted === 1 ? "A model role uses" : `${unlisted} model roles use`} ${counts.length ? "it too" : "this team"}. ${unlisted === 1 ? "Its audience" : "Their audiences"} can be changed once Models is on.`
                   ]
                 : [])
             ].join(" ")

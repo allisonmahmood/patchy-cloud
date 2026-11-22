@@ -379,7 +379,7 @@ it.layer(
       assert.notInclude(asked, "No patch or connection uses it.");
       assert.include(
         asked,
-        "A model role uses it too. Its audience can be changed once Models is on."
+        "A model role uses this team. Its audience can be changed once Models is on."
       );
       assert.notInclude(asked, "off-triage");
       const refused = yield* send(
@@ -391,7 +391,7 @@ it.layer(
       assert.strictEqual(refused.status, 409);
       assert.include(
         yield* refused.text,
-        "A model role uses it too. Its audience can be changed once Models is on."
+        "A model role uses this team. Its audience can be changed once Models is on."
       );
       assert.isTrue((yield* teams.list(actor)).some((found) => found.id === team.id));
     })
