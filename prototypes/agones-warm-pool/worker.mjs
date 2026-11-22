@@ -13,9 +13,12 @@ const sdk = async (path, method = "GET") => {
 };
 
 let ready = false;
+let shuttingDown = false;
+let lastActivity = null;
+const idleAfterMs = Number(process.env.IDLE_AFTER_MS ?? 0);
 const server = createServer(async (request, response) => {
   try {
-    if (!ready) {
+    if (!ready || shuttingDown) {
       response.writeHead(503).end();
       return;
     }
@@ -27,7 +30,10 @@ const server = createServer(async (request, response) => {
     };
     if (request.url === "/shutdown" && request.method === "POST") {
       // The SDK, not the test runner deleting a Pod, drives shutdown.
+      shuttingDown = true;
       await sdk("/shutdown", "POST");
+    } else if (request.url === "/activity" && request.method === "POST") {
+      lastActivity = Date.now();
     } else if (request.url !== "/identity" || request.method !== "GET") {
       response.writeHead(404).end();
       return;
@@ -51,7 +57,24 @@ for (let attempt = 0; ; attempt++) {
   }
 }
 ready = true;
-const health = setInterval(() => sdk("/health", "POST").catch(console.error), 1_000);
+// Application policy: only an allocated worker that has done work can go idle.
+// Agones owns capacity; it does not know when a company's work is finished.
+const health = setInterval(async () => {
+  if (shuttingDown) return;
+  try {
+    await sdk("/health", "POST");
+    if (idleAfterMs > 0 && lastActivity !== null && Date.now() - lastActivity >= idleAfterMs) {
+      const gameServer = await (await sdk("/gameserver")).json();
+      if (gameServer.status.state === "Allocated" && Date.now() - lastActivity >= idleAfterMs) {
+        shuttingDown = true;
+        console.log(JSON.stringify({ event: "idle_shutdown", idleAfterMs }));
+        await sdk("/shutdown", "POST");
+      }
+    }
+  } catch (error) {
+    console.error(error);
+  }
+}, 1_000);
 process.on("SIGTERM", () => {
   clearInterval(health);
   server.close();
