@@ -14,7 +14,7 @@ import * as Runtime from "./Runtime.js";
 import * as RuntimeLog from "./RuntimeLog.js";
 import * as Fixtures from "./test/callbacks.js";
 import { NodeCryptography } from "@patchy/core";
-import { stalledUpload } from "../../../test/socket.js";
+import { stalledUpload, twoRequests } from "../../../test/socket.js";
 
 const headers = (capability: InvocationCapabilities.Capability) => ({
   authorization: `Bearer ${capability.token}`,
@@ -525,6 +525,43 @@ it.layer(
         assert.deepInclude(yield* call("{"), { code: "invalid_request", details: { sent: false } });
         assert.strictEqual(capability.counters.modelsInFlight, 0);
       }).pipe(Effect.scoped, Effect.provideService(ContractLimits.overrides, {}))
+  );
+
+  it.effect("an ordinary callback refused before its body is read keeps its connection", () =>
+    Effect.gen(function* () {
+      const capabilities = yield* InvocationCapabilities.make;
+      const gateway = yield* CallbackGateway.make({
+        "tables.get": { kind: "read", run: () => Effect.succeed(null) }
+      }).pipe(Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities));
+      const listener = yield* CallbackGatewayApi.listen().pipe(
+        Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities),
+        Effect.provideService(CallbackGateway.CallbackGateway, gateway)
+      );
+      const capability = yield* Fixtures.issue(capabilities, { kind: "query" });
+      const request = (bearer: string, body: string) => ({
+        head: [
+          "POST /callback HTTP/1.1",
+          "host: 127.0.0.1",
+          "content-type: application/json",
+          ...Object.entries({ ...headers(capability), authorization: `Bearer ${bearer}` }).map(
+            ([name, value]) => `${name}: ${value}`
+          )
+        ].join("\n"),
+        body
+      });
+      // A stale capability, no body: refused before reading, and the connection stays for the
+      // loader's next callback, as it always has.
+      const answers = yield* Effect.promise(() =>
+        twoRequests(
+          Number(new URL(listener.url).port),
+          request("stale-capability", ""),
+          request(capability.token, JSON.stringify({ op: "tables.get", args: { table: "rows" } }))
+        )
+      );
+      assert.strictEqual(answers.first.status, 200);
+      assert.notStrictEqual(answers.first.connection, "close");
+      assert.strictEqual(answers.second?.status, 200);
+    }).pipe(Effect.scoped, Effect.provideService(ContractLimits.overrides, {}))
   );
 
   it.effect(

@@ -130,11 +130,6 @@ export const make = Effect.gen(function* () {
   const capabilities = yield* InvocationCapabilities.InvocationCapabilities;
   const byteLimit = yield* ContractLimits.get("tier2.callbacks.bytes");
   const fileLimit = yield* ContractLimits.get("tier2.callbacks.fileBytes");
-  /**
-   * An answer given before the body is read: the connection closes after it, so a body that is
-   * still arriving, or never will, is neither drained nor waited for.
-   */
-  const unread = (reply: GuestProtocol.CallbackReply) => Effect.as(closeAfterAnswer, json(reply));
   return Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     // Classified before anything can refuse it, so a model call's every refusal before its
@@ -142,6 +137,15 @@ export const make = Effect.gen(function* () {
     // once it is read.
     const marked = request.headers["x-patchy-model-call"];
     const modelCall = isModelCall(marked) ? marked : undefined;
+    /**
+     * An answer given before the body is read. A model call's connection closes after it, so its
+     * arguments, up to a mebibyte still arriving or never sent, are neither drained nor waited
+     * for; an ordinary callback's stays open for the loader's next, as it always has.
+     */
+    const unread = (reply: GuestProtocol.CallbackReply) =>
+      modelCall === undefined
+        ? Effect.succeed(json(reply))
+        : Effect.as(closeAfterAnswer, json(reply));
     if (request.method !== "POST" || request.url.split("?")[0] !== "/callback")
       return yield* unread(said(modelCall, invalid));
     const authorization = request.headers.authorization ?? "";
