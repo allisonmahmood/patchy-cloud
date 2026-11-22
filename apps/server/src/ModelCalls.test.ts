@@ -149,6 +149,12 @@ const ask = action({
       await signalled(ctx, args.key);
       throw new Error("The handler's own failure.");
     }
+    // A call answered, then a wait past the action's own deadline.
+    if (args.call === "overstay") {
+      await one(ctx, "generate", "A quick answer.");
+      await sleep(args.waitMs);
+      return { late: true };
+    }
     if (args.call === "oversized")
       return await ctx.connections.writer.generate({
         input: "x".repeat(1_100_000), maxOutputTokens: 60
@@ -477,7 +483,8 @@ type Call =
   | "oversized"
   | "twins"
   | "abandon"
-  | "own failure";
+  | "own failure"
+  | "overstay";
 /** The page's call of the action, as a person, the seeded one unless named, and its answer. */
 const ask = (patch: Patch, call: Call, input: string, waitMs = 0, person: Person = seeded) =>
   callHandler(patch, "demo.ask", { call, input, waitMs, key: "" }, person);
@@ -697,6 +704,33 @@ it.layer(suite, { excludeTestServices: true, timeout: "120 seconds" })(
           yield* leftOpen(patch.patchId, failed.since, 2, "failed on its own");
         }),
       60_000
+    );
+    it.effect(
+      "answers handler_timeout when the handler outlasts its deadline after its model call ended",
+      () =>
+        Effect.gen(function* () {
+          const patch = yield* published("overstay");
+          const sql = yield* SqlClient.SqlClient;
+          const from = attempts.length;
+          const late = yield* ask(patch, "overstay", "", deadline + 500);
+          assert.include(late.body as object, { ok: false, code: "handler_timeout" });
+          // The call was answered before the wait began, so nothing was left open to interrupt.
+          assert.deepStrictEqual(
+            recordsSince(patch.patchId, from).map((record) => [record.outcome, record.sent]),
+            [["success", true]]
+          );
+          let logged: string | undefined;
+          for (let tries = 0; tries < 100 && (logged ?? "pending") === "pending"; tries++) {
+            const [row] = yield* sql<{ readonly outcome: string }>`
+              SELECT outcome FROM runtime_invocations
+              WHERE patch_id = ${patch.patchId} AND handler = 'demo.ask'
+              ORDER BY started_at DESC LIMIT 1`;
+            logged = row?.outcome;
+            if ((logged ?? "pending") === "pending") yield* Effect.sleep(20);
+          }
+          assert.strictEqual(logged, "handler_timeout");
+        }),
+      30_000
     );
     it.effect(
       "refuses a second person's action its place in the model pool, busy, nothing sent",
