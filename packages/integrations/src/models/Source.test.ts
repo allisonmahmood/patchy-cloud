@@ -1,9 +1,12 @@
+// @effect-diagnostics nodeBuiltinImport:off -- a local HTTP server proves what the real fetch transport does with a redirect.
+import { createServer } from "node:http";
 import { assert, describe, it } from "@effect/vitest";
 import type { ModelsDecideArgs, ModelsGenerateArgs } from "@patchy/api";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Redacted from "effect/Redacted";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Errors from "./Errors.js";
@@ -23,22 +26,45 @@ const json = (body: unknown, status = 200, headers: Record<string, string> = {})
     status,
     headers: { "content-type": "application/json", ...headers }
   });
-/** A completed Responses answer whose message holds `parts`. */
+/** Usage as OpenAI documents it, with its detail objects. */
+const documentedUsage = (input: number, output: number) => ({
+  input_tokens: input,
+  input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
+  output_tokens: output,
+  output_tokens_details: { reasoning_tokens: 0 },
+  total_tokens: input + output
+});
+/** A completed Responses answer as OpenAI documents one, whose message holds `parts`. */
 const responses = (
   parts: ReadonlyArray<Record<string, unknown>>,
   extra: Record<string, unknown> = {}
 ) => ({
   id: "resp_1",
   object: "response",
-  created_at: 1,
-  model: "gpt-test",
+  created_at: 1741476542,
   status: "completed",
-  incomplete_details: null,
+  completed_at: 1741476543,
   error: null,
+  incomplete_details: null,
+  instructions: null,
+  max_output_tokens: 200,
+  model: "gpt-test",
   output: [
     { type: "message", id: "msg_1", role: "assistant", status: "completed", content: parts }
   ],
-  usage: { input_tokens: 12, output_tokens: 7, total_tokens: 19 },
+  parallel_tool_calls: true,
+  previous_response_id: null,
+  reasoning: { effort: null, summary: null },
+  store: true,
+  temperature: 1,
+  text: { format: { type: "text" } },
+  tool_choice: "auto",
+  tools: [],
+  top_p: 1,
+  truncation: "disabled",
+  usage: documentedUsage(12, 7),
+  user: null,
+  metadata: {},
   ...extra
 });
 const textPart = (text: string) => ({ type: "output_text", text, annotations: [] });
@@ -53,7 +79,7 @@ const provider = (answer: (sent: Sent) => Response | "hang") => {
       const call: Sent = {
         url: url.href,
         method: request.method,
-        headers: request.headers,
+        headers: Object.fromEntries(Object.entries(request.headers)),
         body: JSON.parse(body)
       };
       sent.push(call);
@@ -65,10 +91,13 @@ const provider = (answer: (sent: Sent) => Response | "hang") => {
   return { sent, source: Source.make.pipe(Effect.provideService(HttpClient.HttpClient, client)) };
 };
 
-const target: Source.Target = { key: Redacted.make(KEY), model: "gpt-test" };
+const target: Source.Target = { model: "gpt-test" };
+const deciding: Source.Target = { model: "gpt-6-luna" };
 const dispatch = (
   deadlineMs = 60_000,
-  beforeSend: Effect.Effect<void, Errors.CallError> = Effect.void
+  beforeSend: Effect.Effect<Redacted.Redacted<string>, Errors.CallError> = Effect.succeed(
+    Redacted.make(KEY)
+  )
 ) =>
   Effect.map(Clock.currentTimeMillis, (now) => ({
     deadline: now + deadlineMs,
@@ -107,6 +136,19 @@ const failed = <A, E>(exit: Exit.Exit<A, E>): E => {
   if (error === undefined || error._tag !== "Fail") throw new Error("expected a typed failure");
   return error.error;
 };
+/** Every header the provider receives, and nothing else: no trace context, no organisation. */
+const assertHeaders = (sent: Sent) => {
+  const { "content-length": length, ...named } = sent.headers;
+  assert.deepStrictEqual(named, {
+    accept: "application/json",
+    authorization: `Bearer ${KEY}`,
+    "content-type": "application/json"
+  });
+  assert.strictEqual(
+    Number(length),
+    new TextEncoder().encode(JSON.stringify(sent.body)).byteLength
+  );
+};
 const typed = {
   kind: "object",
   fields: {
@@ -132,30 +174,21 @@ describe("OpenAI text calls", () => {
       const [request] = fake.sent;
       assert.strictEqual(request!.url, "https://api.openai.com/v1/responses");
       assert.strictEqual(request!.method, "POST");
-      assert.strictEqual(request!.headers["authorization"], `Bearer ${KEY}`);
       // No trace context, no organisation or project, nothing but the selected key.
-      assert.deepStrictEqual(
-        Object.keys(request!.headers)
-          .filter((name) => name !== "content-length")
-          .sort(),
-        ["accept", "authorization", "content-type"]
-      );
-      // No storage directive, previous response, tool, conversation or reasoning state.
-      assert.deepStrictEqual(Object.keys(request!.body).sort(), [
-        "input",
-        "max_output_tokens",
-        "model"
-      ]);
-      assert.strictEqual(request!.body.model, "gpt-test");
-      assert.strictEqual(request!.body.max_output_tokens, 200);
-      // Instructions and input in separate positions.
-      assert.deepStrictEqual(request!.body.input, [
-        { role: "system", content: [{ type: "input_text", text: "Summarise the request." }] },
-        {
-          role: "user",
-          content: [{ type: "input_text", text: "The printer on floor 2 is out of toner." }]
-        }
-      ]);
+      assertHeaders(request!);
+      // The whole body: no storage directive, previous response, tool, conversation or reasoning
+      // state; instructions and input in separate positions.
+      assert.deepStrictEqual(request!.body, {
+        model: "gpt-test",
+        max_output_tokens: 200,
+        input: [
+          { role: "system", content: [{ type: "input_text", text: "Summarise the request." }] },
+          {
+            role: "user",
+            content: [{ type: "input_text", text: "The printer on floor 2 is out of toner." }]
+          }
+        ]
+      });
     })
   );
 
@@ -178,11 +211,37 @@ describe("OpenAI text calls", () => {
         value: { team: "billing", summary: "Refund", tags: ["charge"] },
         usage: { inputTokens: 12, outputTokens: 7 }
       });
-      const format = (fake.sent[0]!.body.text as { format: Record<string, unknown> }).format;
-      assert.strictEqual(format.type, "json_schema");
-      assert.strictEqual(format.name, "output");
-      assert.strictEqual(format.strict, true);
-      assert.isUndefined(fake.sent[0]!.body.tools);
+      assertHeaders(fake.sent[0]!);
+      // The whole body, the compiled schema included: no tool definition, nothing to keep.
+      assert.deepStrictEqual(fake.sent[0]!.body, {
+        model: "gpt-test",
+        max_output_tokens: 200,
+        input: [
+          { role: "system", content: [{ type: "input_text", text: "Summarise the request." }] },
+          {
+            role: "user",
+            content: [{ type: "input_text", text: "The printer on floor 2 is out of toner." }]
+          }
+        ],
+        text: {
+          format: {
+            type: "json_schema",
+            name: "output",
+            description: "Response with a JSON object",
+            schema: {
+              type: "object",
+              properties: {
+                team: { type: "string", enum: ["billing", "technical"] },
+                summary: { type: "string" },
+                tags: { type: "array", items: { type: "string" } }
+              },
+              required: ["team", "summary", "tags"],
+              additionalProperties: false
+            },
+            strict: true
+          }
+        }
+      });
     })
   );
 
@@ -254,7 +313,15 @@ describe("OpenAI text calls", () => {
           generateArgs(),
           "source_unavailable"
         ],
-        ["failed", responses([], { status: "failed" }), generateArgs(), "source_unavailable"]
+        [
+          "failed",
+          responses([], {
+            status: "failed",
+            error: { code: "server_error", message: "The server had an error processing it." }
+          }),
+          generateArgs(),
+          "source_unavailable"
+        ]
       ];
       for (const [name, body, args, code] of cases) {
         const fake = provider(() => json(body));
@@ -341,7 +408,7 @@ describe("OpenAI text calls", () => {
 });
 
 describe("OpenAI refusals", () => {
-  it.effect("maps each HTTP refusal to Patchy's codes and never follows a redirect", () =>
+  it.effect("maps each HTTP refusal to Patchy's codes, one request each", () =>
     Effect.gen(function* () {
       const cases: ReadonlyArray<
         readonly [Response, string, Record<string, unknown>, number | undefined]
@@ -383,12 +450,6 @@ describe("OpenAI refusals", () => {
           "source_unavailable",
           { sent: true, reason: "provider", upstreamStatus: 503 },
           2
-        ],
-        [
-          new Response(null, { status: 302, headers: { location: "https://elsewhere.example/" } }),
-          "source_unavailable",
-          { sent: true, reason: "provider", upstreamStatus: 302 },
-          undefined
         ]
       ];
       for (const [response, code, details, retryAfter] of cases) {
@@ -512,8 +573,9 @@ describe("OpenAI refusals", () => {
 });
 
 describe("OpenAI decision calls", () => {
+  /** A Decisions answer as OpenAI documents one: output tokens are free and count 0. */
   const decisions = (answers: ReadonlyArray<Record<string, unknown>>) =>
-    json({ answers, model: "gpt-6-luna", usage: { input_tokens: 40, output_tokens: 0 } });
+    json({ answers, model: "gpt-6-luna", usage: documentedUsage(40, 0) });
 
   it.effect("sends fixed questions to the Decisions API and answers each in its own terms", () =>
     Effect.gen(function* () {
@@ -544,7 +606,7 @@ describe("OpenAI decision calls", () => {
         ])
       );
       const source = yield* fake.source;
-      const answer = yield* source.decide(target, decideArgs, yield* dispatch());
+      const answer = yield* source.decide(deciding, decideArgs, yield* dispatch());
       assert.deepStrictEqual(answer, {
         answers: {
           team: { choice: "billing", probabilities: { billing: 0.9, technical: 0.1 } },
@@ -559,35 +621,35 @@ describe("OpenAI decision calls", () => {
       });
       const [request] = fake.sent;
       assert.strictEqual(request!.url, "https://api.openai.com/v1/decisions");
-      assert.strictEqual(request!.headers["authorization"], `Bearer ${KEY}`);
-      assert.deepStrictEqual(Object.keys(request!.body).sort(), ["input", "model", "questions"]);
-      // The input goes as text, never as structured parts an image key could steer.
-      assert.strictEqual(
-        request!.body.input,
-        JSON.stringify({ subject: "Refund please", body: "I was charged twice." })
-      );
-      assert.deepStrictEqual(request!.body.questions, [
-        {
-          type: "choice",
-          name: "team",
-          instructions: "Which team handles it?",
-          choices: [
-            { value: "billing", description: "Charges and refunds" },
-            { value: "technical", description: "Bugs and outages" }
-          ]
-        },
-        {
-          type: "score",
-          name: "urgency",
-          instructions: "How urgent is it?",
-          levels: [
-            { label: "low", description: "low" },
-            { label: "medium", description: "medium" },
-            { label: "high", description: "high" }
-          ]
-        },
-        { type: "predicate", name: "angry", instructions: "The sender is angry." }
-      ]);
+      assertHeaders(request!);
+      // The whole body. The input goes as text, never as structured parts an image key could
+      // steer, and the model is the one the role is mapped to.
+      assert.deepStrictEqual(request!.body, {
+        model: "gpt-6-luna",
+        input: JSON.stringify({ subject: "Refund please", body: "I was charged twice." }),
+        questions: [
+          {
+            type: "choice",
+            name: "team",
+            instructions: "Which team handles it?",
+            choices: [
+              { value: "billing", description: "Charges and refunds" },
+              { value: "technical", description: "Bugs and outages" }
+            ]
+          },
+          {
+            type: "score",
+            name: "urgency",
+            instructions: "How urgent is it?",
+            levels: [
+              { label: "low", description: "low" },
+              { label: "medium", description: "medium" },
+              { label: "high", description: "high" }
+            ]
+          },
+          { type: "predicate", name: "angry", instructions: "The sender is angry." }
+        ]
+      });
     })
   );
 
@@ -609,7 +671,7 @@ describe("OpenAI decision calls", () => {
           { type: "predicate", name: "angry", probability: 0.6 }
         ])
       );
-      const answer = yield* (yield* fake.source).decide(target, decideArgs, yield* dispatch());
+      const answer = yield* (yield* fake.source).decide(deciding, decideArgs, yield* dispatch());
       assert.strictEqual(answer.answers.urgency, null);
       assert.deepStrictEqual(answer.answers.angry, { probability: 0.6 });
     })
@@ -632,11 +694,219 @@ describe("OpenAI decision calls", () => {
       );
       const call = yield* dispatch();
       const error = failed(
-        yield* Effect.exit((yield* fake.source).decide(target, decideArgs, call))
+        yield* Effect.exit((yield* fake.source).decide(deciding, decideArgs, call))
       );
       assert.strictEqual(error.code, "source_unavailable");
       assert.deepStrictEqual(error.details, { sent: true, reason: "answer" });
       assert.deepStrictEqual(call.attempt.usage, { inputTokens: 40, outputTokens: 0 });
+    })
+  );
+});
+
+describe("OpenAI calls at their edges", () => {
+  /** A dispatch whose final check takes `checkMs` and approves the key. */
+  const checked = (deadlineMs: number, checkMs: number) =>
+    Effect.map(Clock.currentTimeMillis, (now) => ({
+      deadline: now + deadlineMs,
+      attempt: { sent: false } as Source.Attempt,
+      beforeSend: Effect.sleep(checkMs).pipe(Effect.as(Redacted.make(KEY)))
+    }));
+
+  it.live("sends nothing when the final check crosses the floor", () =>
+    Effect.gen(function* () {
+      const fake = provider(() => json(responses([textPart("Hi")])));
+      const source = yield* fake.source;
+      const call = yield* checked(2_300, 500);
+      const error = failed(yield* Effect.exit(source.generate(target, generateArgs(), call)));
+      assert.strictEqual(error.code, "timeout");
+      assert.deepStrictEqual(error.details, { sent: false });
+      assert.isFalse(call.attempt.sent);
+      assert.strictEqual(fake.sent.length, 0);
+    })
+  );
+
+  it.effect("aborts an oversized answer whose body stays open before it returns", () =>
+    Effect.gen(function* () {
+      const signals: AbortSignal[] = [];
+      const client = HttpClient.make((request, _url, signal) =>
+        Effect.sync(() => {
+          signals.push(signal);
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response(new ReadableStream({ start: () => undefined }), {
+              status: 200,
+              headers: { "content-type": "application/json", "content-length": "2097152" }
+            })
+          );
+        })
+      );
+      const source = yield* Source.make.pipe(Effect.provideService(HttpClient.HttpClient, client));
+      const error = failed(
+        yield* Effect.exit(source.generate(target, generateArgs(), yield* dispatch()))
+      );
+      assert.strictEqual(error.code, "too_large");
+      assert.strictEqual(signals.length, 1);
+      assert.isTrue(signals[0]!.aborted, "the request is aborted before the call returns");
+    })
+  );
+
+  it.effect(
+    "reads a message that stopped short as unfinished, with or without an outer status",
+    () =>
+      Effect.gen(function* () {
+        const shortMessage = {
+          id: "resp_1",
+          object: "response",
+          created_at: 1,
+          model: "gpt-test",
+          output: [
+            {
+              type: "message",
+              id: "msg_1",
+              role: "assistant",
+              status: "incomplete",
+              content: [textPart("Order toner for")]
+            }
+          ],
+          usage: { input_tokens: 12, output_tokens: 7, total_tokens: 19 }
+        };
+        const fake = provider(() => json(shortMessage));
+        const error = failed(
+          yield* Effect.exit(
+            (yield* fake.source).generate(target, generateArgs(), yield* dispatch())
+          )
+        );
+        assert.strictEqual(error.code, "source_unavailable");
+        assert.deepStrictEqual(error.details, { sent: true, reason: "stopped" });
+      })
+  );
+
+  it.effect("answers a bodyless 204, 205 or 304 without faulting", () =>
+    Effect.gen(function* () {
+      for (const [status, details] of [
+        [204, { sent: true, reason: "answer" }],
+        [205, { sent: true, reason: "answer" }],
+        [304, { sent: true, reason: "provider", upstreamStatus: 304 }]
+      ] as const) {
+        const fake = provider(() => new Response(null, { status }));
+        const error = failed(
+          yield* Effect.exit(
+            (yield* fake.source).generate(target, generateArgs(), yield* dispatch())
+          )
+        );
+        assert.strictEqual(error.code, "source_unavailable", String(status));
+        assert.deepStrictEqual(error.details, details, String(status));
+      }
+    })
+  );
+
+  it.effect("sends a decision only to a model its provider documents as deciding", () =>
+    Effect.gen(function* () {
+      const fake = provider(() => json({ answers: [] }));
+      const error = failed(
+        yield* Effect.exit((yield* fake.source).decide(target, decideArgs, yield* dispatch()))
+      );
+      assert.strictEqual(error.code, "source_unavailable");
+      assert.deepStrictEqual(error.details, { sent: false, reason: "model" });
+      assert.strictEqual(fake.sent.length, 0);
+    })
+  );
+
+  it.effect("honours Retry-After as a date, and a billing limit as quota whatever its type", () =>
+    Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis;
+      const dated = provider(() =>
+        json({ error: { type: "rate_limit_error", code: "rate_limit_exceeded" } }, 429, {
+          "retry-after": new Date(now + 30_000).toUTCString()
+        })
+      );
+      const later = failed(
+        yield* Effect.exit(
+          (yield* dated.source).generate(target, generateArgs(), yield* dispatch())
+        )
+      );
+      assert.strictEqual(later.code, "source_rate_limited");
+      assert.isAtLeast("retryAfterSeconds" in later ? (later.retryAfterSeconds ?? 0) : 0, 29);
+      const billing = provider(() =>
+        json({ error: { type: "invalid_request_error", code: "billing_hard_limit_reached" } }, 429)
+      );
+      const spent = failed(
+        yield* Effect.exit(
+          (yield* billing.source).generate(target, generateArgs(), yield* dispatch())
+        )
+      );
+      assert.deepStrictEqual(spent.details, { sent: true, limit: "quota" });
+    })
+  );
+});
+
+describe("OpenAI's transport", () => {
+  it.live("never follows a redirect, through the real fetch", () =>
+    Effect.gen(function* () {
+      const hits: string[] = [];
+      const server = yield* Effect.acquireRelease(
+        Effect.callback<ReturnType<typeof createServer>>((resume) => {
+          const listening = createServer((request, response) => {
+            hits.push(request.url ?? "");
+            if (request.url?.endsWith("/responses")) {
+              response.writeHead(302, { location: "/elsewhere" });
+              response.end();
+            } else {
+              response.writeHead(200, { "content-type": "application/json" });
+              response.end(JSON.stringify(responses([textPart("followed")])));
+            }
+          });
+          listening.listen(0, "127.0.0.1", () => resume(Effect.succeed(listening)));
+        }),
+        (listening) =>
+          Effect.callback<void>((resume) => {
+            listening.close(() => resume(Effect.void));
+          })
+      );
+      const address = server.address();
+      const port = typeof address === "object" && address !== null ? address.port : 0;
+      const source = yield* Source.makeAt(`http://127.0.0.1:${port}/v1`).pipe(
+        Effect.provide(FetchHttpClient.layer)
+      );
+      const error = failed(
+        yield* Effect.exit(source.generate(target, generateArgs(), yield* dispatch()))
+      );
+      assert.strictEqual(error.code, "source_unavailable");
+      assert.deepStrictEqual(error.details, {
+        sent: true,
+        reason: "provider",
+        upstreamStatus: 302
+      });
+      assert.deepStrictEqual(hits, ["/v1/responses"]);
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect("relays OpenAI's 400 for a schema it rejects as invalid_request, sent", () =>
+    Effect.gen(function* () {
+      const fake = provider(() =>
+        json(
+          {
+            error: {
+              message: "Invalid schema for response_format 'output'.",
+              type: "invalid_request_error",
+              param: "text.format.schema",
+              code: "invalid_json_schema"
+            }
+          },
+          400
+        )
+      );
+      const error = failed(
+        yield* Effect.exit(
+          (yield* fake.source).generate(target, generateArgs({ output: typed }), yield* dispatch())
+        )
+      );
+      assert.strictEqual(error.code, "invalid_request");
+      assert.deepStrictEqual(error.details, {
+        sent: true,
+        reason: "provider",
+        upstreamStatus: 400
+      });
     })
   );
 });

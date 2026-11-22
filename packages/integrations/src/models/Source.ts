@@ -47,9 +47,10 @@ import * as Stream from "effect/Stream";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
-import type * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Errors from "./Errors.js";
+import * as Models from "./Models.js";
 
 /** OpenAI's one address; no admin types a host. */
 export const OPENAI_URL = "https://api.openai.com/v1";
@@ -57,19 +58,20 @@ export const OPENAI_URL = "https://api.openai.com/v1";
 const REQUEST_BYTES = registry["models.request.bytes"].default;
 const ANSWER_BYTES = registry["models.answer.bytes"].default;
 const FLOOR_MS = registry["models.send.floor"].default;
+/** The models OpenAI documents as answering decision calls. */
+const deciding: ReadonlyArray<string> = Models.capabilities.openai.decision.models;
 const CUTOFF_MS = registry["models.cutoff"].default;
 const OUTPUT_DEPTH = registry["models.output.depth"].default;
 const OUTPUT_NODES = registry["models.output.nodes"].default;
 
-/** The role's model as the call loaded it, and its provider's key. */
+/** The role's model as the call's first check found it. */
 export interface Target {
-  readonly key: Redacted.Redacted<string>;
   readonly model: string;
 }
 
 /** One attempt as the host observes it, written as the call goes, however it ends. */
 export interface Attempt {
-  /** A request was handed to the network. */
+  /** The request reached the transport, past every check, where its bytes can leave. */
   sent: boolean;
   /** What the provider counted, once an answer said. */
   usage?: ModelUsage;
@@ -81,10 +83,11 @@ export interface Dispatch<E> {
   readonly deadline: number;
   readonly attempt: Attempt;
   /**
-   * The caller's final check, run once the request is prepared and immediately before it is
-   * sent, with nothing queued between them. Its refusal sends nothing.
+   * The caller's final check, run once the request is prepared, answering the key it approved,
+   * which is the key sent. After it only the floor is checked before the request reaches the
+   * transport. Its refusal sends nothing.
    */
-  readonly beforeSend: Effect.Effect<void, E>;
+  readonly beforeSend: Effect.Effect<Redacted.Redacted<string>, E>;
 }
 
 export class Source extends Context.Service<
@@ -195,6 +198,7 @@ const Envelope = Schema.Struct({
       Schema.Array(
         Schema.Struct({
           type: Schema.String,
+          status: Schema.optionalKey(Schema.NullOr(Schema.String)),
           content: Schema.optionalKey(
             Schema.NullOr(Schema.Array(Schema.Struct({ type: Schema.String })))
           )
@@ -234,11 +238,14 @@ const usageOf = (envelope: Envelope | undefined): ModelUsage => ({
   inputTokens: tokens(envelope?.usage?.input_tokens),
   outputTokens: tokens(envelope?.usage?.output_tokens)
 });
-/** `Retry-After` in seconds, at least 1, or none when absent or not a number of seconds. */
-const retryAfter = (value: string | undefined) => {
-  const seconds = value === undefined || value === "" ? Number.NaN : Number(value);
-  return Number.isFinite(seconds) && seconds >= 0 ? Math.max(1, Math.ceil(seconds)) : undefined;
+/** `Retry-After` in seconds, at least 1, from a number of seconds or an HTTP date; none if neither. */
+const retryAfter = (value: string | undefined, now: number) => {
+  if (value === undefined || value.trim() === "") return undefined;
+  const seconds = /^\d+$/.test(value.trim()) ? Number(value) : (Date.parse(value) - now) / 1_000;
+  return Number.isFinite(seconds) ? Math.max(1, Math.ceil(seconds)) : undefined;
 };
+/** Statuses whose response has no body, which a rebuilt response must not be given. */
+const bodyless = new Set([101, 103, 204, 205, 304]);
 
 /** A transport failure carrying nothing; the refusal it stands for waits in the wire. */
 const withheld = (request: HttpClientRequest.HttpClientRequest) =>
@@ -290,7 +297,7 @@ const collect = <E>(response: HttpClientResponse.HttpClientResponse, wire: Wire<
     if (response.status >= 200 && response.status < 300)
       wire.envelope = Option.getOrUndefined(decodeEnvelope(decoded));
     else {
-      const retry = retryAfter(response.headers["retry-after"]);
+      const retry = retryAfter(response.headers["retry-after"], yield* Clock.currentTimeMillis);
       if (retry !== undefined) wire.retryAfter = retry;
       const error = Option.getOrUndefined(decodeErrorBody(decoded))?.error;
       wire.error = {
@@ -300,14 +307,20 @@ const collect = <E>(response: HttpClientResponse.HttpClientResponse, wire: Wire<
     }
     return HttpClientResponse.fromWeb(
       response.request,
-      new Response(body, { status: response.status, headers: { ...response.headers } })
+      new Response(bodyless.has(response.status) ? null : body, {
+        status: response.status,
+        headers: { ...response.headers }
+      })
     );
   });
 
 /**
- * The provider client's `transformClient`: the bound on the request, the floor and the caller's
- * check before dispatch, and the bound on the answer, a refusal's body included, which arrives as
- * a failure holding an unread body after the client's status filter.
+ * The provider client's `transformClient`. Before dispatch: the bound on the request, the
+ * caller's final check, which answers the key to send, then the floor on what is left of the
+ * action, so a check that takes long can't send late. Each request is owned by a scope that
+ * spans its answer's reading and aborts it on the way out, so a stalled or oversized body never
+ * outlives the call or its permits. The answer, a refusal's body included, which arrives as a
+ * failure holding an unread body after the client's status filter, is read under its bound.
  */
 const guarded =
   <E>(wire: Wire<E>, dispatch: Dispatch<E>) =>
@@ -320,11 +333,6 @@ const guarded =
             wire.refused = new Errors.TooLarge({ limitId: "models.request.bytes" });
             return yield* Effect.fail(withheld(request));
           }
-          const left = dispatch.deadline - (yield* Clock.currentTimeMillis);
-          if (left < FLOOR_MS) {
-            wire.refused = new Errors.Timeout({ sent: false, milliseconds: Math.max(0, left) });
-            return yield* Effect.fail(withheld(request));
-          }
           const checked = yield* Effect.exit(dispatch.beforeSend);
           if (Exit.isFailure(checked)) {
             const error = Cause.findErrorOption(checked.cause);
@@ -333,28 +341,35 @@ const guarded =
             wire.refused = error.value;
             return yield* Effect.fail(withheld(request));
           }
-          dispatch.attempt.sent = true;
-          return request;
+          const left = dispatch.deadline - (yield* Clock.currentTimeMillis);
+          if (left < FLOOR_MS) {
+            wire.refused = new Errors.Timeout({ sent: false, milliseconds: Math.max(0, left) });
+            return yield* Effect.fail(withheld(request));
+          }
+          return HttpClientRequest.bearerToken(request, Redacted.value(checked.value));
         })
       ),
+      HttpClient.withScope,
       HttpClient.transformResponse((effect) =>
-        effect.pipe(
-          Effect.flatMap((response) => collect(response, wire)),
-          Effect.catchTags({
-            HttpClientError: (error) =>
-              error.reason._tag === "StatusCodeError"
-                ? Effect.flatMap(collect(error.reason.response, wire), (response) =>
-                    Effect.fail(
-                      new HttpClientError.HttpClientError({
-                        reason: new HttpClientError.StatusCodeError({
-                          request: error.reason.request,
-                          response
+        Effect.scoped(
+          effect.pipe(
+            Effect.flatMap((response) => collect(response, wire)),
+            Effect.catchTags({
+              HttpClientError: (error) =>
+                error.reason._tag === "StatusCodeError"
+                  ? Effect.flatMap(collect(error.reason.response, wire), (response) =>
+                      Effect.fail(
+                        new HttpClientError.HttpClientError({
+                          reason: new HttpClientError.StatusCodeError({
+                            request: error.reason.request,
+                            response
+                          })
                         })
-                      })
+                      )
                     )
-                  )
-                : Effect.fail(error)
-          })
+                  : Effect.fail(error)
+            })
+          )
         )
       )
     );
@@ -365,6 +380,7 @@ const quota = new Set([
   "organization_spend_limit_exceeded",
   "project_spend_limit_exceeded",
   "organization_usage_limit_exceeded",
+  "billing_hard_limit_reached",
   "insufficient_quota"
 ]);
 
@@ -437,10 +453,17 @@ const ending = (
   if (envelope === undefined) return new Errors.Unavailable({ reason: "answer", sent: true });
   const usage = usageOf(envelope);
   const reason = envelope.incomplete_details?.reason ?? undefined;
-  const status = envelope.status ?? (reason === undefined ? "completed" : "incomplete");
-  const refused = (envelope.output ?? []).some(
-    (item) =>
-      item.type === "message" && (item.content ?? []).some((part) => part.type === "refusal")
+  const messages = (envelope.output ?? []).filter((item) => item.type === "message");
+  // A message that stopped short leaves its answer unfinished, whatever the outer status says.
+  const short = messages.some((item) => item.status === "incomplete");
+  const status =
+    envelope.status === "completed" || envelope.status === undefined || envelope.status === null
+      ? reason !== undefined || short
+        ? "incomplete"
+        : "completed"
+      : envelope.status;
+  const refused = messages.some((item) =>
+    (item.content ?? []).some((part) => part.type === "refusal")
   );
   if (status === "completed") return refused ? new Errors.Refused({ usage }) : undefined;
   if (status === "incomplete" && reason === "content_filter") return new Errors.Refused({ usage });
@@ -494,16 +517,38 @@ const inputText = (input: typeof Schema.Json.Type) =>
  * OpenAI's layer over the process's HTTP client. Published, dev and test calls alike pass the
  * host's admission queue before they get here.
  */
-export const make = Effect.gen(function* () {
+export const makeAt = Effect.fn("ModelsSource.make")(function* (apiUrl: string) {
   const http = yield* HttpClient.HttpClient;
 
-  /** The provider's client for one call, with its key, reading the wire through `wire`. */
-  const client = <E>(target: Target, wire: Wire<E>, dispatch: Dispatch<E>) =>
-    OpenAiClient.layer({
-      apiUrl: OPENAI_URL,
-      apiKey: target.key,
-      transformClient: guarded(wire, dispatch)
-    }).pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, http)));
+  /**
+   * The provider's client for one call, reading the wire through `wire`. It holds no key: the
+   * final check answers the one to send. `sent` turns true as the request reaches the
+   * transport, past every check, where its bytes can leave.
+   */
+  const client = <E>(wire: Wire<E>, dispatch: Dispatch<E>) =>
+    OpenAiClient.layer({ apiUrl, transformClient: guarded(wire, dispatch) }).pipe(
+      Layer.provide(
+        Layer.succeed(
+          HttpClient.HttpClient,
+          // The transport: it receives the request once every check before it has passed.
+          HttpClient.makeWith(
+            (
+              prepared: Effect.Effect<
+                HttpClientRequest.HttpClientRequest,
+                HttpClientError.HttpClientError
+              >
+            ) =>
+              Effect.flatMap(prepared, (request) =>
+                Effect.suspend(() => {
+                  dispatch.attempt.sent = true;
+                  return http.execute(request);
+                })
+              ),
+            (request: HttpClientRequest.HttpClientRequest) => Effect.succeed(request)
+          )
+        )
+      )
+    );
 
   /**
    * Sends under the cut-off, never following a redirect, without trace context, and with no
@@ -532,6 +577,9 @@ export const make = Effect.gen(function* () {
     dispatch: Dispatch<E>
   ): Effect.Effect<ModelsDecided, Errors.CallError | E> =>
     Effect.gen(function* () {
+      // Only a model the provider documents as deciding is sent a decision.
+      if (!deciding.includes(target.model))
+        return yield* new Errors.Unavailable({ reason: "model", sent: false });
       const entries = Object.entries(args.questions);
       const definition = yield* Effect.try({
         try: () =>
@@ -546,7 +594,7 @@ export const make = Effect.gen(function* () {
         DecisionModel.decideSettled(definition, { input: inputText(args.input) }).pipe(
           Effect.provide(
             OpenAiDecisionModel.layer({ model: target.model }).pipe(
-              Layer.provide(client(target, wire, dispatch))
+              Layer.provide(client(wire, dispatch))
             )
           ),
           Effect.mapError((error) => failure(error, wire, dispatch.attempt))
@@ -585,7 +633,7 @@ export const make = Effect.gen(function* () {
       const model = OpenAiLanguageModel.layer({
         model: target.model,
         config: { max_output_tokens: args.maxOutputTokens, reasoningModel: false }
-      }).pipe(Layer.provide(client(target, wire, dispatch)));
+      }).pipe(Layer.provide(client(wire, dispatch)));
       /** The answer's own ending decides first; only a completed one is read for its content. */
       const finished = <A>(
         exit: Exit.Exit<A, AiError.AiError>
@@ -646,6 +694,9 @@ export const make = Effect.gen(function* () {
 
   return Source.of({ decide, generate });
 });
+
+/** OpenAI at its one address; `makeAt` exists for tests of the transport against a local server. */
+export const make = makeAt(OPENAI_URL);
 
 /** OpenAI over the process's fetch. */
 export const layer = Layer.effect(Source, make).pipe(Layer.provide(FetchHttpClient.layer));

@@ -129,7 +129,8 @@ export class Unavailable extends Schema.TaggedError<Unavailable>()("ModelsUnavai
     "provider",
     "stopped",
     "answer",
-    "connection_changed"
+    "connection_changed",
+    "model"
   ]),
   sent: Schema.Boolean,
   upstreamStatus: Schema.optionalKey(Schema.Int),
@@ -154,7 +155,9 @@ export class Unavailable extends Schema.TaggedError<Unavailable>()("ModelsUnavai
       stopped: "The model stopped before it finished, for a reason Patchy doesn't report.",
       answer: "The model provider answered in a shape Patchy doesn't read.",
       connection_changed:
-        "An admin changed this role's provider, model or key while the call waited, so nothing was sent. Try again."
+        "An admin changed this role's provider, model or key while the call waited, so nothing was sent. Try again.",
+      model:
+        "This role's model can't answer this kind of call on its provider, so nothing was sent. Ask an admin to map it to one that can."
     }[this.reason];
   }
 }

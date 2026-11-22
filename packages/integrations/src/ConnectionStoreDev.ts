@@ -175,8 +175,7 @@ export const layer = (metadata: ReadonlyArray<DevConnection> = []) => {
       pauseLogin: () => Effect.void,
       // Models are an admin's, on the instance.
       providers: unavailable,
-      provider: unavailable,
-      providerKey: unavailable,
+      modelCall: unavailable,
       connectProvider: unavailable,
       createRole: unavailable,
       changeModels: unavailable

@@ -2400,13 +2400,6 @@ export const knowing = (known: ReadonlyArray<Models.Kind>) =>
       },
       Effect.catchTags(safe("providers"))
     );
-    const provider = Effect.fn("ConnectionStore.provider")(
-      function* (companyId: string, id: string) {
-        if (!models) return yield* new ModelsUnavailable({});
-        return yield* providerOf({ companyId, id });
-      },
-      Effect.catchTags(safe("providers"))
-    );
     const providerSecret = SqlSchema.findOneOption({
       Request: Schema.Struct({ companyId: Schema.String, id: Schema.String }),
       Result: Schema.Struct({
@@ -2420,17 +2413,68 @@ export const knowing = (known: ReadonlyArray<Models.Kind>) =>
       }) => sql`SELECT ${providerColumns}, p.credentials, p.key_id AS "keyId"
         FROM connections p WHERE p.company_id = ${companyId} AND p.id = ${id} AND ${knownProvider}`
     });
-    const providerKey = Effect.fn("ConnectionStore.providerKey")(
-      function* (companyId: string, id: string, credentialRevision: number) {
+    const modelCall = Effect.fn("ConnectionStore.modelCall")(
+      function* (input: {
+        readonly companyId: string;
+        readonly patchId: string;
+        readonly roleId: string;
+        readonly key: boolean;
+      }) {
         if (!models) return yield* new ModelsUnavailable({});
-        const found = yield* providerSecret({ companyId, id });
-        if (Option.isNone(found)) return yield* notFound({ companyId, id });
-        if (found.value.status !== "connected") return yield* new ConnectionNotConnected({});
-        if (found.value.credentialRevision !== credentialRevision)
-          return yield* new ConnectionChanged({});
-        return yield* keys.decrypt(found.value, found.value);
+        // One snapshot for every read, so the role, its provider, the owner's authority and the
+        // key agree with each other however changes land around it.
+        const read = yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY`;
+            const found = yield* connectionRow({
+              companyId: input.companyId,
+              id: input.roleId,
+              locked: false
+            });
+            if (Option.isNone(found) || found.value.integration !== "models")
+              return yield* notFound({ companyId: input.companyId, id: input.roleId });
+            const role = found.value;
+            const stored = input.key
+              ? Option.getOrUndefined(
+                  yield* providerSecret({ companyId: input.companyId, id: role.role.providerId })
+                )
+              : undefined;
+            const provider =
+              stored ??
+              Option.getOrUndefined(
+                yield* providerRow({
+                  companyId: input.companyId,
+                  id: role.role.providerId,
+                  locked: false
+                })
+              );
+            const owner = yield* ownerCanUse(input.companyId, input.patchId, input.roleId).pipe(
+              Effect.catchTags({ ConnectionNotFound: () => Effect.succeed(false) })
+            );
+            return { role, provider, stored, owner };
+          })
+        );
+        const key =
+          read.stored === undefined ? undefined : yield* keys.decrypt(read.stored, read.stored);
+        return {
+          role: read.role,
+          provider:
+            read.provider === undefined
+              ? undefined
+              : {
+                  id: read.provider.id,
+                  companyId: read.provider.companyId,
+                  integration: read.provider.integration,
+                  handle: read.provider.handle,
+                  status: read.provider.status,
+                  credentialRevision: read.provider.credentialRevision,
+                  createdBy: read.provider.createdBy
+                },
+          ownerCanUse: read.owner,
+          ...(key === undefined ? {} : { key })
+        } satisfies ConnectionStore.ModelCall;
       },
-      Effect.catchTags(safe("poolCredentials"))
+      Effect.catchTags(safe("models"))
     );
     const connectProvider = Effect.fn("ConnectionStore.connectProvider")(
       function* (input: ConnectionStore.ProviderInput, report?: ConnectionStore.ModelsReport) {
@@ -2660,8 +2704,7 @@ export const knowing = (known: ReadonlyArray<Models.Kind>) =>
       sends,
       pauseLogin,
       providers,
-      provider,
-      providerKey,
+      modelCall,
       connectProvider,
       createRole,
       changeModels

@@ -4,7 +4,8 @@ import * as GuestProtocol from "@patchy/api/guest";
 import { DEV_SEED } from "@patchy/auth/seed";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { Binding, Runtime } from "@patchy/runtime/core";
-import { ActionSlots } from "@patchy/runtime";
+import { ActionSlots, CallbackGateway, InvocationCapabilities } from "@patchy/runtime";
+import { OperatingLimits } from "@patchy/limits";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -132,7 +133,7 @@ const setup = Effect.fn(function* () {
       kind,
       description: handle,
       providerId: provider.id,
-      model: "gpt-test"
+      model: kind === "decision" ? "gpt-6-luna" : "gpt-test"
     });
   const triage = yield* role("triage", "decision");
   const writer = yield* role("writer", "text");
@@ -255,7 +256,7 @@ it.layer(layer, { excludeTestServices: true, timeout: 60_000 })("model calls", (
         roleId: scene.triage.id,
         providerId: scene.provider.id,
         provider: "openai",
-        model: "gpt-test",
+        model: "gpt-6-luna",
         modelKind: "decision",
         door: "published",
         sent: true,
@@ -548,6 +549,374 @@ it.layer(layer, { excludeTestServices: true, timeout: 60_000 })("model calls", (
         assert.notInclude(line, INPUT);
       }
     })
+  );
+
+  /** A final check whose authorization lands `change` while it runs, then approves the viewer. */
+  const landing = (
+    scene: Scene,
+    change: (scene: Scene) => Effect.Effect<unknown, unknown>,
+    viewer: Partial<NonNullable<Binding.Binding["Service"]["identity"]>> = {}
+  ) =>
+    Effect.suspend(() => change(scene)).pipe(
+      Effect.orDie,
+      Effect.as({ ...scene.binding().identity!, ...viewer })
+    );
+
+  it.effect("send nothing when a change lands while the final check authorizes", () =>
+    Effect.gen(function* () {
+      const cases: ReadonlyArray<
+        readonly [
+          string,
+          (scene: Scene) => Effect.Effect<unknown, unknown>,
+          Record<string, unknown>,
+          Partial<NonNullable<Binding.Binding["Service"]["identity"]>>?
+        ]
+      > = [
+        [
+          "remap",
+          (scene) =>
+            scene.store.changeModels({
+              ...scene.who,
+              id: scene.writer.id,
+              change: { kind: "remap", providerId: scene.provider.id, model: "gpt-other" }
+            }),
+          { code: "source_unavailable", details: { sent: false, reason: "connection_changed" } }
+        ],
+        [
+          "key replaced",
+          (scene) =>
+            scene.store.changeModels({
+              ...scene.who,
+              id: scene.provider.id,
+              change: { kind: "replaceKey", credentials: Redacted.make("sk-replaced") }
+            }),
+          { code: "source_unavailable", details: { sent: false, reason: "connection_changed" } }
+        ],
+        [
+          "role paused",
+          (scene) =>
+            scene.store.changeModels({
+              ...scene.who,
+              id: scene.writer.id,
+              change: { kind: "pause" }
+            }),
+          { code: "access_denied", details: { sent: false } }
+        ],
+        [
+          "provider paused",
+          (scene) =>
+            scene.store.changeModels({
+              ...scene.who,
+              id: scene.provider.id,
+              change: { kind: "pause" }
+            }),
+          { code: "access_denied", details: { sent: false } }
+        ],
+        [
+          "guests blocked, the viewer now a guest",
+          (scene) => scene.store.blockGuests({ ...scene.who, id: scene.writer.id, block: true }),
+          { code: "access_denied", details: { sent: false } },
+          { guest: true }
+        ]
+      ];
+      for (const [name, change, expected, viewer] of cases) {
+        const scene = yield* setup();
+        const provider = scripted(() => text("sent anyway"));
+        const made = yield* handlers(provider);
+        const failure = refusal(
+          yield* Effect.exit(
+            call(
+              made,
+              "models.generate",
+              generateArgs(),
+              scene.binding({ reauthorize: landing(scene, change, viewer) })
+            )
+          )
+        );
+        assert.deepInclude(failure, expected, name);
+        assert.strictEqual(provider.sent.length, 0, `${name}: nothing sent`);
+      }
+    })
+  );
+
+  it.effect("say whether anything was sent on every refusal a handler gives", () =>
+    Effect.gen(function* () {
+      const scene = yield* setup();
+      const made = yield* handlers(scripted(() => text("never")));
+      yield* scene.store.changeModels({
+        ...scene.who,
+        id: scene.writer.id,
+        change: { kind: "pause" }
+      });
+      const paused = refusal(
+        yield* Effect.exit(call(made, "models.generate", generateArgs(), scene.binding()))
+      );
+      assert.deepInclude(paused, { code: "access_denied", details: { sent: false } });
+      const malformed = refusal(
+        yield* Effect.exit(
+          call(made, "models.generate", { ...generateArgs(), maxOutputTokens: 1 }, scene.binding())
+        )
+      );
+      assert.deepInclude(malformed, { code: "invalid_request", details: { sent: false } });
+      const undeclared = refusal(
+        yield* Effect.exit(
+          call(made, "models.generate", { ...generateArgs(), connection: "nope" }, scene.binding())
+        )
+      );
+      assert.deepInclude(undeclared, { code: "connection_not_declared", details: { sent: false } });
+    })
+  );
+
+  /** A role's call through the real callback gateway, as an action's guest makes it. */
+  const relay = Effect.fn(function* (
+    scene: Scene,
+    provider: ReturnType<typeof scripted>,
+    options: {
+      readonly kind?: "query" | "mutation" | "action";
+      readonly deadlineMs?: number;
+      readonly treeBytes?: number;
+      readonly modelPool?: Binding.Binding["Service"]["modelPool"];
+      readonly store?: (
+        store: ConnectionStore.ConnectionStore["Service"]
+      ) => ConnectionStore.ConnectionStore["Service"];
+    } = {}
+  ) {
+    const store = yield* ConnectionStore.ConnectionStore;
+    const made = yield* handlers(provider).pipe(
+      Effect.provideService(ConnectionStore.ConnectionStore, options.store?.(store) ?? store)
+    );
+    const capabilities = yield* InvocationCapabilities.make;
+    const gateway = yield* CallbackGateway.make(made).pipe(
+      Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities)
+    );
+    const capability = yield* capabilities.issue({
+      binding: { ...scene.binding(), invocationId: "inv_models", effectivePrincipal: "patch" },
+      attempt: {
+        invocationId: "inv_models",
+        attemptId: "attempt_models",
+        processGeneration: 1,
+        deadline: Date.now() + (options.deadlineMs ?? 60_000)
+      },
+      kind: options.kind ?? "action",
+      readOnly: false,
+      ...(options.treeBytes === undefined ? {} : { tree: { bytes: options.treeBytes } }),
+      ...(options.modelPool === undefined ? {} : { modelPool: options.modelPool })
+    });
+    return {
+      capability,
+      send: (op: string, args: Record<string, unknown>) =>
+        gateway.callback(capability.token, capability.attempt, {
+          op,
+          args: args as Record<string, typeof Schema.Json.Type>
+        })
+    };
+  });
+
+  it.effect(
+    "relay through the gateway whether anything was sent, early refusals and slow lookups included",
+    () =>
+      Effect.gen(function* () {
+        events.length = 0;
+        const scene = yield* setup();
+        const query = yield* relay(
+          scene,
+          scripted(() => text("never")),
+          { kind: "query" }
+        );
+        assert.deepInclude(yield* query.send("models.generate", generateArgs()), {
+          ok: false,
+          code: "access_denied",
+          details: { sent: false }
+        });
+        const slow = yield* relay(
+          scene,
+          scripted(() => text("never")),
+          {
+            deadlineMs: 2_600,
+            // The final read, the one that loads the key, takes longer than the action has left.
+            store: (store) => ({
+              ...store,
+              modelCall: (input) =>
+                input.key
+                  ? Effect.sleep("3 seconds").pipe(Effect.andThen(store.modelCall(input)))
+                  : store.modelCall(input)
+            })
+          }
+        );
+        assert.deepInclude(yield* slow.send("models.generate", generateArgs()), {
+          ok: false,
+          code: "timeout",
+          details: { sent: false }
+        });
+        const refused = yield* relay(
+          scene,
+          scripted(() =>
+            json({ error: { type: "invalid_request_error", code: "invalid_api_key" } }, 401)
+          )
+        );
+        assert.deepInclude(yield* refused.send("models.generate", generateArgs()), {
+          ok: false,
+          code: "source_unavailable",
+          details: { sent: true, reason: "key", upstreamStatus: 401 }
+        });
+        yield* settled;
+        // The query's refusal is an attempt the host saw, with its own event.
+        assert.deepInclude(
+          modelEvents().map((event) => [event.code, event.sent, event.modelKind]),
+          ["access_denied", false, "text"]
+        );
+      }).pipe(Effect.scoped)
+  );
+
+  it.effect("keep a model's answer when the call tree's bytes run out after it was sent", () =>
+    Effect.gen(function* () {
+      const scene = yield* setup();
+      const limit = 64 * 1024 * 1024;
+      const tight = yield* relay(
+        scene,
+        scripted(() => text("x".repeat(4_000))),
+        {
+          treeBytes: limit - 1_000
+        }
+      );
+      const reply = yield* tight.send("models.generate", generateArgs("short"));
+      assert.isTrue(reply.ok, JSON.stringify(reply).slice(0, 200));
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect("give a refused fifth call an attempt event of its own", () =>
+    Effect.gen(function* () {
+      events.length = 0;
+      const scene = yield* setup();
+      // Four calls held at the pool step, inside the handler, each counted as running.
+      const action = yield* relay(
+        scene,
+        scripted(() => "hang"),
+        { modelPool: Effect.never }
+      );
+      const running = yield* Effect.forEach([1, 2, 3, 4], () =>
+        Effect.forkChild(action.send("models.generate", generateArgs()))
+      );
+      yield* Effect.sleep("100 millis");
+      assert.deepInclude(yield* action.send("models.generate", generateArgs()), {
+        ok: false,
+        code: "busy",
+        limitId: "models.calls.inFlight"
+      });
+      yield* settled;
+      assert.deepInclude(
+        modelEvents().map((event) => [event.code, event.sent]),
+        ["busy", false]
+      );
+      yield* Fiber.interruptAll(running);
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect("record the pool move's peaks on the action's event, not the attempt's", () =>
+    Effect.gen(function* () {
+      events.length = 0;
+      const scene = yield* setup();
+      const wide = yield* WideEvents.WideEvents;
+      const limit = (limitId: string, value: number) =>
+        new OperatingLimits.EffectiveLimit({
+          companyId: scene.owner.company.id,
+          limitId,
+          value,
+          overrideValue: null,
+          configRevision: new OperatingLimits.ConfigRevision({
+            deploymentRevision: "test",
+            overrideRevision: "0"
+          })
+        });
+      const slots = ActionSlots.make({ replica: 64, deploymentRevision: "test" });
+      const slot = yield* slots.admit(
+        {
+          companyId: scene.owner.company.id,
+          patchId: "desk",
+          userId: scene.owner.user.id,
+          caller: "page"
+        },
+        { company: limit("tier2.actions.company", 8), viewer: limit("tier2.actions.viewer", 2) }
+      );
+      yield* wide.withEvent(
+        { type: "request" },
+        Effect.gen(function* () {
+          const action = yield* relay(scene, ordinary, {
+            modelPool: slot
+              .transfer({
+                company: limit("tier2.models.company", 24),
+                viewer: limit("tier2.models.viewer", 4)
+              })
+              .pipe(
+                Effect.catchTags({
+                  SlotReleased: (cause) => Effect.fail(new Runtime.AccessDenied({ cause }))
+                })
+              )
+          });
+          assert.isTrue((yield* action.send("models.generate", generateArgs())).ok);
+        }).pipe(Effect.scoped)
+      );
+      yield* settled;
+      const pool = (event: WideEvents.WideEvent) =>
+        (event.limits ?? []).filter((entry) => entry.limitId.startsWith("tier2.models.")).length;
+      const request = events.find((event) => event.type === "request");
+      assert.strictEqual(pool(request!), 3, "the action's event has the pool's three limits");
+      for (const event of modelEvents()) assert.strictEqual(pool(event), 0);
+    })
+  );
+
+  it.effect(
+    "keep markers in a successful and a refused answer out of the journal and the record",
+    () =>
+      Effect.gen(function* () {
+        events.length = 0;
+        const scene = yield* setup();
+        const sql = yield* SqlClient.SqlClient;
+        const answerMarker = "ANSWER-MARKER-5b0e";
+        const refusalMarker = "REFUSAL-MARKER-c71a";
+        const answered = yield* relay(
+          scene,
+          scripted(() => text(answerMarker))
+        );
+        const ok = yield* answered.send("models.generate", generateArgs());
+        assert.include(JSON.stringify(ok), answerMarker, "the patch gets its answer");
+        const declined = yield* relay(
+          scene,
+          scripted(() =>
+            json({
+              id: "resp_2",
+              object: "response",
+              created_at: 1,
+              model: "gpt-test",
+              status: "completed",
+              output: [
+                {
+                  type: "message",
+                  id: "msg_2",
+                  role: "assistant",
+                  status: "completed",
+                  content: [{ type: "refusal", refusal: `I won't: ${refusalMarker} ${INPUT}` }]
+                }
+              ],
+              usage: { input_tokens: 5, output_tokens: 3, total_tokens: 8 }
+            })
+          )
+        );
+        const refusedReply = yield* declined.send("models.generate", generateArgs());
+        assert.deepInclude(refusedReply, { ok: false, code: "model_refused" });
+        yield* settled;
+        const journal =
+          yield* sql`SELECT * FROM runtime_calls WHERE company_id = ${scene.owner.company.id}`;
+        assert.isAbove(journal.length, 1);
+        for (const line of [
+          JSON.stringify(refusedReply),
+          JSON.stringify(journal),
+          ...modelEvents().map((event) => JSON.stringify(event))
+        ]) {
+          for (const marker of [answerMarker, refusalMarker, INPUT, KEY])
+            assert.notInclude(line, marker);
+        }
+      }).pipe(Effect.scoped)
   );
 });
 
