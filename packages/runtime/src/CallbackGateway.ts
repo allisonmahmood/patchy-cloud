@@ -47,6 +47,7 @@ const Log = Schema.Struct({ message: Schema.String, details: Schema.optionalKey(
 const decodeLog = Schema.decodeUnknownEffect(Log, strict);
 const decodeAdoption = Schema.decodeUnknownEffect(FilePutUpload, strict);
 const isCapabilityRefused = Schema.is(InvocationCapabilities.CapabilityRefused);
+const isHoldRefused = Schema.is(InvocationCapabilities.HoldRefused);
 const readTable: Readonly<Record<string, true>> = {
   "tables.get": true,
   "tables.getMany": true,
@@ -297,9 +298,10 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
     if (operation?.kind === "integration") integration = request.op;
     if (capability.kind === "query" && operation?.transport !== undefined)
       return remember(refused("access_denied", "Queries cannot transfer file bytes."), 403);
-    // A model call's own bounds, before anything is queued for it: its arguments, the action's
-    // attempts across every role alias, refused ones included, and the four it may have running.
-    // The patch's client holds the rest, so a refusal here means a client past its contract.
+    // A model call's own bounds, before anything is queued for it: its arguments and the
+    // action's attempts across every role alias, refused ones included. The four it may have
+    // running are a place its work takes as it is handed off, below. The patch's client holds the
+    // rest, so a refusal here means a client past its contract.
     const model = isModelCall(request.op);
     if (model) {
       if (
@@ -323,17 +325,6 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
             source: "patchy",
             error: "This action made the model calls it may, so nothing was sent.",
             ...limitRefusal("models.calls.perAction", limits.modelCalls),
-            details: { sent: false }
-          },
-          429
-        );
-      if (capability.counters.modelsInFlight >= limits.modelsInFlight)
-        return remember(
-          {
-            ok: false,
-            source: "patchy",
-            error: "This action has the model calls running it may, so nothing was sent.",
-            ...limitRefusal("models.calls.inFlight", limits.modelsInFlight, 1),
             details: { sent: false }
           },
           429
@@ -612,30 +603,44 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
                   )
                 )
           : run;
-    // A model call counts as running until the work the service owns ends, not until the page's
-    // request stops waiting for it.
-    if (model) capability.counters.modelsInFlight++;
+    // A model call holds one of the action's places for running calls from the moment its work
+    // is handed off until that work's fiber exits, not until the page's request stops waiting.
     const result = yield* Effect.exit(
       capabilities.execute(
         capability,
         operationRun,
         model
-          ? Effect.sync(() => {
-              capability.counters.modelsInFlight--;
-            })
-          : Effect.void
+          ? {
+              take: () => {
+                if (capability.counters.modelsInFlight >= limits.modelsInFlight) return false;
+                capability.counters.modelsInFlight++;
+                return true;
+              },
+              give: () => {
+                capability.counters.modelsInFlight--;
+              }
+            }
+          : undefined
       )
     );
     let reply: GuestProtocol.CallbackReply;
     let status = 200;
     if (Exit.isSuccess(result)) reply = result.value;
     else {
-      const error = Cause.findErrorOption(result.cause);
-      if (Option.isSome(error)) {
-        status = isCapabilityRefused(error.value) ? 403 : error.value.status;
-        reply = isCapabilityRefused(error.value)
-          ? error.value.failure
-          : Runtime.toFailure(error.value);
+      const error = Option.getOrUndefined(Cause.findErrorOption(result.cause));
+      if (error !== undefined && isHoldRefused(error))
+        return remember(
+          {
+            ok: false,
+            source: "patchy",
+            error: "This action has the model calls running it may, so nothing was sent.",
+            ...limitRefusal("models.calls.inFlight", limits.modelsInFlight, 1)
+          },
+          429
+        );
+      if (error !== undefined) {
+        status = isCapabilityRefused(error) ? 403 : error.status;
+        reply = isCapabilityRefused(error) ? error.failure : Runtime.toFailure(error);
       } else {
         const live = yield* Effect.result(capabilities.resolve(token, attempt));
         status = live._tag === "Failure" ? 403 : 503;

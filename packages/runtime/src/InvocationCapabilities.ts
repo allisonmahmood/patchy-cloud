@@ -92,6 +92,21 @@ export interface RetainedResource {
   readonly destroy: () => void;
 }
 
+/** A place a callback's work holds while it runs, such as one of an action's model calls. */
+export interface Hold {
+  /** Takes the place, or answers false when none is free; checked and taken in one step. */
+  readonly take: () => boolean;
+  /** Gives it back, once, as the work's fiber exits. */
+  readonly give: () => void;
+}
+
+/** The work's `Hold` had no place free, so it was never handed off. */
+export class HoldRefused extends Schema.TaggedError<HoldRefused>()("HoldRefused", {}) {
+  override get message() {
+    return "The callback's work found no place free, so it was not run.";
+  }
+}
+
 export class CapabilityRefused extends Schema.TaggedError<CapabilityRefused>()(
   "CapabilityRefused",
   {
@@ -155,14 +170,16 @@ export class InvocationCapabilities extends Context.Service<
       operation?: string
     ) => RuntimeFailure;
     /**
-     * Runs a callback's work as a fiber the service owns, not the request waiting for it.
-     * `settled` runs once when that work ends, however it ends, or at once if it never starts.
+     * Runs a callback's work as a fiber the service owns, not the request waiting for it, in the
+     * set the action's end cancels. With `hold`, the work takes a place before it is handed off
+     * and gives it back when its fiber exits, however it ends, before its first step included;
+     * no place free refuses `HoldRefused` and hands nothing off.
      */
     readonly execute: <A, E, R>(
       capability: Capability,
       effect: Effect.Effect<A, E, R>,
-      settled?: Effect.Effect<void>
-    ) => Effect.Effect<A, E | CapabilityRefused, R>;
+      hold?: Hold
+    ) => Effect.Effect<A, E | CapabilityRefused | HoldRefused, R>;
   }
 >()("@patchy/runtime/InvocationCapabilities") {}
 
@@ -407,67 +424,64 @@ export const make = Effect.gen(function* () {
         )
       );
     });
-  const execute = <A, E, R>(
-    capability: Capability,
-    effect: Effect.Effect<A, E, R>,
-    settled: Effect.Effect<void> = Effect.void
-  ) => {
-    let owned = false;
-    return Effect.gen(function* () {
-      yield* resolve(capability.token, capability.attempt);
-      const entry = entries.get(capability.token)!;
-      const queuedAt = yield* Clock.currentTimeMillis;
-      const job = entry.gate.withPermits(1)(
-        Effect.gen(function* () {
-          yield* resolve(capability.token, capability.attempt);
-          yield* capability.observe(
-            WideEvents.add({
-              queueWaitMs: Math.max(0, (yield* Clock.currentTimeMillis) - queuedAt)
-            })
-          );
-          capability.counters.outstanding++;
-          capability.counters.peakOutstanding = Math.max(
-            capability.counters.peakOutstanding,
-            capability.counters.outstanding
-          );
-          return yield* capability.observe(effect).pipe(
-            Effect.ensuring(
-              Effect.sync(() => {
-                capability.counters.outstanding--;
+  const execute = <A, E, R>(capability: Capability, effect: Effect.Effect<A, E, R>, hold?: Hold) =>
+    Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        yield* resolve(capability.token, capability.attempt);
+        const entry = entries.get(capability.token)!;
+        const queuedAt = yield* Clock.currentTimeMillis;
+        const job = entry.gate.withPermits(1)(
+          Effect.gen(function* () {
+            yield* resolve(capability.token, capability.attempt);
+            yield* capability.observe(
+              WideEvents.add({
+                queueWaitMs: Math.max(0, (yield* Clock.currentTimeMillis) - queuedAt)
               })
+            );
+            capability.counters.outstanding++;
+            capability.counters.peakOutstanding = Math.max(
+              capability.counters.peakOutstanding,
+              capability.counters.outstanding
+            );
+            return yield* capability.observe(effect).pipe(
+              Effect.ensuring(
+                Effect.sync(() => {
+                  capability.counters.outstanding--;
+                })
+              )
+            );
+          })
+        );
+        // Taking the place, forking the work the service owns, putting it in the set the
+        // action's end cancels and tying the place to the fiber's exit all happen under this
+        // mask, so a waiter interrupted at the hand-off can't leave work outside that set. The
+        // fiber's observer runs however it exits, interrupted before its first step included,
+        // where an `ensuring` inside it would never run; on a fiber already done it runs at once.
+        if (hold !== undefined && !hold.take()) return yield* new HoldRefused();
+        const fiber = yield* Effect.forkIn(job, scope);
+        entry.fibers.add(fiber);
+        fiber.addObserver(() => {
+          entry.fibers.delete(fiber);
+          hold?.give();
+        });
+        const value = yield* restore(
+          Fiber.await(fiber).pipe(
+            Effect.flatMap((exit): Effect.Effect<A, E | CapabilityRefused> => {
+              if (entry.reason !== undefined)
+                return Effect.fail(new CapabilityRefused({ reason: entry.reason }));
+              return Exit.isSuccess(exit) ? Effect.succeed(exit.value) : Effect.failCause(exit.cause);
+            }),
+            Effect.raceFirst(
+              Deferred.await(entry.ended).pipe(
+                Effect.flatMap((reason) => Effect.fail(new CapabilityRefused({ reason })))
+              )
             )
-          );
-        })
-      );
-      // The service owns callback effects, not the HTTP request that waits for their reply, and
-      // `settled` follows the work it owns.
-      const fiber = yield* Effect.uninterruptible(
-        Effect.forkIn(job.pipe(Effect.ensuring(settled)), scope).pipe(
-          Effect.tap(() =>
-            Effect.sync(() => {
-              owned = true;
-            })
           )
-        )
-      );
-      entry.fibers.add(fiber);
-      fiber.addObserver(() => entry.fibers.delete(fiber));
-      const value = yield* Fiber.await(fiber).pipe(
-        Effect.flatMap((exit): Effect.Effect<A, E | CapabilityRefused> => {
-          if (entry.reason !== undefined)
-            return Effect.fail(new CapabilityRefused({ reason: entry.reason }));
-          return Exit.isSuccess(exit) ? Effect.succeed(exit.value) : Effect.failCause(exit.cause);
-        }),
-        Effect.raceFirst(
-          Deferred.await(entry.ended).pipe(
-            Effect.flatMap((reason) => Effect.fail(new CapabilityRefused({ reason })))
-          )
-        )
-      );
-      yield* resolve(capability.token, capability.attempt);
-      return value;
-    }).pipe(Effect.onExit(() => (owned ? Effect.void : settled)));
-  };
+        );
+        yield* restore(resolve(capability.token, capability.attempt));
+        return value;
+      })
+    );
   const settle = Effect.fn("InvocationCapabilities.settle")(function* (
     token: string,
     reason: EndReason,
