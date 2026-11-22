@@ -452,14 +452,14 @@ after idling do not overwrite it, and idle reconnects leave it unset). All Cloud
 Insights queries below target `/patchy/production/host`.
 
 Spare misses and bind waits across browser opens (`stream`, including `start_failed` and
-`interrupted` startup binds) and invocations (`request`):
+`interrupted` startup binds), invocations (`request`) and subscription reads (`re-run`):
 
 ```
-filter type in ["stream", "request"] and ispresent(bindWaitMs)
+filter type in ["stream", "request", "re-run"] and ispresent(bindWaitMs)
 | stats count(*) as opens, pct(bindWaitMs, 50) as p50, pct(bindWaitMs, 99) as p99, max(bindWaitMs) as slowest by type, companyBind, outcome
 ```
 
-Empty-pool `execution.pool.wait` refusals (browser `start_failed` streams and refused calls):
+Pool wait (`execution.pool.wait`) refusals (browser `start_failed` streams and refused calls):
 
 ```
 fields @timestamp, type, companyId, patchId, companyBind, bindWaitMs, code, closeReason
@@ -471,8 +471,8 @@ fields @timestamp, type, companyId, patchId, companyBind, bindWaitMs, code, clos
 Fleet budget exhaustion warnings: when housekeeping cannot reserve a spare because live tasks
 have reached `execution.fleet.budget`, it logs a single-line warning
 `Execution fleet budget exhausted revision=<rev> budget=<n> target=<n> spares=<n>` at most once
-per housekeeping interval per revision (it does not log when reservation stops because the lease
-was lost or the revision was retired):
+per housekeeping interval per revision per host replica (it does not log when reservation stops
+because the lease was lost or the revision was retired):
 
 ```
 fields @timestamp, @message

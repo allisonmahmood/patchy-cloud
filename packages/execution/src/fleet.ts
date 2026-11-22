@@ -469,6 +469,8 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
               warnAt - last >= config.get("execution.housekeeping.interval")
             ) {
               lastBudgetWarningAt.set(revision, warnAt);
+              // Keep this single-line and unannotated: ECS awslogs has no multiline grouping, so
+              // CloudWatch's `parse` query relies on all four fields landing on one line.
               yield* Effect.logWarning(
                 `Execution fleet budget exhausted revision=${revision} budget=${budget} target=${target} spares=${budgetSpares}`
               );
@@ -706,20 +708,23 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
       if (caller === "prewarm") return yield* busy(0);
       const wait = yield* limits.get({ companyId, limitId: "execution.pool.wait" });
       search.until ??= search.startedAt + wait.value;
-      if (search.found === undefined || search.found === "bound") search.found = "spare";
       return yield* Effect.gen(function* () {
         let claimed: FleetStore.Binding | undefined;
         while (true) {
           const wake = changed;
           const now = yield* Clock.currentTimeMillis;
-          claimed ??= yield* store.claim(
-            companyId,
-            options.replicaId,
-            now,
-            now - search.startedAt,
-            FleetStore.clocksOf(caller, now)
-          );
-          if (claimed === undefined) search.found = "launch";
+          if (claimed === undefined) {
+            claimed = yield* store.claim(
+              companyId,
+              options.replicaId,
+              now,
+              now - search.startedAt,
+              FleetStore.clocksOf(caller, now)
+            );
+            if (claimed === undefined) search.found = "launch";
+            else if (search.found === undefined)
+              search.found = claimed.state === "active" ? "bound" : "spare";
+          }
           if (claimed) {
             if (!(yield* store.isAdmissibleTask(claimed.taskId))) {
               yield* fence(claimed, "deployment").pipe(

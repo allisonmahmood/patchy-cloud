@@ -69,7 +69,6 @@ class Pause extends Schema.Class<Pause>("Fleet.Pause")({ pausedUntil: Schema.Num
 class Flag extends Schema.Class<Flag>("Fleet.Flag")({ acquired: Schema.Boolean }) {}
 class ReserveRow extends Schema.Class<ReserveRow>("Fleet.ReserveRow")({
   reserved: Schema.Boolean,
-  room: Schema.Boolean,
   listed: Schema.Boolean,
   spares: Schema.Number
 }) {}
@@ -510,7 +509,6 @@ export const make = Effect.gen(function* () {
       )
       SELECT
         (SELECT count(*) > 0 FROM inserted) AS reserved,
-        state.room,
         state.listed,
         state.spares
       FROM state`.pipe(Effect.flatMap(decodeReserveRows));

@@ -1806,9 +1806,11 @@ it.layer(layer)("document activity", (it) => {
         // Launch startup interrupted by RuntimeStream's outer timeoutOption still records bind wait
         // from connect's onExit and refusal on the stream event (including early timeout before
         // companyBind is known).
+        const timeoutStarted = yield* Deferred.make<void>();
         host.fleet.onConnect = () =>
           Effect.gen(function* () {
             const startedAt = yield* Clock.currentTimeMillis;
+            yield* Deferred.succeed(timeoutStarted, undefined);
             return yield* Effect.never.pipe(
               Effect.onExit(() =>
                 Effect.flatMap(Clock.currentTimeMillis, (end) =>
@@ -1818,6 +1820,7 @@ it.layer(layer)("document activity", (it) => {
             );
           });
         const timedOut = yield* host.connect("bind_telemetry_timeout");
+        yield* Deferred.await(timeoutStarted);
         const frameFiber = yield* timedOut.next.pipe(Effect.forkChild);
         yield* TestClock.adjust("40 seconds");
         assert.strictEqual((yield* Fiber.join(frameFiber)).type, "start_failed");

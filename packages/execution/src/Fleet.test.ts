@@ -1102,7 +1102,8 @@ it.layer(services)("host fleet controller", (it) => {
         if (event.type !== "stream") return assert.fail(`a ${event.type} event`);
         assert.include(event, { outcome: "interrupted", companyBind: "launch" });
         assert.isAtLeast(event.bindWaitMs ?? 0, 1_500);
-        // An early cancellation before the bind path is known still records bindWaitMs without companyBind.
+        // An early cancellation before the bind path is known (during initial lookup OR while the
+        // first claim's per-company advisory lock is pending) still records bindWaitMs without companyBind.
         const early = "cmp_fleet_connect_found_early";
         yield* sql`INSERT INTO companies(id, handle, name) VALUES (${early}, ${early}, 'Fleet connect early')`;
         const stalledLookup = yield* Deferred.make<void>();
@@ -1128,6 +1129,34 @@ it.layer(services)("host fleet controller", (it) => {
         if (earlyEvent.type !== "stream") return assert.fail(`a ${earlyEvent.type} event`);
         assert.include(earlyEvent, { outcome: "interrupted", bindWaitMs: 2_000 });
         assert.notProperty(earlyEvent, "companyBind");
+        const claimBlocked = "cmp_fleet_connect_claim_blocked";
+        yield* sql`INSERT INTO companies(id, handle, name) VALUES (${claimBlocked}, ${claimBlocked}, 'Fleet claim blocked')`;
+        const stalledClaim = yield* Deferred.make<void>();
+        const blockFirstClaim: Statement.Transformer = (statement) =>
+          /pg_advisory_xact_lock/.test(statement.compile()[0])
+            ? Deferred.succeed(stalledClaim, undefined).pipe(
+                Effect.andThen(Effect.never),
+                Effect.as(statement)
+              )
+            : Effect.succeed(statement);
+        const cancelledClaim = yield* captured.events
+          .withEvent(
+            { type: "stream", tier: 2 },
+            stalled.lifecycle
+              .connect(claimBlocked)
+              .pipe(
+                Effect.provideService(Statement.CurrentTransformer, blockFirstClaim),
+                Effect.scoped
+              )
+          )
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(stalledClaim);
+        yield* TestClock.adjust(1_250);
+        yield* Fiber.interrupt(cancelledClaim);
+        const claimEvent = yield* captured.take;
+        if (claimEvent.type !== "stream") return assert.fail(`a ${claimEvent.type} event`);
+        assert.include(claimEvent, { outcome: "interrupted", bindWaitMs: 1_250 });
+        assert.notProperty(claimEvent, "companyBind");
       }).pipe(Effect.scoped),
     30_000
   );
