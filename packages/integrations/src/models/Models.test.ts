@@ -605,7 +605,7 @@ it.layer(layer)("Models", (it) => {
               listed.connections.map((row) => `${row.integration}/${row.handle}`),
               ["models/triage"]
             );
-            // No patch can declare a role yet, so its hint offers no add.
+            // A role is declared in config, not added, so its hint says how and offers no add.
             assert.deepInclude(listed.connections[0], {
               status: "connected",
               hint: 'Declare it in patchy.config.ts as models("triage"), then run patchy refresh.'
