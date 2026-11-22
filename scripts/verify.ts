@@ -1,15 +1,18 @@
 /**
- * `pnpm check` and `pnpm verify`: CI's required checks, run locally.
+ * `pnpm check` and `pnpm verify`: the test suites CI requires, run locally. GitHub's own checks,
+ * such as dependency review, stay GitHub's.
  *
  *   pnpm check              format, lint, typecheck, infrastructure synth and the offline tests
- *   pnpm verify             check, then every acceptance suite CI requires except live Clerk
+ *   pnpm verify             check, then every acceptance suite CI requires except live Clerk,
+ *                           `server-image` and `rollback-rehearsal`
  *   pnpm verify --changed   the same, skipping the acceptance suites when nothing since the
  *                           merge base with origin/main can change what they exercise
  *
  * Suites run one at a time and keep going after a failure, so one run reports
  * everything; the exit code is nonzero if any failed. Keep the acceptance list
  * in step with the jobs in .github/workflows/ci.yml, except `rollback-rehearsal`,
- * which rehearses commits against the one production runs, and `browser-webkit`,
+ * which rehearses commits against the one production runs, `server-image`, in its
+ * own workflow, which needs Docker, and `browser-webkit`,
  * which isn't required and runs on macOS alone: `pnpm test:browser:webkit` on a Mac.
  */
 import { execFileSync, spawnSync } from "node:child_process";

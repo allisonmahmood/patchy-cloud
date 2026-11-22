@@ -54,7 +54,7 @@ for (const { entry, file, render } of outputs) {
     write: false,
     format: "iife",
     platform: "browser",
-    // The same browsers as the shell broker's, in scripts/build-serving-broker.mjs.
+    // The shell broker's syntax targets, in scripts/build-serving-broker.mjs.
     target: ["chrome120", "firefox120", "safari16.4"],
     minify: true,
     legalComments: "none",

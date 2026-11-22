@@ -10,12 +10,13 @@
  * no stops keeps focus. Anything richer keeps the browser's own Tab, out of the frame included.
  *
  * On a desktop Mac, Option+Tab is a Tab too in Safari and Chromium, which move focus by it there;
- * Firefox there doesn't, so it keeps the browser's (`movesByOptionTab`). Under Safari's
- * defaults it stops on every control, as this counts stops, while plain Tab stops only on text
- * fields and selects; past the last of those it goes round Patchy's page, which holds none, and
- * back into the dialog. Safari's "Press Tab to highlight each item" swaps the two, which a page
- * can't read: then Tab stops as this counts and wraps, and Option+Tab, stopping only on text
- * fields and selects, can leave past the last of them.
+ * Firefox there doesn't, so it keeps the browser's (`movesByOptionTab`). This decides only the
+ * dialog's ends, by the stops it counts; between them the browser moves focus its own way. Under
+ * Safari's and macOS's default keyboard settings that holds the dialog. Option+Tab stops on every
+ * control, as this counts. Plain Tab stops on fewer: from a stop that is also the dialog's last as
+ * this counts, this wraps it, and from an earlier one it goes round Patchy's page, which holds
+ * none of its stops, and back into the dialog. A page can't read those settings, and with either
+ * changed, Tab or Option+Tab can still leave past a control the browser skips.
  *
  * Two things this can't see, both left as they are: a closed shadow root attached to a standard
  * element, and a listener a capture listener adds to the window, during the key's own dispatch,

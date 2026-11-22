@@ -53,41 +53,29 @@ export const test = base.extend<
 /**
  * WebKit fires a patch page's load before its frame's, where Chromium's and Firefox's wait for it,
  * so there a `goto` that waits for load also waits for the frame `iframe#patch` holds to load its
- * content. A page without that frame returns at once, and so does one whose shell takes the frame
- * away for a notice. A shell that loads afresh, as a cached public shell does for a signed-in
- * viewer, takes its frame with it, and the next shell's frame is waited for in turn.
+ * content. It waits for the shell `goto` loaded, and no further: a page without that frame
+ * returns at once, and so does one whose shell takes the frame away as it leaves, for a notice or
+ * a fresh load. A test that needs the next shell's patch waits for it, as the reload test in
+ * tier1.spec does. A frame that stalls in place, or a page that closes or crashes, fails `goto`.
  */
 function waitsForFrame(page: Page) {
   let crashed = false;
   page.on("crash", () => {
     crashed = true;
   });
-  // The frame `iframe#patch` holds, if the page has one. A shell already leaving takes its
-  // document, and the query with it; a closed or crashed page is a failure.
-  const patchFrame = async () => {
-    try {
-      return (await (await page.$("iframe#patch"))?.contentFrame()) ?? undefined;
-    } catch (error) {
-      if (page.isClosed() || crashed) throw error;
-      return undefined;
-    }
-  };
   const goto = page.goto.bind(page);
   page.goto = async (url, options) => {
     const response = await goto(url, options);
     if ((options?.waitUntil ?? "load") !== "load") return response;
-    for (let shells = 0; shells < 3; shells++) {
-      const frame = await patchFrame();
-      if (!frame) return response;
-      try {
-        await frame.waitForURL(/\/~content\//, { waitUntil: "load" });
-        return response;
-      } catch (error) {
-        if (!frame.isDetached() || page.isClosed() || crashed) throw error;
-      }
-      await page.waitForLoadState("load");
+    let frame: Frame | null | undefined;
+    try {
+      frame = await (await page.$("iframe#patch"))?.contentFrame();
+      await frame?.waitForURL(/\/~content\//, { waitUntil: "load" });
+    } catch (error) {
+      // A shell leaving takes its document, the lookup and the frame with it.
+      if (page.isClosed() || crashed || frame?.isDetached() === false) throw error;
     }
-    throw new Error(`${page.url()} kept replacing its patch frame`);
+    return response;
   };
 }
 /**
