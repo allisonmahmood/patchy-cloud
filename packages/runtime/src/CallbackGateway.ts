@@ -493,8 +493,13 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
         return { ok: true, value: null };
       }
       const handler = operation!;
+      // An effect the action's outcome depends on: a write, or an integration call that may
+      // change what it reaches, interrupted, leaves the action's outcome unknown. A model call
+      // changes nothing in Patchy or the company's systems; how it ended, and whether it was sent
+      // and may be charged, is its own, on its attempt record and journal row. Left open when its
+      // action ends, it is closed with the action and leaves the action's outcome as it was.
       const perform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-        handler.kind === "read" || capability.kind === "mutation"
+        handler.kind === "read" || capability.kind === "mutation" || modelCall
           ? effect
           : capabilities.performEffect(capability, effect);
       const now = yield* Clock.currentTimeMillis;

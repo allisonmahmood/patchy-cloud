@@ -1019,6 +1019,25 @@ it.layer(layer, { excludeTestServices: true, timeout: 60_000 })("model calls", (
     }).pipe(Effect.scoped)
   );
 
+  it.effect("record a call its action left open after sending it as sent and unanswered", () =>
+    Effect.gen(function* () {
+      events.length = 0;
+      const scene = yield* setup();
+      const provider = scripted(() => "hang");
+      const made = yield* handlers(provider);
+      // The action ends while the provider still holds the request: its work is interrupted.
+      const open = yield* Effect.forkChild(
+        call(made, "models.generate", generateArgs(), scene.binding())
+      );
+      while (provider.sent.length === 0) yield* Effect.sleep(10);
+      yield* Fiber.interrupt(open);
+      yield* settled;
+      assert.deepStrictEqual(
+        modelEvents().map((event) => [event.code, event.sent, event.outcome]),
+        [[undefined, true, "interrupted"]]
+      );
+    }).pipe(Effect.scoped)
+  );
   it.effect("record the pool move's peaks on the action's event, not the attempt's", () =>
     Effect.gen(function* () {
       events.length = 0;

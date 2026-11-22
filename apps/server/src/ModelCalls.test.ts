@@ -64,16 +64,52 @@ const questions = {
   urgency: { type: "scale", instructions: "How urgent is it?", levels: ["low", "medium", "high"] },
   spam: { type: "yesNo", instructions: "It is spam." }
 };
+const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
+/** One call of a kind: a decision, a short text, or a typed text. */
+const one = (ctx, call, input) =>
+  call === "decide"
+    ? ctx.connections.triage.decide({ input, questions })
+    : call === "typed"
+      ? ctx.connections.writer.generate({
+          instructions: "Plan the reply.", input, maxOutputTokens: 200,
+          output: t.object({ team: t.enum(["billing", "technical"]), reply: t.text() })
+        })
+      : ctx.connections.writer.generate({ instructions: "Summarise it.", input, maxOutputTokens: 60 });
+/** A decision and a text held open at the provider, as a handler's other calls still waiting. */
+const held = (ctx) => [
+  ctx.connections.triage.decide({ input: "[fake:hang]", questions }),
+  ctx.connections.writer.generate({ input: "[fake:hang]", maxOutputTokens: 60 })
+];
 const ask = action({
   args: { call: t.text(), input: t.text(), waitMs: t.integer() }, result: t.json(),
   handler: async (ctx, args) => {
     if (args.call === "quick") return { quick: true };
-    // Two at once: the second meets a task holding one model call at a time.
+    // Two at once: the second, made once the first is at the provider, meets a task holding one
+    // model call at a time.
     if (args.call === "pair")
       return await Promise.all([
-        ctx.connections.writer.generate({ input: "[fake:delay=1500]", maxOutputTokens: 60 }),
-        ctx.connections.writer.generate({ input: args.input, maxOutputTokens: 60 })
+        ctx.connections.writer.generate({ input: "[fake:delay=4000]", maxOutputTokens: 60 }),
+        sleep(500).then(() => ctx.connections.writer.generate({ input: args.input, maxOutputTokens: 60 }))
       ]);
+    // As Request triage does: calls awaited together, one ending as asked while the other two
+    // are still open, and the handler rethrowing its refusal.
+    if (args.call.startsWith("together:")) {
+      const open = held(ctx);
+      await sleep(Math.max(args.waitMs, 500));
+      return await Promise.all([one(ctx, args.call.slice("together:".length), args.input), ...open]);
+    }
+    // A call it never awaits, still open when the handler returns.
+    if (args.call === "abandon") {
+      held(ctx).forEach((call) => call.catch(() => null));
+      await sleep(500);
+      return { returned: true };
+    }
+    // Calls still open when the handler fails for a reason of its own.
+    if (args.call === "own failure") {
+      held(ctx).forEach((call) => call.catch(() => null));
+      await sleep(500);
+      throw new Error("The handler's own failure.");
+    }
     if (args.call === "oversized")
       return await ctx.connections.writer.generate({
         input: "x".repeat(1_100_000), maxOutputTokens: 60
@@ -85,17 +121,8 @@ const ask = action({
         input: "x".repeat(1_100_000), maxOutputTokens: 60
       });
     }
-    if (args.waitMs > 0) await new Promise((done) => setTimeout(done, args.waitMs));
-    if (args.call === "decide")
-      return await ctx.connections.triage.decide({ input: args.input, questions });
-    if (args.call === "typed")
-      return await ctx.connections.writer.generate({
-        instructions: "Plan the reply.", input: args.input, maxOutputTokens: 200,
-        output: t.object({ team: t.enum(["billing", "technical"]), reply: t.text() })
-      });
-    return await ctx.connections.writer.generate({
-      instructions: "Summarise it.", input: args.input, maxOutputTokens: 60
-    });
+    if (args.waitMs > 0) await sleep(args.waitMs);
+    return await one(ctx, args.call, args.input);
   }
 });
 export default createGuest({ demo: { ask } }, [], {}, [], [], [], [], { triage: "decision", writer: "text" });`,
@@ -215,14 +242,182 @@ const callHandler = (
     answer
   );
 
+/** A call's kind: a decision, a short text, or a typed text. */
+type Kind = "decide" | "generate" | "typed";
+/**
+ * Every way a call can end that a page sees, each as one call of a kind with an input that asks
+ * the fake for it, after waiting a while, and the refusal the page gets.
+ */
+const ends: ReadonlyArray<readonly [string, Kind, string, number, unknown]> = [
+  [
+    "cut off",
+    "generate",
+    "[fake:hang]",
+    0,
+    {
+      code: "timeout",
+      limitId: "models.cutoff",
+      details: { sent: true },
+      operation: "models.generate"
+    }
+  ],
+  [
+    "too late to send",
+    "generate",
+    "late",
+    deadline - 1_500,
+    {
+      code: "timeout",
+      limitId: "models.send.floor",
+      details: { sent: false },
+      operation: "models.generate"
+    }
+  ],
+  [
+    "rate limited",
+    "generate",
+    "[fake:rate]",
+    0,
+    {
+      code: "source_rate_limited",
+      retryAfter: 7,
+      details: { sent: true, limit: "requests" },
+      operation: "models.generate"
+    }
+  ],
+  [
+    "out of credit",
+    "decide",
+    "[fake:quota]",
+    0,
+    {
+      code: "source_rate_limited",
+      details: { sent: true, limit: "quota" },
+      operation: "models.decide"
+    }
+  ],
+  [
+    "refused",
+    "generate",
+    "[fake:refuse]",
+    0,
+    { code: "model_refused", details: { sent: true }, operation: "models.generate" }
+  ],
+  [
+    "truncated",
+    "generate",
+    "[fake:truncate]",
+    0,
+    {
+      code: "output_truncated",
+      details: { sent: true, maxOutputTokens: 60 },
+      operation: "models.generate"
+    }
+  ],
+  [
+    "the wrong shape",
+    "typed",
+    "[fake:mismatch]",
+    0,
+    { code: "shape_mismatch", details: { sent: true }, operation: "models.generate" }
+  ],
+  [
+    "the provider failing",
+    "generate",
+    "[fake:overloaded]",
+    0,
+    {
+      code: "source_unavailable",
+      retryAfter: 2,
+      details: { sent: true, reason: "provider", upstreamStatus: 503 },
+      operation: "models.generate"
+    }
+  ],
+  [
+    "too large an answer",
+    "decide",
+    "[fake:huge]",
+    0,
+    {
+      code: "too_large",
+      limitId: "models.answer.bytes",
+      details: { sent: true },
+      operation: "models.decide"
+    }
+  ],
+  [
+    "an invalid request",
+    "generate",
+    "[fake:invalid]",
+    0,
+    {
+      code: "invalid_request",
+      details: { sent: true, reason: "provider", upstreamStatus: 400 },
+      operation: "models.generate"
+    }
+  ]
+];
+/** The action's model calls as its journal holds them, latest invocation of `patchId` first. */
+const journaled = Effect.fn("test.journaled")(function* (patchId: string) {
+  const sql = yield* SqlClient.SqlClient;
+  const [latest] = yield* sql<{ readonly invocation_id: string }>`
+    SELECT invocation_id FROM runtime_calls
+    WHERE patch_id = ${patchId} AND op LIKE 'models.%' ORDER BY at DESC, id DESC LIMIT 1`;
+  if (latest === undefined) return [];
+  return yield* sql<{ readonly outcome: string; readonly outcome_code: string | null }>`
+    SELECT outcome, outcome_code FROM runtime_calls
+    WHERE invocation_id = ${latest.invocation_id} AND op LIKE 'models.%'`;
+});
+
+/**
+ * The fake's held requests since entry `from`, once their callers have closed them: calls sent
+ * and left unanswered. Gives up waiting after two seconds and returns them as they are.
+ */
+const closedHeld = Effect.fn("test.closedHeld")(function* (from: number) {
+  const provider = yield* Provider;
+  const held = () => provider.entries.slice(from).filter((entry) => entry.mode === "hang");
+  for (let tries = 0; tries < 100 && !held().every((entry) => entry.closedEarly); tries++)
+    yield* Effect.sleep(20);
+  return held();
+});
+/** Two of an action's model calls were left open, sent and unanswered, and journaled unknown. */
+const leftOpen = Effect.fn("test.leftOpen")(function* (
+  patchId: string,
+  from: number,
+  name: string
+) {
+  const held = yield* closedHeld(from);
+  assert.isAtLeast(held.length, 2, name);
+  assert.isTrue(
+    held.every((entry) => entry.closedEarly),
+    `${name}: every call left open was closed unanswered`
+  );
+  const rows = yield* journaled(patchId);
+  assert.isAtLeast(rows.filter((row) => row.outcome === "unknown").length, 2, name);
+  return rows;
+});
+
 /** The page's call of the action, as a person, the seeded one unless named, and its answer. */
 const ask = (
   patch: { readonly patchId: string; readonly versionId: string },
-  call: "decide" | "generate" | "typed" | "quick" | "pair" | "oversized" | "twins",
+  call:
+    | Kind
+    | `together:${Kind}`
+    | "quick"
+    | "pair"
+    | "oversized"
+    | "twins"
+    | "abandon"
+    | "own failure",
   input: string,
   waitMs = 0,
   person: Person = seeded
 ) => callHandler(patch, "demo.ask", { call, input, waitMs }, person);
+/** A refusal's words without the operation it names. */
+const withoutOperation = (value: unknown) =>
+  Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).filter(([key]) => key !== "operation")
+  );
 /** What a refusal says to the page: its code, limit, retry advice, details and operation. */
 const refusal = (body: unknown) => {
   const { code, limitId, retryAfter, details, operation } = body as Record<string, unknown>;
@@ -327,117 +522,6 @@ it.layer(suite, { excludeTestServices: true, timeout: "120 seconds" })(
       () =>
         Effect.gen(function* () {
           const patch = yield* published("ends");
-          const ends: ReadonlyArray<
-            readonly [string, "decide" | "generate" | "typed", string, number, unknown]
-          > = [
-            [
-              "cut off",
-              "generate",
-              "[fake:hang]",
-              0,
-              {
-                code: "timeout",
-                limitId: "models.cutoff",
-                details: { sent: true },
-                operation: "models.generate"
-              }
-            ],
-            [
-              "too late to send",
-              "generate",
-              "late",
-              deadline - 1_500,
-              {
-                code: "timeout",
-                limitId: "models.send.floor",
-                details: { sent: false },
-                operation: "models.generate"
-              }
-            ],
-            [
-              "rate limited",
-              "generate",
-              "[fake:rate]",
-              0,
-              {
-                code: "source_rate_limited",
-                retryAfter: 7,
-                details: { sent: true, limit: "requests" },
-                operation: "models.generate"
-              }
-            ],
-            [
-              "out of credit",
-              "decide",
-              "[fake:quota]",
-              0,
-              {
-                code: "source_rate_limited",
-                details: { sent: true, limit: "quota" },
-                operation: "models.decide"
-              }
-            ],
-            [
-              "refused",
-              "generate",
-              "[fake:refuse]",
-              0,
-              { code: "model_refused", details: { sent: true }, operation: "models.generate" }
-            ],
-            [
-              "truncated",
-              "generate",
-              "[fake:truncate]",
-              0,
-              {
-                code: "output_truncated",
-                details: { sent: true, maxOutputTokens: 60 },
-                operation: "models.generate"
-              }
-            ],
-            [
-              "the wrong shape",
-              "typed",
-              "[fake:mismatch]",
-              0,
-              { code: "shape_mismatch", details: { sent: true }, operation: "models.generate" }
-            ],
-            [
-              "the provider failing",
-              "generate",
-              "[fake:overloaded]",
-              0,
-              {
-                code: "source_unavailable",
-                retryAfter: 2,
-                details: { sent: true, reason: "provider", upstreamStatus: 503 },
-                operation: "models.generate"
-              }
-            ],
-            [
-              "too large an answer",
-              "decide",
-              "[fake:huge]",
-              0,
-              {
-                code: "too_large",
-                limitId: "models.answer.bytes",
-                details: { sent: true },
-                operation: "models.decide"
-              }
-            ],
-            [
-              "an invalid request",
-              "generate",
-              "[fake:invalid]",
-              0,
-              {
-                code: "invalid_request",
-                details: { sent: true, reason: "provider", upstreamStatus: 400 },
-                operation: "models.generate"
-              }
-            ]
-          ];
           for (const [name, call, input, waitMs, expected] of ends) {
             const ended = yield* ask(patch, call, input, waitMs);
             assert.notStrictEqual(ended.status, 200, name);
@@ -447,6 +531,56 @@ it.layer(suite, { excludeTestServices: true, timeout: "120 seconds" })(
       90_000
     );
 
+    it.effect(
+      "hands the page the failing call's code while its action's other calls are still open",
+      () =>
+        Effect.gen(function* () {
+          const patch = yield* published("together");
+          const provider = yield* Provider;
+          for (const [name, call, input, waitMs, expected] of ends) {
+            const from = provider.entries.length;
+            const ended = yield* ask(patch, `together:${call}`, input, waitMs);
+            assert.notStrictEqual(ended.status, 200, name);
+            const cutOff = input === "[fake:hang]";
+            // Cut off together, the three calls' timeouts are in the same words, so the page may
+            // be told neither operation.
+            if (cutOff)
+              assert.deepStrictEqual(
+                withoutOperation(refusal(ended.body)),
+                withoutOperation(expected),
+                name
+              );
+            else assert.deepStrictEqual(refusal(ended.body), expected, name);
+            const rows = yield* leftOpen(patch.patchId, from, name);
+            // The failing call's row says how it ended; a sent call cut off is unknown itself.
+            if (!cutOff)
+              assert.deepInclude(
+                rows,
+                { outcome: "failure", outcome_code: (expected as { code: string }).code },
+                name
+              );
+          }
+        }),
+      180_000
+    );
+    it.effect(
+      "answers an action that returns, or fails on its own, while its model calls are still open",
+      () =>
+        Effect.gen(function* () {
+          const patch = yield* published("abandoned");
+          const provider = yield* Provider;
+          let from = provider.entries.length;
+          const returned = yield* ask(patch, "abandon", "");
+          assert.strictEqual(returned.status, 200);
+          assert.deepStrictEqual((returned.body as { value: unknown }).value, { returned: true });
+          yield* leftOpen(patch.patchId, from, "returned");
+          from = provider.entries.length;
+          const failed = yield* ask(patch, "own failure", "");
+          assert.include(failed.body as object, { ok: false, code: "handler_failed" });
+          yield* leftOpen(patch.patchId, from, "failed on its own");
+        }),
+      60_000
+    );
     it.effect(
       "refuses a second person's action its place in the model pool, busy, nothing sent",
       () =>
