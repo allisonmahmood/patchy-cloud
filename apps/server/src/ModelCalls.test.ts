@@ -29,29 +29,29 @@ import { answer, publish, send, server } from "./test/server.js";
 const origin = "https://patchy.example";
 const deadline = 6_000;
 
-/** The fake provider for the suite, and the server sending its model calls there. */
+/** The fake provider for a suite, and the server sending its model calls there. */
 class Provider extends Context.Service<Provider, FakeModels.Fake>()("test/ModelCalls/Provider") {}
-const fake = Layer.effect(Provider, FakeModels.start());
-const suite = Layer.unwrap(
-  Effect.gen(function* () {
-    const provider = yield* Provider;
-    return server(
-      {
-        NODE_ENV: "development",
-        // One model-calling action per person, so a second is refused its move into the pool.
-        PATCHY_LIMITS_JSON: JSON.stringify({ "tier2.models.viewer": 1 })
-      },
-      undefined,
-      undefined,
-      ModelsSource.layerAt(provider.url)
-    );
-  })
-).pipe(
-  Layer.provideMerge(fake),
-  Layer.provide(Layer.succeed(ContractLimits.overrides, { "tier2.action.deadline": deadline })),
-  Layer.provide([FetchHttpClient.layer, NodeFileSystem.layer]),
-  Layer.provideMerge(NodeCryptography.layer)
-);
+const suiteWith = (limits: Readonly<Record<string, number>>) =>
+  Layer.unwrap(
+    Effect.gen(function* () {
+      const provider = yield* Provider;
+      return server(
+        { NODE_ENV: "development", PATCHY_LIMITS_JSON: JSON.stringify(limits) },
+        undefined,
+        undefined,
+        ModelsSource.layerAt(provider.url)
+      );
+    })
+  ).pipe(
+    Layer.provideMerge(Layer.effect(Provider, FakeModels.start())),
+    Layer.provide(Layer.succeed(ContractLimits.overrides, { "tier2.action.deadline": deadline })),
+    Layer.provide([FetchHttpClient.layer, NodeFileSystem.layer]),
+    Layer.provideMerge(NodeCryptography.layer)
+  );
+// One model-calling action per person, so a second is refused its move into the pool.
+const suite = suiteWith({ "tier2.models.viewer": 1 });
+// One model call at a time in the execution task, so a second is refused at its proxy.
+const permitSuite = suiteWith({ "models.execution.inFlight": 1 });
 
 /** One action asks a role: `decide`, `generate` for text, or `typed`, after waiting `waitMs`. */
 const guest = Effect.promise(async () => {
@@ -68,6 +68,16 @@ const ask = action({
   args: { call: t.text(), input: t.text(), waitMs: t.integer() }, result: t.json(),
   handler: async (ctx, args) => {
     if (args.call === "quick") return { quick: true };
+    // Two at once: the second meets a task holding one model call at a time.
+    if (args.call === "pair")
+      return await Promise.all([
+        ctx.connections.writer.generate({ input: "[fake:delay=1500]", maxOutputTokens: 60 }),
+        ctx.connections.writer.generate({ input: args.input, maxOutputTokens: 60 })
+      ]);
+    if (args.call === "oversized")
+      return await ctx.connections.writer.generate({
+        input: "x".repeat(1_100_000), maxOutputTokens: 60
+      });
     if (args.waitMs > 0) await new Promise((done) => setTimeout(done, args.waitMs));
     if (args.call === "decide")
       return await ctx.connections.triage.decide({ input: args.input, questions });
@@ -167,12 +177,11 @@ const member = Effect.fn("test.member")(function* (number: number) {
   return person;
 });
 
-/** The page's call of the action, as a person, the seeded one unless named, and its answer. */
-const ask = (
+/** The page's call of a handler, as a person, the seeded one unless named, and its answer. */
+const callHandler = (
   patch: { readonly patchId: string; readonly versionId: string },
-  call: "decide" | "generate" | "typed" | "quick",
-  input: string,
-  waitMs = 0,
+  handler: string,
+  args: Readonly<Record<string, unknown>>,
   person: Person = seeded
 ) =>
   Effect.flatMap(
@@ -192,12 +201,21 @@ const ask = (
           wire: WIRE_VERSION,
           principal: { userId: person.userId },
           op: "server.call",
-          args: { handler: "demo.ask", args: { call, input, waitMs } }
+          args: { handler, args }
         })
       )
     ),
     answer
   );
+
+/** The page's call of the action, as a person, the seeded one unless named, and its answer. */
+const ask = (
+  patch: { readonly patchId: string; readonly versionId: string },
+  call: "decide" | "generate" | "typed" | "quick" | "pair" | "oversized",
+  input: string,
+  waitMs = 0,
+  person: Person = seeded
+) => callHandler(patch, "demo.ask", { call, input, waitMs }, person);
 /** What a refusal says to the page: its code, limit, retry advice, details and operation. */
 const refusal = (body: unknown) => {
   const { code, limitId, retryAfter, details, operation } = body as Record<string, unknown>;
@@ -443,6 +461,75 @@ it.layer(suite, { excludeTestServices: true, timeout: "120 seconds" })(
           );
         }),
       30_000
+    );
+  }
+);
+
+/** The refusal an execution task gives a model call past its one permit, as the proxy words it. */
+const taskBusy = {
+  ok: false,
+  source: "patchy",
+  code: "busy",
+  error:
+    "Too many model calls are running in this company's execution task, so nothing was sent. Try again shortly.",
+  scope: "company",
+  limitId: "models.execution.inFlight",
+  value: 1,
+  retryAfter: 1,
+  details: { sent: false }
+};
+
+/** A patch whose action claims that refusal without making any call: no SDK, its own reply. */
+const fabricating = Effect.gen(function* () {
+  const bundle = `export default { async fetch(request) {
+  const input = await request.json();
+  if (input.type === "describe")
+    return Response.json({ ok: true, handlers: { "demo.claim": { kind: "action", args: {}, result: { kind: "json" } } } });
+  return Response.json(${JSON.stringify(taskBusy)});
+}};`;
+  const response = yield* publish(DEV_SEED.token, {
+    html: "<!doctype html><html><body><h1>Claims</h1></body></html>",
+    server: bundle,
+    manifest: {
+      manifestVersion: 1,
+      release: CURRENT_RELEASE,
+      tier: 2,
+      tables: {},
+      files: {},
+      uses: {},
+      handlers: { "demo.claim": { kind: "action", args: {}, result: { kind: "json" } } }
+    } satisfies typeof Manifest.Type
+  });
+  assert.strictEqual(response.status, 201);
+  return (yield* response.json) as { readonly patchId: string; readonly versionId: string };
+});
+
+it.layer(permitSuite, { excludeTestServices: true, timeout: "120 seconds" })(
+  "an execution task's own refusals",
+  (it) => {
+    it.effect(
+      "hand the page the task's busy and too_large with their limits, and no patch can claim one",
+      () =>
+        Effect.gen(function* () {
+          const patch = yield* published("task");
+          // A second call while the task holds its one model call: refused at the task's proxy.
+          const busy = yield* ask(patch, "pair", "second");
+          assert.strictEqual(busy.status, 429);
+          assert.deepStrictEqual(busy.body, { ...taskBusy, operation: "models.generate" });
+          // Arguments past models.ingress.bytes: refused before they leave the task.
+          const large = yield* ask(patch, "oversized", "");
+          assert.strictEqual(large.status, 413);
+          assert.deepStrictEqual(refusal(large.body), {
+            code: "too_large",
+            limitId: "models.ingress.bytes",
+            details: { sent: false },
+            operation: "models.generate"
+          });
+          // The same words from patch code, with no call behind them, are the patch's own failure.
+          const claimed = yield* callHandler(yield* fabricating, "demo.claim", {});
+          assert.include(claimed.body as object, { ok: false, code: "handler_failed" });
+        }),
+      60_000
     );
   }
 );

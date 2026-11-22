@@ -60,10 +60,41 @@ class CallbackBodyTooLarge extends Schema.TaggedError<CallbackBodyTooLarge>()(
     return `The callback body has ${this.actual} bytes; the maximum is ${this.max}.`;
   }
 }
+/** A host's reply past what the proxy reads back: the call reached the host, so its outcome is unknown. */
+class CallbackReplyTooLarge extends Schema.TaggedError<CallbackReplyTooLarge>()(
+  "CallbackReplyTooLarge",
+  { actual: Schema.Number, max: Schema.Number }
+) {
+  override get message() {
+    return `The callback reply has ${this.actual} bytes; the maximum is ${this.max}.`;
+  }
+}
+/**
+ * A body read up to `max` and no further. With its length declared, into one buffer of that size,
+ * so it is never held twice; otherwise collected, then joined.
+ */
 const readCallbackBody = Effect.fnUntraced(function* <E, R>(
   stream: Stream.Stream<Uint8Array, E, R>,
-  max: number = GuestProtocol.callbackFileLimit.value
+  max: number = GuestProtocol.callbackFileLimit.value,
+  declared?: number
 ) {
+  if (
+    declared !== undefined &&
+    Number.isSafeInteger(declared) &&
+    declared >= 0 &&
+    declared <= max
+  ) {
+    const bytes = new Uint8Array(declared);
+    let length = 0;
+    yield* Stream.runForEach(stream, (chunk) => {
+      if (length + chunk.byteLength > declared)
+        return Effect.fail(new CallbackBodyTooLarge({ actual: length + chunk.byteLength, max }));
+      bytes.set(chunk, length);
+      length += chunk.byteLength;
+      return Effect.void;
+    });
+    return length === declared ? bytes : bytes.subarray(0, length);
+  }
   const chunks: Uint8Array[] = [];
   let length = 0;
   yield* Stream.runForEach(stream, (chunk) => {
@@ -72,8 +103,12 @@ const readCallbackBody = Effect.fnUntraced(function* <E, R>(
     chunks.push(chunk);
     return Effect.void;
   });
-  return Buffer.concat(chunks, length);
+  return chunks.length === 1 ? chunks[0]! : Buffer.concat(chunks, length);
 });
+const declaredLength = (value: string | undefined) => {
+  const length = value === undefined ? Number.NaN : Number(value);
+  return Number.isSafeInteger(length) && length >= 0 ? length : undefined;
+};
 
 /**
  * The header naming a model call's operation, which the loader sets from the operation it
@@ -84,8 +119,6 @@ const readCallbackBody = Effect.fnUntraced(function* <E, R>(
 const modelCallHeader = "x-patchy-model-call";
 const isModelCall = (op: string | undefined): op is "models.decide" | "models.generate" =>
   op === "models.decide" || op === "models.generate";
-/** The bytes a model call's arguments may take, refused before more of the body is read. */
-const modelIngress = limitRefusal("models.ingress.bytes");
 
 const operatingLimitIds = [
   "execution.probe.interval",
@@ -141,6 +174,8 @@ interface Invocation {
   readonly capability: string;
   readonly target: string;
   readonly result: Deferred.Deferred<GuestProtocol.InvokeReply, SupervisorError>;
+  /** The refusals this proxy gave the attempt's model calls, distinct, returned with its reply. */
+  readonly refusals: Map<string, GuestProtocol.ExecutionRefusal>;
 }
 interface Resident {
   readonly binding: GuestProtocol.BundleBinding;
@@ -201,6 +236,28 @@ export class Supervisor extends Context.Service<
     ) => Effect.Effect<Management.TouchReply, SupervisorError>;
   }
 >()("@patchy/execution/supervisor") {}
+
+/**
+ * The reply with every refusal the task gave the attempt's model calls: the loader's, then this
+ * proxy's, distinct and bounded. A reply the task gave none keeps no field, as older hosts read it.
+ */
+const withRefusals = (
+  reply: GuestProtocol.InvokeReply,
+  given: ReadonlyMap<string, GuestProtocol.ExecutionRefusal>
+): GuestProtocol.InvokeReply => {
+  if (reply.outcome !== "returned") return reply;
+  const all = new Map<string, GuestProtocol.ExecutionRefusal>();
+  for (const refusal of [...(reply.refusals ?? []), ...given.values()]) {
+    const key = JSON.stringify(refusal.failure);
+    if (!all.has(key) && all.size < GuestProtocol.executionRefusalLimit) all.set(key, refusal);
+  }
+  return {
+    outcome: reply.outcome,
+    reply: reply.reply,
+    guestMs: reply.guestMs,
+    ...(all.size === 0 ? {} : { refusals: [...all.values()] })
+  };
+};
 
 export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
   const cryptography = yield* Cryptography.Cryptography;
@@ -461,79 +518,99 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
    * forwarding the call; one given after is about a call the host may have made, so it says
    * nothing, which reads as unknown. Every other call's answer is as it always was.
    */
-  const answer = (
-    failure: RuntimeFailure,
-    options: { readonly status?: number; readonly unsent?: boolean } = {}
-  ) =>
-    HttpServerResponse.jsonUnsafe(
-      options.unsent === true
-        ? { ...failure, details: { ...failure.details, sent: false } }
-        : failure,
-      options.status === undefined ? undefined : { status: options.status }
-    );
+  const shaped = (failure: RuntimeFailure, unsent: boolean): RuntimeFailure =>
+    unsent ? { ...failure, details: { ...failure.details, sent: false } } : failure;
+  const respond = (failure: RuntimeFailure, status: number | undefined) =>
+    HttpServerResponse.jsonUnsafe(failure, status === undefined ? undefined : { status });
   const ended: RuntimeFailure = {
     ok: false,
     source: "patchy",
     code: "access_denied",
     error: "The invocation callback has ended."
   };
-  const refusedCallback = (unsent = false) => answer(ended, { status: 403, unsent });
   yield* proxy.serve(
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
+      // Classified before anything can refuse it, so every refusal a model call gets before it
+      // reaches the host says nothing was sent. The mark comes from the loader, never the guest.
+      const marked = request.headers[modelCallHeader];
+      const modelCall = isModelCall(marked) ? marked : undefined;
+      const model = modelCall !== undefined;
       const resident = callbacks.get(request.url);
-      if (request.method !== "POST" || resident === undefined) return refusedCallback();
+      if (request.method !== "POST" || resident === undefined)
+        return respond(shaped(ended, model), 403);
       const invocation = resident.invocations.get(
         attemptKey({
           invocationId: request.headers["x-patchy-invocation-id"] ?? "",
           attemptId: request.headers["x-patchy-attempt-id"] ?? ""
         })
       );
-      if (invocation === undefined) return refusedCallback();
-      const marked = request.headers[modelCallHeader];
-      const modelCall = isModelCall(marked) ? marked : undefined;
-      const model = modelCall !== undefined;
+      if (invocation === undefined) return respond(shaped(ended, model), 403);
       /** Set as the call is handed to the host: before it, nothing the call asked for was done. */
       let forwarded = false;
+      /**
+       * The proxy's own refusal of this call. A model call's is kept on its attempt, as the guest
+       * gets it, so the host can relay it when the guest does and tell it from one patch code
+       * makes up.
+       */
+      const refuse = (failure: RuntimeFailure, status?: number) => {
+        const given = shaped(failure, model && !forwarded);
+        if (modelCall !== undefined) {
+          const key = JSON.stringify(given);
+          if (
+            !invocation.refusals.has(key) &&
+            invocation.refusals.size < GuestProtocol.executionRefusalLimit
+          )
+            invocation.refusals.set(key, {
+              failure: given,
+              status: status ?? GuestProtocol.refusalStatus(given.code),
+              operation: modelCall
+            });
+        }
+        return respond(given, status);
+      };
       const live = () =>
         resident.alive &&
         invocation.epoch === bindingEpoch &&
         resident.invocations.get(attemptKey(invocation.attempt)) === invocation &&
         request.headers["x-patchy-process-generation"] === String(resident.generation) &&
         request.headers.authorization === `Bearer ${invocation.capability}`;
+      const refusedCallback = () => refuse(ended, 403);
       const deadlineCallback = () =>
-        answer(
-          {
-            ok: false,
-            source: "patchy",
-            code: "timeout",
-            error: "The invocation callback deadline has passed."
-          },
-          { unsent: model && !forwarded }
-        );
+        refuse({
+          ok: false,
+          source: "patchy",
+          code: "timeout",
+          error: "The invocation callback deadline has passed."
+        });
       const unavailableCallback = () =>
         !live()
-          ? refusedCallback(model && !forwarded)
+          ? refusedCallback()
           : Date.now() >= invocation.attempt.deadline
             ? deadlineCallback()
-            : answer(
-                {
-                  ok: false,
-                  source: "patchy",
-                  code: "source_unavailable",
-                  error: "The invocation callback could not complete."
-                },
-                { unsent: model && !forwarded }
-              );
-      if (!live()) return refusedCallback(model);
+            : refuse({
+                ok: false,
+                source: "patchy",
+                code: "source_unavailable",
+                error: "The invocation callback could not complete."
+              });
+      if (!live()) return refusedCallback();
       if (Date.now() >= invocation.attempt.deadline) return deadlineCallback();
+      const declared = declaredLength(request.headers["content-length"]);
+      // A model call declared past its cap is refused unread, before it asks for a permit; its
+      // connection closes after, so nothing more of it is taken.
+      if (model && declared !== undefined && declared > GuestProtocol.modelIngressLimit.value) {
+        yield* closeAfterAnswer;
+        return refuse(GuestProtocol.modelIngressTooLarge, 413);
+      }
       const proxied = Effect.gen(function* () {
         // A request body over the limit stops being read; its 413 closes the connection.
         const body = yield* readCallbackBody(
           request.stream,
-          model ? modelIngress.value : GuestProtocol.callbackFileLimit.value
+          model ? GuestProtocol.modelIngressLimit.value : GuestProtocol.callbackFileLimit.value,
+          declared
         ).pipe(Effect.tapErrorTag("CallbackBodyTooLarge", () => closeAfterAnswer));
-        if (!live()) return refusedCallback(model);
+        if (!live()) return refusedCallback();
         const headers: Record<string, string> = {
           authorization: `Bearer ${invocation.capability}`,
           "x-patchy-invocation-id": invocation.attempt.invocationId,
@@ -554,7 +631,16 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
             )
           )
           .pipe(Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }));
-        const bytes = yield* readCallbackBody(response.stream);
+        // The host's reply has its own overflow: the call reached the host by then.
+        const bytes = yield* readCallbackBody(
+          response.stream,
+          GuestProtocol.callbackFileLimit.value,
+          declaredLength(response.headers["content-length"])
+        ).pipe(
+          Effect.catchTag("CallbackBodyTooLarge", (error) =>
+            Effect.fail(new CallbackReplyTooLarge({ actual: error.actual, max: error.max }))
+          )
+        );
         if (!live()) return refusedCallback();
         return HttpServerResponse.uint8Array(bytes, {
           status: response.status,
@@ -571,19 +657,18 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
           CallbackBodyTooLarge: () =>
             Effect.succeed(
               model
-                ? answer(
-                    {
-                      ok: false,
-                      source: "patchy",
-                      error: "The model call exceeds models.ingress.bytes, so nothing was sent.",
-                      ...modelIngress
-                    },
-                    { status: 413, unsent: true }
-                  )
+                ? refuse(GuestProtocol.modelIngressTooLarge, 413)
+                : HttpServerResponse.jsonUnsafe(GuestProtocol.callbackFileTooLarge, { status: 413 })
+            ),
+          // A model call's outcome is unknown; any other call's answer is as it always was.
+          CallbackReplyTooLarge: () =>
+            Effect.succeed(
+              model
+                ? unavailableCallback()
                 : HttpServerResponse.jsonUnsafe(GuestProtocol.callbackFileTooLarge, { status: 413 })
             ),
           TimeoutError: () => Effect.succeed(deadlineCallback()),
-          SupervisorError: () => Effect.succeed(refusedCallback(model && !forwarded)),
+          SupervisorError: () => Effect.succeed(refusedCallback()),
           HttpClientError: () => Effect.succeed(unavailableCallback()),
           HttpServerError: () => Effect.succeed(unavailableCallback())
         })
@@ -608,7 +693,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
           admitted
             ? Effect.interruptible(proxied)
             : Effect.succeed(
-                answer(
+                refuse(
                   {
                     ok: false,
                     source: "patchy",
@@ -616,7 +701,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
                       "Too many model calls are running in this company's execution task, so nothing was sent. Try again shortly.",
                     ...limitRefusal("models.execution.inFlight", limitValue, 1)
                   },
-                  { status: 429, unsent: true }
+                  429
                 )
               ),
         (admitted) =>
@@ -1082,18 +1167,22 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
             processGeneration: resident.generation,
             deadline: request.deadline
           };
+          const refusals = new Map<string, GuestProtocol.ExecutionRefusal>();
           resident.invocations.set(key, {
             attempt,
             epoch,
             capability: request.callback.capability,
             target: request.callback.url,
-            result
+            result,
+            refusals
           });
           resident.callsServed++;
           resident.speculative = false;
           let uncertain = false;
           // The supervisor owns dispatch. Losing the HTTP caller must not erase a running deadline.
           yield* engine.invoke({ ...request, callback: { ...request.callback, url: target } }).pipe(
+            // The loader's refusals and this proxy's, both the task's own, ride the reply.
+            Effect.map((reply) => withRefusals(reply, refusals)),
             Effect.catchTags({
               ExecutionError: (cause) => {
                 uncertain = cause.reason === "transport";

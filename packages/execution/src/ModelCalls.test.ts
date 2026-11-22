@@ -1,6 +1,14 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalDateInEffect:off globalJsonInEffect:off -- real workerd children and callback sockets are the boundary under test.
 import { createHash } from "node:crypto";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import {
+  createServer,
+  request as httpRequest,
+  type IncomingMessage,
+  type ServerResponse
+} from "node:http";
+import { promisify } from "node:util";
 import { expect, it } from "@effect/vitest";
 import * as GuestProtocol from "@patchy/api/guest";
 import * as Management from "@patchy/api/management";
@@ -48,6 +56,7 @@ const host = Effect.acquireRelease(
     const held: ServerResponse[] = [];
     let holding = true;
     let lose = false;
+    let huge = false;
     const answer = (response: ServerResponse) => {
       response.setHeader("content-type", "application/json");
       response.end(JSON.stringify({ ok: true, value: "answered" }));
@@ -65,6 +74,13 @@ const host = Effect.acquireRelease(
         }
         // The reply is lost on its way back: the host acted, and the connection dropped.
         if (lose) return response.socket?.destroy();
+        // A reply past what the proxy reads back, as no host of this release answers.
+        if (huge) {
+          response.setHeader("content-type", "application/json");
+          return response.end(
+            JSON.stringify({ ok: true, value: "x".repeat(GuestProtocol.callbackFileLimit.value) })
+          );
+        }
         if (holding) held.push(response);
         else answer(response);
       });
@@ -94,6 +110,9 @@ const host = Effect.acquireRelease(
       },
       loseReplies: () => {
         lose = true;
+      },
+      hugeReplies: () => {
+        huge = true;
       }
     };
   }),
@@ -341,4 +360,192 @@ it.live(
       });
     }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   20_000
+);
+
+/** The address a process's loader calls back on, read from the config its workerd was started with. */
+const callbackAddress = Effect.fnUntraced(function* (
+  supervisor: Supervisor.Supervisor["Service"],
+  versionId: string
+) {
+  const { processes } = yield* supervisor.stats({ bindingEpoch: 1 });
+  const pid = processes.find((process) => process.binding.versionId === versionId)?.pid;
+  const { stdout } = yield* Effect.promise(() =>
+    promisify(execFile)("ps", ["-o", "args=", "-p", String(pid)])
+  );
+  const config = /\S+config\.capnp/.exec(stdout)?.[0];
+  if (config === undefined) throw new Error("No workerd config");
+  const text = yield* Effect.promise(() => readFile(config, "utf8"));
+  const url = /http:\/\/127\.0\.0\.1:\d+\/callback\/[0-9a-f-]+/.exec(text)?.[0];
+  if (url === undefined) throw new Error("No callback address");
+  return url;
+});
+
+/**
+ * One request straight to a proxy, as only a loader should send one: its status, headers and
+ * body. `declared` sends that Content-Length and only the headers, so nothing can be read.
+ */
+const direct = (
+  url: string,
+  headers: Readonly<Record<string, string>>,
+  body: { readonly declared: number } | { readonly chunks: number; readonly size: number }
+) =>
+  Effect.promise(
+    () =>
+      new Promise<{ status: number; headers: IncomingMessage["headers"]; body: unknown }>(
+        (resolve, reject) => {
+          const sending = httpRequest(url, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              ...headers,
+              ...("declared" in body ? { "content-length": String(body.declared) } : {})
+            }
+          });
+          sending.on("response", (response) => {
+            const chunks: Buffer[] = [];
+            response.on("data", (chunk: Buffer) => chunks.push(chunk));
+            response.on("end", () =>
+              resolve({
+                status: response.statusCode ?? 0,
+                headers: response.headers,
+                body: JSON.parse(Buffer.concat(chunks).toString("utf8"))
+              })
+            );
+          });
+          sending.on("error", reject);
+          if ("declared" in body) sending.flushHeaders();
+          else {
+            for (let index = 0; index < body.chunks; index++) sending.write("x".repeat(body.size));
+            sending.end();
+          }
+        }
+      )
+  );
+
+const tooLarge = {
+  ok: false,
+  source: "patchy",
+  code: "too_large",
+  error: "The model call exceeds models.ingress.bytes, so nothing was sent.",
+  scope: "viewer",
+  limitId: "models.ingress.bytes",
+  value: registry["models.ingress.bytes"].default,
+  details: { sent: false }
+};
+
+it.live(
+  "returns the refusals the task itself gave a model call with the attempt's reply",
+  () =>
+    Effect.gen(function* () {
+      const target = yield* host;
+      const supervisor = yield* make(target, 1);
+      const first = yield* bindVersion(supervisor, "ver_holding");
+      const second = yield* bindVersion(supervisor, "ver_refused");
+      const holding = yield* invoke(supervisor, first, target, "inv_hold", [generate()]).pipe(
+        Effect.forkChild
+      );
+      yield* until(() => target.held.length === 1);
+      const refused = yield* invoke(supervisor, second, target, "inv_refusals", [
+        generate("busy"),
+        generate("x".repeat(registry["models.ingress.bytes"].default)),
+        ordinary()
+      ]);
+      const [busy, large] = replies(refused);
+      // Each refusal the task gave, as the guest got it, with its status and its operation; the
+      // host relays a guest's refusal only when it matches one of these or one of its own.
+      expect(refused.outcome === "returned" ? refused.refusals : undefined).toEqual(
+        expect.arrayContaining([
+          { failure: busy, status: 429, operation: "models.generate" },
+          { failure: large, status: 413, operation: "models.generate" }
+        ])
+      );
+      expect(large).toEqual(tooLarge);
+      target.release();
+      yield* Fiber.join(holding);
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+  30_000
+);
+
+it.live(
+  "says nothing of a model call whose host's reply was past what the proxy reads",
+  () =>
+    Effect.gen(function* () {
+      const target = yield* host;
+      target.release();
+      target.hugeReplies();
+      const supervisor = yield* make(target, 4);
+      const loaded = yield* bindVersion(supervisor, "ver_huge");
+      const [lost] = replies(yield* invoke(supervisor, loaded, target, "inv_huge", [generate()]));
+      // The call went to the host, so whether it was sent is unknown: never the call's own
+      // arguments refused, nothing sent.
+      expect(lost).toEqual({
+        ok: false,
+        source: "patchy",
+        code: "source_unavailable",
+        error: "The invocation callback could not complete."
+      });
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+  30_000
+);
+
+it.live(
+  "classifies a model call before refusing it at the proxy, and refuses a body it can't take unread",
+  () =>
+    Effect.gen(function* () {
+      const target = yield* host;
+      const supervisor = yield* make(target, 2);
+      const loaded = yield* bindVersion(supervisor, "ver_direct");
+      const url = yield* callbackAddress(supervisor, "ver_direct");
+      // Both of the task's permits held by one attempt's two calls.
+      const holding = yield* invoke(supervisor, loaded, target, "inv_direct", [
+        generate(),
+        generate()
+      ]).pipe(Effect.forkChild);
+      yield* until(() => target.held.length === 2);
+      const attempt = (invocationId: string) => ({
+        authorization: "Bearer host-attempt-capability",
+        "x-patchy-invocation-id": invocationId,
+        "x-patchy-attempt-id": "attempt_one",
+        "x-patchy-process-generation": String(loaded.processGeneration),
+        "x-patchy-model-call": "models.generate"
+      });
+      const ended = {
+        ok: false,
+        source: "patchy",
+        code: "access_denied",
+        error: "The invocation callback has ended."
+      };
+      // An attempt the proxy doesn't hold, and an address it doesn't serve: a model call's refusal
+      // says nothing was sent, wherever it falls.
+      for (const address of [url, url.replace(/[0-9a-f-]+$/, "nowhere")]) {
+        const gone = yield* direct(address, attempt("inv_gone"), { declared: 10 });
+        expect(gone.body).toEqual({ ...ended, details: { sent: false } });
+      }
+      // Declared past the cap: refused before a permit is asked for, so not busy though both are
+      // held, with nothing read and the connection closed after.
+      const declared = yield* direct(url, attempt("inv_direct"), {
+        declared: registry["models.ingress.bytes"].default + 1
+      });
+      expect(declared.status).toBe(413);
+      expect(declared.body).toEqual(tooLarge);
+      expect(declared.headers.connection).toBe("close");
+      target.release();
+      yield* Fiber.join(holding);
+      // Of no stated length, it takes the free permit and is read up to the cap and no further.
+      target.hold();
+      const streaming = yield* invoke(supervisor, loaded, target, "inv_stream", [generate()]).pipe(
+        Effect.forkChild
+      );
+      yield* until(() => target.held.length === 1);
+      const streamed = yield* direct(url, attempt("inv_stream"), {
+        chunks: 3,
+        size: registry["models.ingress.bytes"].default / 2
+      });
+      expect(streamed.status).toBe(413);
+      expect(streamed.body).toEqual(tooLarge);
+      expect(streamed.headers.connection).toBe("close");
+      target.release();
+      yield* Fiber.join(streaming);
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+  30_000
 );
