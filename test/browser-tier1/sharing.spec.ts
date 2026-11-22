@@ -13,18 +13,17 @@ test("an owner shares a page from its menu, and the guest opens it from Home and
 
   await page.goto(`${instance.origin}/patches`);
   await page.getByRole("button", { name: `Actions for ${title}` }).click();
-  await page.getByRole("link", { name: `Share…, ${title}` }).click();
+  await loadDialog(page, () => page.getByRole("link", { name: `Share…, ${title}` }).click());
   const dialog = page.getByRole("dialog", { name: `Share ${title}` });
   const email = dialog.getByLabel("Invite a guest");
   await expect(email).toBeFocused();
   await email.fill("guest@pine.example");
-  await dialog.getByRole("button", { name: "Invite", exact: true }).click();
+  // The redrawn dialog's script records that it took a later entry. Back before it has run would
+  // stay on the earlier one, as WebKit under load showed.
+  await loadDialog(page, () => dialog.getByRole("button", { name: "Invite", exact: true }).click());
   await expect(page).toHaveURL(`${instance.origin}/patches?share=${patch.name}`);
   await expect(dialog.getByRole("status")).toHaveText(`Shared ${title} with Jo Rivera`);
   await expect(dialog.getByText("guest@pine.example · Pine Studio")).toBeVisible();
-  // The redrawn dialog's script records that it took a later entry. Back before it has run would
-  // stay on the earlier one, as WebKit under load showed.
-  await page.waitForLoadState("domcontentloaded");
   // The invitation came back to the dialog's own address, which takes a new history entry in
   // Chromium and replaces the dialog's in Firefox. Back and Close both reach the list either way.
   const actions = page.getByRole("button", { name: `Actions for ${title}` });
