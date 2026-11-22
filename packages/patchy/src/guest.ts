@@ -10,6 +10,7 @@ import { createPidgeonClient } from "./pidgeon.js";
 import { createAttioClient } from "./attio.js";
 import { createImapClient } from "./imap.js";
 import { createGithubClient } from "./github.js";
+import { createModelScheduler, createModelsClient } from "./models.js";
 import { decodeHandlerError, isHandlerError } from "./handlerError.js";
 import type { Handler, HandlerKindName } from "./server.js";
 
@@ -346,7 +347,7 @@ const dispatch = (modules: Modules, agentFiles: Modules) => {
  * Worker entry for server bundles, without importing privileged Workers APIs. The build passes
  * `server/` modules by name and `agent/` files by filename stem; the files fold into `agent`.
  * Shared stores and Pidgeon, Attio, IMAP and GitHub connections come by alias, since their clients
- * differ from a table's and a Postgres connection's.
+ * differ from a table's and a Postgres connection's; model roles by alias with their kind.
  *
  * Modules that break the handler contract, such as a name two agent files export, are refused
  * by answering every request with the refusal. A throw here would reach inspection only as a
@@ -359,7 +360,8 @@ export function createGuest(
   pidgeon: readonly string[] = [],
   attio: readonly string[] = [],
   imap: readonly string[] = [],
-  github: readonly string[] = []
+  github: readonly string[] = [],
+  models: Readonly<Record<string, "decision" | "text">> = {}
 ) {
   let handlers: ReturnType<typeof dispatch>;
   try {
@@ -466,6 +468,8 @@ export function createGuest(
       };
       const pendingLogs: Promise<Failure | undefined>[] = [];
       const kind = entry.descriptor.kind;
+      // One scheduler for every role alias the invocation uses.
+      const scheduler = createModelScheduler(call);
       // A read-only action keeps an action's writes here, so one forced past its types reaches
       // the host, which refuses it. Only an agent's call names its agent; a page's is null.
       const context = {
@@ -496,15 +500,17 @@ export function createGuest(
           : {
               // A read connection's write is refused by the host; its types offer none.
               connections: names((connection) =>
-                pidgeon.includes(connection)
-                  ? createPidgeonClient(connection, call, "send")
-                  : attio.includes(connection)
-                    ? createAttioClient(connection, call)
-                    : imap.includes(connection)
-                      ? createImapClient(connection, call)
-                      : github.includes(connection)
-                        ? createGithubClient(connection, call)
-                        : connectionClient(call, connection, invalidRequest)
+                Object.hasOwn(models, connection)
+                  ? createModelsClient(connection, models[connection]!, scheduler)
+                  : pidgeon.includes(connection)
+                    ? createPidgeonClient(connection, call, "send")
+                    : attio.includes(connection)
+                      ? createAttioClient(connection, call)
+                      : imap.includes(connection)
+                        ? createImapClient(connection, call)
+                        : github.includes(connection)
+                          ? createGithubClient(connection, call)
+                          : connectionClient(call, connection, invalidRequest)
               ),
               run: names((module) =>
                 names(
@@ -548,6 +554,8 @@ export function createGuest(
           }
         }
       }
+      // Model calls still waiting are never sent once the handler is done.
+      scheduler.end();
       let logFailure: Failure | undefined;
       // log() is synchronous to handlers, but its callbacks belong to this invocation's reply.
       for (let index = 0; index < pendingLogs.length; index++) {
