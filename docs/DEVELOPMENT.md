@@ -21,11 +21,11 @@ and offers start, stop, environment and **Check** actions; import them once from
 
 ## Checks
 
-| Command                 | Runs                                                                                       | When                                  |
-| ----------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------- |
-| `pnpm check`            | format, lint, typecheck (tests included), the infrastructure synth and the offline tests   | while working; a few minutes          |
-| `pnpm verify`           | `check`, then every acceptance suite CI requires except live Clerk                         | before calling a change ready to ship |
-| `pnpm verify --changed` | the same, skipping the acceptance suites when only docs, agent files or the runner changed | docs and runner changes               |
+| Command                 | Runs                                                                                                        | When                                  |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| `pnpm check`            | format, lint, typecheck (tests included), the infrastructure synth and the offline tests                    | while working; a few minutes          |
+| `pnpm verify`           | `check`, then every acceptance suite CI requires except live Clerk, `server-image` and `rollback-rehearsal` | before calling a change ready to ship |
+| `pnpm verify --changed` | the same, skipping the acceptance suites when only docs, agent files or the runner changed                  | docs and runner changes               |
 
 `pnpm verify` mirrors CI's jobs: `test (bun)` (`pnpm test:bun`, the offline
 tests on Bun, the runtime production runs the server on, leaving out the files

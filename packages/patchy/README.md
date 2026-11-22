@@ -88,7 +88,10 @@ and text, with buttons, links, selects, checkboxes, summaries, one-line inputs
 and elements with `tabindex="0"`, and nothing that scrolls, pops over, or adds,
 hides or reorders stops, while no popover is open in the page. In Safari and
 Chromium-based browsers on a Mac, Option+Tab, Safari's Tab to every control,
-wraps the same way; Firefox on a Mac doesn't move focus by Option+Tab. A richer
+wraps the same way; Firefox on a Mac doesn't move focus by Option+Tab. That
+holds under Safari's default keyboard settings: with "Press Tab to highlight
+each item" on, Safari swaps the two keys, so Tab wraps and Option+Tab can leave
+the dialog. A richer
 dialog keeps the browser's own Tab, which can leave the patch's frame, as
 `showModal()` alone lets it.
 Tooling and type-only imports do not enter the page graph. An off-SDK import,

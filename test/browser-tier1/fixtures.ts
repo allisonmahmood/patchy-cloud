@@ -54,23 +54,40 @@ export const test = base.extend<
  * WebKit fires a patch page's load before its frame's, where Chromium's and Firefox's wait for it,
  * so there a `goto` that waits for load also waits for the frame `iframe#patch` holds to load its
  * content. A page without that frame returns at once, and so does one whose shell takes the frame
- * away as it leaves, for a notice or a fresh load.
+ * away for a notice. A shell that loads afresh, as a cached public shell does for a signed-in
+ * viewer, takes its frame with it, and the next shell's frame is waited for in turn.
  */
 function waitsForFrame(page: Page) {
+  let crashed = false;
+  page.on("crash", () => {
+    crashed = true;
+  });
+  // The frame `iframe#patch` holds, if the page has one. A shell already leaving takes its
+  // document, and the query with it; a closed or crashed page is a failure.
+  const patchFrame = async () => {
+    try {
+      return (await (await page.$("iframe#patch"))?.contentFrame()) ?? undefined;
+    } catch (error) {
+      if (page.isClosed() || crashed) throw error;
+      return undefined;
+    }
+  };
   const goto = page.goto.bind(page);
   page.goto = async (url, options) => {
     const response = await goto(url, options);
     if ((options?.waitUntil ?? "load") !== "load") return response;
-    // A shell already leaving takes its document, and the query with it.
-    const holder = await page.$("iframe#patch").catch(() => null);
-    const frame = await holder?.contentFrame();
-    if (!frame) return response;
-    try {
-      await frame.waitForURL(/\/~content\//, { waitUntil: "load" });
-    } catch (error) {
-      if (!frame.isDetached()) throw error;
+    for (let shells = 0; shells < 3; shells++) {
+      const frame = await patchFrame();
+      if (!frame) return response;
+      try {
+        await frame.waitForURL(/\/~content\//, { waitUntil: "load" });
+        return response;
+      } catch (error) {
+        if (!frame.isDetached() || page.isClosed() || crashed) throw error;
+      }
+      await page.waitForLoadState("load");
     }
-    return response;
+    throw new Error(`${page.url()} kept replacing its patch frame`);
   };
 }
 /**

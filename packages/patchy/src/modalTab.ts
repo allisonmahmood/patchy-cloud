@@ -13,7 +13,9 @@
  * Firefox there doesn't, so it keeps the browser's (`movesByOptionTab`). Under Safari's
  * defaults it stops on every control, as this counts stops, while plain Tab stops only on text
  * fields and selects; past the last of those it goes round Patchy's page, which holds none, and
- * back into the dialog.
+ * back into the dialog. Safari's "Press Tab to highlight each item" swaps the two, which a page
+ * can't read: then Tab stops as this counts and wraps, and Option+Tab, stopping only on text
+ * fields and selects, can leave past the last of them.
  *
  * Two things this can't see, both left as they are: a closed shadow root attached to a standard
  * element, and a listener a capture listener adds to the window, during the key's own dispatch,

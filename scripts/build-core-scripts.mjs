@@ -54,7 +54,8 @@ for (const { entry, file, render } of outputs) {
     write: false,
     format: "iife",
     platform: "browser",
-    target: ["chrome120", "firefox120", "safari16"],
+    // The same browsers as the shell broker's, in scripts/build-serving-broker.mjs.
+    target: ["chrome120", "firefox120", "safari16.4"],
     minify: true,
     legalComments: "none",
     metafile: true

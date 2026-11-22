@@ -11,7 +11,9 @@ const result = await build({
   write: false,
   format: "iife",
   platform: "browser",
-  target: ["chrome120", "firefox120", "safari16"],
+  // Safari 16.4 is the oldest that runs the shared schemas' lookbehind; esbuild can't lower one,
+  // only move its failure from parsing to running.
+  target: ["chrome120", "firefox120", "safari16.4"],
   conditions: ["development"],
   minify: true,
   legalComments: "none",
