@@ -130,7 +130,11 @@ export const make = Effect.gen(function* () {
   const capabilities = yield* InvocationCapabilities.InvocationCapabilities;
   const byteLimit = yield* ContractLimits.get("tier2.callbacks.bytes");
   const fileLimit = yield* ContractLimits.get("tier2.callbacks.fileBytes");
-  const modelsInFlight = yield* ContractLimits.get("models.calls.inFlight");
+  /**
+   * An answer given before the body is read: the connection closes after it, so a body that is
+   * still arriving, or never will, is neither drained nor waited for.
+   */
+  const unread = (reply: GuestProtocol.CallbackReply) => Effect.as(closeAfterAnswer, json(reply));
   return Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     // Classified before anything can refuse it, so a model call's every refusal before its
@@ -139,10 +143,10 @@ export const make = Effect.gen(function* () {
     const marked = request.headers["x-patchy-model-call"];
     const modelCall = isModelCall(marked) ? marked : undefined;
     if (request.method !== "POST" || request.url.split("?")[0] !== "/callback")
-      return json(said(modelCall, invalid));
+      return yield* unread(said(modelCall, invalid));
     const authorization = request.headers.authorization ?? "";
     if (!authorization.startsWith("Bearer "))
-      return json(
+      return yield* unread(
         said(modelCall, {
           ok: false,
           source: "patchy",
@@ -158,9 +162,10 @@ export const make = Effect.gen(function* () {
         processGeneration: request.headers["x-patchy-process-generation"]
       })
     );
-    if (identity._tag === "Failure") return json(said(modelCall, invalid));
+    if (identity._tag === "Failure") return yield* unread(said(modelCall, invalid));
     const resolved = yield* Effect.result(capabilities.resolve(token, identity.success));
-    if (resolved._tag === "Failure") return json(said(modelCall, resolved.failure.failure));
+    if (resolved._tag === "Failure")
+      return yield* unread(said(modelCall, resolved.failure.failure));
     const capability = resolved.success;
     // A marked call's refusals are kept once, said unsent, by the gateway; others as they were.
     const stored = modelCall === undefined;
@@ -170,28 +175,18 @@ export const make = Effect.gen(function* () {
         : gateway.refuseModelCall(capability, modelCall, failure, status);
     const countRefusal = capabilities.chargeCallback(capability, { stored });
     if (countRefusal !== undefined)
-      return json(
+      return yield* unread(
         modelCall === undefined
           ? countRefusal
           : yield* gateway.refuseModelCall(capability, modelCall, countRefusal, 429)
       );
-    // A marked call takes one of its action's places for running model calls before it is read,
-    // so a fifth is refused before it costs a read or a callback's place.
-    const place = modelCall === undefined ? undefined : gateway.modelPlace(capability);
-    if (modelCall !== undefined && place === undefined)
-      return json(
-        yield* gateway.refuseModelCall(
-          capability,
-          modelCall,
-          {
-            ok: false,
-            source: "patchy",
-            error: "This action has the model calls running it may, so nothing was sent.",
-            ...limitRefusal("models.calls.inFlight", modelsInFlight, 1)
-          },
-          429
-        )
-      );
+    // A marked call is counted as one of its action's model call attempts and takes one of its
+    // places for running ones before it is read, so a fifth is refused before it costs a read,
+    // and one refused here still counts toward the action's attempts.
+    const admission =
+      modelCall === undefined ? undefined : yield* gateway.admitModelCall(capability, modelCall);
+    if (admission !== undefined && "refused" in admission) return yield* unread(admission.refused);
+    const place = admission?.place;
     const raw = request.headers["x-patchy-callback"];
     const available = Math.max(0, byteLimit - capability.tree.bytes);
     // A marked call is read no further than a model call's arguments may go.

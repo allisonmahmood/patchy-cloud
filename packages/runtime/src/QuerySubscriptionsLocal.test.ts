@@ -159,7 +159,7 @@ it.live(
               }
               return yield* gateway.callback(token, attempt, input, charged);
             }),
-          modelPlace: gateway.modelPlace,
+          admitModelCall: gateway.admitModelCall,
           refuseModelCall: gateway.refuseModelCall
         })
       );

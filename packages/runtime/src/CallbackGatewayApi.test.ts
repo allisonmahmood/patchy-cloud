@@ -517,12 +517,83 @@ it.layer(
           limitId: "models.calls.inFlight",
           details: { sent: false }
         });
+        // Its unread body is never waited for: the connection closes after the answer.
+        assert.isDefined(fifth.closedAfterMs);
         yield* Deferred.succeed(release, undefined);
         assert.isTrue((yield* Fiber.join(four)).every((reply) => reply.ok === true));
         // A call refused after taking its place, before its handler, gives the place back.
         assert.deepInclude(yield* call("{"), { code: "invalid_request", details: { sent: false } });
         assert.strictEqual(capability.counters.modelsInFlight, 0);
       }).pipe(Effect.scoped, Effect.provideService(ContractLimits.overrides, {}))
+  );
+
+  it.effect(
+    "a model call refused busy at the listener is still an attempt: the 201st is refused either way",
+    () =>
+      Effect.gen(function* () {
+        const capabilities = yield* InvocationCapabilities.make;
+        const limit = yield* ContractLimits.get("models.calls.perAction");
+        const release = yield* Deferred.make<void>();
+        const allRunning = yield* Deferred.make<void>();
+        let holding = true;
+        let running = 0;
+        const gateway = yield* CallbackGateway.make({
+          "models.generate": {
+            kind: "integration",
+            fence: "action",
+            connectionId: () => "role",
+            run: () =>
+              Effect.gen(function* () {
+                if (holding) {
+                  if (++running === 4) yield* Deferred.succeed(allRunning, undefined);
+                  yield* Deferred.await(release);
+                }
+                return { text: "ok", usage: { inputTokens: null, outputTokens: null } };
+              })
+          }
+        }).pipe(Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities));
+        const listener = yield* CallbackGatewayApi.listen().pipe(
+          Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities),
+          Effect.provideService(CallbackGateway.CallbackGateway, gateway)
+        );
+        const body = JSON.stringify({
+          op: "models.generate",
+          args: { connection: "writer", input: "x" }
+        });
+        const caller = (capability: InvocationCapabilities.Capability) => () =>
+          fetchJson(listener.url, {
+            method: "POST",
+            headers: {
+              ...headers(capability),
+              "content-type": "application/json",
+              "x-patchy-model-call": "models.generate"
+            },
+            body
+          });
+        const spent = {
+          code: "limit_exceeded",
+          limitId: "models.calls.perAction",
+          details: { sent: false }
+        };
+        // Four running hold every place, so the rest are refused busy before they are read.
+        const crowded = caller(yield* Fixtures.issue(capabilities, { kind: "action" }));
+        const four = yield* Effect.forEach([1, 2, 3, 4], crowded, {
+          concurrency: "unbounded"
+        }).pipe(Effect.forkChild);
+        yield* Deferred.await(allRunning);
+        for (let attempt = 5; attempt <= limit; attempt++)
+          assert.deepInclude(yield* crowded(), { code: "busy", limitId: "models.calls.inFlight" });
+        assert.deepInclude(yield* crowded(), spent);
+        holding = false;
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(four);
+        // Answered one at a time, each attempt counts once: the 200th runs, the 201st is refused.
+        const answered = caller(yield* Fixtures.issue(capabilities, { kind: "action" }));
+        for (let attempt = 1; attempt <= limit; attempt++)
+          assert.strictEqual((yield* answered()).ok, true);
+        assert.deepInclude(yield* answered(), spent);
+      }).pipe(Effect.scoped, Effect.provideService(ContractLimits.overrides, {})),
+    30_000
   );
 
   it.effect(
@@ -539,7 +610,7 @@ it.layer(
         Effect.scoped,
         Effect.provideService(CallbackGateway.CallbackGateway, {
           callback: () => Effect.succeed({ ok: true, value: null }),
-          modelPlace: () => undefined,
+          admitModelCall: () => Effect.die("no model call reaches this listener"),
           refuseModelCall: () => Effect.die("no model call reaches this listener")
         }),
         Effect.provide(InvocationCapabilities.layer)

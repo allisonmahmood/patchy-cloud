@@ -181,6 +181,10 @@ export interface Wire {
   readonly place?: ModelPlace;
 }
 
+/** A marked call's admission: the place it took, or the refusal it was given instead. */
+export type ModelAdmission =
+  { readonly place: ModelPlace } | { readonly refused: GuestProtocol.CallbackReply };
+
 /**
  * One of an action's places for a running model call, taken before its callback is read. The
  * request holds it until it hands it to the call's work as that work is forked; the work's exit
@@ -205,10 +209,14 @@ export class CallbackGateway extends Context.Service<
       wire?: Wire
     ) => Effect.Effect<GuestProtocol.CallbackReply>;
     /**
-     * One of the action's places for a running model call, or none while it runs as many as it
-     * may: the private listener takes it for a marked call before reading the call.
+     * A marked model call's admission at the private listener, before the call is read: it is
+     * counted as one of its action's attempts, then takes one of its places for a running call.
+     * Past either limit it is refused, said unsent and kept once, as `refuseModelCall` keeps it.
      */
-    readonly modelPlace: (capability: InvocationCapabilities.Capability) => ModelPlace | undefined;
+    readonly admitModelCall: (
+      capability: InvocationCapabilities.Capability,
+      operation: string
+    ) => Effect.Effect<ModelAdmission>;
     /**
      * A marked model call's refusal given before the gateway sees the call, as the private
      * listener's: said unsent, kept once with its status and operation, and recorded.
@@ -245,6 +253,25 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
     modelCalls: ContractLimits.get("models.calls.perAction"),
     modelCutoff: ContractLimits.get("models.cutoff")
   });
+  /**
+   * Counts one of an action's model call attempts, refused ones included, and says whether it is
+   * past `models.calls.perAction`.
+   */
+  const countAttempt = (capability: InvocationCapabilities.Capability) =>
+    ++capability.counters.modelCalls > limits.modelCalls;
+  const attemptsRefusal = {
+    ok: false,
+    source: "patchy",
+    error: "This action made the model calls it may, so nothing was sent.",
+    ...limitRefusal("models.calls.perAction", limits.modelCalls),
+    details: { sent: false }
+  } as const satisfies RuntimeFailure;
+  const placesRefusal = {
+    ok: false,
+    source: "patchy",
+    error: "This action has the model calls running it may, so nothing was sent.",
+    ...limitRefusal("models.calls.inFlight", limits.modelsInFlight, 1)
+  } as const satisfies RuntimeFailure;
   const wide = yield* Effect.serviceOption(WideEvents.WideEvents);
   /** What one callback did, which its model call's record and refusal follow. */
   interface Call {
@@ -408,18 +435,9 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
           },
           413
         );
-      capability.counters.modelCalls++;
-      if (capability.counters.modelCalls > limits.modelCalls)
-        return remember(
-          {
-            ok: false,
-            source: "patchy",
-            error: "This action made the model calls it may, so nothing was sent.",
-            ...limitRefusal("models.calls.perAction", limits.modelCalls),
-            details: { sent: false }
-          },
-          429
-        );
+      // A call from an execution task was counted as the listener admitted it; one from in
+      // process is counted here.
+      if (wire === undefined && countAttempt(capability)) return remember(attemptsRefusal, 429);
     }
     // Integration arguments keep the caps they have on tier 1; nothing past them is sent.
     const argsLimitId = runtimeBodyLimitId(request.op);
@@ -895,7 +913,18 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
     yield* recordUnsent(capability, operation, undefined, given);
     return given;
   });
-  return CallbackGateway.of({ callback, modelPlace, refuseModelCall });
+  const admitModelCall = Effect.fn("CallbackGateway.admitModelCall")(function* (
+    capability: InvocationCapabilities.Capability,
+    operation: string
+  ): Effect.fn.Return<ModelAdmission> {
+    if (countAttempt(capability))
+      return { refused: yield* refuseModelCall(capability, operation, attemptsRefusal, 429) };
+    const place = modelPlace(capability);
+    if (place === undefined)
+      return { refused: yield* refuseModelCall(capability, operation, placesRefusal, 429) };
+    return { place };
+  });
+  return CallbackGateway.of({ callback, admitModelCall, refuseModelCall });
 });
 
 export const layer = (handlers: Readonly<Record<string, Runtime.Handler>>) =>
