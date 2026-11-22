@@ -244,8 +244,11 @@ const retryAfter = (value: string | undefined, now: number) => {
   const seconds = /^\d+$/.test(value.trim()) ? Number(value) : (Date.parse(value) - now) / 1_000;
   return Number.isFinite(seconds) ? Math.max(1, Math.ceil(seconds)) : undefined;
 };
-/** Statuses whose response has no body, which a rebuilt response must not be given. */
-const bodyless = new Set([101, 103, 204, 205, 304]);
+/**
+ * Final statuses whose response has no body, which a rebuilt response must not be given. Fetch
+ * never surfaces an interim 1xx; any status a `Response` can't carry is refused before rebuilding.
+ */
+const bodyless = new Set([204, 205, 304]);
 
 /** A transport failure carrying nothing; the refusal it stands for waits in the wire. */
 const withheld = (request: HttpClientRequest.HttpClientRequest) =>
@@ -267,6 +270,17 @@ const collect = <E>(response: HttpClientResponse.HttpClientResponse, wire: Wire<
       });
     };
     wire.status = response.status;
+    // A status no `Response` can carry is never rebuilt: it reads as the provider's failure.
+    if (response.status < 200 || response.status > 599)
+      return yield* Effect.fail(
+        new HttpClientError.HttpClientError({
+          reason: new HttpClientError.DecodeError({
+            request: response.request,
+            response,
+            description: "The answer's status is not a final HTTP status."
+          })
+        })
+      );
     const declared = Number(response.headers["content-length"]);
     if (Number.isFinite(declared) && declared > ANSWER_BYTES) return yield* Effect.fail(over());
     const read = yield* response.stream.pipe(
@@ -444,7 +458,8 @@ const failure = <E>(
 
 /**
  * How a text answer ended, from its own status: `undefined` when it completed and isn't a
- * refusal. A refusal reports first, then a cut-off at `maxOutputTokens`, then any other stop.
+ * refusal. An explicit refusal reports first, then the provider's filter, then a cut-off at
+ * `maxOutputTokens`, then any other stop, a message that stopped short included.
  */
 const ending = (
   envelope: Envelope | undefined,
@@ -462,10 +477,10 @@ const ending = (
         ? "incomplete"
         : "completed"
       : envelope.status;
-  const refused = messages.some((item) =>
-    (item.content ?? []).some((part) => part.type === "refusal")
-  );
-  if (status === "completed") return refused ? new Errors.Refused({ usage }) : undefined;
+  // An explicit refusal answers first, whatever else the answer says of how it ended.
+  if (messages.some((item) => (item.content ?? []).some((part) => part.type === "refusal")))
+    return new Errors.Refused({ usage });
+  if (status === "completed") return undefined;
   if (status === "incomplete" && reason === "content_filter") return new Errors.Refused({ usage });
   if (status === "incomplete" && reason === "max_output_tokens")
     return new Errors.OutputTruncated({ maxOutputTokens, usage });

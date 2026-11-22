@@ -781,6 +781,31 @@ describe("OpenAI calls at their edges", () => {
       })
   );
 
+  it.effect("reads an explicit refusal as a refusal, even in a message that stopped short", () =>
+    Effect.gen(function* () {
+      const fake = provider(() =>
+        json(
+          responses([], {
+            output: [
+              {
+                type: "message",
+                id: "msg_1",
+                role: "assistant",
+                status: "incomplete",
+                content: [textPart("I"), { type: "refusal", refusal: "I can't help with that." }]
+              }
+            ]
+          })
+        )
+      );
+      const error = failed(
+        yield* Effect.exit((yield* fake.source).generate(target, generateArgs(), yield* dispatch()))
+      );
+      assert.strictEqual(error.code, "model_refused");
+      assert.deepStrictEqual(error.details, { sent: true });
+    })
+  );
+
   it.effect("answers a bodyless 204, 205 or 304 without faulting", () =>
     Effect.gen(function* () {
       for (const [status, details] of [
@@ -797,6 +822,22 @@ describe("OpenAI calls at their edges", () => {
         assert.strictEqual(error.code, "source_unavailable", String(status));
         assert.deepStrictEqual(error.details, details, String(status));
       }
+    })
+  );
+
+  it.effect("answers a status no response can carry without faulting", () =>
+    Effect.gen(function* () {
+      const client = HttpClient.make((request) =>
+        Effect.sync(() => {
+          const real = HttpClientResponse.fromWeb(request, json(responses([textPart("Hi")])));
+          // A transport that surfaced an interim status, which fetch itself never does.
+          return Object.create(real, { status: { value: 103 } }) as typeof real;
+        })
+      );
+      const source = yield* Source.make.pipe(Effect.provideService(HttpClient.HttpClient, client));
+      const error = failed(yield* Effect.exit(source.generate(target, generateArgs(), yield* dispatch())));
+      assert.strictEqual(error.code, "source_unavailable");
+      assert.deepStrictEqual(error.details, { sent: true, reason: "provider", upstreamStatus: 103 });
     })
   );
 
