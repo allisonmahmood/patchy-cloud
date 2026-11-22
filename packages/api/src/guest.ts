@@ -154,6 +154,12 @@ export const ExecutionRefusal = Schema.Struct({
 export type ExecutionRefusal = typeof ExecutionRefusal.Type;
 /** The distinct refusals one attempt's record holds; past it, a further one isn't relayed. */
 export const executionRefusalLimit = 32;
+/**
+ * What makes a record's refusal distinct: its words and its operation, so two operations given
+ * the same refusal are both kept and a host can see it can't tell which one a guest relayed.
+ */
+export const refusalKey = (refusal: ExecutionRefusal): string =>
+  JSON.stringify([refusal.operation, refusal.failure]);
 
 /** Engine observations are separate from guest claims; only the host classifies settlement. */
 export const InvokeReply = Schema.Union([

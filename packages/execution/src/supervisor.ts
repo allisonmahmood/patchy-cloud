@@ -248,7 +248,7 @@ const withRefusals = (
   if (reply.outcome !== "returned") return reply;
   const all = new Map<string, GuestProtocol.ExecutionRefusal>();
   for (const refusal of [...(reply.refusals ?? []), ...given.values()]) {
-    const key = JSON.stringify(refusal.failure);
+    const key = GuestProtocol.refusalKey(refusal);
     if (!all.has(key) && all.size < GuestProtocol.executionRefusalLimit) all.set(key, refusal);
   }
   return {
@@ -556,16 +556,17 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
       const refuse = (failure: RuntimeFailure, status?: number) => {
         const given = shaped(failure, model && !forwarded);
         if (modelCall !== undefined) {
-          const key = JSON.stringify(given);
+          const record = {
+            failure: given,
+            status: status ?? GuestProtocol.refusalStatus(given.code),
+            operation: modelCall
+          };
+          const key = GuestProtocol.refusalKey(record);
           if (
             !invocation.refusals.has(key) &&
             invocation.refusals.size < GuestProtocol.executionRefusalLimit
           )
-            invocation.refusals.set(key, {
-              failure: given,
-              status: status ?? GuestProtocol.refusalStatus(given.code),
-              operation: modelCall
-            });
+            invocation.refusals.set(key, record);
         }
         return respond(given, status);
       };

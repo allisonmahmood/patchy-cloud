@@ -91,13 +91,10 @@ const recorded = (
   reply: GuestProtocol.CallbackReply
 ): GuestProtocol.CallbackReply => {
   if (operation === undefined || reply.ok || reply.source !== "patchy") return reply;
-  const key = JSON.stringify(reply);
+  const given = { failure: reply, status: GuestProtocol.refusalStatus(reply.code), operation };
+  const key = GuestProtocol.refusalKey(given);
   if (!live.refusals.has(key) && live.refusals.size < GuestProtocol.executionRefusalLimit)
-    live.refusals.set(key, {
-      failure: reply,
-      status: GuestProtocol.refusalStatus(reply.code),
-      operation
-    });
+    live.refusals.set(key, given);
   return reply;
 };
 const identity = (binding: GuestProtocol.BundleBinding) =>

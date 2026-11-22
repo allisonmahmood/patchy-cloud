@@ -78,6 +78,13 @@ const ask = action({
       return await ctx.connections.writer.generate({
         input: "x".repeat(1_100_000), maxOutputTokens: 60
       });
+    // Both roles' calls past the cap, refused in the same words; the text call's is relayed.
+    if (args.call === "twins") {
+      await ctx.connections.triage.decide({ input: "x".repeat(1_100_000), questions }).catch(() => null);
+      return await ctx.connections.writer.generate({
+        input: "x".repeat(1_100_000), maxOutputTokens: 60
+      });
+    }
     if (args.waitMs > 0) await new Promise((done) => setTimeout(done, args.waitMs));
     if (args.call === "decide")
       return await ctx.connections.triage.decide({ input: args.input, questions });
@@ -211,7 +218,7 @@ const callHandler = (
 /** The page's call of the action, as a person, the seeded one unless named, and its answer. */
 const ask = (
   patch: { readonly patchId: string; readonly versionId: string },
-  call: "decide" | "generate" | "typed" | "quick" | "pair" | "oversized",
+  call: "decide" | "generate" | "typed" | "quick" | "pair" | "oversized" | "twins",
   input: string,
   waitMs = 0,
   person: Person = seeded
@@ -528,6 +535,15 @@ it.layer(permitSuite, { excludeTestServices: true, timeout: "120 seconds" })(
           });
           assert.include(large.body as object, {
             error: "The model call exceeds models.ingress.bytes, so nothing was sent."
+          });
+          // Two operations given the same refusal: the record can't say which was relayed, so
+          // the page is told neither.
+          const twins = yield* ask(patch, "twins", "");
+          assert.strictEqual(twins.status, 413);
+          assert.deepStrictEqual(refusal(twins.body), {
+            code: "too_large",
+            limitId: "models.ingress.bytes",
+            details: { sent: false }
           });
           // The same words from patch code, with no call behind them, are the patch's own failure.
           const claimed = yield* callHandler(yield* fabricating, "demo.claim", {});
