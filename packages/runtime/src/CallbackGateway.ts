@@ -199,7 +199,8 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
     githubBytes: ContractLimits.get("runtime.github.bytes"),
     modelIngress: ContractLimits.get("models.ingress.bytes"),
     modelsInFlight: ContractLimits.get("models.calls.inFlight"),
-    modelCalls: ContractLimits.get("models.calls.perAction")
+    modelCalls: ContractLimits.get("models.calls.perAction"),
+    modelCutoff: ContractLimits.get("models.cutoff")
   });
   const wide = yield* Effect.serviceOption(WideEvents.WideEvents);
   /** What one callback did, which its model call's record and refusal follow. */
@@ -417,7 +418,16 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
         Runtime.RuntimeError | InvocationCapabilities.CapabilityRefused
       > {
         if (viewerAuthority(request.op)) {
-          const identity = yield* capability.binding.reauthorize;
+          // A model call's door is asked within its cut-off, as the rest of the call is.
+          const identity = yield* handler.fence === "action"
+            ? capability.binding.reauthorize.pipe(
+                Effect.timeoutOrElse({
+                  duration: Math.max(0, capability.attempt.deadline - limits.modelCutoff - now),
+                  orElse: () =>
+                    Effect.fail(new Runtime.Timeout({ deadlineMs, limitId: "models.cutoff" }))
+                })
+              )
+            : capability.binding.reauthorize;
           if (
             identity.company.id !== binding.companyId ||
             identity.user.id !== capability.binding.identity?.user.id
@@ -427,7 +437,6 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
         }
         // Reauthorization may have waited past return or deadline.
         yield* capabilities.resolve(token, attempt);
-        call.started = true;
         if (handler.transport === "bytes-put") {
           const args =
             request.body === undefined
@@ -437,6 +446,7 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
                   )
                 : yield* new Runtime.InvalidRequest({})
               : { ...request.args, contentType: request.body.contentType };
+          call.started = true;
           const value = yield* perform(
             handler
               .run(args, request.body?.bytes)
@@ -451,6 +461,7 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
         }
         if (request.body !== undefined) return yield* new Runtime.InvalidRequest({});
         if (handler.transport === "bytes-get") {
+          call.started = true;
           const body = yield* perform(
             handler.run(request.args).pipe(Effect.provideService(Binding.Binding, binding))
           );
@@ -462,6 +473,7 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
             return remember(bounded("tier2.callbacks.fileBytes", limits.fileBytes), 413);
           return { ok: true, body };
         }
+        call.started = true;
         const value = yield* perform(
           handler.run(request.args).pipe(Effect.provideService(Binding.Binding, binding))
         );
@@ -659,7 +671,10 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
     const responseRefusal = capabilities.chargeBytes(capability, responseBytes, {
       counted: modelCall && call.started
     });
-    if (responseRefusal !== undefined) return responseRefusal;
+    // A model call's final refusal, whatever produced it, says nothing was sent before it is
+    // stored for relaying.
+    if (responseRefusal !== undefined)
+      return modelCall ? remember(responseRefusal, 429) : responseRefusal;
     return remember(reply, status);
   });
   const callback = Effect.fn("CallbackGateway.callback")(function* (

@@ -154,7 +154,8 @@ export class Timeout extends Schema.TaggedError<Timeout>()("Timeout", {
   limitId: Schema.Literals([
     "runtime.mutation.deadline",
     "integration.deadline",
-    "tier2.action.deadline"
+    "tier2.action.deadline",
+    "models.cutoff"
   ])
 }) {
   readonly code = "timeout" as const;
