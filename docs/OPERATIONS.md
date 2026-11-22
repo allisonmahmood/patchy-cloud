@@ -242,7 +242,9 @@ them, read from `PATCHY_LIMITS_JSON` like every operating limit:
 `models.outbound.host` (provider requests in flight in one server process, 64),
 `models.outbound.provider` (per provider record in one process, 16) and
 `models.queue.waiting` (calls waiting for both, 256). Every model call in a
-process, published, dev and test, passes the one admission queue they bound.
+process passes the one admission queue they bound; today that is published
+actions' calls, and `patchy dev`'s door and an admin's test call will join them
+when those land.
 They aren't set in the task definitions yet: the values stay their registry
 defaults until they are chosen from measurements.
 

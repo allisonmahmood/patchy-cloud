@@ -53,7 +53,7 @@ The places, per company, per person and per host replica, held by actions that c
 _Avoid_: parking (freeing a slot while a call waits and taking one again after), model queue
 
 **Cut-off**:
-Where a model call stops: its fence is its action's own deadline, not the 15-second integration deadline. Immediately before dispatch a call with less than `models.send.floor` (two seconds) left is not sent, and a call waiting for capacity gives up early enough to keep that floor; a sent call's connection is closed `models.cutoff` (one second) before the deadline, so the handler hears why. Unsent, it answers `timeout` with `sent: false`; cut off after dispatch, `timeout` with `sent: true`, and the provider may still charge.
+Where a model call stops: its fence is its action's own deadline, not the 15-second integration deadline. After its final check, immediately before the request reaches the transport, a call with less than `models.send.floor` (two seconds) left is not sent, and a call waiting for capacity gives up early enough to keep that floor. The whole call, store reads and checks included, ends `models.cutoff` (one second) before the deadline, closing a sent request's connection, so the handler hears why. Unsent, it answers `timeout` with `sent: false`; cut off after the request reached the transport, `timeout` with `sent: true`, and the provider may still charge.
 _Avoid_: model timeout, deadline (the action's)
 
 **Execution service**:

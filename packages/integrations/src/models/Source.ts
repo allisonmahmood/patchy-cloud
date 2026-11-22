@@ -514,7 +514,7 @@ const inputText = (input: typeof Schema.Json.Type) =>
   typeof input === "string" ? input : encodeJson(input);
 
 /**
- * OpenAI's layer over the process's HTTP client. Published, dev and test calls alike pass the
+ * OpenAI's layer over the process's HTTP client. A published call passes the
  * host's admission queue before they get here.
  */
 export const makeAt = Effect.fn("ModelsSource.make")(function* (apiUrl: string) {

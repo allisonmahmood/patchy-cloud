@@ -1315,7 +1315,8 @@ export const registry = {
     default: 1048576,
     unit: "bytes",
     scope: "viewer",
-    measure: "Encoded arguments of one model call as the host receives them, before it reads more",
+    measure:
+      "Encoded arguments of one model call, checked by the host's callback gateway once the callback is read; nothing past it is queued or sent",
     refusal: "too_large",
     overridable: false
   },
@@ -1385,7 +1386,7 @@ export const registry = {
     unit: "requests",
     scope: "host",
     measure:
-      "Provider requests in flight in one server process across every provider record, published, dev and test calls alike; a call waits in the host's admission queue within its deadline",
+      "Provider requests in flight in one server process across every provider record; a call waits in the host's admission queue within its deadline",
     refusal: "busy",
     overridable: false
   },

@@ -61,15 +61,15 @@ _Avoid_: classification call, prompt
 _Avoid_: completion, chat, agent
 
 **Model call**:
-A decision call or a text call. One provider request, never retried and never following a redirect, made by the host on the role's provider with the company's key, only from an action, checked before it takes capacity and again immediately before it is sent. Every refusal says in `details.sent` whether a request went out; a reply lost on its way back has no `sent`. Patchy records each attempt the host sees as one `model` event, never what was sent or answered.
+A decision call or a text call. One provider request, never retried and never following a redirect, made by the host on the role's provider with the company's key, only from an action. It is checked before it takes capacity, and again once the request is prepared: the viewer's door is asked, then the role, its provider, the owner's authority and the key are read from one snapshot, and that key is sent; a change that lands after that read may still see it sent. Every refusal the host gives says in `details.sent` whether the request reached the transport; a reply lost on its way back has no `sent`. Patchy records each attempt the host sees as one `model` event, refusals before the handler included, never what was sent or answered.
 _Avoid_: AI request, inference
 
 **Admission queue**:
-The host's one queue for provider requests, which published, dev and test calls all pass: a call waits for a host permit and its provider record's permit together, first come first served per provider record, within its own deadline. Nothing is sent while it waits.
+The host's one queue for provider requests: a call waits for a host permit and its provider record's permit together, first come first served per provider record, within its own deadline, and holds both until its answer is read or it ends. Nothing is sent while it waits. Published calls pass it today; `patchy dev`'s door and an admin's test call will pass the same queue when they land.
 _Avoid_: rate limiter, fair queue (not built)
 
 **Capability matrix**:
-What each provider can serve per role kind, from its own documentation: endpoint, credentials and the models that can serve it, each row naming its page (`Models.capabilities`). A provider and kind it doesn't hold can't serve a role.
+What each provider can serve per role kind, from its own documentation: endpoint, credentials and the models that can serve it, each row naming its page (`Models.capabilities`). A decision call is sent only to a model it lists, OpenAI's `gpt-6-luna`; a typed text call's models are documented as a lower bound, so the provider's own refusal answers for those. Checking a role's model when it is saved comes with the admin page.
 _Avoid_: support table, compatibility list
 
 **Models switch**:
