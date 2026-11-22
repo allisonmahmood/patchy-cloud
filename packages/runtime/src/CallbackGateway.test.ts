@@ -1136,6 +1136,49 @@ it.layer(
     // Each of the action's 200 calls is journaled, so this one runs longer than most.
     { timeout: 60_000 }
   );
+  it.effect(
+    "a model call counts as running until its owned job settles, whatever its waiter does",
+    () =>
+      Effect.gen(function* () {
+        const capabilities = yield* InvocationCapabilities.make;
+        const inFlight = yield* ContractLimits.get("models.calls.inFlight");
+        const release = yield* Deferred.make<void>();
+        const allRunning = yield* Deferred.make<void>();
+        let held = 0;
+        const gateway = yield* CallbackGateway.make({
+          "models.generate": {
+            kind: "integration",
+            fence: "action",
+            connectionId: () => "role",
+            run: () =>
+              Effect.gen(function* () {
+                if (++held === inFlight) yield* Deferred.succeed(allRunning, undefined);
+                yield* Deferred.await(release);
+                return { text: "ok", usage: { inputTokens: null, outputTokens: null } };
+              })
+          }
+        }).pipe(Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities));
+        const action = yield* Fixtures.issue(capabilities, { kind: "action" });
+        const call = { op: "models.generate", args: { connection: "writer" } };
+        const waiters = yield* Effect.forEach(Array.from({ length: inFlight }), () =>
+          Effect.forkChild(gateway.callback(action.token, action.attempt, call))
+        );
+        yield* Deferred.await(allRunning);
+        // The page's request goes away; its call keeps running and keeps its place.
+        yield* Fiber.interrupt(waiters[0]!);
+        assert.deepInclude(yield* gateway.callback(action.token, action.attempt, call), {
+          ok: false,
+          code: "busy",
+          limitId: "models.calls.inFlight"
+        });
+        assert.strictEqual(action.counters.modelsInFlight, inFlight);
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.joinAll(waiters.slice(1));
+        while (action.counters.modelsInFlight > 0) yield* Effect.yieldNow;
+        assert.isTrue((yield* gateway.callback(action.token, action.attempt, call)).ok);
+        assert.strictEqual(action.counters.modelsInFlight, 0);
+      }).pipe(Effect.scoped)
+  );
   it.effect("IMAP runs only in actions, read-only ones included, and caps its arguments", () =>
     Effect.gen(function* () {
       const capabilities = yield* InvocationCapabilities.make;

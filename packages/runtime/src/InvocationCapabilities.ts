@@ -139,16 +139,29 @@ export class InvocationCapabilities extends Context.Service<
       effect: Effect.Effect<A, E, R>
     ) => Effect.Effect<A, E | CapabilityRefused, R>;
     readonly chargeCallback: (capability: Capability) => RuntimeFailure | undefined;
-    readonly chargeBytes: (capability: Capability, bytes: number) => RuntimeFailure | undefined;
+    /**
+     * Charges bytes to the call tree, refusing past `tier2.callbacks.bytes`. `counted` charges a
+     * reply that must reach its caller whatever the budget says, and refuses nothing.
+     */
+    readonly chargeBytes: (
+      capability: Capability,
+      bytes: number,
+      options?: { readonly counted?: boolean }
+    ) => RuntimeFailure | undefined;
     readonly rememberRefusal: (
       capability: Capability,
       failure: RuntimeFailure,
       status: number,
       operation?: string
     ) => RuntimeFailure;
+    /**
+     * Runs a callback's work as a fiber the service owns, not the request waiting for it.
+     * `settled` runs once when that work ends, however it ends, or at once if it never starts.
+     */
     readonly execute: <A, E, R>(
       capability: Capability,
-      effect: Effect.Effect<A, E, R>
+      effect: Effect.Effect<A, E, R>,
+      settled?: Effect.Effect<void>
     ) => Effect.Effect<A, E | CapabilityRefused, R>;
   }
 >()("@patchy/runtime/InvocationCapabilities") {}
@@ -193,12 +206,16 @@ export const make = Effect.gen(function* () {
         429
       );
   };
-  const chargeBytes: InvocationCapabilities["Service"]["chargeBytes"] = (capability, bytes) => {
+  const chargeBytes: InvocationCapabilities["Service"]["chargeBytes"] = (
+    capability,
+    bytes,
+    options
+  ) => {
     capability.counters.peakBytes = Math.max(
       capability.counters.peakBytes,
       capability.tree.bytes + bytes
     );
-    if (capability.tree.bytes + bytes > byteLimit)
+    if (capability.tree.bytes + bytes > byteLimit && options?.counted !== true)
       return rememberRefusal(
         capability,
         {
@@ -390,8 +407,13 @@ export const make = Effect.gen(function* () {
         )
       );
     });
-  const execute = <A, E, R>(capability: Capability, effect: Effect.Effect<A, E, R>) =>
-    Effect.gen(function* () {
+  const execute = <A, E, R>(
+    capability: Capability,
+    effect: Effect.Effect<A, E, R>,
+    settled: Effect.Effect<void> = Effect.void
+  ) => {
+    let owned = false;
+    return Effect.gen(function* () {
       yield* resolve(capability.token, capability.attempt);
       const entry = entries.get(capability.token)!;
       const queuedAt = yield* Clock.currentTimeMillis;
@@ -417,8 +439,17 @@ export const make = Effect.gen(function* () {
           );
         })
       );
-      // The service owns callback effects, not the HTTP request that waits for their reply.
-      const fiber = yield* Effect.forkIn(job, scope);
+      // The service owns callback effects, not the HTTP request that waits for their reply, and
+      // `settled` follows the work it owns.
+      const fiber = yield* Effect.uninterruptible(
+        Effect.forkIn(job.pipe(Effect.ensuring(settled)), scope).pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              owned = true;
+            })
+          )
+        )
+      );
       entry.fibers.add(fiber);
       fiber.addObserver(() => entry.fibers.delete(fiber));
       const value = yield* Fiber.await(fiber).pipe(
@@ -435,7 +466,8 @@ export const make = Effect.gen(function* () {
       );
       yield* resolve(capability.token, capability.attempt);
       return value;
-    });
+    }).pipe(Effect.onExit(() => (owned ? Effect.void : settled)));
+  };
   const settle = Effect.fn("InvocationCapabilities.settle")(function* (
     token: string,
     reason: EndReason,
