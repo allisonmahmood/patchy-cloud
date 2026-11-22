@@ -50,6 +50,7 @@ import { Cryptography, dateLabel } from "@patchy/core";
 import { ContractLimits } from "@patchy/limits";
 import { LoadedVersions, Patches } from "@patchy/patches";
 import {
+  ActionSlots,
   ExecutionLifecycle,
   Invocation,
   type LoadedVersions as Served,
@@ -425,7 +426,7 @@ const changeRefusal = (
  */
 const neverStarted = Schema.is(
   Schema.Union([
-    Invocation.InvocationBusy,
+    ActionSlots.InvocationBusy,
     ExecutionLifecycle.LifecycleError,
     Invocation.ExecutorBusy
   ])

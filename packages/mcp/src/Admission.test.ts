@@ -14,7 +14,13 @@ import * as TestClock from "effect/testing/TestClock";
 import type { HandlerDescriptors, ServerCallReply } from "@patchy/api";
 import { AgentConnections } from "@patchy/auth";
 import { OperatingLimits } from "@patchy/limits";
-import { CompanyAdmission, ExecutionLifecycle, Invocation, Runtime } from "@patchy/runtime";
+import {
+  ActionSlots,
+  CompanyAdmission,
+  ExecutionLifecycle,
+  Invocation,
+  Runtime
+} from "@patchy/runtime";
 import { call, CLAUDE, company, doorTo, harness, objectAt, publish, runtime } from "./test/door.js";
 
 /** An agent tool's descriptor. */
@@ -364,7 +370,7 @@ it.layer(harness)("admission", (it) => {
       const priya = acme.people[0]!;
       yield* publish(acme.id, priya, "new-business", { handlers: deals });
       const refusals: ReadonlyArray<Runtime.RuntimeError> = [
-        new Invocation.InvocationBusy({
+        new ActionSlots.InvocationBusy({
           limitId: "tier2.actions.viewer",
           value: 2,
           scope: "viewer"

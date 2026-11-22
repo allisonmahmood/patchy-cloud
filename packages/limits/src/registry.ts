@@ -1250,6 +1250,36 @@ export const registry = {
     refusal: "busy",
     overridable: true
   },
+  "tier2.models.company": {
+    kind: "operating",
+    default: 24,
+    unit: "actions",
+    scope: "company",
+    measure:
+      "Actions in the model pool per company per host replica. An action moves there from its action slots once, on its first model call, and stays until it ends; a refused move keeps its action slot. Not reached yet: no patch can call a model",
+    refusal: "busy",
+    overridable: true
+  },
+  "tier2.models.viewer": {
+    kind: "operating",
+    default: 4,
+    unit: "actions",
+    scope: "viewer",
+    measure:
+      "Actions in the model pool per person per host replica, across their patches, pages and worker agent. Not reached yet: no patch can call a model",
+    refusal: "busy",
+    overridable: true
+  },
+  "tier2.models.replica": {
+    kind: "operating",
+    default: 64,
+    unit: "actions",
+    scope: "host",
+    measure:
+      "Actions in the model pool per host replica, across companies. Not reached yet: no patch can call a model",
+    refusal: "busy",
+    overridable: false
+  },
   "company.admission.rate": {
     kind: "operating",
     default: 100,
