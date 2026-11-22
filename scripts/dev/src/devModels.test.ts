@@ -1,9 +1,11 @@
 // @effect-diagnostics globalFetch:off -- the test watches the process's own fetch, which a source would use.
 import { assert, it } from "@effect/vitest";
 import { ModelsSource } from "@patchy/integrations";
+import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import { devModels } from "./devModels.js";
 
@@ -30,7 +32,7 @@ const call = (env: Record<string, string>) =>
   Effect.gen(function* () {
     const source = yield* ModelsSource.Source;
     const dispatch = {
-      deadline: Date.now() + 30_000,
+      deadline: (yield* Clock.currentTimeMillis) + 30_000,
       attempt: { sent: false },
       beforeSend: Effect.succeed(Redacted.make("sk-stored-key"))
     };
@@ -46,8 +48,9 @@ const call = (env: Record<string, string>) =>
     );
     return { generated, decided, sent: dispatch.attempt.sent };
   }).pipe(
-    Effect.provide(devModels),
-    Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env)))
+    Effect.provide(
+      devModels.pipe(Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env))))
+    )
   );
 
 it.effect("without the fake's address, a dev instance's model calls go nowhere", () =>
@@ -55,7 +58,8 @@ it.effect("without the fake's address, a dev instance's model calls go nowhere",
     const { value, seen } = yield* watchingFetch(call({}));
     assert.deepStrictEqual(seen, []);
     assert.isFalse(value.sent);
-    for (const exit of [value.generated, value.decided]) {
+    const exits: ReadonlyArray<Exit.Exit<unknown, unknown>> = [value.generated, value.decided];
+    for (const exit of exits) {
       assert.isTrue(Exit.isFailure(exit));
       if (Exit.isFailure(exit)) assert.include(String(exit.cause), "ModelsUnavailable");
     }
