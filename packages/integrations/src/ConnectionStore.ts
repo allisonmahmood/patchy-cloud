@@ -725,6 +725,21 @@ export class ConnectionStore extends Context.Service<
     readonly providers: (
       companyId: string
     ) => Effect.Effect<ReadonlyArray<ModelProvider>, ConnectionError>;
+    /** One provider by id as it stands now, its state and credential revision, for a model call. */
+    readonly provider: (
+      companyId: string,
+      id: string
+    ) => Effect.Effect<ModelProvider, ConnectionError>;
+    /**
+     * A provider's key, decrypted for one model call about to be sent, while the provider is
+     * connected and its credential revision is still `credentialRevision`; a replaced key
+     * refuses `ConnectionChanged`. Never kept past the call.
+     */
+    readonly providerKey: (
+      companyId: string,
+      id: string,
+      credentialRevision: number
+    ) => Effect.Effect<Redacted.Redacted<string>, ConnectionError>;
     /** Keeps a provider's key, sealed as every connection's credentials are. Nothing is called. */
     readonly connectProvider: (
       input: ProviderInput,

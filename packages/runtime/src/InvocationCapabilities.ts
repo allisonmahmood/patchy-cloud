@@ -41,6 +41,9 @@ export interface Counters {
   peakBytes: number;
   peakLogBytes: number;
   peakFileBytes: number;
+  /** Model call attempts across the call tree's action, refused ones included, and those running. */
+  modelCalls: number;
+  modelsInFlight: number;
   readonly operations: Set<string>;
   readonly logs: Array<Schema.Json>;
 }
@@ -61,6 +64,8 @@ export interface Capability {
     readonly operation?: string;
   }>;
   readonly run?: (args: unknown) => Effect.Effect<ServerCallReply, RuntimeError>;
+  /** An action's move into the model pool, which its model calls take (see `Binding.modelPool`). */
+  readonly modelPool?: Effect.Effect<void, RuntimeError>;
   /** Host-observed resource attempts, recorded before callback authorisation. */
   readonly onDependency?: (key: string) => void;
   readonly snapshot: { value?: Resource };
@@ -75,6 +80,7 @@ export interface Issue {
   readonly tree?: TreeBudget;
   readonly counters?: Counters;
   readonly run?: (args: unknown) => Effect.Effect<ServerCallReply, RuntimeError>;
+  readonly modelPool?: Effect.Effect<void, RuntimeError>;
   readonly onDependency?: (key: string) => void;
 }
 
@@ -299,6 +305,8 @@ export const make = Effect.gen(function* () {
       peakBytes: 0,
       peakLogBytes: 0,
       peakFileBytes: 0,
+      modelCalls: 0,
+      modelsInFlight: 0,
       operations: new Set()
     };
     const observe = yield* WideEvents.capture;
@@ -326,6 +334,7 @@ export const make = Effect.gen(function* () {
       observe: <A, E, R>(work: Effect.Effect<A, E, R>) =>
         observe(work.pipe(Effect.provideService(DatabaseMeter.current, meter))),
       ...(input.run === undefined ? {} : { run: input.run }),
+      ...(input.modelPool === undefined ? {} : { modelPool: input.modelPool }),
       ...(input.onDependency === undefined ? {} : { onDependency: input.onDependency }),
       counters,
       logs: counters.logs,

@@ -41,5 +41,11 @@ export class Binding extends Context.Service<
      * that queues for a slot stops waiting before it, so a refused wait is never a timeout.
      */
     readonly deadline?: number;
+    /**
+     * Moves the calling action into the model pool, once; set only on an action's callbacks on a
+     * host that counts action slots. A model call takes it after its first check passes, and its
+     * refusal sends nothing.
+     */
+    readonly modelPool?: Effect.Effect<void, RuntimeError>;
   }
 >()("@patchy/runtime/Binding") {}

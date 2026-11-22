@@ -311,6 +311,25 @@ const prewarmMetrics = {
   followed: Schema.optionalKey(Schema.Boolean)
 };
 
+/**
+ * One model call as the host saw it: the role, its provider record and type, the model, the
+ * call's kind and door, whether a request was dispatched (absent when that's unknown), how long it
+ * waited for admission, and what the provider counted. Never the instructions, the input, the
+ * questions or the answer.
+ */
+const modelFields = {
+  roleId: Schema.optionalKey(Schema.String),
+  providerId: Schema.optionalKey(Schema.String),
+  provider: Schema.optionalKey(Schema.String),
+  model: Schema.optionalKey(Schema.String),
+  modelKind: Schema.optionalKey(Schema.Literals(["decision", "text"])),
+  door: Schema.optionalKey(Schema.Literals(["published", "dev", "test"])),
+  sent: Schema.optionalKey(Schema.Boolean),
+  admissionWaitMs: Schema.optionalKey(Schema.Number),
+  inputTokens: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+  outputTokens: Schema.optionalKey(Schema.NullOr(Schema.Number))
+};
+
 /** Enrichment is local to the current event. Each emitter retains only its own fields. */
 export const EventFields = Schema.Struct({
   ...attribution,
@@ -328,7 +347,8 @@ export const EventFields = Schema.Struct({
   ...processMetrics,
   ...bindingMetrics,
   ...keepaliveMetrics,
-  ...prewarmMetrics
+  ...prewarmMetrics,
+  ...modelFields
 });
 export type EventFields = typeof EventFields.Type;
 
@@ -421,6 +441,20 @@ export const PrewarmEvent = Schema.Struct({
   ...prewarmMetrics
 });
 export type PrewarmEvent = typeof PrewarmEvent.Type;
+/**
+ * One model call attempt, its own event beside the request that made it and linked to it, so an
+ * attempt that settles after its action's event closed still lands.
+ */
+export const ModelEvent = Schema.Struct({
+  ...common,
+  type: Schema.Literal("model"),
+  companyId: attribution.companyId,
+  patchId: attribution.patchId,
+  versionId: attribution.versionId,
+  viewerId: attribution.viewerId,
+  ...modelFields
+});
+export type ModelEvent = typeof ModelEvent.Type;
 export const WideEvent = Schema.Union([
   RequestEvent,
   RerunEvent,
@@ -428,7 +462,8 @@ export const WideEvent = Schema.Union([
   ProcessEvent,
   BindingEvent,
   KeepaliveEvent,
-  PrewarmEvent
+  PrewarmEvent,
+  ModelEvent
 ]);
 export type WideEvent = typeof WideEvent.Type;
 
@@ -560,7 +595,8 @@ const schemas = {
   process: ProcessEvent,
   binding: BindingEvent,
   keepalive: KeepaliveEvent,
-  prewarm: PrewarmEvent
+  prewarm: PrewarmEvent,
+  model: ModelEvent
 };
 const bestEffort = (work: Effect.Effect<void>) =>
   work.pipe(

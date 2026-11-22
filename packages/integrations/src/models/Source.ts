@@ -505,7 +505,11 @@ export const make = Effect.gen(function* () {
       transformClient: guarded(wire, dispatch)
     }).pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, http)));
 
-  /** Sends under the cut-off, never following a redirect, without trace context. */
+  /**
+   * Sends under the cut-off, never following a redirect, without trace context, and with no
+   * spans: Effect's own would keep the provider's error text, which can echo the key or the
+   * input, and the answer. The host's `model` event is the call's record.
+   */
   const sending = <A, E, R>(effect: Effect.Effect<A, E, R>, dispatch: Dispatch<unknown>) =>
     Effect.gen(function* () {
       const started = yield* Clock.currentTimeMillis;
@@ -517,7 +521,8 @@ export const make = Effect.gen(function* () {
           duration: window,
           orElse: () =>
             Effect.fail(new Errors.Timeout({ sent: dispatch.attempt.sent, milliseconds: window }))
-        })
+        }),
+        Effect.withTracerEnabled(false)
       );
     });
 

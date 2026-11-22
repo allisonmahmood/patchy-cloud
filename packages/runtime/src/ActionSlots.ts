@@ -38,6 +38,9 @@ export class ModelPoolBusy extends Schema.TaggedError<ModelPoolBusy>()("ModelPoo
   get scope() {
     return registry[this.limitId].scope;
   }
+  get details() {
+    return { sent: false };
+  }
   override get message() {
     return "Too many actions are waiting on a model, so nothing was sent. Try again shortly.";
   }
@@ -84,8 +87,14 @@ const bump = (counts: Map<string, number>, key: string, by: 1 | -1) => {
   else counts.set(key, next);
 };
 
-/** One replica's slots. `Invocation` makes one; `replica` is `tier2.models.replica`. */
-export const make = (options: { readonly replica: number }) => {
+/**
+ * One replica's slots. `Invocation` makes one; `replica` is `tier2.models.replica`, from the
+ * deployment configuration `deploymentRevision` names.
+ */
+export const make = (options: {
+  readonly replica: number;
+  readonly deploymentRevision: string;
+}) => {
   const actionCompanies = new Map<string, number>();
   const actionViewers = new Map<string, number>();
   const modelCompanies = new Map<string, number>();
@@ -147,26 +156,52 @@ export const make = (options: { readonly replica: number }) => {
           Effect.suspend((): Effect.Effect<void, ModelPoolBusy | SlotReleased> => {
             if (held === "model") return Effect.void;
             if (held === "released") return Effect.fail(new SlotReleased());
-            const refused = (
+            const pool = [
               [
-                [
-                  "tier2.models.company",
-                  modelCompanies.get(holder.companyId) ?? 0,
-                  modelLimits.company.value
-                ],
-                ["tier2.models.viewer", modelPeople.get(person) ?? 0, modelLimits.viewer.value],
-                ["tier2.models.replica", modelReplica, options.replica]
-              ] as const
-            ).find(([, inPool, limit]) => inPool >= limit);
+                "tier2.models.company",
+                modelCompanies.get(holder.companyId) ?? 0,
+                modelLimits.company.value,
+                modelLimits.company.configRevision
+              ],
+              [
+                "tier2.models.viewer",
+                modelPeople.get(person) ?? 0,
+                modelLimits.viewer.value,
+                modelLimits.viewer.configRevision
+              ],
+              [
+                "tier2.models.replica",
+                modelReplica,
+                options.replica,
+                { deploymentRevision: options.deploymentRevision, overrideRevision: "0" }
+              ]
+            ] as const;
+            const at = pool.findIndex(([, inPool, limit]) => inPool >= limit);
+            // The action's event records each limit the move checked with its peak, as admission
+            // does; the counts are known only here.
+            const peaks = WideEvents.enrich({
+              limits: (at < 0 ? pool : pool.slice(0, at + 1)).map(
+                ([limitId, inPool, value, configRevision]) => ({
+                  limitId,
+                  value,
+                  peak: Math.min(inPool + 1, value),
+                  configRevision
+                })
+              )
+            });
+            const refused = at < 0 ? undefined : pool[at];
             if (refused !== undefined)
-              return Effect.fail(new ModelPoolBusy({ limitId: refused[0], value: refused[2] }));
+              return Effect.andThen(
+                peaks,
+                Effect.fail(new ModelPoolBusy({ limitId: refused[0], value: refused[2] }))
+              );
             bump(modelCompanies, holder.companyId, 1);
             bump(modelPeople, person, 1);
             modelReplica++;
             bump(actionCompanies, holder.companyId, -1);
             bump(actionViewers, viewer, -1);
             held = "model";
-            return Effect.void;
+            return peaks;
           }),
         release: Effect.sync(() => {
           if (held === "action") {

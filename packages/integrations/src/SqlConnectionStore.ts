@@ -2400,6 +2400,38 @@ export const knowing = (known: ReadonlyArray<Models.Kind>) =>
       },
       Effect.catchTags(safe("providers"))
     );
+    const provider = Effect.fn("ConnectionStore.provider")(
+      function* (companyId: string, id: string) {
+        if (!models) return yield* new ModelsUnavailable({});
+        return yield* providerOf({ companyId, id });
+      },
+      Effect.catchTags(safe("providers"))
+    );
+    const providerSecret = SqlSchema.findOneOption({
+      Request: Schema.Struct({ companyId: Schema.String, id: Schema.String }),
+      Result: Schema.Struct({
+        ...ModelProvider.fields,
+        credentials: Schema.String,
+        keyId: Schema.String
+      }),
+      execute: ({
+        companyId,
+        id
+      }) => sql`SELECT ${providerColumns}, p.credentials, p.key_id AS "keyId"
+        FROM connections p WHERE p.company_id = ${companyId} AND p.id = ${id} AND ${knownProvider}`
+    });
+    const providerKey = Effect.fn("ConnectionStore.providerKey")(
+      function* (companyId: string, id: string, credentialRevision: number) {
+        if (!models) return yield* new ModelsUnavailable({});
+        const found = yield* providerSecret({ companyId, id });
+        if (Option.isNone(found)) return yield* notFound({ companyId, id });
+        if (found.value.status !== "connected") return yield* new ConnectionNotConnected({});
+        if (found.value.credentialRevision !== credentialRevision)
+          return yield* new ConnectionChanged({});
+        return yield* keys.decrypt(found.value, found.value);
+      },
+      Effect.catchTags(safe("poolCredentials"))
+    );
     const connectProvider = Effect.fn("ConnectionStore.connectProvider")(
       function* (input: ConnectionStore.ProviderInput, report?: ConnectionStore.ModelsReport) {
         if (!providerKinds.includes(input.provider)) return yield* new ModelsUnavailable({});
@@ -2628,6 +2660,8 @@ export const knowing = (known: ReadonlyArray<Models.Kind>) =>
       sends,
       pauseLogin,
       providers,
+      provider,
+      providerKey,
       connectProvider,
       createRole,
       changeModels

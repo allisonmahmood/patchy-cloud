@@ -99,6 +99,8 @@ const decideArgs: typeof ModelsDecideArgs.Type = {
     angry: { type: "yesNo", instructions: "The sender is angry." }
   }
 };
+/** The limit a refusal names, if it names one. */
+const limitOf = (error: object) => ("limitId" in error ? error.limitId : undefined);
 const failed = <A, E>(exit: Exit.Exit<A, E>): E => {
   if (Exit.isSuccess(exit)) throw new Error("expected a failure");
   const error = exit.cause.reasons.find((reason) => reason._tag === "Fail");
@@ -419,7 +421,7 @@ describe("OpenAI refusals", () => {
           yield* Effect.exit(source.generate(target, generateArgs(), yield* dispatch()))
         );
         assert.strictEqual(error.code, "too_large");
-        assert.strictEqual(error.limitId, "models.answer.bytes");
+        assert.strictEqual(limitOf(error), "models.answer.bytes");
         assert.deepStrictEqual(error.details, details);
       }
     })
@@ -441,13 +443,13 @@ describe("OpenAI refusals", () => {
           )
         );
         assert.strictEqual(large.code, "too_large");
-        assert.strictEqual(large.limitId, "models.request.bytes");
+        assert.strictEqual(limitOf(large), "models.request.bytes");
         assert.deepStrictEqual(large.details, { sent: false });
         const late = yield* dispatch(1_500);
         const floor = failed(yield* Effect.exit(source.generate(target, generateArgs(), late)));
         assert.strictEqual(floor.code, "timeout");
         assert.deepStrictEqual(floor.details, { sent: false });
-        assert.strictEqual(floor.limitId, "models.send.floor");
+        assert.strictEqual(limitOf(floor), "models.send.floor");
         assert.isFalse(late.attempt.sent);
         const changed = new Errors.Unavailable({ reason: "connection_changed", sent: false });
         const checked = failed(
@@ -470,7 +472,7 @@ describe("OpenAI refusals", () => {
       const elapsed = (yield* Clock.currentTimeMillis) - started;
       assert.strictEqual(error.code, "timeout");
       assert.deepStrictEqual(error.details, { sent: true });
-      assert.strictEqual(error.limitId, "models.cutoff");
+      assert.strictEqual(limitOf(error), "models.cutoff");
       assert.isAtLeast(elapsed, 1_200);
       assert.isBelow(elapsed, 2_300 - 800);
     })

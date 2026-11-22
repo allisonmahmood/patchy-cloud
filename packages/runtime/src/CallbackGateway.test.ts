@@ -1025,6 +1025,117 @@ it.layer(
       assert.strictEqual(ran.length, ops.length);
     }).pipe(Effect.scoped)
   );
+  it.effect(
+    "model calls run only in actions, read-only ones included, on the action's own deadline and bounds",
+    () =>
+      Effect.gen(function* () {
+        const capabilities = yield* InvocationCapabilities.make;
+        const ingress = yield* ContractLimits.get("models.ingress.bytes");
+        const inFlight = yield* ContractLimits.get("models.calls.inFlight");
+        const perAction = yield* ContractLimits.get("models.calls.perAction");
+        const seen: Array<{
+          readonly op: string;
+          readonly deadline?: number;
+          readonly pool: boolean;
+        }> = [];
+        const release = yield* Deferred.make<void>();
+        const allRunning = yield* Deferred.make<void>();
+        let hold = false;
+        let held = 0;
+        const handler = (op: string): Runtime.JsonHandler => ({
+          kind: "integration",
+          fence: "action",
+          connectionId: () => "role",
+          run: () =>
+            Effect.gen(function* () {
+              const binding = yield* Binding.Binding;
+              seen.push({
+                op,
+                ...(binding.deadline === undefined ? {} : { deadline: binding.deadline }),
+                pool: binding.modelPool !== undefined
+              });
+              if (hold) {
+                if (++held === inFlight) yield* Deferred.succeed(allRunning, undefined);
+                yield* Deferred.await(release);
+              }
+              return { text: "ok", usage: { inputTokens: null, outputTokens: null } };
+            })
+        });
+        const gateway = yield* CallbackGateway.make({
+          "models.decide": handler("models.decide"),
+          "models.generate": handler("models.generate")
+        }).pipe(Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities));
+        const call = (op: string, args: Record<string, string> = { connection: "writer" }) => ({
+          op,
+          args
+        });
+        // A query and a mutation are refused before anything runs.
+        for (const kind of ["query", "mutation"] as const)
+          for (const op of ["models.decide", "models.generate"]) {
+            const capability = yield* Fixtures.issue(capabilities, { kind });
+            assert.include(
+              yield* gateway.callback(capability.token, capability.attempt, call(op)),
+              { ok: false, code: "access_denied" }
+            );
+          }
+        assert.deepStrictEqual(seen, []);
+        // A read-only action may call a model: it writes nothing. The call gets the action's
+        // remaining time, not integration.deadline, and the action's move into the pool.
+        const pooled = yield* Fixtures.issue(capabilities, {
+          kind: "action",
+          readOnly: true,
+          modelPool: Effect.void
+        });
+        assert.isTrue(
+          (yield* gateway.callback(pooled.token, pooled.attempt, call("models.generate"))).ok
+        );
+        assert.strictEqual(seen[0]?.deadline, pooled.attempt.deadline);
+        assert.isTrue(seen[0]?.pool);
+        // Past models.ingress.bytes nothing runs, and nothing was sent.
+        const action = yield* Fixtures.issue(capabilities, { kind: "action" });
+        assert.deepInclude(
+          yield* gateway.callback(
+            action.token,
+            action.attempt,
+            call("models.generate", { connection: "writer", input: "x".repeat(ingress) })
+          ),
+          {
+            ok: false,
+            code: "too_large",
+            limitId: "models.ingress.bytes",
+            details: { sent: false }
+          }
+        );
+        // Four may run at once across every alias; a fifth is refused busy.
+        hold = true;
+        const running = yield* Effect.forEach(
+          Array.from({ length: inFlight }, (_, index) =>
+            index % 2 === 0 ? "models.decide" : "models.generate"
+          ),
+          (op) => Effect.forkChild(gateway.callback(action.token, action.attempt, call(op)))
+        );
+        yield* Deferred.await(allRunning);
+        assert.deepInclude(
+          yield* gateway.callback(action.token, action.attempt, call("models.generate")),
+          { ok: false, code: "busy", limitId: "models.calls.inFlight", details: { sent: false } }
+        );
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.joinAll(running);
+        hold = false;
+        // The action's attempts are counted, the busy one included, up to models.calls.perAction.
+        const used = inFlight + 1;
+        for (let attempt = used; attempt < perAction; attempt++)
+          assert.isTrue(
+            (yield* gateway.callback(action.token, action.attempt, call("models.generate"))).ok
+          );
+        assert.deepInclude(
+          yield* gateway.callback(action.token, action.attempt, call("models.decide")),
+          { ok: false, code: "limit_exceeded", limitId: "models.calls.perAction" }
+        );
+      }).pipe(Effect.scoped),
+    // Each of the action's 200 calls is journaled, so this one runs longer than most.
+    { timeout: 60_000 }
+  );
   it.effect("IMAP runs only in actions, read-only ones included, and caps its arguments", () =>
     Effect.gen(function* () {
       const capabilities = yield* InvocationCapabilities.make;

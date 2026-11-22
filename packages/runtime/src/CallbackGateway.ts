@@ -109,8 +109,12 @@ const connections: Readonly<Record<string, true>> = {
   "github.listPulls": true,
   "github.getPull": true,
   "github.listPullFiles": true,
-  "github.listPullReviews": true
+  "github.listPullReviews": true,
+  // A model call is an action's alone, read-only ones included: it writes nothing.
+  "models.decide": true,
+  "models.generate": true
 };
+const isModelCall = (op: string) => op === "models.decide" || op === "models.generate";
 const allowed = (kind: HandlerKind, op: string) =>
   op === "log" ||
   Object.hasOwn(readTable, op) ||
@@ -185,7 +189,10 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
     pidgeonBytes: ContractLimits.get("runtime.pidgeon.bytes"),
     attioBytes: ContractLimits.get("runtime.attio.bytes"),
     imapBytes: ContractLimits.get("runtime.imap.bytes"),
-    githubBytes: ContractLimits.get("runtime.github.bytes")
+    githubBytes: ContractLimits.get("runtime.github.bytes"),
+    modelIngress: ContractLimits.get("models.ingress.bytes"),
+    modelsInFlight: ContractLimits.get("models.calls.inFlight"),
+    modelCalls: ContractLimits.get("models.calls.perAction")
   });
   const callback = Effect.fn("CallbackGateway.callback")(function* (
     token: string,
@@ -272,6 +279,48 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
     if (operation?.kind === "integration") integration = request.op;
     if (capability.kind === "query" && operation?.transport !== undefined)
       return remember(refused("access_denied", "Queries cannot transfer file bytes."), 403);
+    // A model call's own bounds, before anything is queued for it: its arguments, the action's
+    // attempts across every role alias, refused ones included, and the four it may have running.
+    // The patch's client holds the rest, so a refusal here means a client past its contract.
+    const model = isModelCall(request.op);
+    if (model) {
+      if (
+        Buffer.byteLength(encodeJson({ op: request.op, args: request.args })) > limits.modelIngress
+      )
+        return remember(
+          {
+            ok: false,
+            source: "patchy",
+            error: "The model call exceeds models.ingress.bytes, so nothing was sent.",
+            ...limitRefusal("models.ingress.bytes", limits.modelIngress),
+            details: { sent: false }
+          },
+          413
+        );
+      capability.counters.modelCalls++;
+      if (capability.counters.modelCalls > limits.modelCalls)
+        return remember(
+          {
+            ok: false,
+            source: "patchy",
+            error: "This action made the model calls it may, so nothing was sent.",
+            ...limitRefusal("models.calls.perAction", limits.modelCalls),
+            details: { sent: false }
+          },
+          429
+        );
+      if (capability.counters.modelsInFlight >= limits.modelsInFlight)
+        return remember(
+          {
+            ok: false,
+            source: "patchy",
+            error: "This action has the model calls running it may, so nothing was sent.",
+            ...limitRefusal("models.calls.inFlight", limits.modelsInFlight, 1),
+            details: { sent: false }
+          },
+          429
+        );
+    }
     // Integration arguments keep the caps they have on tier 1; nothing past them is sent.
     const argsLimitId = runtimeBodyLimitId(request.op);
     if (
@@ -329,11 +378,12 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
           ? effect
           : capabilities.performEffect(capability, effect);
       const now = yield* Clock.currentTimeMillis;
+      // A model call takes what's left of its action; every other integration call 15 seconds.
       const deadlineMs = Math.max(
         0,
         Math.min(
           capability.attempt.deadline - now,
-          handler.kind === "integration"
+          handler.kind === "integration" && handler.fence !== "action"
             ? limits.integrationDeadline
             : handler.kind === "mutation"
               ? limits.mutationDeadline
@@ -348,7 +398,10 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
         effectivePrincipal,
         invocationId: attempt.invocationId,
         correlationId: yield* cryptography.internalId("call"),
-        ...(handler.kind === "read" ? {} : { deadline: now + deadlineMs })
+        ...(handler.kind === "read" ? {} : { deadline: now + deadlineMs }),
+        ...(handler.fence === "action" && capability.modelPool !== undefined
+          ? { modelPool: capability.modelPool }
+          : {})
       });
       const execute = Effect.gen(function* (): Effect.fn.Return<
         GuestProtocol.CallbackReply,
@@ -420,9 +473,11 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
                     new Runtime.Timeout({
                       deadlineMs,
                       limitId:
-                        handler.kind === "integration"
-                          ? "integration.deadline"
-                          : "runtime.mutation.deadline"
+                        handler.fence === "action"
+                          ? "tier2.action.deadline"
+                          : handler.kind === "integration"
+                            ? "integration.deadline"
+                            : "runtime.mutation.deadline"
                     })
                   )
               })
@@ -538,7 +593,14 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
                   )
                 )
           : run;
-    const result = yield* Effect.exit(capabilities.execute(capability, operationRun));
+    if (model) capability.counters.modelsInFlight++;
+    const result = yield* Effect.exit(capabilities.execute(capability, operationRun)).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (model) capability.counters.modelsInFlight--;
+        })
+      )
+    );
     let reply: GuestProtocol.CallbackReply;
     let status = 200;
     if (Exit.isSuccess(result)) reply = result.value;

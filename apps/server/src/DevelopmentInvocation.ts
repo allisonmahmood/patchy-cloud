@@ -19,6 +19,7 @@ import {
   type Wakes
 } from "@patchy/runtime";
 import * as Config from "effect/Config";
+import type * as Digest from "effect/crypto/Digest";
 import type * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -39,6 +40,7 @@ type Dependencies =
   | Cryptography.Cryptography
   | Scope.Scope
   | SecureRandom.SecureRandom
+  | Digest.Digest
   | HttpClient.HttpClient
   | RuntimeLog.RuntimeLog
   | ServerBundles.ServerBundles
@@ -125,6 +127,7 @@ export const layer = (
   | SqlClient.SqlClient
   | WideEvents.WideEvents
   | Cryptography.Cryptography
+  | Digest.Digest
 > =>
   Layer.effect(Invocation.Invocation, make(handlers)).pipe(
     Layer.provide([InvocationLog.layer, QuerySnapshot.layer, MutationTransaction.layer]),
