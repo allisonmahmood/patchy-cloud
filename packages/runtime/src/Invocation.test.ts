@@ -1285,15 +1285,80 @@ it.layer(services)("Invocation", (it) => {
     })
   );
 
+  it.effect("records the action limits an admission checked, each with its peak", () =>
+    Effect.gen(function* () {
+      const seen = yield* Queue.unbounded<GuestProtocol.Invoke>();
+      const finish = yield* Deferred.make<GuestProtocol.InvokeReply>();
+      const invocations = yield* makeInvocation((request) =>
+        Queue.offer(seen, request).pipe(Effect.andThen(Deferred.await(finish)))
+      );
+      const { events, next } = yield* recorder;
+      const call = Effect.suspend(() =>
+        events.withEvent(
+          { type: "request" },
+          invocations.call(
+            { handler: "demo.action", args: {} },
+            { ...binding, correlationId: newInternalId("call") }
+          )
+        )
+      );
+      // The action slot peaks on the next event out, as `[company, viewer]`.
+      const peaks = Effect.map(next, (event) => {
+        const limits = event.type === "request" ? (event.limits ?? []) : [];
+        return ["tier2.actions.company", "tier2.actions.viewer"].map(
+          (limitId) => limits.find((limit) => limit.limitId === limitId)?.peak
+        );
+      });
+      const first = yield* call.pipe(Effect.forkChild);
+      yield* Queue.take(seen);
+      const second = yield* call.pipe(Effect.forkChild);
+      yield* Queue.take(seen);
+      // Refused on the viewer's two slots: the company's peak counts the try, and the viewer's
+      // stops at its limit.
+      yield* call.pipe(Effect.flip);
+      assert.deepStrictEqual(yield* peaks, [3, 2]);
+      yield* Deferred.succeed(finish, {
+        outcome: "returned",
+        reply: { ok: true, value: null },
+        guestMs: 1
+      });
+      yield* Fiber.join(first);
+      yield* Fiber.join(second);
+      // Each admitted action recorded the slots in use once it had its own.
+      assert.sameDeepMembers(
+        [yield* peaks, yield* peaks],
+        [
+          [1, 1],
+          [2, 2]
+        ]
+      );
+    })
+  );
+
   it.effect(
     "gives the action slot back when the caller's hold fails before the action starts",
     () =>
       Effect.gen(function* () {
+        const leases = { taken: 0, givenBack: 0 };
         const invocations = yield* makeInvocation(() =>
           Effect.succeed({
             outcome: "returned" as const,
             reply: { ok: true as const, value: null },
             guestMs: 1
+          })
+        ).pipe(
+          Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
+            prewarm: () => Effect.die("Nothing here prewarms."),
+            touch: () => Effect.succeed({ outcome: "absent" as const }),
+            connect: () => Effect.void,
+            acquire: () =>
+              Effect.sync(() => {
+                leases.taken++;
+                return {
+                  binding: { taskId: "handoff-task", bindingEpoch: 1 },
+                  release: Effect.sync(() => void leases.givenBack++)
+                };
+              })
           })
         );
         const call = (retain?: Binding.Binding["Service"]["retain"]) =>
@@ -1306,12 +1371,15 @@ it.layer(services)("Invocation", (it) => {
             }
           );
         // The viewer has two action slots. Two starts that die before the owner fiber exists
-        // must not keep them, or the third call would be refused busy.
-        for (let attempt = 0; attempt < 2; attempt++) {
+        // must not keep them, or the third call would be refused busy. Nor may they keep the
+        // company's server, which would then never go idle.
+        for (let attempt = 1; attempt <= 2; attempt++) {
           const broken = yield* call(Effect.die("The hold broke.")).pipe(Effect.exit);
           assert.strictEqual(broken._tag, "Failure");
+          assert.deepStrictEqual(leases, { taken: attempt, givenBack: attempt });
         }
         assert.deepStrictEqual(yield* call(), { ok: true, value: null });
+        assert.deepStrictEqual(leases, { taken: 3, givenBack: 3 });
       })
   );
 
