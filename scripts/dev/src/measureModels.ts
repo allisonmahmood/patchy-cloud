@@ -262,13 +262,19 @@ await Effect.runPromise(
      */
     const reportKill = yield* Effect.cached(
       Effect.gen(function* () {
+        // What the run saw as the kill arrived, taken before the wait for its report can move it.
+        const { at, ...probe } = lastProbe;
+        const seen = {
+          heldAtHost: host.held(),
+          invokesInFlight,
+          lastProbe: { ...probe, msBeforeKill: Math.round(performance.now() - at) }
+        };
         let report: ProcessReport | undefined;
         for (let attempt = 0; attempt < 40 && report === undefined; attempt++) {
           const { reports } = yield* Effect.orDie(supervisor.stats({ bindingEpoch: 1 }));
           report = reports.find((entry) => entry.processGeneration === generation);
           if (report === undefined) yield* Effect.sleep(50);
         }
-        const { at, ...probe } = lastProbe;
         process.stdout.write(
           `${JSON.stringify({
             phase: "killed",
@@ -277,9 +283,7 @@ await Effect.runPromise(
             cause: report?.cause ?? "no report filed within two seconds",
             processGeneration: report?.processGeneration ?? generation,
             ranMs: report === undefined ? undefined : report.endedAt - report.startedAt,
-            heldAtHost: host.held(),
-            invokesInFlight,
-            lastProbe: { ...probe, msBeforeKill: Math.round(performance.now() - at) }
+            ...seen
           })}\n`
         );
       })

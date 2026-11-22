@@ -20,6 +20,12 @@ import * as Schema from "effect/Schema";
 import { ImapNetwork } from "@patchy/integrations";
 import { launch } from "@patchy/server/launch";
 import { devModels } from "./devModels.js";
+import { directLoopback } from "./directLoopback.js";
+
+// The runner already starts this with loopback exempt from any proxy. Started by hand it is not,
+// so it exempts itself before anything is fetched: a model call reaches the fake, never a proxy.
+// oxlint-disable-next-line no-restricted-properties -- sets the exemption Bun's fetch reads; reads nothing.
+Object.assign(process.env, directLoopback);
 
 const decode = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Array(ImapNetwork.LoopbackServer))
