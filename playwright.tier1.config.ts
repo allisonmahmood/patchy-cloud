@@ -35,6 +35,12 @@ export default defineConfig({
         ...devices["Desktop Firefox"],
         launchOptions: { firefoxUserPrefs: { "fission.webContentIsolationStrategy": 1 } }
       }
-    }
+    },
+    // WebKit runs the same specs on macOS only, where it is Safari's engine with Safari's keyboard
+    // defaults. Linux WebKit's network stack never notices a dropped HTTP/2 stream, so live
+    // updates hang there, and its keyboard isn't Safari's.
+    ...(process.platform === "darwin"
+      ? [{ name: "webkit", use: { ...devices["Desktop Safari"] } }]
+      : [])
   ]
 });

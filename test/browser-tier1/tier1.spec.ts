@@ -154,7 +154,9 @@ test("broker keeps admission and source retry timing and the refusing operation,
 
 test("route bridge, real client file URL, shell download and isolation", async ({
   page,
-  instance
+  context,
+  instance,
+  browserName
 }) => {
   const patch = await instance.publish();
   const frame = await open(page, patch, "/items/2?filter=active");
@@ -222,28 +224,59 @@ test("route bridge, real client file URL, shell download and isolation", async (
   expect(file.suggestedFilename()).toBe("active.html");
   expect(await readFile((await file.path())!, "utf8")).toContain("<p>download bytes</p>");
 
-  // Simulate a UA ignoring the download hint: active uploaded HTML must still download,
-  // never become a same-origin shell document.
-  await page.evaluate(() =>
+  // Simulate a UA ignoring the download hint, in a page of its own: active uploaded HTML must
+  // never run in the shell's origin. Its type makes Chromium and Firefox download it, and the page
+  // stays where it was. WebKit shows it there instead, as a document of the shell's origin under
+  // the shell's policy, which refuses its script.
+  const ignoring = await context.newPage();
+  const ignoringFrame = await open(ignoring, patch);
+  const at = ignoring.url();
+  const ran: Array<string> = [];
+  ignoring.on("request", (request) => {
+    if (request.url().includes("example.invalid")) ran.push(request.url());
+  });
+  await ignoring.evaluate(() =>
     document.addEventListener(
       "click",
       (event) => {
-        if (event.target instanceof HTMLAnchorElement && event.target.href.startsWith("blob:"))
+        if (event.target instanceof HTMLAnchorElement && event.target.href.startsWith("blob:")) {
           event.target.removeAttribute("download");
+          (window as unknown as { stripped?: boolean }).stripped = true;
+        }
       },
       { capture: true, once: true }
     )
   );
-  const forcedDownload = page.waitForEvent("download");
-  await frame.getByRole("button", { name: "Download file" }).click();
-  expect(await readFile((await (await forcedDownload).path())!, "utf8")).toContain(
-    "<p>download bytes</p>"
-  );
+  if (browserName === "webkit") {
+    const shown = ignoring.waitForEvent(
+      "framenavigated",
+      (navigated) => navigated === ignoring.mainFrame() && navigated.url().startsWith("blob:")
+    );
+    await ignoringFrame.getByRole("button", { name: "Download file" }).click();
+    await shown;
+    await ignoring.waitForLoadState("load");
+    await expect(ignoring.locator("p")).toHaveText("download bytes");
+    // Its script marks the document before anything else it does.
+    expect(await ignoring.evaluate(() => document.documentElement.dataset.ran)).toBeUndefined();
+  } else {
+    const forcedDownload = ignoring.waitForEvent("download");
+    await ignoringFrame.getByRole("button", { name: "Download file" }).click();
+    expect(await readFile((await (await forcedDownload).path())!, "utf8")).toContain(
+      "<p>download bytes</p>"
+    );
+    expect(
+      await ignoring.evaluate(() => (window as unknown as { stripped?: boolean }).stripped)
+    ).toBe(true);
+    expect(ignoring.url()).toBe(at);
+  }
+  // Its script would send the page to example.invalid.
+  expect(ran).toEqual([]);
+  await ignoring.close();
   expect(page.url()).toBe(`${patch.address}/items/3?filter=active`);
 
   await frame.getByRole("button", { name: "Copy text" }).click();
   await expect(frame.locator("#copy-status")).toHaveText("Copied");
-  await frame.locator("#pasted-copy").press("Control+V");
+  await frame.locator("#pasted-copy").press("ControlOrMeta+V");
   await expect(frame.locator("#pasted-copy")).toHaveValue("Patchy clipboard acceptance");
 
   const escaped = await frame.evaluate(async () => {
@@ -801,7 +834,8 @@ test("a kept public copy that starts after its patch went back to the company re
 test("cross-site simple POST refusal, response CSP and one terminal stale public refresh", async ({
   page,
   context,
-  instance
+  instance,
+  browserName
 }) => {
   const patch = await instance.publish();
   const frame = await open(page, patch);
@@ -857,7 +891,18 @@ test("cross-site simple POST refusal, response CSP and one terminal stale public
     const framed = embedder.waitForEvent("requestfailed", (request) => request.url() === target);
     await embedder.goto(`${parent}?target=${encodeURIComponent(target)}`);
     await framed;
-    expect(embedder.frames().map((child) => child.url())).not.toContain(target);
+    if (browserName === "webkit") {
+      // WebKit leaves a refused frame at its address, holding an empty document of its own: none
+      // of the shell's frame and scripts, and none of the patch's heading or text.
+      for (const child of embedder.frames().filter((frame) => frame.url() === target))
+        expect(
+          await child.evaluate(() => ({
+            elements: document.querySelectorAll("head *, body *").length,
+            text: document.documentElement?.textContent ?? "",
+            title: document.title
+          }))
+        ).toEqual({ elements: 0, text: "", title: "" });
+    } else expect(embedder.frames().map((child) => child.url())).not.toContain(target);
     await embedder.close();
   }
   await instance.session(context, "none");

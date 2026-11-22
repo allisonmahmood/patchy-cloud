@@ -11,6 +11,7 @@ Use Node 22.22.0+ (`mise.toml` pins 24) and the pnpm version in `package.json`:
 ```sh
 pnpm install
 pnpm exec playwright install --with-deps chromium firefox   # browser and packed suites
+pnpm exec playwright install webkit                         # on a Mac, the WebKit suite
 ```
 
 Install pins `workerd`, embedded Postgres and Bun per platform; nothing is
@@ -20,11 +21,11 @@ and offers start, stop, environment and **Check** actions; import them once from
 
 ## Checks
 
-| Command                 | Runs                                                                                       | When                                  |
-| ----------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------- |
-| `pnpm check`            | format, lint, typecheck (tests included), the infrastructure synth and the offline tests   | while working; a few minutes          |
-| `pnpm verify`           | `check`, then every acceptance suite CI runs except live Clerk                             | before calling a change ready to ship |
-| `pnpm verify --changed` | the same, skipping the acceptance suites when only docs, agent files or the runner changed | docs and runner changes               |
+| Command                 | Runs                                                                                                        | When                                  |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| `pnpm check`            | format, lint, typecheck (tests included), the infrastructure synth and the offline tests                    | while working; a few minutes          |
+| `pnpm verify`           | `check`, then every acceptance suite CI requires except live Clerk, `server-image` and `rollback-rehearsal` | before calling a change ready to ship |
+| `pnpm verify --changed` | the same, skipping the acceptance suites when only docs, agent files or the runner changed                  | docs and runner changes               |
 
 `pnpm verify` mirrors CI's jobs: `test (bun)` (`pnpm test:bun`, the offline
 tests on Bun, the runtime production runs the server on, leaving out the files
@@ -45,6 +46,7 @@ on pushes to `main` and same-repository PRs. The server those suites start runs 
 Bun, as production runs it; the CLI runs on Node, as people run it. CI's `server-image`
 job, in `server-image.yml`, builds the production image and runs it with
 `scripts/server-image-smoke.mjs`, which needs Docker, so `pnpm verify` leaves it out.
+It leaves out `browser-webkit` too, which isn't a required check.
 
 On pull requests CI also runs `rollback-rehearsal`. When the PR changes a
 capability's `src/migrations.ts`, the handler descriptor schemas
@@ -61,10 +63,11 @@ leaves it out, because it rehearses commits against the commit production runs. 
 the Deploy runs with `gh`; `--live <sha>` rehearses against another commit.
 
 CI pins every job to a runner image, `ubuntu-24.04` except `install`'s
-`macos-15` and `windows-2025`, and every job that runs the repository's code
-to an exact Node patch. Bump the patches by hand in every workflow under
-`.github/workflows/` that pins one, like the server image: Node 24 moves with the
-`node:24-slim` digest in `apps/server/Dockerfile`, which builds the image.
+`macos-15` and `windows-2025` and `browser-webkit`'s `macos-15`, and every job
+that runs the repository's code to an exact Node patch. Bump the patches by
+hand in every workflow under `.github/workflows/` that pins one, like the server
+image: Node 24 moves with the `node:24-slim` digest in `apps/server/Dockerfile`,
+which builds the image.
 Bun is pinned once, as the `bun: runtime:<version>` devDependency in
 `package.json`, and `pnpm install` downloads it with the lockfile's hashes. It is a
 devDependency rather than `devEngines.runtime` because npm, which the packed CLI
@@ -100,12 +103,18 @@ For a focused loop:
 - `pnpm typecheck:tests` checks every test and harness file in one program,
   about three seconds when warm. Package `src` is checked by `pnpm typecheck`.
 - `pnpm exec playwright test -c playwright.tier1.config.ts --project=chromium <spec>`
-  runs one browser spec; `--project=firefox` runs it in Firefox.
-- The tier 1 config has two projects, `chromium` (`pnpm test:browser`) and `firefox`
-  (`pnpm test:browser:firefox`), and every spec runs in both. The `firefox` project turns
-  Fission isolation on, as Firefox ships it. CI runs them side by side as the `browser` and
-  `browser-firefox` jobs, each building what it runs, so Firefox passes or fails by itself;
-  `pnpm verify` runs one after the other. Safari isn't run.
+  runs one browser spec; `--project=firefox` runs it in Firefox, and `--project=webkit` in
+  WebKit on a Mac.
+- The tier 1 config has three projects, `chromium` (`pnpm test:browser`), `firefox`
+  (`pnpm test:browser:firefox`) and `webkit` (`pnpm test:browser:webkit`), and every spec
+  runs in each. The `firefox` project turns Fission isolation on, as Firefox ships it. The
+  `webkit` project exists only on macOS, where WebKit is Safari's engine: Linux WebKit's
+  network stack never notices a dropped HTTP/2 stream, so live updates hang there, and its
+  keyboard isn't Safari's. CI runs the three side by side as the `browser`, `browser-firefox`
+  and `browser-webkit` jobs, each building what it runs, so each browser passes or fails by
+  itself; `pnpm verify` runs Chromium then Firefox. `browser-webkit` runs on a macOS runner
+  and isn't a required check: a failure shows red on the pull request and on `main`
+  without blocking a merge.
 
 Every vitest run builds core's browser scripts and the shell broker and stages
 the packed CLI release once before its workers start; `pnpm dev` builds the same
@@ -133,8 +142,8 @@ takes seconds.
   keeps a patch's sandboxed frame in the shell's process, so focus and keyboard checks
   can pass there and fail in Chrome. A script that launches its own browser for such a
   check passes the same channel.
-- A browser spec passes in both projects. Where the two browsers rightly differ, the spec says
-  how beside the line that differs. A skip names what the other browser lacks, as the steps
+- A browser spec passes in every project. Where browsers rightly differ, the spec says how
+  beside the line that differs. A skip names what the other browser lacks, as the steps
   that drive Chromium's DevTools protocol do (another layout's keys, an input method, a
   dragged touch, the accessibility tree); "unsupported" is never the reason.
 - `tsconfig.test.json` keeps Effect's correctness rules and turns off the style

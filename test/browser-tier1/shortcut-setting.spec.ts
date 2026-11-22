@@ -84,7 +84,7 @@ const firedNext = async (frame: Frame, expected: string[]) => {
 /** Presses the page's keys from its body: A and G H are single-key, Mod+K isn't. */
 const pressAll = async (page: Page, frame: Frame) => {
   await frame.locator("#body").focus();
-  for (const key of ["a", "g", "h", "Control+k"]) await page.keyboard.press(key);
+  for (const key of ["a", "g", "h", "ControlOrMeta+k"]) await page.keyboard.press(key);
 };
 const shellDialog = (page: Page) =>
   page.getByRole("dialog", {
@@ -151,7 +151,7 @@ test("the sheet's row opens Patchy's dialog, which changes the setting live; a f
   const { frame, sheet } = await openDeals(page, patch.address);
   const dialog = shellDialog(page);
   await frame.locator("#body").focus();
-  await page.keyboard.press("Control+/");
+  await page.keyboard.press("ControlOrMeta+/");
   await sheet.getByRole("button", { name: "Single-key shortcuts: Off" }).click();
 
   await test.step("Patchy's dialog takes focus and keeps Tab inside", async () => {
@@ -206,7 +206,7 @@ test("the sheet's row opens Patchy's dialog, which changes the setting live; a f
   await test.step("Escape cancels, focus goes back to the frame and the setting stays", async () => {
     const { frame: current, sheet: open } = await openDeals(page, patch.address);
     await current.locator("#body").focus();
-    await page.keyboard.press("Control+/");
+    await page.keyboard.press("ControlOrMeta+/");
     await open.getByRole("button", { name: "Single-key shortcuts: On" }).click();
     await expect(dialog.getByRole("button", { name: "Turn off" })).toBeFocused();
     await page.keyboard.press("Escape");
@@ -245,7 +245,7 @@ test("Cancel or Escape mid-save closes the dialog at once, and the answer is wha
   const dialog = shellDialog(page);
   const saves = await holdSaves(page);
   await frame.locator("#body").focus();
-  await page.keyboard.press("Control+/");
+  await page.keyboard.press("ControlOrMeta+/");
   for (const [from, to, way, outcome, ends] of [
     ["Off", "on", "Cancel", "save", "On"],
     ["On", "off", "Escape", "refuse", "On"]
@@ -434,7 +434,7 @@ test("a guest's setting is their own", async ({ page, context, instance }) => {
   const { frame, sheet } = await openDeals(page, patch.address);
   expect(await frame.evaluate(() => window.name)).toBe("patchy:shortcuts=on");
   await frame.locator("#body").focus();
-  await page.keyboard.press("Control+/");
+  await page.keyboard.press("ControlOrMeta+/");
   await sheet.getByRole("button", { name: "Single-key shortcuts: On" }).click();
   await shellDialog(page).getByRole("button", { name: "Turn off" }).click();
   await expect(sheet.getByRole("button", { name: "Single-key shortcuts: Off" })).toBeFocused();
