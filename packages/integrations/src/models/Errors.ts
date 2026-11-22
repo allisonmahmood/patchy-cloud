@@ -149,7 +149,9 @@ export class Unavailable extends Schema.TaggedError<Unavailable>()("ModelsUnavai
   }
   override get message() {
     return {
-      unreachable: "The model provider couldn't be reached.",
+      unreachable: this.sent
+        ? "The connection to the model provider dropped after the request was sent, so whether it was answered, and charged, is unknown."
+        : "The model provider couldn't be reached.",
       key: "The model provider doesn't accept the company's key. Ask an admin to replace it.",
       provider: "The model provider failed to answer.",
       stopped: "The model stopped before it finished, for a reason Patchy doesn't report.",

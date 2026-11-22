@@ -16,6 +16,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as ConnectionStore from "../ConnectionStore.js";
@@ -94,7 +95,10 @@ const decided = json({
 });
 
 /** A scripted provider: answers by path, holds a call whose input says `hold`. */
-const scripted = (answer: (path: string, body: Record<string, unknown>) => Response | "hang") => {
+/** A scripted provider: answers by path, holds a call, or drops the connection once it is sent. */
+const scripted = (
+  answer: (path: string, body: Record<string, unknown>) => Response | "hang" | "reset"
+) => {
   const sent: Array<{ readonly path: string; readonly authorization: string | undefined }> = [];
   const client = HttpClient.make((request, url) =>
     Effect.gen(function* () {
@@ -104,6 +108,10 @@ const scripted = (answer: (path: string, body: Record<string, unknown>) => Respo
       sent.push({ path: url.pathname, authorization: request.headers["authorization"] });
       const reply = answer(url.pathname, body);
       if (reply === "hang") return yield* Effect.never;
+      if (reply === "reset")
+        return yield* new HttpClientError.HttpClientError({
+          reason: new HttpClientError.TransportError({ request, description: "socket hang up" })
+        });
       return HttpClientResponse.fromWeb(request, reply);
     })
   );
@@ -719,6 +727,8 @@ it.layer(layer, { excludeTestServices: true, timeout: 60_000 })("model calls", (
     });
     return {
       capability,
+      /** Ends the action, as its deadline or its return would. */
+      end: capabilities.end(capability.token, "returned"),
       send: (op: string, args: Record<string, unknown>, body?: GuestProtocol.Callback["body"]) =>
         gateway.callback(capability.token, capability.attempt, {
           op,
@@ -798,6 +808,52 @@ it.layer(layer, { excludeTestServices: true, timeout: 60_000 })("model calls", (
         SELECT outcome, outcome_code FROM runtime_calls
         WHERE company_id = ${scene.owner.company.id} AND op = 'models.generate'`;
       assert.deepStrictEqual(row, { outcome: "failure", outcome_code: "timeout" });
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect("journal what the caller was told when the action ends at a stalled door", () =>
+    Effect.gen(function* () {
+      const scene = yield* setup();
+      const sql = yield* SqlClient.SqlClient;
+      const stalled = yield* relay(
+        scene,
+        scripted(() => text("never")),
+        {
+          reauthorize: Effect.never
+        }
+      );
+      const waiting = yield* Effect.forkChild(stalled.send("models.generate", generateArgs()));
+      yield* Effect.sleep("200 millis");
+      yield* stalled.end;
+      const reply = yield* Fiber.join(waiting);
+      assert.deepInclude(reply, { ok: false, code: "access_denied", details: { sent: false } });
+      yield* Effect.sleep("100 millis");
+      const [row] = yield* sql<{ readonly outcome: string; readonly outcome_code: string }>`
+        SELECT outcome, outcome_code FROM runtime_calls
+        WHERE company_id = ${scene.owner.company.id} AND op = 'models.generate'`;
+      assert.deepStrictEqual(row, { outcome: "failure", outcome_code: "access_denied" });
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect("journal a connection dropped after dispatch as unknown, the refusal saying sent", () =>
+    Effect.gen(function* () {
+      const scene = yield* setup();
+      const sql = yield* SqlClient.SqlClient;
+      const dropped = yield* relay(
+        scene,
+        scripted(() => "reset")
+      );
+      const reply = yield* dropped.send("models.generate", generateArgs());
+      assert.deepInclude(reply, {
+        ok: false,
+        code: "source_unavailable",
+        details: { sent: true, reason: "unreachable" }
+      });
+      yield* Effect.sleep("100 millis");
+      const [row] = yield* sql<{ readonly outcome: string; readonly outcome_code: string }>`
+        SELECT outcome, outcome_code FROM runtime_calls
+        WHERE company_id = ${scene.owner.company.id} AND op = 'models.generate'`;
+      assert.deepStrictEqual(row, { outcome: "unknown", outcome_code: "unknown_outcome" });
     }).pipe(Effect.scoped)
   );
 

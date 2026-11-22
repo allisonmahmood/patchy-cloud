@@ -570,14 +570,30 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
               (Option.isSome(failure) &&
                 "details" in failure.value &&
                 failure.value.details?.sent === false));
-          const uncertain =
-            !unsent &&
+          // A model call sent and then cut off with no answer is the design's lost reply: bytes
+          // left, and whether the provider acted on them is unknown.
+          const lost =
+            modelCall &&
+            Option.isSome(failure) &&
+            "details" in failure.value &&
+            failure.value.details?.sent === true &&
+            failure.value.details.reason === "unreachable";
+          // An unsent model call interrupted because its action ended was told `access_denied`.
+          const fenced =
+            unsent &&
+            Option.isNone(failure) &&
             Exit.isFailure(result) &&
-            (Cause.hasInterrupts(result.cause) ||
-              Cause.hasDies(result.cause) ||
-              (Option.isSome(failure) &&
-                !isCapabilityRefused(failure.value) &&
-                (failure.value.code === "unknown_outcome" || failure.value.code === "timeout")));
+            Cause.hasInterrupts(result.cause) &&
+            (yield* Effect.result(capabilities.resolve(token, attempt)))._tag === "Failure";
+          const uncertain =
+            lost ||
+            (!unsent &&
+              Exit.isFailure(result) &&
+              (Cause.hasInterrupts(result.cause) ||
+                Cause.hasDies(result.cause) ||
+                (Option.isSome(failure) &&
+                  !isCapabilityRefused(failure.value) &&
+                  (failure.value.code === "unknown_outcome" || failure.value.code === "timeout"))));
           const cleanupDeadline =
             Math.min(now + deadlineMs, capability.attempt.deadline) + limits.cleanup;
           const remaining = Math.max(0, cleanupDeadline - (yield* Clock.currentTimeMillis));
@@ -600,7 +616,9 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
                       : failure.value.code
                     : reply?.ok
                       ? null
-                      : "source_unavailable",
+                      : fenced
+                        ? "access_denied"
+                        : "source_unavailable",
               durationMs: (yield* Clock.currentTimeMillis) - now,
               rowCount:
                 reply?.ok && "value" in reply ? (handler.rowCount?.(reply.value) ?? null) : null,
