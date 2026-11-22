@@ -1251,19 +1251,27 @@ it.layer(
         tree: { bytes: limit - requestBytes - 20 },
         reauthorize: Effect.fail(new Runtime.SessionExpired({}))
       });
-      while (action.refusals.length < count - 1)
+      // Storage keeps refusals while it holds at most `count`, so this leaves exactly one slot.
+      while (action.refusals.length < count)
         action.refusals.push({
           failure: { ok: false, source: "patchy", code: "busy", error: "filler" },
           status: 429
         });
       const reply = yield* gateway.callback(action.token, action.attempt, call);
-      assert.deepInclude(reply, { ok: false, details: { sent: false } });
-      // What the guest got is what the host can match when the handler relays it.
-      const relayed = canonicalArgs(reply);
-      assert.isTrue(
-        action.refusals.some((entry) => canonicalArgs(entry.failure) === relayed),
-        "the refusal the guest got is stored"
-      );
+      // The door's refusal didn't fit, so the guest is told the call tree's bytes ran out.
+      assert.deepInclude(reply, {
+        ok: false,
+        code: "limit_exceeded",
+        limitId: "tier2.callbacks.bytes",
+        details: { sent: false }
+      });
+      // One refusal is stored for the call, and it is what the guest got, so a handler that
+      // relays it is matched with its status and operation.
+      const stored = action.refusals.slice(count);
+      assert.strictEqual(stored.length, 1, "exactly one refusal stored");
+      assert.strictEqual(canonicalArgs(stored[0]!.failure), canonicalArgs(reply));
+      assert.strictEqual(stored[0]!.status, 429);
+      assert.strictEqual(stored[0]!.operation, "models.generate");
     }).pipe(Effect.scoped)
   );
   it.effect("IMAP runs only in actions, read-only ones included, and caps its arguments", () =>

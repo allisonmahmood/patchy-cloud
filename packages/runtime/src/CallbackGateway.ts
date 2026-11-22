@@ -208,6 +208,12 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
     capability?: InvocationCapabilities.Capability;
     /** The handler was given the call; before that, nothing was sent. */
     started: boolean;
+    /**
+     * A model call's refusal as last given, with the status and operation it is stored under:
+     * `callback` stores the final one once, after byte charging, as the guest receives it.
+     */
+    status?: number;
+    operation?: string;
   }
   const respond = Effect.fn("CallbackGateway.respond")(function* (
     token: string,
@@ -233,6 +239,14 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
       // A model call refused before its handler ran says nothing was sent, recorded as it is said.
       const reply = modelCall && !call.started ? unsent(given) : given;
       if (reply.ok || reply.source !== "patchy") return reply;
+      // A model call's refusal may yet be replaced by the call tree's byte limit, so it is stored
+      // once, by `callback`, when the reply the guest receives is known.
+      if (modelCall) {
+        const { operation, ...failure } = reply;
+        call.status = status;
+        call.operation = operation ?? integration;
+        return operation === undefined ? reply : failure;
+      }
       // The same refusal can pass twice; only a copy that names an operation is new.
       if (reply.operation === undefined)
         return capabilities.rememberRefusal(capability, reply, status, integration);
@@ -711,6 +725,10 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
     const call: Call = { started: false };
     const reply = yield* respond(token, attempt, input, transportCharged, call);
     const capability = call.capability;
+    // A model call's one stored refusal is the reply the guest receives, so a handler that
+    // relays it is matched with its status and operation.
+    if (isModelCall(input.op) && capability !== undefined && !reply.ok && reply.source === "patchy")
+      capabilities.rememberRefusal(capability, reply, call.status ?? 503, call.operation);
     // A model call refused before its handler ran is still an attempt the host saw: one record.
     if (
       !isModelCall(input.op) ||
