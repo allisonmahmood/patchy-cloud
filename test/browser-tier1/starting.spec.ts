@@ -293,6 +293,8 @@ for (const bound of ["outstanding", "heldBytes"] as const) {
 }
 
 test.describe("fleet bind retry", () => {
+  // The local fleet's task provider starts tasks on Linux alone, as production's fleet runs them.
+  test.skip(process.platform !== "linux", "The local fleet starts tasks on Linux only.");
   const limits = {
     "execution.fleet.budget": 1,
     "execution.pool.spares": 1,
@@ -450,6 +452,8 @@ test.describe("fleet bind retry", () => {
 });
 
 test.describe("idle documents", () => {
+  // The local fleet's task provider starts tasks on Linux alone, as production's fleet runs them.
+  test.skip(process.platform !== "linux", "The local fleet starts tasks on Linux only.");
   test.use({
     serverEnvironment: {
       EXECUTION_PROVIDER: "local-fleet",

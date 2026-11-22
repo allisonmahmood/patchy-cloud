@@ -341,6 +341,29 @@ jobs:
       - name: Exercise tier 1 and 2 pages in Firefox
         run: pnpm test:browser:firefox
 
+  # The same pages in WebKit, Safari's engine, on macOS, where it keeps Safari's network stack and
+  # keyboard defaults; `pnpm test:browser:webkit`. Like the Firefox job, it builds what it runs and
+  # shares nothing. It isn't a required check, so a failure shows red without blocking a merge.
+  browser-webkit:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.22.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install WebKit
+        uses: ./.github/actions/playwright
+        with:
+          browser: webkit
+      - name: Exercise tier 1 and 2 pages in WebKit
+        run: pnpm test:browser:webkit
+
   dependency-review:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04

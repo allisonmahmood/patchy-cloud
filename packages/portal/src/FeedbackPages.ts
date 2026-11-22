@@ -460,6 +460,9 @@ const tellScript = `(() => {
   // Where focus goes back on close, and whether it waits for the switcher to give it up.
   let opener = null;
   let awaiting = false;
+  // Whether the panel is open, as its toggle events last said. WebKit hides it under a modal
+  // dialog, such as the switcher's, without one, so the switcher's close settles that.
+  let shown = false;
   const drawn = (html) => {
     const template = document.createElement("template");
     template.innerHTML = html;
@@ -521,6 +524,7 @@ const tellScript = `(() => {
     if (invoker.dataset.kind) pick(invoker.dataset.kind);
   });
   window.addEventListener("patchy:switcher-closed", () => {
+    if (shown && !panel.matches(":popover-open")) return closed();
     if (!awaiting) return;
     awaiting = false;
     if (lost()) giveBack();
@@ -585,12 +589,8 @@ const tellScript = `(() => {
     const menu = document.getElementById("app-menu");
     if (event.target instanceof Element && event.target.closest('[data-tell="done"]') && menu?.matches(":popover-open")) menu.hidePopover();
   });
-  panel.addEventListener("toggle", (event) => {
-    if (event.newState === "open") {
-      awaiting = false;
-      if (!compose().hidden) compose().elements.namedItem("text").focus();
-      return;
-    }
+  const closed = () => {
+    shown = false;
     state++;
     const inFlight = pending !== null;
     pending = null;
@@ -607,6 +607,13 @@ const tellScript = `(() => {
     if (lost()) giveBack();
     else awaiting = true;
     afterPress();
+  };
+  panel.addEventListener("toggle", (event) => {
+    if (event.newState === "open") {
+      shown = true;
+      awaiting = false;
+      if (!compose().hidden) compose().elements.namedItem("text").focus();
+    } else if (shown) closed();
   });
 })();
 `;

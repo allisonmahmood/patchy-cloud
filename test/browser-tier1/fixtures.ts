@@ -27,6 +27,10 @@ export const test = base.extend<
     },
     { scope: "worker", timeout: 120_000 }
   ],
+  context: async ({ context, browserName }, use) => {
+    if (browserName === "webkit") context.on("page", waitsForFrame);
+    await use(context);
+  },
   preparedContext: [
     async ({ context, instance }, use) => {
       await prepare(context, instance);
@@ -46,11 +50,42 @@ export const test = base.extend<
     { timeout: 120_000 }
   ]
 });
-/** Every context stays offline, even with developer credentials in the invoking shell. */
+/**
+ * WebKit fires a patch page's load before its frame's, where Chromium's and Firefox's wait for it,
+ * so there a `goto` that waits for load also waits for the patch's frame, unless the page has none
+ * or leaves it, as for a notice.
+ */
+function waitsForFrame(page: Page) {
+  const goto = page.goto.bind(page);
+  page.goto = async (url, options) => {
+    const response = await goto(url, options);
+    if ((options?.waitUntil ?? "load") !== "load") return response;
+    const content = () => page.frames().find((frame) => frame.url().includes("/~content/"));
+    const framed = () =>
+      page
+        .locator("#patch")
+        .count()
+        .then((count) => count > 0)
+        .catch(() => true);
+    await expect.poll(async () => content() !== undefined || !(await framed())).toBe(true);
+    await content()
+      ?.waitForLoadState("load")
+      .catch(() => {});
+    return response;
+  };
+}
+/**
+ * Every context stays offline, even with developer credentials in the invoking shell. WebKit
+ * routes `blob:` and `data:` addresses too, which never leave the browser.
+ */
 export async function prepare(context: BrowserContext, instance: Instance) {
   await context.route("**/*", async (route) => {
     const url = new URL(route.request().url());
-    if (["127.0.0.1", "localhost"].includes(url.hostname)) await route.continue();
+    if (
+      ["127.0.0.1", "localhost"].includes(url.hostname) ||
+      ["blob:", "data:"].includes(url.protocol)
+    )
+      await route.continue();
     else await route.abort("blockedbyclient");
   });
   await instance.session(context);

@@ -9,7 +9,8 @@
  * Suites run one at a time and keep going after a failure, so one run reports
  * everything; the exit code is nonzero if any failed. Keep the acceptance list
  * in step with the jobs in .github/workflows/ci.yml, except `rollback-rehearsal`,
- * which rehearses commits against the one production runs.
+ * which rehearses commits against the one production runs, and `browser-webkit`,
+ * which isn't required and runs on macOS alone: `pnpm test:browser:webkit` on a Mac.
  */
 import { execFileSync, spawnSync } from "node:child_process";
 

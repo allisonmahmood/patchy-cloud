@@ -86,7 +86,8 @@ The generated client uses `patchy/client` internally and re-exports
 the page's topmost modal dialog when the dialog is plain: ordinary containers
 and text, with buttons, links, selects, checkboxes, summaries, one-line inputs
 and elements with `tabindex="0"`, and nothing that scrolls, pops over, or adds,
-hides or reorders stops, while no popover is open in the page. A richer dialog
+hides or reorders stops, while no popover is open in the page. On a Mac,
+Option+Tab, Safari's Tab to every control, wraps the same way. A richer dialog
 keeps the browser's own Tab, which can leave the patch's frame, as `showModal()`
 alone lets it.
 Tooling and type-only imports do not enter the page graph. An off-SDK import,

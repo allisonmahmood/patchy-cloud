@@ -154,6 +154,7 @@ test("broker keeps admission and source retry timing and the refusing operation,
 
 test("route bridge, real client file URL, shell download and isolation", async ({
   page,
+  context,
   instance
 }) => {
   const patch = await instance.publish();
@@ -222,9 +223,17 @@ test("route bridge, real client file URL, shell download and isolation", async (
   expect(file.suggestedFilename()).toBe("active.html");
   expect(await readFile((await file.path())!, "utf8")).toContain("<p>download bytes</p>");
 
-  // Simulate a UA ignoring the download hint: active uploaded HTML must still download,
-  // never become a same-origin shell document.
-  await page.evaluate(() =>
+  // Simulate a UA ignoring the download hint, in a page of its own: active uploaded HTML must
+  // never run in the shell's origin. Its type still makes Chromium and Firefox download it;
+  // WebKit shows it there, as a document of the shell's origin under the shell's policy, which
+  // refuses its script.
+  const ignoring = await context.newPage();
+  const ignoringFrame = await open(ignoring, patch);
+  const ran: Array<string> = [];
+  ignoring.on("request", (request) => {
+    if (request.url().includes("example.invalid")) ran.push(request.url());
+  });
+  await ignoring.evaluate(() =>
     document.addEventListener(
       "click",
       (event) => {
@@ -234,16 +243,32 @@ test("route bridge, real client file URL, shell download and isolation", async (
       { capture: true, once: true }
     )
   );
-  const forcedDownload = page.waitForEvent("download");
-  await frame.getByRole("button", { name: "Download file" }).click();
-  expect(await readFile((await (await forcedDownload).path())!, "utf8")).toContain(
-    "<p>download bytes</p>"
-  );
+  // Chromium starts the navigation and turns it into the download; WebKit commits it.
+  const saved = ignoring.waitForEvent("download").catch(() => undefined);
+  const shown = ignoring
+    .waitForEvent(
+      "framenavigated",
+      (navigated) => navigated === ignoring.mainFrame() && navigated.url().startsWith("blob:")
+    )
+    .then(
+      () => undefined,
+      () => undefined
+    );
+  await ignoringFrame.getByRole("button", { name: "Download file" }).click();
+  const forcedDownload = await Promise.race([saved, shown]);
+  if (forcedDownload)
+    expect(await readFile((await forcedDownload.path())!, "utf8")).toContain(
+      "<p>download bytes</p>"
+    );
+  else await expect(ignoring.locator("p")).toHaveText("download bytes");
+  // Its script would send the page to example.invalid.
+  expect(ran).toEqual([]);
+  await ignoring.close();
   expect(page.url()).toBe(`${patch.address}/items/3?filter=active`);
 
   await frame.getByRole("button", { name: "Copy text" }).click();
   await expect(frame.locator("#copy-status")).toHaveText("Copied");
-  await frame.locator("#pasted-copy").press("Control+V");
+  await frame.locator("#pasted-copy").press("ControlOrMeta+V");
   await expect(frame.locator("#pasted-copy")).toHaveValue("Patchy clipboard acceptance");
 
   const escaped = await frame.evaluate(async () => {
@@ -857,7 +882,10 @@ test("cross-site simple POST refusal, response CSP and one terminal stale public
     const framed = embedder.waitForEvent("requestfailed", (request) => request.url() === target);
     await embedder.goto(`${parent}?target=${encodeURIComponent(target)}`);
     await framed;
-    expect(embedder.frames().map((child) => child.url())).not.toContain(target);
+    // WebKit leaves a refused frame at its address, holding an empty document; Chromium and
+    // Firefox take the address away. Either way nothing of the page is in it.
+    for (const child of embedder.frames().filter((frame) => frame.url() === target))
+      expect(await child.evaluate(() => document.body?.childElementCount ?? 0)).toBe(0);
     await embedder.close();
   }
   await instance.session(context, "none");

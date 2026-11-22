@@ -9,6 +9,11 @@
  * Tab from its last stop goes to its first, Shift+Tab from its first to its last, and a dialog with
  * no stops keeps focus. Anything richer keeps the browser's own Tab, out of the frame included.
  *
+ * On a Mac, Option+Tab is a Tab too: Safari and Chromium move focus by it there. Under Safari's
+ * defaults it stops on every control, as this counts stops, while plain Tab stops only on text
+ * fields and selects; past the last of those it goes round Patchy's page, which holds none, and
+ * back into the dialog.
+ *
  * Two things this can't see, both left as they are: a closed shadow root attached to a standard
  * element, and a listener a capture listener adds to the window, during the key's own dispatch,
  * that takes Tab after this has.
@@ -169,6 +174,13 @@ const wrapTo = (
   return backward ? last : first;
 };
 
+// Whether Option+Tab moves focus: on a Mac, as TanStack Hotkeys tells one, in Safari and Chromium.
+// Firefox ignores it, as every browser ignores Alt+Tab elsewhere, where it's the system's window
+// switcher and seldom reaches the page.
+const optionTabs = (): boolean =>
+  /mac/i.test(`${navigator.platform} ${navigator.userAgent}`) &&
+  !navigator.userAgent.includes("Firefox/");
+
 // The Tab being dispatched, for `decide` at the end of its way.
 let pending: KeyboardEvent | undefined;
 
@@ -191,8 +203,8 @@ const decide = (event: KeyboardEvent): void => {
 // A Tab, as its dispatch starts. `decide` goes on the end of the window's listeners now: a listener
 // added during the capture runs as the key bubbles back to the window, after those there before it.
 const note = (event: KeyboardEvent): void => {
-  if (event.key !== "Tab" || event.isComposing || event.altKey || event.ctrlKey || event.metaKey)
-    return;
+  if (event.key !== "Tab" || event.isComposing || event.ctrlKey || event.metaKey) return;
+  if (event.altKey && !optionTabs()) return;
   pending = event;
   window.removeEventListener("keydown", decide);
   window.addEventListener("keydown", decide);
@@ -203,8 +215,9 @@ let installed = false;
 /**
  * Keeps Tab and Shift+Tab inside the page's topmost modal dialog, the one focus is in, when the
  * dialog is plain: from its last tab stop to its first, from its first to its last, and on itself
- * when it has none. Everywhere else the browser moves focus. A Tab that something on the page took
- * with `preventDefault()` is left to it. Once per document; outside a browser it does nothing.
+ * when it has none, and on a Mac by Option+Tab too. Everywhere else the browser moves focus. A Tab
+ * that something on the page took with `preventDefault()` is left to it. Once per document;
+ * outside a browser it does nothing.
  */
 export function keepTabInModals(): void {
   if (installed || typeof document === "undefined") return;
