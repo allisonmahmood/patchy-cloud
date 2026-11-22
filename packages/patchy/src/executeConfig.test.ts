@@ -326,12 +326,14 @@ describe("executeConfig", () => {
       manifestVersion: MANIFEST_VERSION,
       uses: [stamp("triage", "decision"), stamp("writer", writer)]
     });
-    const stamped = await executeConfig(await fixture(source, index("text")));
+    // The stamps and the kinds come from one read of the index, so they can't disagree.
+    const { manifest: stamped, modelKinds: kinds } = await ConfigExecution.executeStamped(
+      await fixture(source, index("text"))
+    );
     expect(stamped.uses).toEqual({
       triage: { kind: "models", handle: "triage", id: "conn_triage", revision: 1 },
       writer: { kind: "models", handle: "writer", id: "conn_writer", revision: 1 }
     });
-    const kinds = ConfigExecution.modelKinds(JSON.stringify(index("text")));
     expect(kinds).toEqual({ triage: "decision", writer: "text" });
     expect(guestAliases(stamped.uses, kinds).models).toEqual({
       triage: "decision",

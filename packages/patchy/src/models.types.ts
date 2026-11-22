@@ -15,11 +15,11 @@ const typedRequest = {
   maxOutputTokens: 64,
   output: t.object({ team: t.enum(["billing", "technical"]), steps: t.integer() })
 };
-const typed = () => writer.generate(typedRequest);
+export const typed = () => writer.generate(typedRequest);
 type Typed = Awaited<ReturnType<typeof typed>>;
 
 // A request with no output answers text.
-const text = () => writer.generate({ input: "Refund please", maxOutputTokens: 64 });
+export const text = () => writer.generate({ input: "Refund please", maxOutputTokens: 64 });
 type Text = Awaited<ReturnType<typeof text>>;
 
 export type TextClientAssertions = [

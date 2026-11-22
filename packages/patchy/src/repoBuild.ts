@@ -11,7 +11,7 @@ import * as Instance from "./Instance.js";
 import * as Output from "./Output.js";
 import { checkBundle } from "./bundleCheck.js";
 import { LocalError, ReleaseMismatch } from "./CliError.js";
-import { configFailure, executeConfig, modelKinds } from "./executeConfig.js";
+import { configFailure, executeStamped } from "./executeConfig.js";
 import { safePath } from "./ManagedProject.js";
 import { checkRelease } from "./ReleaseCheck.js";
 import { RELEASE } from "./release.js";
@@ -137,12 +137,15 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
   const path = yield* Path.Path;
   const { repo, warnings: syncWarnings } = yield* Project.syncDescription(cwd, token, true);
   const description = yield* Project.publishDescription(repo.description);
-  const configured = yield* Effect.tryPromise({
-    try: async () =>
-      decodeManifest({
-        ...(await executeConfig(path.join(cwd, "patchy.config.ts"))),
-        description
-      }),
+  // The manifest's stamps and each model role's kind, from one read of the generated index.
+  const { configured, roleKinds } = yield* Effect.tryPromise({
+    try: async () => {
+      const stamped = await executeStamped(path.join(cwd, "patchy.config.ts"));
+      return {
+        configured: decodeManifest({ ...stamped.manifest, description }),
+        roleKinds: stamped.modelKinds
+      };
+    },
     catch: configFailure
   });
   const warnings = [...syncWarnings, ...(yield* primitiveReminders(cwd, configured))];
@@ -153,15 +156,6 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
   warnings.push(...snapshot.warnings);
   const serverModules = configured.tier === 2 ? yield* discoverServerModules(cwd) : undefined;
   const agentFiles = configured.tier === 2 ? yield* discoverAgentFiles(cwd) : [];
-  // The index executeConfig just stamped from, for each model role's kind.
-  const roleKinds = Object.values(configured.uses).some((use) => use.kind === "models")
-    ? yield* fs.readFileString(path.join(cwd, "patchy/_generated/index.json")).pipe(
-        Effect.mapError(configFailure),
-        Effect.flatMap((source) =>
-          Effect.try({ try: () => modelKinds(source), catch: configFailure })
-        )
-      )
-    : {};
   const skipped = yield* agentTypecheckWarning(cwd, agentFiles);
   if (skipped !== undefined) {
     yield* Output.rememberWarnings([skipped]);
