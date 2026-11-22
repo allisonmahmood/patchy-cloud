@@ -59,7 +59,8 @@ class Lease extends Schema.Class<Lease>("Fleet.Lease")({ leaseEpoch: Schema.Numb
 class Target extends Schema.Class<Target>("Fleet.Target")({
   wakes: Schema.Number,
   coldStart: Schema.Number,
-  spares: Schema.Number
+  spares: Schema.Number,
+  waiting: Schema.Number
 }) {}
 class Rollout extends Schema.Class<Rollout>("Fleet.Rollout")({
   currentRevision: Schema.NullOr(Schema.String),
@@ -181,7 +182,10 @@ export const make = Effect.gen(function* () {
   ) {
     yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`execution/claim/${company}`}, 0))`;
     const existing = yield* findCompany(company);
-    if (existing[0]) return existing[0];
+    if (existing[0]) {
+      yield* sql`DELETE FROM execution_pool_waits WHERE company_id = ${company}`;
+      return existing[0];
+    }
     const reserve = capacity?.reserve ?? 0;
     const room =
       capacity === undefined
@@ -205,6 +209,7 @@ export const make = Effect.gen(function* () {
     yield* sql`INSERT INTO execution_binding_history
       (binding_id, binding_epoch, company_id, task_id, deployment_revision, bound_at, spare_wait_ms)
       VALUES (${binding.bindingId}, ${binding.bindingEpoch}, ${company}, ${binding.taskId}, ${spare[0].deploymentRevision}, ${now}, ${waited})`;
+    yield* sql`DELETE FROM execution_pool_waits WHERE company_id = ${company}`;
     return binding;
   }, sql.withTransaction);
   const activate = (binding: Binding) => sql`UPDATE execution_bindings SET state = 'active'
@@ -497,13 +502,28 @@ export const make = Effect.gen(function* () {
   }) => sql`UPDATE execution_tasks
     SET started_at = ${task.startedAt}, ready_at = ${task.readyAt}, state = 'spare'
     WHERE task_id = ${task.taskId} AND state = 'starting'`;
+  const recordWait = (company: string, until: number) =>
+    sql`INSERT INTO execution_pool_waits (company_id, until)
+    SELECT ${company}, ${until}
+    WHERE NOT EXISTS (
+      SELECT 1 FROM execution_bindings
+      WHERE company_id = ${company} AND state IN ('claiming', 'active')
+    )
+    ON CONFLICT (company_id) DO UPDATE SET until = GREATEST(execution_pool_waits.until, EXCLUDED.until)`;
+  const sweepWaits = (now: number) => sql`DELETE FROM execution_pool_waits WHERE until <= ${now}`;
   const target = (now: number, window: number, revision: string) =>
     sql`SELECT
     (SELECT count(*)::integer FROM execution_binding_history WHERE bound_at >= ${now - window}) AS wakes,
     COALESCE((SELECT avg(ready_at - requested_at) FROM execution_tasks WHERE ready_at IS NOT NULL
       AND requested_at >= ${now - window}), 0)::double precision AS "coldStart",
     (SELECT count(*)::integer FROM execution_tasks WHERE state IN ('starting', 'spare')
-      AND deployment_revision = ${revision}) AS spares`.pipe(
+      AND deployment_revision = ${revision}) AS spares,
+    (SELECT count(*)::integer FROM execution_pool_waits w
+      WHERE w.until > ${now}
+        AND NOT EXISTS (
+          SELECT 1 FROM execution_bindings b
+          WHERE b.company_id = w.company_id AND b.state IN ('claiming', 'active')
+        )) AS waiting`.pipe(
       Effect.flatMap(decodeTargets),
       Effect.map((rows) => rows[0]!)
     );
@@ -610,6 +630,8 @@ export const make = Effect.gen(function* () {
     retireDeployment,
     reserve,
     ready,
+    recordWait,
+    sweepWaits,
     target,
     pendingEvents,
     markEvent,

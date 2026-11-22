@@ -432,7 +432,7 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
           if (revision === null) continue;
           const window = config.get("execution.pool.wakeWindow");
           const measured = yield* store.target(yield* Clock.currentTimeMillis, window, revision);
-          const target = Math.ceil(
+          const baseline = Math.ceil(
             Math.max(
               minimumSpares,
               revision === rollout.currentRevision
@@ -440,6 +440,8 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
                 : 0
             )
           );
+          const target =
+            revision === rollout.currentRevision ? baseline + measured.waiting : baseline;
           const reserved: string[] = [];
           for (let count = measured.spares; count < target; count++) {
             yield* guard;
@@ -612,6 +614,7 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
           )
         );
         yield* guard;
+        yield* store.sweepWaits(yield* Clock.currentTimeMillis);
         const rollout = yield* store.rollout;
         if (
           rollout.currentRevision === null &&
@@ -686,9 +689,11 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
       if (caller === "prewarm") return yield* busy(0);
       const wait = yield* limits.get({ companyId, limitId: "execution.pool.wait" });
       search.until ??= search.startedAt + wait.value;
+      const until = search.until;
       if (search.found === "bound") search.found = "spare";
       return yield* Effect.gen(function* () {
         let claimed: FleetStore.Binding | undefined;
+        let waitRecorded = false;
         while (true) {
           const wake = changed;
           const now = yield* Clock.currentTimeMillis;
@@ -699,8 +704,15 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
             now - search.startedAt,
             FleetStore.clocksOf(caller, now)
           );
-          if (claimed === undefined) search.found = "launch";
+          if (claimed === undefined) {
+            search.found = "launch";
+            if (!waitRecorded) {
+              yield* store.recordWait(companyId, until);
+              waitRecorded = true;
+            }
+          }
           if (claimed) {
+            waitRecorded = false;
             if (!(yield* store.isAdmissibleTask(claimed.taskId))) {
               yield* fence(claimed, "deployment").pipe(
                 Effect.catchTags({ TaskProviderError: () => Effect.void })

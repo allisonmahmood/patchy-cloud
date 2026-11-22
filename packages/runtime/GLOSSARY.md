@@ -61,7 +61,7 @@ A company-exclusive execution task that hosts its loaded patch versions. Release
 _Avoid_: patch instance, reusable worker
 
 **Spare**:
-An execution task that has never been bound to a company and is available for a first bind.
+An execution task that has never been bound to a company and is available for a first bind. Replenishment targets the larger of the spare floor and the wake rate over the cold-start time, rounded up, plus distinct companies currently waiting on an empty pool, within the fleet budget.
 _Avoid_: idle company task, recycled task
 
 **Bind / release**:

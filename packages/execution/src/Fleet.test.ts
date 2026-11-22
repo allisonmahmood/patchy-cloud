@@ -54,7 +54,7 @@ const setup = Effect.fn("FleetTest.setup")(function* (
 ) {
   yield* TestClock.setTime(Date.now());
   const sql = yield* SqlClient.SqlClient;
-  yield* sql`TRUNCATE execution_deployments, execution_housekeeping, execution_breakers CASCADE`;
+  yield* sql`TRUNCATE execution_deployments, execution_housekeeping, execution_breakers, execution_pool_waits CASCADE`;
   yield* sql`INSERT INTO execution_rollout(singleton) VALUES (true)`;
   const companyId = `cmp_fleet_${name}`;
   yield* sql`INSERT INTO companies(id, handle, name) VALUES (${companyId}, ${`fleet-${name}`}, 'Fleet test')`;
@@ -1706,6 +1706,282 @@ it.layer(services)("host fleet controller", (it) => {
       yield* Fiber.join(other);
       yield* (yield* Fiber.join(call)).release;
     }).pipe(Effect.scoped)
+  );
+
+  it.effect(
+    "counts distinct waiting companies in the spare target, collapses duplicates, clears on claim, and respects budget",
+    () =>
+      Effect.gen(function* () {
+        const { sql, provider, companyId, left, right } = yield* setupMemory("waiting-burst");
+        const store = yield* FleetStore.make;
+        const fill = "cmp_fleet_waiting_burst_fill";
+        const waiters = [
+          "cmp_fleet_waiting_burst_1",
+          "cmp_fleet_waiting_burst_2",
+          "cmp_fleet_waiting_burst_3",
+          "cmp_fleet_waiting_burst_4"
+        ] as const;
+        for (const company of [fill, ...waiters])
+          yield* sql`INSERT INTO companies(id, handle, name) VALUES (${company}, ${company}, 'Fleet burst')`;
+        // Claim both ready spares so the pool starts empty (2 bound tasks live, 5 budget left).
+        yield* left.ensureBinding(companyId);
+        yield* left.ensureBinding(fill);
+        // Hold the housekeeping lease on `left` so `right`'s waiters queue before replenishment.
+        const now = yield* Clock.currentTimeMillis;
+        assert.isDefined(yield* store.lease("waiting-burst-left", "waiting-burst", now, 15_000));
+        const pending = yield* Effect.forEach(waiters, (company) =>
+          right.ensureBinding(company).pipe(Effect.forkChild)
+        );
+        const duplicate = yield* right.ensureBinding(waiters[0]).pipe(Effect.forkChild);
+        yield* phase(
+          "all four waiting companies record demand",
+          Effect.gen(function* () {
+            while (true) {
+              const rows = yield* sql<{ total: number }>`
+                SELECT count(*)::integer AS total FROM execution_pool_waits`;
+              if (rows[0]!.total === waiters.length) return;
+              yield* TestClock.withLive(Effect.sleep(5));
+            }
+          })
+        );
+        const before = yield* store.target(now, 900_000, "waiting-burst");
+        assert.strictEqual(before.waiting, waiters.length);
+        // Target is minimumSpares (2) + waiting (4) = 6, capped by the remaining 5 budget slots.
+        assert.isTrue(yield* left.housekeeping());
+        const settle = <A, E>(fiber: Fiber.Fiber<A, E>) =>
+          Effect.gen(function* () {
+            while (fiber.pollUnsafe() === undefined) {
+              yield* TestClock.adjust(50);
+              yield* TestClock.withLive(Effect.sleep(5));
+            }
+            return yield* Fiber.join(fiber);
+          });
+        const bindings = yield* phase(
+          "waiting companies claim launched spares",
+          Effect.forEach(pending, settle)
+        );
+        const dupBinding = yield* phase("duplicate waiter joins binding", settle(duplicate));
+        assert.strictEqual(dupBinding.taskId, bindings[0]!.taskId);
+        assert.strictEqual(dupBinding.bindingEpoch, bindings[0]!.bindingEpoch);
+        assert.strictEqual(new Set(bindings.map((binding) => binding.taskId)).size, waiters.length);
+        assert.strictEqual(
+          (yield* provider.list).filter((task) => task.state === "running").length,
+          7
+        );
+        assert.deepStrictEqual(yield* sql`SELECT company_id FROM execution_pool_waits`, []);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromUnknown({
+              PATCHY_LIMITS_JSON: '{"execution.fleet.budget":7,"execution.pool.spares":2}'
+            })
+          )
+        )
+      ),
+    30_000
+  );
+
+  it.effect(
+    "records a wait once per search, launches baseline plus waiting without double-counting, and clears stale waits on existing claims",
+    () =>
+      Effect.gen(function* () {
+        const { sql, provider, companyId, left, right } = yield* setupMemory("waiting-exact");
+        const store = yield* FleetStore.make;
+        const fill = "cmp_fleet_waiting_exact_fill";
+        const waiters = [
+          "cmp_fleet_waiting_exact_1",
+          "cmp_fleet_waiting_exact_2",
+          "cmp_fleet_waiting_exact_3"
+        ] as const;
+        for (const company of [fill, ...waiters])
+          yield* sql`INSERT INTO companies(id, handle, name) VALUES (${company}, ${company}, 'Fleet exact')`;
+        yield* left.ensureBinding(companyId);
+        yield* left.ensureBinding(fill);
+        const now = yield* Clock.currentTimeMillis;
+        assert.isDefined(yield* store.lease("waiting-exact-left", "waiting-exact", now, 15_000));
+        const observed = yield* recordStatements(right.ensureBinding(waiters[0])).pipe(
+          Effect.forkChild
+        );
+        const duplicate = yield* right.ensureBinding(waiters[0]).pipe(Effect.forkChild);
+        const others = yield* Effect.forEach(waiters.slice(1), (company) =>
+          right.ensureBinding(company).pipe(Effect.forkChild)
+        );
+        yield* phase(
+          "three distinct waiting companies record demand",
+          Effect.gen(function* () {
+            while (true) {
+              const rows = yield* sql<{ total: number }>`
+                SELECT count(*)::integer AS total FROM execution_pool_waits`;
+              if (rows[0]!.total === waiters.length) return;
+              yield* TestClock.withLive(Effect.sleep(5));
+            }
+          })
+        );
+        // Let the waiters poll several 50 ms cycles while the pool is still empty.
+        for (let poll = 0; poll < 5; poll++) {
+          yield* TestClock.adjust(50);
+          yield* TestClock.withLive(Effect.sleep(5));
+        }
+        // Launches baseline (2) + waiting (3) = 5 spares in one pass.
+        assert.isTrue(yield* left.housekeeping());
+        const settle = <A, E>(fiber: Fiber.Fiber<A, E>) =>
+          Effect.gen(function* () {
+            while (fiber.pollUnsafe() === undefined) {
+              yield* TestClock.adjust(50);
+              yield* TestClock.withLive(Effect.sleep(5));
+            }
+            return yield* Fiber.join(fiber);
+          });
+        const first = yield* phase("first waiter settles", settle(observed));
+        const dup = yield* phase("duplicate waiter settles", settle(duplicate));
+        yield* phase("remaining waiters settle", Effect.forEach(others, settle));
+        assert.strictEqual(dup.taskId, first.result.taskId);
+        const waitInserts = first.statements.filter(({ text }) =>
+          /^INSERT INTO execution_pool_waits\b/.test(text)
+        );
+        assert.lengthOf(waitInserts, 1);
+        assert.deepStrictEqual(yield* sql`SELECT company_id FROM execution_pool_waits`, []);
+        assert.strictEqual(
+          (yield* provider.list).filter((task) => task.state === "running").length,
+          7
+        );
+        // A follow-up pass sees 0 waiting and 2 ready spares, launching nothing more.
+        assert.isTrue(yield* left.housekeeping());
+        assert.strictEqual(
+          (yield* provider.list).filter((task) => task.state === "running").length,
+          7
+        );
+        // A stale wait row for an already-bound company is cleared when `claim` returns it.
+        yield* sql`INSERT INTO execution_pool_waits (company_id, until)
+          VALUES (${waiters[0]}, ${(yield* Clock.currentTimeMillis) + 60_000})`;
+        const existing = yield* store.claim(
+          waiters[0],
+          "waiting-exact-right",
+          yield* Clock.currentTimeMillis,
+          0,
+          FleetStore.clocksOf("page", yield* Clock.currentTimeMillis)
+        );
+        assert.strictEqual(existing?.taskId, first.result.taskId);
+        assert.deepStrictEqual(yield* sql`SELECT company_id FROM execution_pool_waits`, []);
+      }).pipe(Effect.scoped),
+    30_000
+  );
+
+  it.effect(
+    "expires waits at their deadline, sweeps them during housekeeping, and never records waits for prewarm",
+    () =>
+      Effect.gen(function* () {
+        const { sql, provider, companyId, left, bundle } = yield* setupMemory("waiting-expiry");
+        const store = yield* FleetStore.make;
+        const fill = "cmp_fleet_waiting_expiry_fill";
+        const cold = "cmp_fleet_waiting_expiry_cold";
+        for (const company of [fill, cold])
+          yield* sql`INSERT INTO companies(id, handle, name) VALUES (${company}, ${company}, 'Fleet expiry')`;
+        yield* left.ensureBinding(companyId);
+        yield* left.ensureBinding(fill);
+        // Prewarm refuses on an empty pool without writing a wait row.
+        const held = yield* Scope.make();
+        assert.strictEqual(
+          (yield* left.lifecycle.prewarm(cold).pipe(Scope.provide(held))).found,
+          "full"
+        );
+        yield* Scope.close(held, Exit.void);
+        const refused = yield* left.lifecycle
+          .acquire(cold, bundle.patchId, "prewarm")
+          .pipe(Effect.flip);
+        assert.strictEqual(refused.code, "busy");
+        assert.deepStrictEqual(yield* sql`SELECT company_id FROM execution_pool_waits`, []);
+        // Duplicate wait updates only move the deadline forward.
+        const now = yield* Clock.currentTimeMillis;
+        yield* store.recordWait(cold, now + 1_000);
+        yield* store.recordWait(cold, now + 500);
+        yield* store.recordWait(cold, now + 2_000);
+        assert.deepStrictEqual(yield* sql`SELECT company_id, until FROM execution_pool_waits`, [
+          { company_id: cold, until: now + 2_000 }
+        ]);
+        assert.strictEqual(
+          (yield* store.target(now + 1_999, 900_000, "waiting-expiry")).waiting,
+          1
+        );
+        assert.strictEqual(
+          (yield* store.target(now + 2_000, 900_000, "waiting-expiry")).waiting,
+          0
+        );
+        yield* TestClock.adjust(2_000);
+        assert.isTrue(yield* left.housekeeping());
+        assert.deepStrictEqual(yield* sql`SELECT company_id FROM execution_pool_waits`, []);
+        // Only the 2 baseline spares were launched beside the 2 bound tasks.
+        assert.strictEqual(
+          (yield* provider.list).filter((task) => task.state === "running").length,
+          4
+        );
+      }).pipe(Effect.scoped),
+    30_000
+  );
+
+  it.effect(
+    "does not inflate a staged revision's spares with waiting companies before promotion",
+    () =>
+      Effect.gen(function* () {
+        const { sql, provider, companyId, left, right } = yield* setupMemory("waiting-staged-old");
+        const fill = "cmp_fleet_waiting_staged_fill";
+        const waiters = [
+          "cmp_fleet_waiting_staged_1",
+          "cmp_fleet_waiting_staged_2",
+          "cmp_fleet_waiting_staged_3"
+        ] as const;
+        for (const company of [fill, ...waiters])
+          yield* sql`INSERT INTO companies(id, handle, name) VALUES (${company}, ${company}, 'Fleet staged')`;
+        yield* left.ensureBinding(companyId);
+        yield* left.ensureBinding(fill);
+        const candidate = yield* Fleet.make({
+          replicaId: "waiting-staged-candidate",
+          deploymentRevision: "waiting-staged-new",
+          automaticHousekeeping: false
+        }).pipe(Effect.provideService(TaskProvider.TaskProvider, provider));
+        assert.isTrue(yield* candidate.stageDeployment("waiting-staged-new"));
+        // `right` is on the old revision, so its housekeeping requests yield while the candidate is staged.
+        const pending = yield* Effect.forEach(waiters, (company) =>
+          right.ensureBinding(company).pipe(Effect.forkChild)
+        );
+        yield* phase(
+          "three waiting companies record demand before staged housekeeping",
+          Effect.gen(function* () {
+            while (true) {
+              const rows = yield* sql<{ total: number }>`
+                SELECT count(*)::integer AS total FROM execution_pool_waits`;
+              if (rows[0]!.total === waiters.length) return;
+              yield* TestClock.withLive(Effect.sleep(5));
+            }
+          })
+        );
+        assert.isTrue(yield* candidate.housekeeping());
+        const tasks = yield* provider.list;
+        // Staged revision gets only minimumSpares (2), while currentRevision gets minimumSpares (2) + waiting (3).
+        assert.strictEqual(
+          tasks.filter((task) => task.deploymentRevision === "waiting-staged-new").length,
+          2
+        );
+        assert.strictEqual(
+          tasks.filter((task) => task.deploymentRevision === "waiting-staged-old").length,
+          7
+        );
+        const settle = <A, E>(fiber: Fiber.Fiber<A, E>) =>
+          Effect.gen(function* () {
+            while (fiber.pollUnsafe() === undefined) {
+              yield* TestClock.adjust(50);
+              yield* TestClock.withLive(Effect.sleep(5));
+            }
+            return yield* Fiber.join(fiber);
+          });
+        yield* phase(
+          "waiting companies claim current-revision spares",
+          Effect.forEach(pending, settle)
+        );
+        assert.deepStrictEqual(yield* sql`SELECT company_id FROM execution_pool_waits`, []);
+      }).pipe(Effect.scoped),
+    30_000
   );
 });
 
