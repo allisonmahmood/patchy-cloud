@@ -732,6 +732,11 @@ it.layer(layer, { excludeTestServices: true, timeout: 60_000 })("model calls", (
       capability,
       /** Ends the action, as its deadline or its return would. */
       end: capabilities.end(capability.token, "returned"),
+      /**
+       * Ends the action as its return would, then waits for its callbacks' work, their journal
+       * rows included, as the host does before it answers; true when all of it finished.
+       */
+      settle: capabilities.settle(capability.token, "returned"),
       send: (op: string, args: Record<string, unknown>, body?: GuestProtocol.Callback["body"]) =>
         gateway.callback(capability.token, capability.attempt, {
           op,
@@ -821,17 +826,27 @@ it.layer(layer, { excludeTestServices: true, timeout: 60_000 })("model calls", (
         const scene = yield* setup();
         const sql = yield* SqlClient.SqlClient;
         const provider = scripted((_, body) => (held(body) ? "hang" : text("answered")));
+        const admission = yield* Admission.Admission;
         const action = yield* relay(scene, provider);
-        // The first is sent and held; the second waits for the provider's one place, unsent.
+        // The first is sent and held, with the provider's one place.
         const sent = yield* Effect.forkChild(action.send("models.generate", generateArgs("hold")));
         while (provider.sent.length === 0) yield* Effect.sleep("5 millis");
+        // The second is in the host's queue once a probe that may not wait is refused for the
+        // queue's one place rather than the provider's; before that, it is refused for the
+        // provider's, and either way it takes nothing.
         const queued = yield* Effect.forkChild(action.send("models.generate", generateArgs()));
-        yield* Effect.sleep("100 millis");
+        const probe = Effect.flip(Effect.scoped(admission.acquire(scene.provider.id, 0)));
+        let refused = yield* probe;
+        for (let tries = 0; tries < 1_000 && refused.limitId !== "models.queue.waiting"; tries++) {
+          yield* Effect.sleep("2 millis");
+          refused = yield* probe;
+        }
+        assert.strictEqual(refused.limitId, "models.queue.waiting");
         assert.strictEqual(provider.sent.length, 1);
-        yield* action.end;
+        // Ended there, and every callback's work finished, journal rows written, before reading.
+        assert.isTrue(yield* action.settle);
         yield* Fiber.join(sent);
         yield* Fiber.join(queued);
-        yield* Effect.sleep("100 millis");
         const rows = yield* sql<{ readonly outcome: string; readonly outcome_code: string }>`
           SELECT outcome, outcome_code FROM runtime_calls
           WHERE company_id = ${scene.owner.company.id} AND op = 'models.generate'
