@@ -19,9 +19,11 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as SqlClient from "effect/sql/SqlClient";
 import { answer, publish, send, server } from "./test/server.js";
 
 const origin = "https://patchy.example";
@@ -65,6 +67,7 @@ const questions = {
 const ask = action({
   args: { call: t.text(), input: t.text(), waitMs: t.integer() }, result: t.json(),
   handler: async (ctx, args) => {
+    if (args.call === "quick") return { quick: true };
     if (args.waitMs > 0) await new Promise((done) => setTimeout(done, args.waitMs));
     if (args.call === "decide")
       return await ctx.connections.triage.decide({ input: args.input, questions });
@@ -97,7 +100,8 @@ export default createGuest({ demo: { ask } }, [], {}, [], [], [], [], { triage: 
  * as `triage` and `writer`; each case gets its own, by `name`.
  */
 const published = Effect.fn("test.published")(function* (name: string) {
-  const store = yield* ConnectionStore.ConnectionStore;
+  // The server's own store: its layer doesn't name it among what it provides.
+  const store = Option.getOrThrow(yield* Effect.serviceOption(ConnectionStore.ConnectionStore));
   const who = { companyId: DEV_SEED.companyId, userId: DEV_SEED.userId };
   const provider = yield* store.connectProvider({
     ...who,
@@ -139,12 +143,37 @@ const published = Effect.fn("test.published")(function* (name: string) {
   return (yield* response.json) as { readonly patchId: string; readonly versionId: string };
 });
 
-/** The page's call of the action, as the seeded person, and its status and body. */
+interface Person {
+  readonly userId: string;
+  readonly clerkUserId: string;
+  readonly email: string;
+}
+const seeded: Person = {
+  userId: DEV_SEED.userId,
+  clerkUserId: DEV_SEED.clerkUserId,
+  email: DEV_SEED.email
+};
+/** Another member of the seeded company, by number. */
+const member = Effect.fn("test.member")(function* (number: number) {
+  const sql = yield* SqlClient.SqlClient;
+  const person: Person = {
+    userId: `usr_models_${number}`,
+    clerkUserId: `user_models_${number}`,
+    email: `member${number}@models.example`
+  };
+  yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
+    VALUES (${person.userId}, ${person.clerkUserId}, ${DEV_SEED.companyId}, ${person.email},
+      ${`Member ${number}`}, 'member')`;
+  return person;
+});
+
+/** The page's call of the action, as a person, the seeded one unless named, and its answer. */
 const ask = (
   patch: { readonly patchId: string; readonly versionId: string },
-  call: "decide" | "generate" | "typed",
+  call: "decide" | "generate" | "typed" | "quick",
   input: string,
-  waitMs = 0
+  waitMs = 0,
+  person: Person = seeded
 ) =>
   Effect.flatMap(
     send(
@@ -152,16 +181,16 @@ const ask = (
         HttpClientRequest.setHeaders({
           origin,
           cookie: signedInCookies(
-            signSession({ sub: DEV_SEED.clerkUserId, email: DEV_SEED.email, azp: origin })
+            signSession({ sub: person.clerkUserId, email: person.email, azp: origin })
           ),
           "x-patchy-wire": String(WIRE_VERSION),
-          "x-patchy-principal": JSON.stringify({ userId: DEV_SEED.userId })
+          "x-patchy-principal": JSON.stringify({ userId: person.userId })
         }),
         HttpClientRequest.bodyJsonUnsafe({
           patchId: patch.patchId,
           versionId: patch.versionId,
           wire: WIRE_VERSION,
-          principal: { userId: DEV_SEED.userId },
+          principal: { userId: person.userId },
           op: "server.call",
           args: { handler: "demo.ask", args: { call, input, waitMs } }
         })
@@ -189,11 +218,18 @@ it.layer(suite, { excludeTestServices: true, timeout: "120 seconds" })(
             "I was charged twice, please refund me today"
           );
           assert.strictEqual(decided.status, 200);
-          const value = (decided.body as { value: Record<string, Record<string, unknown>> }).value;
-          assert.strictEqual(value.answers?.team?.choice, "billing");
-          assert.strictEqual(value.answers?.urgency?.level, "medium");
+          const { value } = decided.body as {
+            readonly value: {
+              readonly answers: Readonly<
+                Record<string, { readonly choice?: string; readonly level?: string } | null>
+              >;
+              readonly usage: { readonly outputTokens: number };
+            };
+          };
+          assert.strictEqual(value.answers.team?.choice, "billing");
+          assert.strictEqual(value.answers.urgency?.level, "medium");
           // A decision's output tokens are free and count 0.
-          assert.strictEqual(value.usage?.outputTokens, 0);
+          assert.strictEqual(value.usage.outputTokens, 0);
           const text = yield* ask(patch, "generate", "The printer on floor two is out of toner");
           assert.deepInclude((text.body as { value: unknown }).value, {
             text: 'Read 9 words, starting "the printer on floor two".'
@@ -369,6 +405,42 @@ it.layer(suite, { excludeTestServices: true, timeout: "120 seconds" })(
           assert.strictEqual(provider.entries.length, before + 1);
           const held = yield* Fiber.join(holding);
           assert.strictEqual(held.status, 200);
+        }),
+      30_000
+    );
+
+    it.effect(
+      "runs other people's quick actions while eight people wait on slow model calls",
+      () =>
+        Effect.gen(function* () {
+          const patch = yield* published("load");
+          const provider = yield* Provider;
+          const waiting = yield* Effect.forEach([1, 2, 3, 4, 5, 6, 7, 8], member);
+          const others = yield* Effect.forEach([9, 10, 11, 12], member);
+          // Eight slow model calls, one per person: under the old counting they'd hold all eight
+          // of the company's action slots until they answered.
+          const slow = yield* Effect.forEach(
+            waiting,
+            (person) => ask(patch, "generate", "[fake:delay=3000]", 0, person),
+            { concurrency: "unbounded" }
+          ).pipe(Effect.forkChild);
+          while (provider.open() < waiting.length) yield* Effect.sleep(10);
+          const quick = yield* Effect.forEach(
+            others,
+            (person) => ask(patch, "quick", "", 0, person),
+            { concurrency: "unbounded" }
+          );
+          assert.deepStrictEqual(
+            quick.map(({ status, body }) => [status, body]),
+            others.map(() => [200, { ok: true, value: { quick: true } }])
+          );
+          // Every slow call was still open when the quick ones finished, and then answered.
+          assert.strictEqual(provider.open(), waiting.length);
+          const answered = yield* Fiber.join(slow);
+          assert.deepStrictEqual(
+            answered.map(({ status }) => status),
+            waiting.map(() => 200)
+          );
         }),
       30_000
     );
