@@ -34,6 +34,10 @@ import { directLoopback } from "./directLoopback.js";
 // Every request here is to loopback, and none goes through a proxy the shell names.
 // oxlint-disable-next-line no-restricted-properties -- sets the exemption Bun's fetch reads; reads nothing.
 Object.assign(process.env, directLoopback);
+/** What the supervisor reports of a process it ended. */
+type ProcessReport = Effect.Success<
+  ReturnType<Supervisor.Supervisor["Service"]["stats"]>
+>["reports"][number];
 const flag = (name: string, fallback: number) => {
   const at = process.argv.indexOf(`--${name}`);
   return at === -1 ? fallback : Number(process.argv[at + 1]);
@@ -128,44 +132,49 @@ const rssOf = async (pid: number) => {
 };
 /**
  * How long one outbound request from this process takes to come back, as a health probe's would:
- * the median of five, each given up after `probeTimeoutMs` on its own, so a probe queued behind a
- * full pool counts in the median as waiting at least that long instead of being left out. A probe
- * that fails any other way is counted apart and left out of the median.
+ * five, each given up after `probeTimeoutMs` on its own, and their median. A probe queued behind a
+ * full pool counts in the median as waiting at least that long, so a median it reaches is a lower
+ * bound; a probe that fails any other way is counted apart and left out.
  */
 const probeTimeoutMs = 2_000;
+/** The median of `waits`, a given-up probe's as `Infinity`: with an even count, the middle two's. */
+const medianOf = (waits: ReadonlyArray<number>) => {
+  const sorted = [...waits].sort((a, b) => a - b);
+  if (sorted.length === 0) return "no probe answered or timed out";
+  const half = Math.floor(sorted.length / 2);
+  const middle = sorted.length % 2 === 1 ? [sorted[half]!] : [sorted[half - 1]!, sorted[half]!];
+  const bounded = middle.map((wait) => Math.min(wait, probeTimeoutMs));
+  const value =
+    Math.round((bounded.reduce((sum, wait) => sum + wait, 0) / bounded.length) * 10) / 10;
+  return middle.includes(Infinity) ? `at least ${value}` : value;
+};
 const wait = async () => {
-  const waits: number[] = [];
-  let timedOut = 0;
-  let failed = 0;
+  const probes: Array<number | "timedOut" | "failed"> = [];
   for (let i = 0; i < 5; i++) {
     const started = performance.now();
-    const outcome = await fetch(host.url.replace("/callback", "/ping"), {
-      signal: AbortSignal.timeout(probeTimeoutMs)
-    })
-      .then((response) => response.text())
-      .then(
-        () => "answered" as const,
-        (error: unknown) =>
-          error instanceof DOMException && error.name === "TimeoutError"
-            ? ("timedOut" as const)
-            : ("failed" as const)
-      );
-    if (outcome === "answered") waits.push(performance.now() - started);
-    else if (outcome === "timedOut") {
-      timedOut++;
-      waits.push(Infinity);
-    } else failed++;
+    probes.push(
+      await fetch(host.url.replace("/callback", "/ping"), {
+        signal: AbortSignal.timeout(probeTimeoutMs)
+      })
+        .then((response) => response.text())
+        .then(
+          () => Math.round((performance.now() - started) * 10) / 10,
+          (error: unknown) =>
+            error instanceof DOMException && error.name === "TimeoutError"
+              ? ("timedOut" as const)
+              : ("failed" as const)
+        )
+    );
   }
-  const median = waits.sort((a, b) => a - b)[Math.floor(waits.length / 2)];
   return {
-    outboundWaitMs:
-      median === undefined
-        ? "no probe answered or timed out"
-        : median === Infinity
-          ? `over ${probeTimeoutMs}`
-          : Math.round(median * 10) / 10,
-    probesTimedOut: timedOut,
-    probesFailed: failed
+    outboundWaitMs: medianOf(
+      probes.flatMap((probe) =>
+        probe === "failed" ? [] : [probe === "timedOut" ? Infinity : probe]
+      )
+    ),
+    probesTimedOut: probes.filter((probe) => probe === "timedOut").length,
+    probesFailed: probes.filter((probe) => probe === "failed").length,
+    probes
   };
 };
 /** Runs `work` up to `limitMs`: its time, or that it hadn't finished. */
@@ -240,18 +249,50 @@ await Effect.runPromise(
     const generation = bound.processGeneration;
     const workerd = (yield* supervisor.stats({ bindingEpoch: 1 })).processes[0]!.pid;
     let serial = 0;
-    /** Why the supervisor ended its process, from the report it files once the process is gone. */
-    const ended = Effect.gen(function* () {
-      for (let attempt = 0; attempt < 40; attempt++) {
-        const { reports } = yield* Effect.orDie(supervisor.stats({ bindingEpoch: 1 }));
-        if (reports.length > 0) return reports.map((report) => report.cause).join(", ");
-        yield* Effect.sleep(50);
-      }
-      return "no reported cause";
-    });
-    /** One action's call; if the supervisor ended its process, the run fails saying why. */
-    const invoke = (handler: string, args: Record<string, number>) =>
-      Effect.runPromise(
+    /** The last phase's probes and held counts, for a kill to be read against. */
+    let lastProbe: { readonly phase: string; readonly at: number } & Record<string, unknown> = {
+      phase: "none",
+      at: performance.now()
+    };
+    let invokesInFlight = 0;
+    /**
+     * A killed process, as the run's last line, once however many calls it ended: the supervisor's
+     * report of it, once filed, beside what this run saw last, so the kill can be read against its
+     * load. Every call the kill ended waits for the line before it fails.
+     */
+    const reportKill = yield* Effect.cached(
+      Effect.gen(function* () {
+        let report: ProcessReport | undefined;
+        for (let attempt = 0; attempt < 40 && report === undefined; attempt++) {
+          const { reports } = yield* Effect.orDie(supervisor.stats({ bindingEpoch: 1 }));
+          report = reports.find((entry) => entry.processGeneration === generation);
+          if (report === undefined) yield* Effect.sleep(50);
+        }
+        const { at, ...probe } = lastProbe;
+        process.stdout.write(
+          `${JSON.stringify({
+            phase: "killed",
+            calls,
+            maxHttpRequests,
+            cause: report?.cause ?? "no report filed within two seconds",
+            processGeneration: report?.processGeneration ?? generation,
+            ranMs: report === undefined ? undefined : report.endedAt - report.startedAt,
+            heldAtHost: host.held(),
+            invokesInFlight,
+            lastProbe: { ...probe, msBeforeKill: Math.round(performance.now() - at) }
+          })}\n`
+        );
+      })
+    );
+    const killed = (error: Supervisor.SupervisorError) =>
+      Effect.andThen(reportKill, Effect.die(error));
+    /**
+     * One action's call. A kill ends the run with its report; any other refusal, such as `busy`,
+     * fails it as it is, the process still alive.
+     */
+    const invoke = (handler: string, args: Record<string, number>) => {
+      invokesInFlight++;
+      return Effect.runPromise(
         supervisor
           .invoke({
             bindingEpoch: 1,
@@ -274,12 +315,12 @@ await Effect.runPromise(
           })
           .pipe(
             Effect.catchTag("SupervisorError", (error) =>
-              Effect.flatMap(ended, (cause) =>
-                Effect.die(new Error(`${error.message} The process ended for: ${cause}.`))
-              )
-            )
+              error.reason === "process_killed" ? killed(error) : Effect.fail(error)
+            ),
+            Effect.ensuring(Effect.sync(() => invokesInFlight--))
           )
       );
+    };
     /**
      * One phase's line. A phase measured under load says how many calls the host held before and
      * after it was sampled; a count that moved fails the run rather than mix two loads.
@@ -301,6 +342,14 @@ await Effect.runPromise(
         ...extra,
         heldBefore,
         heldAfter: host.held()
+      };
+      lastProbe = {
+        phase,
+        at: performance.now(),
+        probes: line.probes,
+        outboundWaitMs: line.outboundWaitMs,
+        heldBefore,
+        heldAfter: line.heldAfter
       };
       if (steady && line.heldAfter !== heldBefore)
         throw new Error(
