@@ -625,10 +625,29 @@ it.layer(
         yield* Deferred.succeed(release, undefined);
         yield* Fiber.join(four);
         // Answered one at a time, each attempt counts once: the 200th runs, the 201st is refused.
-        const answered = caller(yield* Fixtures.issue(capabilities, { kind: "action" }));
+        const action = yield* Fixtures.issue(capabilities, { kind: "action" });
+        const answered = caller(action);
         for (let attempt = 1; attempt <= limit; attempt++)
           assert.strictEqual((yield* answered()).ok, true);
         assert.deepInclude(yield* answered(), spent);
+        // Each further attempt is its own refusal, kept with its operation: the same words given
+        // decide and then generate are both recorded, so a relayed one names neither.
+        const marked = (op: string) =>
+          fetchJson(listener.url, {
+            method: "POST",
+            headers: {
+              ...headers(action),
+              "content-type": "application/json",
+              "x-patchy-model-call": op
+            },
+            body: JSON.stringify({ op, args: { connection: "writer", input: "x" } })
+          });
+        assert.deepInclude(yield* marked("models.decide"), spent);
+        assert.deepInclude(yield* marked("models.generate"), spent);
+        const spentOps = action.refusals
+          .filter((entry) => entry.failure.limitId === "models.calls.perAction")
+          .map((entry) => entry.operation);
+        assert.includeMembers(spentOps, ["models.decide", "models.generate"]);
       }).pipe(Effect.scoped, Effect.provideService(ContractLimits.overrides, {})),
     30_000
   );

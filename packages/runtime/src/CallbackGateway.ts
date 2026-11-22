@@ -259,19 +259,21 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
    */
   const countAttempt = (capability: InvocationCapabilities.Capability) =>
     ++capability.counters.modelCalls > limits.modelCalls;
-  const attemptsRefusal = {
+  // Each refused call gets its own: the host keeps refusals by identity, so two calls sharing
+  // one would leave the second's operation unrecorded.
+  const attemptsRefusal = (): RuntimeFailure => ({
     ok: false,
     source: "patchy",
     error: "This action made the model calls it may, so nothing was sent.",
     ...limitRefusal("models.calls.perAction", limits.modelCalls),
     details: { sent: false }
-  } as const satisfies RuntimeFailure;
-  const placesRefusal = {
+  });
+  const placesRefusal = (): RuntimeFailure => ({
     ok: false,
     source: "patchy",
     error: "This action has the model calls running it may, so nothing was sent.",
     ...limitRefusal("models.calls.inFlight", limits.modelsInFlight, 1)
-  } as const satisfies RuntimeFailure;
+  });
   const wide = yield* Effect.serviceOption(WideEvents.WideEvents);
   /** What one callback did, which its model call's record and refusal follow. */
   interface Call {
@@ -437,7 +439,7 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
         );
       // A call from an execution task was counted as the listener admitted it; one from in
       // process is counted here.
-      if (wire === undefined && countAttempt(capability)) return remember(attemptsRefusal, 429);
+      if (wire === undefined && countAttempt(capability)) return remember(attemptsRefusal(), 429);
     }
     // Integration arguments keep the caps they have on tier 1; nothing past them is sent.
     const argsLimitId = runtimeBodyLimitId(request.op);
@@ -918,10 +920,10 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
     operation: string
   ): Effect.fn.Return<ModelAdmission> {
     if (countAttempt(capability))
-      return { refused: yield* refuseModelCall(capability, operation, attemptsRefusal, 429) };
+      return { refused: yield* refuseModelCall(capability, operation, attemptsRefusal(), 429) };
     const place = modelPlace(capability);
     if (place === undefined)
-      return { refused: yield* refuseModelCall(capability, operation, placesRefusal, 429) };
+      return { refused: yield* refuseModelCall(capability, operation, placesRefusal(), 429) };
     return { place };
   });
   return CallbackGateway.of({ callback, admitModelCall, refuseModelCall });
