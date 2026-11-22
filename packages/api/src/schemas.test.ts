@@ -9,6 +9,7 @@ import {
   RuntimeFailure,
   PublishRequest,
   CURRENT_RELEASE,
+  GenerationManifest,
   MANIFEST_VERSION,
   Manifest,
   limitRefusal
@@ -358,5 +359,22 @@ describe("wire schemas", () => {
       uses: []
     });
     expect(generated.metadata.pidgeon).toEqual({});
+  });
+});
+
+describe("Models declarations", () => {
+  // A request is decoded before the host's Models switch is read, so this holds either way.
+  it("refuses a provider, and a role until roles are declarable, in a manifest or a generation request", () => {
+    const declaring = (kind: string) => ({
+      ...manifest,
+      tier: 2,
+      uses: { source: { kind, handle: "main", id: "conn_main", revision: 1 } }
+    });
+    for (const schema of [Manifest, GenerationManifest]) {
+      const decode = Schema.decodeUnknownExit(schema);
+      expect(decode(declaring("postgres"))._tag).toBe("Success");
+      expect(decode(declaring("openai"))._tag).toBe("Failure");
+      expect(decode(declaring("models"))._tag).toBe("Failure");
+    }
   });
 });

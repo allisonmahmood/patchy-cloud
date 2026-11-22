@@ -23,7 +23,8 @@ export interface ReachConnection {
   /** Its `integration/handle`. */
   readonly label: string;
   readonly teamIds: readonly string[];
-  readonly href: string;
+  /** Its page, or null while it has none, as a model role doesn't yet. */
+  readonly href: string | null;
   readonly audienceHref: string | null;
   /** Live patches whose served version declares it, read for admins only. */
   readonly usedBy: readonly {
@@ -39,9 +40,19 @@ export interface Reach {
   readonly connections: readonly ReachConnection[];
   /** By team, how many patches naming it the viewer can't see. */
   readonly hidden: ReadonlyMap<string, number>;
+  /**
+   * By team, how many model roles name it that this host doesn't show, while its Models switch is
+   * off. They still keep it from being deleted; only that refusal names them, for admins.
+   */
+  readonly unlisted: ReadonlyMap<string, number>;
 }
 
-export const nothing: Reach = { patches: [], connections: [], hidden: new Map() };
+export const nothing: Reach = {
+  patches: [],
+  connections: [],
+  hidden: new Map(),
+  unlisted: new Map()
+};
 
 /** A person as a roster change reads them: active or not, and every team they are recorded on. */
 export interface Person {

@@ -80,6 +80,26 @@ const pidgeon = (id: string, display: { readonly test: boolean }): ConnectionSto
   display: { email: `${id}@example.com`, inboxId: `inb_${id}`, access: "send", test: display.test }
 });
 
+/** A model role on a provider in `provider` state, or on one this release doesn't know. */
+const role = (
+  id: string,
+  status: "connected" | "disconnected",
+  provider: "connected" | "disconnected" | null
+): ConnectionStore.Connection => ({
+  ...shared,
+  id,
+  handle: id,
+  status,
+  integration: "models",
+  display: {},
+  role: {
+    kind: "decision",
+    model: "gpt-5-mini",
+    providerId: "conn_openai",
+    provider: provider === null ? null : { integration: "openai", handle: "main", status: provider }
+  }
+});
+
 describe("what needs an admin among a company's connections", () => {
   it("names a stopped connection with what it stops and its fix, and leaves choices alone", () => {
     const found = attention(
@@ -155,5 +175,22 @@ describe("what needs an admin among a company's connections", () => {
         fix: { label: "Replace key…", href: "/settings/integrations/hello/rotate" }
       }
     ]);
+  });
+
+  it("names no model role yet, whatever stops it: no page fixes one", () => {
+    expect(
+      attention(
+        [
+          role("triage", "connected", "disconnected"),
+          role("drafts", "connected", null),
+          role("summaries", "disconnected", "connected")
+        ],
+        new Map([
+          ["triage", used(2)],
+          ["drafts", used(1)],
+          ["summaries", used(1)]
+        ])
+      )
+    ).toEqual([]);
   });
 });
