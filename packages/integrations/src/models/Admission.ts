@@ -13,7 +13,6 @@ import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import type * as Scope from "effect/Scope";
 import * as Errors from "./Errors.js";
 
@@ -39,11 +38,15 @@ export class Admission extends Context.Service<
   }
 >()("@patchy/integrations/models/Admission") {}
 
-interface Waiter {
-  readonly sequence: number;
+/** Whether the ticket holds both permits now; a grant changes it while its call waits. */
+const holds = (ticket: Ticket) => ticket.state === "held";
+
+/** One call's place: queued, holding both permits, or settled. */
+interface Ticket {
   readonly provider: string;
-  readonly granted: Deferred.Deferred<void>;
-  admitted: boolean;
+  readonly sequence: number;
+  state: "new" | "waiting" | "held" | "done";
+  granted?: Deferred.Deferred<void>;
 }
 
 export const make = Effect.gen(function* () {
@@ -55,16 +58,25 @@ export const make = Effect.gen(function* () {
   let waiting = 0;
   let sequence = 0;
   const perProvider = new Map<string, number>();
-  const queues = new Map<string, Array<Waiter>>();
+  const queues = new Map<string, Array<Ticket>>();
 
-  const take = (provider: string) => {
+  const take = (ticket: Ticket) => {
     running++;
-    perProvider.set(provider, (perProvider.get(provider) ?? 0) + 1);
+    perProvider.set(ticket.provider, (perProvider.get(ticket.provider) ?? 0) + 1);
+    ticket.state = "held";
+  };
+  const dequeue = (ticket: Ticket) => {
+    const queue = queues.get(ticket.provider);
+    const at = queue?.indexOf(ticket) ?? -1;
+    if (queue === undefined || at < 0) return;
+    queue.splice(at, 1);
+    if (queue.length === 0) queues.delete(ticket.provider);
+    waiting--;
   };
   /** Hands freed permits to the oldest waiters whose provider has room. */
   const grant = () => {
     while (running < hostLimit) {
-      let next: Waiter | undefined;
+      let next: Ticket | undefined;
       for (const [provider, queue] of queues) {
         const head = queue[0];
         if (
@@ -75,30 +87,23 @@ export const make = Effect.gen(function* () {
           next = head;
       }
       if (next === undefined) return;
-      const queue = queues.get(next.provider)!;
-      queue.shift();
-      if (queue.length === 0) queues.delete(next.provider);
-      waiting--;
-      take(next.provider);
-      next.admitted = true;
-      Deferred.doneUnsafe(next.granted, Effect.void);
+      dequeue(next);
+      take(next);
+      Deferred.doneUnsafe(next.granted!, Effect.void);
     }
   };
-  const give = (provider: string) =>
-    Effect.sync(() => {
+  /** Gives back whatever the ticket holds, once: its place in the queue or both permits. */
+  const settle = (ticket: Ticket) => {
+    if (ticket.state === "waiting") dequeue(ticket);
+    else if (ticket.state === "held") {
       running--;
-      const left = (perProvider.get(provider) ?? 1) - 1;
-      if (left === 0) perProvider.delete(provider);
-      else perProvider.set(provider, left);
+      const left = (perProvider.get(ticket.provider) ?? 1) - 1;
+      if (left === 0) perProvider.delete(ticket.provider);
+      else perProvider.set(ticket.provider, left);
+      ticket.state = "done";
       grant();
-    });
-  const leave = (waiter: Waiter) => {
-    const queue = queues.get(waiter.provider);
-    const at = queue?.indexOf(waiter) ?? -1;
-    if (queue === undefined || at < 0) return;
-    queue.splice(at, 1);
-    if (queue.length === 0) queues.delete(waiter.provider);
-    waiting--;
+    }
+    ticket.state = "done";
   };
   /** The limit that keeps `provider` out now, for a refusal. */
   const full = (provider: string, waitedMs: number) =>
@@ -106,14 +111,18 @@ export const make = Effect.gen(function* () {
       ? new Errors.Busy({ limitId: "models.outbound.host", value: hostLimit, waitedMs })
       : new Errors.Busy({ limitId: "models.outbound.provider", value: providerLimit, waitedMs });
 
-  const admit = Effect.fnUntraced(function* (provider: string, until: number) {
+  const acquire = Effect.fnUntraced(function* (provider: string, until: number) {
+    const ticket: Ticket = { provider, sequence: sequence++, state: "new" };
+    // Before anything is queued or taken, so however the call ends, even interrupted the
+    // moment a permit is handed to it, what it holds then goes back exactly once.
+    yield* Effect.addFinalizer(() => Effect.sync(() => settle(ticket)));
     const started = yield* Clock.currentTimeMillis;
     if (
       !queues.has(provider) &&
       running < hostLimit &&
       (perProvider.get(provider) ?? 0) < providerLimit
     ) {
-      take(provider);
+      take(ticket);
       return { waitedMs: 0, running, waiting } satisfies Admitted;
     }
     if (waiting >= waitingLimit)
@@ -123,42 +132,23 @@ export const make = Effect.gen(function* () {
         waitedMs: 0
       });
     if (until <= started) return yield* full(provider, 0);
-    const waiter: Waiter = {
-      sequence: sequence++,
-      provider,
-      granted: Deferred.makeUnsafe<void>(),
-      admitted: false
-    };
+    ticket.granted = Deferred.makeUnsafe<void>();
+    ticket.state = "waiting";
     const queue = queues.get(provider) ?? [];
-    queue.push(waiter);
+    queue.push(ticket);
     queues.set(provider, queue);
     waiting++;
-    return yield* Effect.uninterruptibleMask((restore) =>
-      restore(Deferred.await(waiter.granted).pipe(Effect.timeoutOption(until - started))).pipe(
-        Effect.onInterrupt(() =>
-          // A grant that raced the interruption is handed back, not kept.
-          waiter.admitted ? give(provider) : Effect.sync(() => leave(waiter))
-        ),
-        Effect.flatMap((outcome) =>
-          Effect.gen(function* () {
-            const waitedMs = (yield* Clock.currentTimeMillis) - started;
-            if (Option.isNone(outcome) && !waiter.admitted) {
-              leave(waiter);
-              return yield* full(provider, Math.round(waitedMs));
-            }
-            return { waitedMs: Math.round(waitedMs), running, waiting } satisfies Admitted;
-          })
-        )
-      )
-    );
+    // Interruptible: an action that ends stops waiting, and the finalizer settles its ticket.
+    yield* Deferred.await(ticket.granted).pipe(Effect.timeoutOption(until - started));
+    const waitedMs = Math.round((yield* Clock.currentTimeMillis) - started);
+    if (!holds(ticket)) {
+      settle(ticket);
+      return yield* full(provider, waitedMs);
+    }
+    return { waitedMs, running, waiting } satisfies Admitted;
   });
 
-  return Admission.of({
-    // The wait stays interruptible, so an action that ends stops waiting; `admit` itself hands
-    // back a grant that raced its interruption.
-    acquire: (provider, until) =>
-      Effect.acquireRelease(admit(provider, until), () => give(provider), { interruptible: true })
-  });
+  return Admission.of({ acquire });
 });
 
 export const layer = Layer.effect(Admission, make);
