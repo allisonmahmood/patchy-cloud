@@ -212,7 +212,10 @@ const respond = (body: ResponsesBody, mode: string) => {
   let text =
     format?.type === "json_schema" && format.schema !== undefined
       ? JSON.stringify(sample(format.schema, input, mode === "mismatch"))
-      : `Read ${words.length} words, starting "${words.slice(0, 5).join(" ")}".`;
+      : `Read ${words.length} words, starting "${words
+          .slice(0, 5)
+          .map((word) => word.slice(0, 24))
+          .join(" ")}".`;
   if (mode === "huge") text = "x".repeat(1024 * 1024 + 1);
   const stop =
     mode === "filter"

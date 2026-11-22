@@ -319,7 +319,9 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
           PATCHY_DEV_MAILBOXES: files.mailboxes,
           // Models stay off in production until they're done; here they're on, against the fake.
           PATCHY_MODELS: "true",
-          PATCHY_DEV_MODELS_URL: models.url
+          PATCHY_DEV_MODELS_URL: models.url,
+          // As production's hosts and execution tasks: the local executor runs in this process.
+          BUN_CONFIG_MAX_HTTP_REQUESTS: "512"
         },
         extendEnv: false,
         stdin: "ignore",

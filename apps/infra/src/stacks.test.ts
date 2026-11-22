@@ -123,7 +123,14 @@ it("rolls hosts out beside the promoted release, back if they cannot start, and 
         Match.objectLike({
           Name: "exec",
           User: "0",
-          Environment: Match.absent(),
+          // Process settings only: no credential, secret or AWS setting.
+          Environment: [
+            {
+              Name: "PATCHY_LIMITS_JSON",
+              Value: JSON.stringify({ "models.execution.inFlight": 32 })
+            },
+            { Name: "BUN_CONFIG_MAX_HTTP_REQUESTS", Value: "512" }
+          ],
           Secrets: Match.absent()
         })
       ]
@@ -146,12 +153,30 @@ it("gives hosts and company boxes a full vCPU, and the fleet 24 boxes with three
         Environment: Match.arrayWith([
           {
             Name: "PATCHY_LIMITS_JSON",
-            Value: JSON.stringify({ "execution.fleet.budget": 24, "execution.pool.spares": 3 })
+            Value: JSON.stringify({
+              "execution.fleet.budget": 24,
+              "execution.pool.spares": 3,
+              "models.outbound.host": 32
+            })
           }
         ])
       })
     ]
   });
+});
+
+it("gives hosts and company boxes the outbound requests and open files their measured load needs", () => {
+  // Chosen from measurements (docs/OPERATIONS.md, Models).
+  for (const family of ["patchy-production-host", "patchy-production-exec"])
+    template.hasResourceProperties("AWS::ECS::TaskDefinition", {
+      Family: family,
+      ContainerDefinitions: [
+        Match.objectLike({
+          Environment: Match.arrayWith([{ Name: "BUN_CONFIG_MAX_HTTP_REQUESTS", Value: "512" }]),
+          Ulimits: [{ Name: "nofile", SoftLimit: 65535, HardLimit: 65535 }]
+        })
+      ]
+    });
 });
 
 it("lets only this repository's production environment assume the deploy role", () => {

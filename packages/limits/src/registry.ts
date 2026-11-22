@@ -1382,7 +1382,7 @@ export const registry = {
   },
   "models.outbound.host": {
     kind: "operating",
-    default: 64,
+    default: 32,
     unit: "requests",
     scope: "host",
     measure:
@@ -1412,7 +1412,7 @@ export const registry = {
   },
   "models.execution.inFlight": {
     kind: "operating",
-    default: 64,
+    default: 32,
     unit: "callbacks",
     scope: "company",
     measure:
