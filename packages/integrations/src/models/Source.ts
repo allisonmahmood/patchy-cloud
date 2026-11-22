@@ -773,6 +773,19 @@ export const make = makeAt(OPENAI_URL);
 export const layer = Layer.effect(Source, make).pipe(Layer.provide(FetchHttpClient.layer));
 
 /**
+ * No provider at all: every call refuses at once, `source_unavailable` with nothing sent. What an
+ * entrypoint that isn't production's brings when it has no fake to send to, so no misconfiguration
+ * there can reach a real provider.
+ */
+export const refusing = Layer.succeed(
+  Source,
+  Source.of({
+    decide: () => Effect.fail(new Errors.Unavailable({ reason: "unreachable", sent: false })),
+    generate: () => Effect.fail(new Errors.Unavailable({ reason: "unreachable", sent: false }))
+  })
+);
+
+/**
  * A provider at a loopback address instead, over the process's fetch: the dev runner's fake, or a
  * test's. Anything but plain HTTP to a loopback host is refused, so this can't send a key away.
  */
