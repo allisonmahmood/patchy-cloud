@@ -49,8 +49,12 @@ A handler for work outside one transaction, including file bytes, company integr
 _Avoid_: background job, transaction
 
 **Model pool**:
-The places, per company, per person and per host replica, held by actions that call a model, apart from the action slots every action takes at admission. An action moves in once, on its first model call, which frees its action slot; it keeps its place until it ends, and nothing moves back. A refused move leaves it in its action slot. Actions waiting on a model therefore never hold the slots quick actions need. Nothing enters it yet: no patch can call a model.
+The places, per company, per person and per host replica, held by actions that call a model, apart from the action slots every action takes at admission. An action moves in once, on its first model call, which frees its action slot; it keeps its place until it ends, and nothing moves back. A refused move leaves it in its action slot. Actions waiting on a model therefore never hold the slots quick actions need. An action enters it only while the Models switch is on.
 _Avoid_: parking (freeing a slot while a call waits and taking one again after), model queue
+
+**Cut-off**:
+Where a model call stops: its fence is its action's own deadline, not the 15-second integration deadline. Immediately before dispatch a call with less than `models.send.floor` (two seconds) left is not sent, and a call waiting for capacity gives up early enough to keep that floor; a sent call's connection is closed `models.cutoff` (one second) before the deadline, so the handler hears why. Unsent, it answers `timeout` with `sent: false`; cut off after dispatch, `timeout` with `sent: true`, and the provider may still charge.
+_Avoid_: model timeout, deadline (the action's)
 
 **Execution service**:
 The credential-free side of the deployment that runs handler code and reaches Patchy only through callbacks.

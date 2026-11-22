@@ -1256,7 +1256,7 @@ export const registry = {
     unit: "actions",
     scope: "company",
     measure:
-      "Actions in the model pool per company per host replica. An action moves there from its action slots once, on its first model call, and stays until it ends; a refused move keeps its action slot. Not reached yet: no patch can call a model",
+      "Actions in the model pool per company per host replica. An action moves there from its action slots once, on its first model call, and stays until it ends; a refused move keeps its action slot. Reached only while the Models switch is on",
     refusal: "busy",
     overridable: true
   },
@@ -1266,7 +1266,7 @@ export const registry = {
     unit: "actions",
     scope: "viewer",
     measure:
-      "Actions in the model pool per person per host replica, across their patches, pages and worker agent. Not reached yet: no patch can call a model",
+      "Actions in the model pool per person per host replica, across their patches, pages and worker agent. Reached only while the Models switch is on",
     refusal: "busy",
     overridable: true
   },
@@ -1276,7 +1276,7 @@ export const registry = {
     unit: "actions",
     scope: "host",
     measure:
-      "Actions in the model pool per host replica, across companies. Not reached yet: no patch can call a model",
+      "Actions in the model pool per host replica, across companies. Reached only while the Models switch is on",
     refusal: "busy",
     overridable: false
   },

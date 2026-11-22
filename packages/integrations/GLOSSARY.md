@@ -52,6 +52,26 @@ _Avoid_: model (what a provider serves), prompt, agent
 The company's key for one model provider, such as OpenAI: a connection of that provider's own integration (`openai`), its key sealed as every connection's credentials are. The store keeps it but never as a connection a builder sees: no listing, detail, offer, page, form, attention view, generation or declaration names one. Shown by its type; the first of a type is `main`, and a second takes a name. Pausing it stops every role on it at once and resuming starts them again; Replace key keeps a paused one paused; deleting one is refused while a role points at it.
 _Avoid_: model connection, API key (what it holds), vendor
 
+**Decision call**:
+`models.decide` on a decision role: fixed questions in, each a `choice` among described options, a `scale` of ordered levels or a `yesNo` statement, and probabilities out, never text. A question the model refused answers `null` while the others answer, and every answer is checked on the host against its question's options or levels and probability bounds. On OpenAI it is one Decisions API request.
+_Avoid_: classification call, prompt
+
+**Text call**:
+`models.generate` on a text role: instructions and input in separate positions, a required `maxOutputTokens` the provider enforces, and a short text out, or a value of a typed `output`'s shape, checked on the host. Patchy decides how it ended from the provider's own answer before anything decodes it: a refusal, a cut-off at `maxOutputTokens` or another stop is never a success. On OpenAI it is one Responses API request.
+_Avoid_: completion, chat, agent
+
+**Model call**:
+A decision call or a text call. One provider request, never retried and never following a redirect, made by the host on the role's provider with the company's key, only from an action, checked before it takes capacity and again immediately before it is sent. Every refusal says in `details.sent` whether a request went out; a reply lost on its way back has no `sent`. Patchy records each attempt the host sees as one `model` event, never what was sent or answered.
+_Avoid_: AI request, inference
+
+**Admission queue**:
+The host's one queue for provider requests, which published, dev and test calls all pass: a call waits for a host permit and its provider record's permit together, first come first served per provider record, within its own deadline. Nothing is sent while it waits.
+_Avoid_: rate limiter, fair queue (not built)
+
+**Capability matrix**:
+What each provider can serve per role kind, from its own documentation: endpoint, credentials and the models that can serve it, each row naming its page (`Models.capabilities`). A provider and kind it doesn't hold can't serve a role.
+_Avoid_: support table, compatibility list
+
 **Models switch**:
 The host setting `PATCHY_MODELS`, off unless set and off in production, on in the dev runner and in tests. Off, the server keeps and reads no model provider or role, as a release before Models would: discovery neither lists, offers nor answers a role, and neither is made.
 _Avoid_: feature flag, Models toggle

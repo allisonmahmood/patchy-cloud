@@ -23,6 +23,39 @@ export const providers = ["openai"] as const;
 export const Provider = Schema.Literals(providers);
 export type Provider = typeof Provider.Type;
 
+/**
+ * What each provider can serve, by role kind, from its own documentation: the endpoint a call
+ * goes to and the models its documentation says can serve it. A provider and kind missing here
+ * can't serve a role. Each row names the page it was read from.
+ */
+export const capabilities = {
+  openai: {
+    decision: {
+      endpoint: "POST https://api.openai.com/v1/decisions",
+      credentials: "API key, as a bearer token",
+      models: "gpt-6-luna, the only model OpenAI says the Decisions API supports",
+      documentation:
+        "https://developers.openai.com/api/reference/resources/decisions/methods/create/"
+    },
+    text: {
+      endpoint: "POST https://api.openai.com/v1/responses",
+      credentials: "API key, as a bearer token",
+      models: "a model id the Responses API accepts; max_output_tokens is at least 16",
+      documentation:
+        "https://developers.openai.com/api/reference/resources/responses/methods/create/"
+    }
+  }
+} as const satisfies {
+  readonly [P in Provider]: {
+    readonly [K in "decision" | "text"]?: {
+      readonly endpoint: string;
+      readonly credentials: string;
+      readonly models: string;
+      readonly documentation: string;
+    };
+  };
+};
+
 /** Every kind of connection the store keeps: the public integrations and the providers. */
 export type Kind = Integration | Provider;
 
