@@ -15,6 +15,8 @@ import { NodeCryptography } from "@patchy/core";
 import { ConnectionStore, ModelsSource } from "@patchy/integrations";
 import * as FakeModels from "@patchy/integrations/models-fake";
 import { ContractLimits } from "@patchy/limits";
+import { MutationTransaction } from "@patchy/runtime";
+import * as Console from "effect/Console";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -28,6 +30,19 @@ import { answer, publish, send, server } from "./test/server.js";
 
 const origin = "https://patchy.example";
 const deadline = 6_000;
+
+/** The server's model attempt records, in the order its event sink writes them. */
+const attempts: Array<Record<string, unknown>> = [];
+/** The console the server's event sink writes each event to, keeping its model attempt records. */
+const listening: Console.Console = {
+  ...globalThis.console,
+  log: (...args: ReadonlyArray<unknown>) => {
+    const [line] = args;
+    if (typeof line === "string" && line.startsWith("{") && line.includes('"type":"model"'))
+      attempts.push(JSON.parse(line) as Record<string, unknown>);
+    globalThis.console.log(...args);
+  }
+};
 
 /** The fake provider for a suite, and the server sending its model calls there. */
 class Provider extends Context.Service<Provider, FakeModels.Fake>()("test/ModelCalls/Provider") {}
@@ -43,6 +58,7 @@ const suiteWith = (limits: Readonly<Record<string, number>>) =>
       );
     })
   ).pipe(
+    Layer.provide(Layer.succeed(Console.Console, listening)),
     Layer.provideMerge(Layer.effect(Provider, FakeModels.start())),
     Layer.provide(Layer.succeed(ContractLimits.overrides, { "tier2.action.deadline": deadline })),
     Layer.provide([FetchHttpClient.layer, NodeFileSystem.layer]),
@@ -57,7 +73,7 @@ const permitSuite = suiteWith({ "models.execution.inFlight": 1 });
 const guest = Effect.promise(async () => {
   const built = await build({
     stdin: {
-      contents: `import { action, createGuest, t } from "patchy/server";
+      contents: `import { action, createGuest, mutation, t } from "patchy/server";
 const questions = {
   team: { type: "choice", instructions: "Which team handles it?",
     options: { billing: "Charges and refunds", technical: "Bugs and outages" } },
@@ -80,34 +96,57 @@ const held = (ctx) => [
   ctx.connections.triage.decide({ input: "[fake:hang]", questions }),
   ctx.connections.writer.generate({ input: "[fake:hang]", maxOutputTokens: 60 })
 ];
-const ask = action({
-  args: { call: t.text(), input: t.text(), waitMs: t.integer() }, result: t.json(),
+/**
+ * Waits for the test's signal, a row of the patch's own table that it writes once it has seen
+ * this action's open calls held at the fake.
+ */
+const signalled = async (ctx, key) => {
+  for (let tries = 0; tries < 500; tries++) {
+    const { rows } = await ctx.tables.signals.list({ limit: 100 });
+    if (rows.some((row) => row.signal === key)) return;
+    await sleep(10);
+  }
+  throw new Error("No signal came for " + key + ".");
+};
+const go = mutation({ args: { key: t.text() }, result: t.json(),
   handler: async (ctx, args) => {
+    await ctx.tables.signals.insert({ signal: args.key });
+    return null;
+  } });
+const ask = action({
+  args: { call: t.text(), input: t.text(), waitMs: t.integer(), key: t.text() }, result: t.json(),
+  handler: async (ctx, args) => {
+    const started = Date.now();
     if (args.call === "quick") return { quick: true };
-    // Two at once: the second, made once the first is at the provider, meets a task holding one
-    // model call at a time.
-    if (args.call === "pair")
+    // Two calls: the first held at the provider with the task's one model permit, then, once the
+    // test has seen it there, the second, which the task's proxy refuses.
+    if (args.call === "pair") {
+      const first = ctx.connections.writer.generate({ input: "[fake:hang]", maxOutputTokens: 60 });
+      await signalled(ctx, args.key);
       return await Promise.all([
-        ctx.connections.writer.generate({ input: "[fake:delay=4000]", maxOutputTokens: 60 }),
-        sleep(500).then(() => ctx.connections.writer.generate({ input: args.input, maxOutputTokens: 60 }))
+        first,
+        ctx.connections.writer.generate({ input: args.input, maxOutputTokens: 60 })
       ]);
+    }
     // As Request triage does: calls awaited together, one ending as asked while the other two
-    // are still open, and the handler rethrowing its refusal.
+    // are held at the provider, and the handler rethrowing its refusal. The one that ends is
+    // made once the test has seen the other two held, and no sooner than waitMs into the call.
     if (args.call.startsWith("together:")) {
       const open = held(ctx);
-      await sleep(Math.max(args.waitMs, 500));
+      await signalled(ctx, args.key);
+      await sleep(Math.max(0, started + args.waitMs - Date.now()));
       return await Promise.all([one(ctx, args.call.slice("together:".length), args.input), ...open]);
     }
-    // A call it never awaits, still open when the handler returns.
+    // Calls it never awaits, held at the provider when the handler returns.
     if (args.call === "abandon") {
       held(ctx).forEach((call) => call.catch(() => null));
-      await sleep(500);
+      await signalled(ctx, args.key);
       return { returned: true };
     }
-    // Calls still open when the handler fails for a reason of its own.
+    // Calls held at the provider when the handler fails for a reason of its own.
     if (args.call === "own failure") {
       held(ctx).forEach((call) => call.catch(() => null));
-      await sleep(500);
+      await signalled(ctx, args.key);
       throw new Error("The handler's own failure.");
     }
     if (args.call === "oversized")
@@ -125,7 +164,7 @@ const ask = action({
     return await one(ctx, args.call, args.input);
   }
 });
-export default createGuest({ demo: { ask } }, [], {}, [], [], [], [], { triage: "decision", writer: "text" });`,
+export default createGuest({ demo: { ask, go } }, [], {}, [], [], [], [], { triage: "decision", writer: "text" });`,
       resolveDir: new URL("../../../packages/patchy", import.meta.url).pathname,
       sourcefile: "model-calls-fixture.ts"
     },
@@ -167,15 +206,27 @@ const published = Effect.fn("test.published")(function* (name: string) {
     manifestVersion: 1,
     release: CURRENT_RELEASE,
     tier: 2,
-    tables: {},
+    tables: {
+      signals: {
+        description: "What the test signals an action to go on with.",
+        columns: { signal: { kind: "text" } },
+        indexes: {}
+      }
+    },
     files: {},
     uses: { triage: declared(triage), writer: declared(writer) },
     handlers: {
       "demo.ask": {
         kind: "action",
-        args: { call: { kind: "text" }, input: { kind: "text" }, waitMs: { kind: "integer" } },
+        args: {
+          call: { kind: "text" },
+          input: { kind: "text" },
+          waitMs: { kind: "integer" },
+          key: { kind: "text" }
+        },
         result: { kind: "json" }
-      }
+      },
+      "demo.go": { kind: "mutation", args: { key: { kind: "text" } }, result: { kind: "json" } }
     }
   };
   const response = yield* publish(DEV_SEED.token, {
@@ -211,12 +262,16 @@ const member = Effect.fn("test.member")(function* (number: number) {
   return person;
 });
 
-/** The page's call of a handler, as a person, the seeded one unless named, and its answer. */
+/**
+ * The page's call of a handler, as a person, the seeded one unless named, and its answer; a
+ * mutation's carries the key a page mints for it.
+ */
 const callHandler = (
   patch: { readonly patchId: string; readonly versionId: string },
   handler: string,
   args: Readonly<Record<string, unknown>>,
-  person: Person = seeded
+  person: Person = seeded,
+  mutationKey?: string
 ) =>
   Effect.flatMap(
     send(
@@ -235,7 +290,7 @@ const callHandler = (
           wire: WIRE_VERSION,
           principal: { userId: person.userId },
           op: "server.call",
-          args: { handler, args }
+          args: { handler, args, ...(mutationKey === undefined ? {} : { mutationKey }) }
         })
       )
     ),
@@ -265,7 +320,7 @@ const ends: ReadonlyArray<readonly [string, Kind, string, number, unknown]> = [
     "too late to send",
     "generate",
     "late",
-    deadline - 1_500,
+    deadline - 1_800,
     {
       code: "timeout",
       limitId: "models.send.floor",
@@ -380,39 +435,99 @@ const closedHeld = Effect.fn("test.closedHeld")(function* (from: number) {
     yield* Effect.sleep(20);
   return held();
 });
-/** Two of an action's model calls were left open, sent and unanswered, and journaled unknown. */
+/** The attempt records of `patchId`'s model calls written since record `from`. */
+const recordsSince = (patchId: string, from: number) =>
+  attempts.slice(from).filter((record) => record.patchId === patchId);
+/**
+ * The `count` calls an action left open: each held at the fake until its caller closed it
+ * unanswered, recorded as interrupted after it was sent, so none reached its own cut-off, and
+ * journaled unknown.
+ */
 const leftOpen = Effect.fn("test.leftOpen")(function* (
   patchId: string,
-  from: number,
+  since: { readonly entries: number; readonly records: number },
+  count: number,
   name: string
 ) {
-  const held = yield* closedHeld(from);
-  assert.isAtLeast(held.length, 2, name);
+  const held = yield* closedHeld(since.entries);
+  assert.strictEqual(held.length, count, name);
   assert.isTrue(
     held.every((entry) => entry.closedEarly),
     `${name}: every call left open was closed unanswered`
   );
+  const interrupted = () =>
+    recordsSince(patchId, since.records).filter((record) => record.outcome === "interrupted");
+  for (let tries = 0; tries < 100 && interrupted().length < count; tries++) yield* Effect.sleep(20);
+  assert.deepStrictEqual(
+    interrupted().map((record) => [record.outcome, record.sent, record.code]),
+    Array.from({ length: count }, () => ["interrupted", true, undefined]),
+    name
+  );
   const rows = yield* journaled(patchId);
-  assert.isAtLeast(rows.filter((row) => row.outcome === "unknown").length, 2, name);
+  assert.isAtLeast(rows.filter((row) => row.outcome === "unknown").length, count, name);
   return rows;
 });
 
+type Patch = { readonly patchId: string; readonly versionId: string };
+type Call =
+  | Kind
+  | `together:${Kind}`
+  | "quick"
+  | "pair"
+  | "oversized"
+  | "twins"
+  | "abandon"
+  | "own failure";
 /** The page's call of the action, as a person, the seeded one unless named, and its answer. */
-const ask = (
-  patch: { readonly patchId: string; readonly versionId: string },
-  call:
-    | Kind
-    | `together:${Kind}`
-    | "quick"
-    | "pair"
-    | "oversized"
-    | "twins"
-    | "abandon"
-    | "own failure",
+const ask = (patch: Patch, call: Call, input: string, waitMs = 0, person: Person = seeded) =>
+  callHandler(patch, "demo.ask", { call, input, waitMs, key: "" }, person);
+let signals = 0;
+/**
+ * The page's call of the action, signalled to go on once `held` of its calls are held at the
+ * fake: its handler waits for the signal before it fails, returns or makes its next call, so
+ * every call it leaves open is still waiting on its answer when the action ends. Says where the
+ * fake's entries and the attempt records stood before it.
+ */
+const askOnceHeld = Effect.fn("test.askOnceHeld")(function* (
+  patch: Patch,
+  call: Call,
   input: string,
-  waitMs = 0,
-  person: Person = seeded
-) => callHandler(patch, "demo.ask", { call, input, waitMs }, person);
+  held: number,
+  waitMs = 0
+) {
+  const provider = yield* Provider;
+  const since = { entries: provider.entries.length, records: attempts.length };
+  const key = `go-${++signals}`;
+  const asked = yield* Effect.forkChild(
+    callHandler(patch, "demo.ask", { call, input, waitMs, key })
+  );
+  const holding = () =>
+    provider.entries
+      .slice(since.entries)
+      .filter((entry) => entry.mode === "hang" && entry.durationMs === undefined).length;
+  for (let tries = 0; tries < 500 && holding() < held; tries++) yield* Effect.sleep(10);
+  assert.strictEqual(holding(), held, `${call}: its calls held at the fake before it goes on`);
+  const went = yield* callHandler(
+    patch,
+    "demo.go",
+    { key },
+    seeded,
+    yield* MutationTransaction.mint
+  );
+  assert.strictEqual(went.status, 200, JSON.stringify(went.body));
+  return { answer: yield* Fiber.join(asked), since };
+});
+/** One patch for every ending's case beside open calls, published as the first needs it. */
+let togetherPatch: Patch | undefined;
+const together = Effect.suspend(() =>
+  togetherPatch === undefined
+    ? Effect.tap(published("together"), (patch) =>
+        Effect.sync(() => {
+          togetherPatch = patch;
+        })
+      )
+    : Effect.succeed(togetherPatch)
+);
 /** A refusal's words without the operation it names. */
 const withoutOperation = (value: unknown) =>
   Object.fromEntries(
@@ -531,53 +646,55 @@ it.layer(suite, { excludeTestServices: true, timeout: "120 seconds" })(
       90_000
     );
 
-    it.effect(
-      "hands the page the failing call's code while its action's other calls are still open",
-      () =>
-        Effect.gen(function* () {
-          const patch = yield* published("together");
-          const provider = yield* Provider;
-          for (const [name, call, input, waitMs, expected] of ends) {
-            const from = provider.entries.length;
-            const ended = yield* ask(patch, `together:${call}`, input, waitMs);
-            assert.notStrictEqual(ended.status, 200, name);
-            const cutOff = input === "[fake:hang]";
-            // Cut off together, the three calls' timeouts are in the same words, so the page may
-            // be told neither operation.
-            if (cutOff)
+    ends.forEach(([name, call, input, waitMs, expected]) =>
+      it.effect(
+        `hands the page ${name} while its action's other calls are still open`,
+        () =>
+          Effect.gen(function* () {
+            const patch = yield* together;
+            const { answer: ended, since } = yield* askOnceHeld(
+              patch,
+              `together:${call}`,
+              input,
+              2,
+              waitMs
+            );
+            assert.notStrictEqual(ended.status, 200);
+            if (input === "[fake:hang]") {
+              // The cut-off is one moment for every call of an action, so here the other two
+              // reach it with the third: nothing is left open, and the page may be told neither
+              // operation, the three timeouts being in the same words.
               assert.deepStrictEqual(
                 withoutOperation(refusal(ended.body)),
-                withoutOperation(expected),
-                name
+                withoutOperation(expected)
               );
-            else assert.deepStrictEqual(refusal(ended.body), expected, name);
-            const rows = yield* leftOpen(patch.patchId, from, name);
-            // The failing call's row says how it ended; a sent call cut off is unknown itself.
-            if (!cutOff)
-              assert.deepInclude(
-                rows,
-                { outcome: "failure", outcome_code: (expected as { code: string }).code },
-                name
-              );
-          }
-        }),
-      180_000
+              return;
+            }
+            assert.deepStrictEqual(refusal(ended.body), expected);
+            const rows = yield* leftOpen(patch.patchId, since, 2, name);
+            // The failing call's row says how it ended.
+            assert.deepInclude(rows, {
+              outcome: "failure",
+              outcome_code: (expected as { code: string }).code
+            });
+          }),
+        30_000
+      )
     );
     it.effect(
       "answers an action that returns, or fails on its own, while its model calls are still open",
       () =>
         Effect.gen(function* () {
           const patch = yield* published("abandoned");
-          const provider = yield* Provider;
-          let from = provider.entries.length;
-          const returned = yield* ask(patch, "abandon", "");
-          assert.strictEqual(returned.status, 200);
-          assert.deepStrictEqual((returned.body as { value: unknown }).value, { returned: true });
-          yield* leftOpen(patch.patchId, from, "returned");
-          from = provider.entries.length;
-          const failed = yield* ask(patch, "own failure", "");
-          assert.include(failed.body as object, { ok: false, code: "handler_failed" });
-          yield* leftOpen(patch.patchId, from, "failed on its own");
+          const returned = yield* askOnceHeld(patch, "abandon", "", 2);
+          assert.strictEqual(returned.answer.status, 200);
+          assert.deepStrictEqual((returned.answer.body as { value: unknown }).value, {
+            returned: true
+          });
+          yield* leftOpen(patch.patchId, returned.since, 2, "returned");
+          const failed = yield* askOnceHeld(patch, "own failure", "", 2);
+          assert.include(failed.answer.body as object, { ok: false, code: "handler_failed" });
+          yield* leftOpen(patch.patchId, failed.since, 2, "failed on its own");
         }),
       60_000
     );
@@ -691,10 +808,12 @@ it.layer(permitSuite, { excludeTestServices: true, timeout: "120 seconds" })(
       () =>
         Effect.gen(function* () {
           const patch = yield* published("task");
-          // A second call while the task holds its one model call: refused at the task's proxy.
-          const busy = yield* ask(patch, "pair", "second");
-          assert.strictEqual(busy.status, 429);
-          assert.deepStrictEqual(busy.body, { ...taskBusy, operation: "models.generate" });
+          // A second call while the task's one model permit is held by the first, which the fake
+          // is holding: refused at the task's proxy, the first left open.
+          const pair = yield* askOnceHeld(patch, "pair", "second", 1);
+          assert.strictEqual(pair.answer.status, 429);
+          assert.deepStrictEqual(pair.answer.body, { ...taskBusy, operation: "models.generate" });
+          yield* leftOpen(patch.patchId, pair.since, 1, "the busy pair");
           // Arguments past models.ingress.bytes: refused by the loader, before they leave
           // workerd, in its own words.
           const large = yield* ask(patch, "oversized", "");
