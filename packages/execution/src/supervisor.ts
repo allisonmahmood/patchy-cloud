@@ -1,7 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalDateInEffect:off globalJsonInEffect:off -- residency uses wall time and OS RSS; tuple keys encode already-validated identities without delimiter collisions.
 import { createServer } from "node:http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import { closeAfterAnswer, limitRefusal, limitRefusalFields } from "@patchy/api";
+import {
+  closeAfterAnswer,
+  limitRefusal,
+  limitRefusalFields,
+  type RuntimeFailure
+} from "@patchy/api";
 import * as GuestProtocol from "@patchy/api/guest";
 import * as Management from "@patchy/api/management";
 import { registry } from "@patchy/limits/registry";
@@ -56,21 +61,31 @@ class CallbackBodyTooLarge extends Schema.TaggedError<CallbackBodyTooLarge>()(
   }
 }
 const readCallbackBody = Effect.fnUntraced(function* <E, R>(
-  stream: Stream.Stream<Uint8Array, E, R>
+  stream: Stream.Stream<Uint8Array, E, R>,
+  max: number = GuestProtocol.callbackFileLimit.value
 ) {
   const chunks: Uint8Array[] = [];
   let length = 0;
   yield* Stream.runForEach(stream, (chunk) => {
     length += chunk.byteLength;
-    if (length > GuestProtocol.callbackFileLimit.value)
-      return Effect.fail(
-        new CallbackBodyTooLarge({ actual: length, max: GuestProtocol.callbackFileLimit.value })
-      );
+    if (length > max) return Effect.fail(new CallbackBodyTooLarge({ actual: length, max }));
     chunks.push(chunk);
     return Effect.void;
   });
   return Buffer.concat(chunks, length);
 });
+
+/**
+ * The header naming a model call's operation, which the loader sets from the operation it
+ * decoded. The proxy takes a model permit for the call before reading its body and forwards the
+ * header only once it holds one; the host checks it against the body. The loader and the proxy
+ * ship in one image, so the header tells the host the call came through both.
+ */
+const modelCallHeader = "x-patchy-model-call";
+const isModelCall = (op: string | undefined): op is "models.decide" | "models.generate" =>
+  op === "models.decide" || op === "models.generate";
+/** The bytes a model call's arguments may take, refused before more of the body is read. */
+const modelIngress = limitRefusal("models.ingress.bytes");
 
 const operatingLimitIds = [
   "execution.probe.interval",
@@ -78,7 +93,8 @@ const operatingLimitIds = [
   "execution.residency.processes",
   "execution.residency.bytes",
   "execution.process.idle",
-  "execution.process.load"
+  "execution.process.load",
+  "models.execution.inFlight"
 ] as const;
 type SupervisorLimitId = (typeof operatingLimitIds)[number];
 
@@ -156,6 +172,8 @@ interface Resident {
   peakRssBytes: number;
   peakProcesses: number;
   peakAggregateRssBytes: number;
+  /** The task's model calls in flight at their highest as this process's calls took a permit. */
+  peakModelCalls: number;
   cpuSeconds: number;
   callsServed: number;
 }
@@ -194,7 +212,8 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
       !operatingLimitIds.some((key) => key === id) ||
       !Number.isFinite(value) ||
       value <= 0 ||
-      (id === "execution.residency.processes" && !Number.isSafeInteger(value)) ||
+      ((id === "execution.residency.processes" || id === "models.execution.inFlight") &&
+        !Number.isSafeInteger(value)) ||
       (id === "execution.probe.interval" && value >= registry["execution.stall"].default)
     )
       return yield* new SupervisorError({ operation: "bind", reason: "protocol" });
@@ -358,7 +377,19 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
             value: limit("execution.residency.bytes"),
             peak: resident.peakAggregateRssBytes,
             configRevision
-          }
+          },
+          // Only a process whose patch asked for a model: the proxy's refusals never reach the
+          // host, so this peak is where they show.
+          ...(resident.peakModelCalls === 0
+            ? []
+            : [
+                {
+                  limitId: "models.execution.inFlight",
+                  value: limit("models.execution.inFlight"),
+                  peak: resident.peakModelCalls,
+                  configRevision
+                }
+              ])
         ]
       }
     };
@@ -420,16 +451,33 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
   if (proxy.address._tag === "UnixPathAddress")
     return yield* new SupervisorError({ operation: "bind", reason: "transport" });
   const proxyBase = `http://127.0.0.1:${proxy.address.port}`;
-  const refusedCallback = () =>
+  /**
+   * The task's model calls between taking a permit and reading the host's reply, across every
+   * process. Each is given back by the call that took it, however that call ends.
+   */
+  let modelCallsInFlight = 0;
+  /**
+   * The proxy's own answer. A model call's says nothing was sent when the proxy gives it before
+   * forwarding the call; one given after is about a call the host may have made, so it says
+   * nothing, which reads as unknown. Every other call's answer is as it always was.
+   */
+  const answer = (
+    failure: RuntimeFailure,
+    options: { readonly status?: number; readonly unsent?: boolean } = {}
+  ) =>
     HttpServerResponse.jsonUnsafe(
-      {
-        ok: false,
-        source: "patchy",
-        code: "access_denied",
-        error: "The invocation callback has ended."
-      },
-      { status: 403 }
+      options.unsent === true
+        ? { ...failure, details: { ...failure.details, sent: false } }
+        : failure,
+      options.status === undefined ? undefined : { status: options.status }
     );
+  const ended: RuntimeFailure = {
+    ok: false,
+    source: "patchy",
+    code: "access_denied",
+    error: "The invocation callback has ended."
+  };
+  const refusedCallback = (unsent = false) => answer(ended, { status: 403, unsent });
   yield* proxy.serve(
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
@@ -442,6 +490,11 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
         })
       );
       if (invocation === undefined) return refusedCallback();
+      const marked = request.headers[modelCallHeader];
+      const modelCall = isModelCall(marked) ? marked : undefined;
+      const model = modelCall !== undefined;
+      /** Set as the call is handed to the host: before it, nothing the call asked for was done. */
+      let forwarded = false;
       const live = () =>
         resident.alive &&
         invocation.epoch === bindingEpoch &&
@@ -449,31 +502,38 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
         request.headers["x-patchy-process-generation"] === String(resident.generation) &&
         request.headers.authorization === `Bearer ${invocation.capability}`;
       const deadlineCallback = () =>
-        HttpServerResponse.jsonUnsafe({
-          ok: false,
-          source: "patchy",
-          code: "timeout",
-          error: "The invocation callback deadline has passed."
-        });
+        answer(
+          {
+            ok: false,
+            source: "patchy",
+            code: "timeout",
+            error: "The invocation callback deadline has passed."
+          },
+          { unsent: model && !forwarded }
+        );
       const unavailableCallback = () =>
         !live()
-          ? refusedCallback()
+          ? refusedCallback(model && !forwarded)
           : Date.now() >= invocation.attempt.deadline
             ? deadlineCallback()
-            : HttpServerResponse.jsonUnsafe({
-                ok: false,
-                source: "patchy",
-                code: "source_unavailable",
-                error: "The invocation callback could not complete."
-              });
-      if (!live()) return refusedCallback();
+            : answer(
+                {
+                  ok: false,
+                  source: "patchy",
+                  code: "source_unavailable",
+                  error: "The invocation callback could not complete."
+                },
+                { unsent: model && !forwarded }
+              );
+      if (!live()) return refusedCallback(model);
       if (Date.now() >= invocation.attempt.deadline) return deadlineCallback();
-      return yield* Effect.gen(function* () {
+      const proxied = Effect.gen(function* () {
         // A request body over the limit stops being read; its 413 closes the connection.
-        const body = yield* readCallbackBody(request.stream).pipe(
-          Effect.tapErrorTag("CallbackBodyTooLarge", () => closeAfterAnswer)
-        );
-        if (!live()) return refusedCallback();
+        const body = yield* readCallbackBody(
+          request.stream,
+          model ? modelIngress.value : GuestProtocol.callbackFileLimit.value
+        ).pipe(Effect.tapErrorTag("CallbackBodyTooLarge", () => closeAfterAnswer));
+        if (!live()) return refusedCallback(model);
         const headers: Record<string, string> = {
           authorization: `Bearer ${invocation.capability}`,
           "x-patchy-invocation-id": invocation.attempt.invocationId,
@@ -484,6 +544,8 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
         };
         if (request.headers["x-patchy-callback"] !== undefined)
           headers["x-patchy-callback"] = request.headers["x-patchy-callback"];
+        if (modelCall !== undefined) headers[modelCallHeader] = modelCall;
+        forwarded = true;
         const response = yield* http
           .execute(
             HttpClientRequest.post(invocation.target).pipe(
@@ -508,13 +570,59 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
         Effect.catchTags({
           CallbackBodyTooLarge: () =>
             Effect.succeed(
-              HttpServerResponse.jsonUnsafe(GuestProtocol.callbackFileTooLarge, { status: 413 })
+              model
+                ? answer(
+                    {
+                      ok: false,
+                      source: "patchy",
+                      error: "The model call exceeds models.ingress.bytes, so nothing was sent.",
+                      ...modelIngress
+                    },
+                    { status: 413, unsent: true }
+                  )
+                : HttpServerResponse.jsonUnsafe(GuestProtocol.callbackFileTooLarge, { status: 413 })
             ),
           TimeoutError: () => Effect.succeed(deadlineCallback()),
-          SupervisorError: () => Effect.succeed(refusedCallback()),
+          SupervisorError: () => Effect.succeed(refusedCallback(model && !forwarded)),
           HttpClientError: () => Effect.succeed(unavailableCallback()),
           HttpServerError: () => Effect.succeed(unavailableCallback())
         })
+      );
+      if (!model) return yield* proxied;
+      // A model call takes its permit here, past the attempt's checks and before its body is
+      // read, or is refused at once with nothing sent. The permit is the call's own: it is given
+      // back as the call ends, the page's request closing first included, so the proxy stops
+      // waiting on the host for a call nobody will read; the host still settles it.
+      const limitValue = limit("models.execution.inFlight");
+      return yield* Effect.acquireUseRelease(
+        Effect.sync(() => {
+          const admitted = modelCallsInFlight < limitValue;
+          if (admitted) modelCallsInFlight++;
+          resident.peakModelCalls = Math.max(
+            resident.peakModelCalls,
+            Math.min(modelCallsInFlight + (admitted ? 0 : 1), limitValue)
+          );
+          return admitted;
+        }),
+        (admitted) =>
+          admitted
+            ? Effect.interruptible(proxied)
+            : Effect.succeed(
+                answer(
+                  {
+                    ok: false,
+                    source: "patchy",
+                    error:
+                      "Too many model calls are running in this company's execution task, so nothing was sent. Try again shortly.",
+                    ...limitRefusal("models.execution.inFlight", limitValue, 1)
+                  },
+                  { status: 429, unsent: true }
+                )
+              ),
+        (admitted) =>
+          Effect.sync(() => {
+            if (admitted) modelCallsInFlight--;
+          })
       );
     })
   );
@@ -830,6 +938,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
           peakRssBytes: 0,
           peakProcesses: 0,
           peakAggregateRssBytes: 0,
+          peakModelCalls: 0,
           cpuSeconds: 0,
           callsServed: 0
         };

@@ -69,6 +69,16 @@ const endedCallback = (reference: AttemptReference) =>
   Date.now() >= reference.deadline
     ? refusal("timeout", "The invocation callback deadline has passed.")
     : refusal("access_denied", "The invocation callback has ended.");
+/**
+ * A model call is marked for the proxy, which holds a model permit for it and tells the host it
+ * did. Its refusals given here, before anything leaves the loader, say nothing was sent; one given
+ * once the call has gone to the proxy says nothing, which reads as unknown.
+ */
+const isModelCall = (op: unknown) => op === "models.decide" || op === "models.generate";
+const unsent = (model: boolean, reply: GuestProtocol.CallbackReply): GuestProtocol.CallbackReply =>
+  model && !reply.ok && reply.source === "patchy"
+    ? { ...reply, details: { ...reply.details, sent: false } }
+    : reply;
 const identity = (binding: GuestProtocol.BundleBinding) =>
   JSON.stringify([binding.companyId, binding.patchId, binding.versionId]);
 
@@ -290,20 +300,23 @@ async function readFileBody(response: Response): Promise<Uint8Array | undefined>
 /** Props name one immutable dispatch, not a reusable invocation registry key. */
 export class Callbacks extends WorkerEntrypoint<Environment, AttemptReference> {
   async call(input: unknown): Promise<GuestProtocol.CallbackReply> {
-    if (liveAttempt(this.ctx.props) === undefined) return endedCallback(this.ctx.props);
+    const model =
+      typeof input === "object" && input !== null && "op" in input && isModelCall(input.op);
+    if (liveAttempt(this.ctx.props) === undefined)
+      return unsent(model, endedCallback(this.ctx.props));
     let operation: GuestProtocol.Callback;
     try {
       operation = decodeCallback(input);
     } catch {
-      return refusal("invalid_request", "Malformed callback.");
+      return unsent(model, refusal("invalid_request", "Malformed callback."));
     }
     if (
       operation.body !== undefined &&
       operation.body.bytes.byteLength > GuestProtocol.callbackFileLimit.value
     )
-      return GuestProtocol.callbackFileTooLarge;
+      return unsent(model, GuestProtocol.callbackFileTooLarge);
     const live = liveAttempt(this.ctx.props);
-    if (live === undefined) return endedCallback(this.ctx.props);
+    if (live === undefined) return unsent(model, endedCallback(this.ctx.props));
     try {
       const headers = new Headers({
         authorization: `Bearer ${live.callback.capability}`,
@@ -311,6 +324,7 @@ export class Callbacks extends WorkerEntrypoint<Environment, AttemptReference> {
         "x-patchy-attempt-id": live.reference.attemptId,
         "x-patchy-process-generation": String(live.reference.processGeneration)
       });
+      if (isModelCall(operation.op)) headers.set("x-patchy-model-call", operation.op);
       let body: BodyInit;
       if (operation.body === undefined) {
         headers.set("content-type", "application/json");

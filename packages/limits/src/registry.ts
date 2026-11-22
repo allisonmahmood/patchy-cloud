@@ -1410,6 +1410,16 @@ export const registry = {
     refusal: "busy",
     overridable: false
   },
+  "models.execution.inFlight": {
+    kind: "operating",
+    default: 64,
+    unit: "callbacks",
+    scope: "company",
+    measure:
+      "Model calls one execution task's callback proxy holds at once, from before it reads a call's body until it has read the host's reply; past it a call is refused at once, nothing sent",
+    refusal: "busy",
+    overridable: false
+  },
   "company.admission.rate": {
     kind: "operating",
     default: 100,

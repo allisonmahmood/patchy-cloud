@@ -35,7 +35,8 @@ NodeRuntime.runMain(
         "execution.residency.processes": limits.get("execution.residency.processes"),
         "execution.residency.bytes": limits.get("execution.residency.bytes"),
         "execution.process.idle": limits.get("execution.process.idle"),
-        "execution.process.load": limits.get("execution.process.load")
+        "execution.process.load": limits.get("execution.process.load"),
+        "models.execution.inFlight": limits.get("models.execution.inFlight")
       }
     });
     const listener = yield* Management.serve({
