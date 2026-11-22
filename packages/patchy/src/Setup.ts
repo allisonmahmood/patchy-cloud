@@ -28,8 +28,11 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { LocalError } from "./CliError.js";
 
-/** The running package's bundled global skill directory, beside `dist/` in the installed package. */
-const bundledSkillDir = fileURLToPath(new URL("../skills/patchy", import.meta.url));
+/**
+ * The running package's bundled global skill directory, beside `dist/` in the installed package.
+ * Not under `skills/`, where pnpm would ask every patch repo to approve it as a dependency's skill.
+ */
+const bundledSkillDir = fileURLToPath(new URL("../global-skill", import.meta.url));
 
 /**
  * The skill's copy. It follows the home directory, not `PATCHY_STATE_DIR`: a
@@ -57,7 +60,10 @@ const isLocalError = Schema.is(LocalError);
 const code = (cause: unknown) =>
   Option.match(errno(cause), { onNone: () => "", onSome: ({ code }) => ` (${code})` });
 
-/** A `patchy/skills/patchy` directory whose package is `patchy`, or that is gone with its prefix. */
+/**
+ * A `patchy/skills/patchy` directory whose package is `patchy`, or that is gone with its prefix:
+ * what releases before the copy linked agents to. Later releases link only to the copy.
+ */
 const packageSkill = async (target: string) => {
   const skills = path.dirname(target);
   const pkg = path.dirname(skills);
