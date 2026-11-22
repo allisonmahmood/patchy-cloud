@@ -67,6 +67,12 @@ class Rollout extends Schema.Class<Rollout>("Fleet.Rollout")({
 }) {}
 class Pause extends Schema.Class<Pause>("Fleet.Pause")({ pausedUntil: Schema.Number }) {}
 class Flag extends Schema.Class<Flag>("Fleet.Flag")({ acquired: Schema.Boolean }) {}
+class ReserveRow extends Schema.Class<ReserveRow>("Fleet.ReserveRow")({
+  reserved: Schema.Boolean,
+  room: Schema.Boolean,
+  listed: Schema.Boolean,
+  spares: Schema.Number
+}) {}
 class AdmissibleTask extends Schema.Class<AdmissibleTask>("Fleet.AdmissibleTask")({
   admissible: Schema.Boolean
 }) {}
@@ -77,6 +83,7 @@ const decodeTargets = Schema.decodeUnknownEffect(Schema.Array(Target));
 const decodeRollouts = Schema.decodeUnknownEffect(Schema.Array(Rollout));
 const decodePauses = Schema.decodeUnknownEffect(Schema.Array(Pause));
 const decodeFlags = Schema.decodeUnknownEffect(Schema.Array(Flag));
+const decodeReserveRows = Schema.decodeUnknownEffect(Schema.Array(ReserveRow));
 const decodeAdmissibleTasks = Schema.decodeUnknownEffect(Schema.Array(AdmissibleTask));
 const reportJson = Schema.encodeSync(Schema.fromJsonString(Management.ProcessReport));
 
@@ -98,8 +105,12 @@ export interface Capacity {
   readonly budget: number;
 }
 
-/** What a spare reservation came to: reserved, lease lost, fleet at budget, or revision inactive. */
-export type ReserveOutcome = "reserved" | "lease_lost" | "budget" | "retired";
+/** What a spare reservation came to, including the revision's live spare count when at budget. */
+export type ReserveResult =
+  | { readonly outcome: "reserved" }
+  | { readonly outcome: "lease_lost" }
+  | { readonly outcome: "retired" }
+  | { readonly outcome: "budget"; readonly spares: number };
 
 export const companyLock = (companyId: string) => `execution/company/${companyId}`;
 /** Held while a prewarm holds the company's task: it defers release without moving a clock. */
@@ -482,26 +493,31 @@ export const make = Effect.gen(function* () {
       WHERE owner_id = ${owner} AND lease_epoch = ${epoch} AND expires_at > ${now} FOR UPDATE`.pipe(
       Effect.flatMap(decodeLeases)
     );
-    if (!held[0]) return "lease_lost" as const;
-    const rows =
-      yield* sql`INSERT INTO execution_tasks(task_id, deployment_revision, state, requested_at)
-      SELECT ${taskId}, ${revision}, 'starting', ${now}
-      WHERE (SELECT count(*) FROM execution_tasks WHERE state <> 'stopped') < ${budget}
-        AND EXISTS (SELECT 1 FROM execution_deployments WHERE revision = ${revision} AND NOT retired)
-        AND EXISTS (SELECT 1 FROM execution_rollout WHERE singleton
-          AND (current_revision = ${revision} OR staged_revision = ${revision}))
-      RETURNING ${taskColumns}`.pipe(Effect.flatMap(decodeTasks));
-    if (rows.length === 1) return "reserved" as const;
-    const exhausted = yield* sql`SELECT (
-        EXISTS (SELECT 1 FROM execution_deployments WHERE revision = ${revision} AND NOT retired)
-        AND EXISTS (SELECT 1 FROM execution_rollout WHERE singleton
-          AND (current_revision = ${revision} OR staged_revision = ${revision}))
-        AND (SELECT count(*) FROM execution_tasks WHERE state <> 'stopped') >= ${budget}
-      ) AS acquired`.pipe(
-      Effect.flatMap(decodeFlags),
-      Effect.map((result) => result[0]!.acquired)
-    );
-    return (exhausted ? "budget" : "retired") as ReserveOutcome;
+    if (!held[0]) return { outcome: "lease_lost" } as const;
+    const rows = yield* sql`WITH state AS (
+        SELECT
+          (SELECT count(*) FROM execution_tasks WHERE state <> 'stopped') < ${budget} AS room,
+          (EXISTS (SELECT 1 FROM execution_deployments WHERE revision = ${revision} AND NOT retired)
+            AND EXISTS (SELECT 1 FROM execution_rollout WHERE singleton
+              AND (current_revision = ${revision} OR staged_revision = ${revision}))) AS listed,
+          (SELECT count(*)::integer FROM execution_tasks
+            WHERE state IN ('starting', 'spare') AND deployment_revision = ${revision}) AS spares
+      ), inserted AS (
+        INSERT INTO execution_tasks(task_id, deployment_revision, state, requested_at)
+        SELECT ${taskId}, ${revision}, 'starting', ${now}
+        FROM state WHERE room AND listed
+        RETURNING task_id
+      )
+      SELECT
+        (SELECT count(*) > 0 FROM inserted) AS reserved,
+        state.room,
+        state.listed,
+        state.spares
+      FROM state`.pipe(Effect.flatMap(decodeReserveRows));
+    const row = rows[0]!;
+    if (row.reserved) return { outcome: "reserved" } as const;
+    if (!row.listed) return { outcome: "retired" } as const;
+    return { outcome: "budget", spares: row.spares } as const;
   }, sql.withTransaction);
   const ready = (task: {
     taskId: string;

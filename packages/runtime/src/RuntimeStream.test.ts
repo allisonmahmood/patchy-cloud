@@ -1723,13 +1723,17 @@ it.layer(layer)("document activity", (it) => {
           });
         // Warm startup (`bound`), goes idle, then background reactivation (`startup === false`)
         // runs outside any event and must neither overwrite startup bind wait nor leak onto the
-        // subscription request event.
+        // triggering subscription request event while that request event is still open.
         let calls = 0;
+        const reholdRan = yield* Deferred.make<void>();
         host.fleet.onConnect = () => {
           calls++;
           return calls === 1
             ? WideEvents.enrich({ companyBind: "bound", bindWaitMs: 0 })
-            : WideEvents.enrich({ companyBind: "launch", bindWaitMs: 999 });
+            : WideEvents.enrich({ companyBind: "launch", bindWaitMs: 999 }).pipe(
+                Effect.andThen(Deferred.succeed(reholdRan, undefined)),
+                Effect.asVoid
+              );
         };
         const warm = yield* host.connect("bind_telemetry_warm");
         assert.deepStrictEqual(yield* warm.next, { type: "ready" });
@@ -1738,7 +1742,9 @@ it.layer(layer)("document activity", (it) => {
         yield* host.settle({ company: 0, versions: 0 });
         yield* host.events.withEvent(
           { type: "request" },
-          host.update(warm, { sequence: 1, type: "subscribe", subscription: items })
+          host
+            .update(warm, { sequence: 1, type: "subscribe", subscription: items })
+            .pipe(Effect.andThen(Deferred.await(reholdRan)))
         );
         yield* host.settle({ company: 1, versions: 1, connects: 2 });
         let updateRequest: WideEvents.RequestEvent | undefined;
@@ -1798,14 +1804,15 @@ it.layer(layer)("document activity", (it) => {
         });
 
         // Launch startup interrupted by RuntimeStream's outer timeoutOption still records bind wait
-        // from connect's onExit and refusal on the stream event.
+        // from connect's onExit and refusal on the stream event (including early timeout before
+        // companyBind is known).
         host.fleet.onConnect = () =>
           Effect.gen(function* () {
             const startedAt = yield* Clock.currentTimeMillis;
             return yield* Effect.never.pipe(
               Effect.onExit(() =>
                 Effect.flatMap(Clock.currentTimeMillis, (end) =>
-                  WideEvents.enrich({ companyBind: "launch", bindWaitMs: end - startedAt })
+                  WideEvents.enrich({ bindWaitMs: end - startedAt })
                 )
               )
             );
@@ -1815,12 +1822,77 @@ it.layer(layer)("document activity", (it) => {
         yield* TestClock.adjust("40 seconds");
         assert.strictEqual((yield* Fiber.join(frameFiber)).type, "start_failed");
         yield* Scope.close(timedOut.scope, Exit.void);
-        assert.include(yield* takeStream(timedOut.generation), {
+        const timedOutSummary = yield* takeStream(timedOut.generation);
+        assert.include(timedOutSummary, {
           outcome: "refused",
           code: "busy",
           limitId: "execution.pool.wait",
-          companyBind: "launch",
           bindWaitMs: 40_000
+        });
+        assert.notProperty(timedOutSummary, "companyBind");
+
+        // Disconnecting mid-bind waits for connect's onExit enrichment before closing the stream
+        // event, and marks the abandoned startup bind as `interrupted`.
+        const disconnectStarted = yield* Deferred.make<void>();
+        host.fleet.onConnect = () =>
+          Effect.gen(function* () {
+            const startedAt = yield* Clock.currentTimeMillis;
+            yield* Deferred.succeed(disconnectStarted, undefined);
+            return yield* Effect.never.pipe(
+              Effect.onExit(() =>
+                TestClock.withLive(Effect.sleep(20)).pipe(
+                  Effect.andThen(Clock.currentTimeMillis),
+                  Effect.flatMap((end) =>
+                    WideEvents.enrich({ companyBind: "launch", bindWaitMs: end - startedAt })
+                  )
+                )
+              )
+            );
+          });
+        const disconnected = yield* host.connect("bind_telemetry_disconnect");
+        yield* Deferred.await(disconnectStarted);
+        yield* TestClock.adjust("5 seconds");
+        yield* Scope.close(disconnected.scope, Exit.void);
+        assert.include(yield* takeStream(disconnected.generation), {
+          outcome: "interrupted",
+          companyBind: "launch",
+          bindWaitMs: 5_000
+        });
+
+        // A startup the idle window outlasts still settles to ready, records bind wait, and marks
+        // the abandoned startup bind as `interrupted` rather than `success`.
+        const shortIdleHost = yield* fleetStreams({ idle: 5_000 });
+        const takeShortStream = (generation: string) =>
+          Effect.gen(function* () {
+            while (true) {
+              const event = yield* Queue.take(shortIdleHost.recorded);
+              if (event.type === "stream" && event.eventId === generation) return event;
+            }
+          });
+        const idleConnectStarted = yield* Deferred.make<void>();
+        shortIdleHost.fleet.onConnect = () =>
+          Effect.gen(function* () {
+            const startedAt = yield* Clock.currentTimeMillis;
+            yield* Deferred.succeed(idleConnectStarted, undefined);
+            return yield* Effect.never.pipe(
+              Effect.onExit(() =>
+                Effect.flatMap(Clock.currentTimeMillis, (end) =>
+                  WideEvents.enrich({ companyBind: "launch", bindWaitMs: end - startedAt })
+                )
+              )
+            );
+          });
+        const idledStartup = yield* shortIdleHost.connect("bind_telemetry_idle_startup");
+        yield* Deferred.await(idleConnectStarted);
+        const readyFiber = yield* idledStartup.next.pipe(Effect.forkChild);
+        yield* TestClock.adjust("5 seconds");
+        assert.deepStrictEqual(yield* Fiber.join(readyFiber), { type: "ready" });
+        yield* Scope.close(idledStartup.scope, Exit.void);
+        assert.include(yield* takeShortStream(idledStartup.generation), {
+          outcome: "interrupted",
+          companyBind: "launch",
+          bindWaitMs: 5_000,
+          idled: 1
         });
 
         // An idle reconnect opens directly into ready without binding, leaving bind wait unset.

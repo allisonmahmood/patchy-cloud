@@ -444,17 +444,18 @@ filter type = "process" and ispresent(startMs)
 
 #### Monitoring the execution fleet
 
-Every tier 2 bind records `companyBind` (`bound`, `spare` or `launch`) and `bindWaitMs` on
-its wide event: on `request` / `re-run` events for agent and page invocations, and on
-`stream` events for a document's startup bind (`start_failed` included; background re-holds
+Every tier 2 bind records `companyBind` (`bound`, `spare` or `launch`, once the path is
+known) and `bindWaitMs` on its wide event: on `request` / `re-run` events for agent and page
+invocations, and on `stream` events for a document's startup bind (`start_failed` and
+abandoned startup binds, which record `outcome = "interrupted"`, included; background re-holds
 after idling do not overwrite it, and idle reconnects leave it unset). All CloudWatch Logs
 Insights queries below target `/patchy/production/host`.
 
-Spare misses and bind waits across browser opens (`stream`, including `start_failed`) and
-invocations (`request`):
+Spare misses and bind waits across browser opens (`stream`, including `start_failed` and
+`interrupted` startup binds) and invocations (`request`):
 
 ```
-filter type in ["stream", "request"] and ispresent(companyBind)
+filter type in ["stream", "request"] and ispresent(bindWaitMs)
 | stats count(*) as opens, pct(bindWaitMs, 50) as p50, pct(bindWaitMs, 99) as p99, max(bindWaitMs) as slowest by type, companyBind, outcome
 ```
 
@@ -468,13 +469,16 @@ fields @timestamp, type, companyId, patchId, companyBind, bindWaitMs, code, clos
 ```
 
 Fleet budget exhaustion warnings: when housekeeping cannot reserve a spare because live tasks
-have reached `execution.fleet.budget`, it logs `Execution fleet budget exhausted` once per
-revision per replenishment pass with `revision`, `budget`, `target` and `spares` (it does not
-log when reservation stops because the lease was lost or the revision was retired):
+have reached `execution.fleet.budget`, it logs a single-line warning
+`Execution fleet budget exhausted revision=<rev> budget=<n> target=<n> spares=<n>` at most once
+per housekeeping interval per revision (it does not log when reservation stops because the lease
+was lost or the revision was retired):
 
 ```
 fields @timestamp, @message
 | filter @message like /Execution fleet budget exhausted/
+| parse @message /revision=(?<revision>\S+) budget=(?<budget>\d+) target=(?<target>\d+) spares=(?<spares>\d+)/
+| display @timestamp, revision, budget, target, spares
 | sort @timestamp desc
 | limit 50
 ```

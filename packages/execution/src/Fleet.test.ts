@@ -1061,31 +1061,79 @@ it.layer(services)("host fleet controller", (it) => {
         const refusal = yield* phase("refused connect", gaveUp);
         assert.include(refusal, { found: "launch" });
         assert.isTrue(Exit.isFailure(refusal.exit));
+        // The last 500 ms step can cross the 40 s pool timeout by one tick.
         assert.oneOf(refusal.waitedMs, [40_000, 40_500]);
-        // An interrupted wait (outer timeout or client disconnect) still records bind wait.
+        // An interrupted wait after missing a claim (launch phase) still records companyBind and bindWaitMs.
         const gone = "cmp_fleet_connect_found_gone";
         yield* sql`INSERT INTO companies(id, handle, name) VALUES (${gone}, ${gone}, 'Fleet connect gone')`;
+        let claimAttempts = 0;
+        const secondAttempt = yield* Deferred.make<void>();
+        const watchClaim: Statement.Transformer = (statement) =>
+          /pg_advisory_xact_lock/.test(statement.compile()[0])
+            ? Effect.suspend(() => {
+                claimAttempts++;
+                return claimAttempts >= 2
+                  ? Deferred.succeed(secondAttempt, undefined).pipe(Effect.as(statement))
+                  : Effect.succeed(statement);
+              })
+            : Effect.succeed(statement);
         const abandoned = yield* captured.events
           .withEvent(
             { type: "stream", tier: 2 },
-            stalled.lifecycle.connect(gone).pipe(Effect.scoped)
+            stalled.lifecycle
+              .connect(gone)
+              .pipe(Effect.provideService(Statement.CurrentTransformer, watchClaim), Effect.scoped)
           )
           .pipe(Effect.forkChild);
-        for (let step = 0; step < 10; step++) {
-          yield* TestClock.adjust(500);
-          yield* TestClock.withLive(Effect.sleep(5));
-        }
+        // Wait until the first claim misses (marking `launch`) and the second poll begins.
+        yield* phase(
+          "connect enters launch wait",
+          Effect.gen(function* () {
+            while (claimAttempts < 2) {
+              yield* TestClock.adjust(50);
+              yield* TestClock.withLive(Effect.sleep(5));
+            }
+            yield* Deferred.await(secondAttempt);
+          })
+        );
+        yield* TestClock.adjust(1_500);
         yield* Fiber.interrupt(abandoned);
         const event = yield* captured.take;
         if (event.type !== "stream") return assert.fail(`a ${event.type} event`);
         assert.include(event, { outcome: "interrupted", companyBind: "launch" });
-        assert.isAbove(event.bindWaitMs ?? 0, 0);
+        assert.isAtLeast(event.bindWaitMs ?? 0, 1_500);
+        // An early cancellation before the bind path is known still records bindWaitMs without companyBind.
+        const early = "cmp_fleet_connect_found_early";
+        yield* sql`INSERT INTO companies(id, handle, name) VALUES (${early}, ${early}, 'Fleet connect early')`;
+        const stalledLookup = yield* Deferred.make<void>();
+        const blockLookup: Statement.Transformer = (statement) =>
+          /FROM execution_bindings\b/.test(statement.compile()[0])
+            ? Deferred.succeed(stalledLookup, undefined).pipe(
+                Effect.andThen(Effect.never),
+                Effect.as(statement)
+              )
+            : Effect.succeed(statement);
+        const cancelledEarly = yield* captured.events
+          .withEvent(
+            { type: "stream", tier: 2 },
+            stalled.lifecycle
+              .connect(early)
+              .pipe(Effect.provideService(Statement.CurrentTransformer, blockLookup), Effect.scoped)
+          )
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(stalledLookup);
+        yield* TestClock.adjust(2_000);
+        yield* Fiber.interrupt(cancelledEarly);
+        const earlyEvent = yield* captured.take;
+        if (earlyEvent.type !== "stream") return assert.fail(`a ${earlyEvent.type} event`);
+        assert.include(earlyEvent, { outcome: "interrupted", bindWaitMs: 2_000 });
+        assert.notProperty(earlyEvent, "companyBind");
       }).pipe(Effect.scoped),
     30_000
   );
 
   it.effect(
-    "logs fleet budget exhaustion once per pass when budget blocks reservation, never on lease loss or retired revision",
+    "logs a single-line fleet budget exhaustion warning rate-limited per housekeeping interval, never on lease loss or retired revision",
     () =>
       Effect.gen(function* () {
         const logs: Array<{ readonly message: unknown; readonly level: string }> = [];
@@ -1095,12 +1143,18 @@ it.layer(services)("host fleet controller", (it) => {
           })
         ]);
         const budgetWarnings = () =>
-          logs.filter(
-            (entry) =>
-              entry.level === "Warn" &&
-              Array.isArray(entry.message) &&
-              entry.message[0] === "Execution fleet budget exhausted"
-          );
+          logs
+            .filter((entry) => entry.level === "Warn")
+            .map((entry) =>
+              Array.isArray(entry.message) && entry.message.length === 1
+                ? entry.message[0]
+                : entry.message
+            )
+            .filter(
+              (message): message is string =>
+                typeof message === "string" &&
+                message.startsWith("Execution fleet budget exhausted")
+            );
         const { companyId, bundle, left, sql } = yield* setupMemory("budget-warn");
         const store = yield* FleetStore.make;
         // Budget is 2 and minimumSpares is 2; binding one company leaves 1 spare and 0 headroom.
@@ -1108,19 +1162,28 @@ it.layer(services)("host fleet controller", (it) => {
         yield* left.housekeeping().pipe(Effect.provide(captureLogs));
         const warnings = budgetWarnings();
         assert.strictEqual(warnings.length, 1);
-        assert.deepStrictEqual(warnings[0]!.message, [
-          "Execution fleet budget exhausted",
-          { revision: "budget-warn", budget: 2, target: 2, spares: 1 }
-        ]);
-        // Direct store.reserve distinguishes lease loss and retired revision from budget exhaustion.
+        assert.strictEqual(
+          warnings[0],
+          "Execution fleet budget exhausted revision=budget-warn budget=2 target=2 spares=1"
+        );
+        assert.notInclude(warnings[0]!, "\n");
+        // Immediate follow-up pass within the housekeeping interval is rate-limited.
+        yield* left.housekeeping().pipe(Effect.provide(captureLogs));
+        assert.strictEqual(budgetWarnings().length, 1);
+        // Once the housekeeping interval elapses, sustained exhaustion logs again.
+        yield* TestClock.adjust(5_000);
+        yield* left.housekeeping().pipe(Effect.provide(captureLogs));
+        assert.strictEqual(budgetWarnings().length, 2);
+        // Direct store.reserve distinguishes lease loss and retired revision from budget exhaustion
+        // in one snapshot and returns the live spare count for the revision.
         yield* TestClock.adjust(15_000);
         const now = yield* Clock.currentTimeMillis;
-        assert.strictEqual(
+        assert.deepStrictEqual(
           yield* store.reserve("res-lease-lost", "budget-warn", "other-owner", 999, now, 2),
-          "lease_lost"
+          { outcome: "lease_lost" }
         );
         const lease = (yield* store.lease("budget-warn-direct", "budget-warn", now, 15_000))!;
-        assert.strictEqual(
+        assert.deepStrictEqual(
           yield* store.reserve(
             "res-budget",
             "budget-warn",
@@ -1129,9 +1192,9 @@ it.layer(services)("host fleet controller", (it) => {
             now,
             2
           ),
-          "budget"
+          { outcome: "budget", spares: 1 }
         );
-        assert.strictEqual(
+        assert.deepStrictEqual(
           yield* store.reserve(
             "res-retired",
             "missing-revision",
@@ -1140,16 +1203,17 @@ it.layer(services)("host fleet controller", (it) => {
             now,
             10
           ),
-          "retired"
+          { outcome: "retired" }
         );
         yield* sql`DELETE FROM execution_housekeeping WHERE owner_id = 'budget-warn-direct'`;
         yield* admission.release;
-        // If the revision is retired right before INSERT INTO execution_tasks, replenish must not
-        // log a budget exhaustion warning.
+        // Advance past the warning rate-limit window before testing retired/lease-loss suppression.
+        yield* TestClock.adjust(5_000);
+        // If the revision is retired right before the reserve CTE, replenish must not log a budget warning.
         logs.length = 0;
         let retiredOnce = false;
         const retireBeforeReserve: Statement.Transformer = (statement) =>
-          retiredOnce || !/^\s*INSERT INTO execution_tasks\b/.test(statement.compile()[0])
+          retiredOnce || !/INSERT INTO execution_tasks\b/.test(statement.compile()[0])
             ? Effect.succeed(statement)
             : Effect.sync(() => {
                 retiredOnce = true;
@@ -1169,6 +1233,7 @@ it.layer(services)("host fleet controller", (it) => {
         // Re-register and expire the lease right before reserve's FOR UPDATE lease check: no budget warning.
         yield* sql`UPDATE execution_deployments SET retired = false WHERE revision = 'budget-warn'`;
         yield* sql`UPDATE execution_rollout SET current_revision = 'budget-warn' WHERE singleton`;
+        yield* TestClock.adjust(5_000);
         let expiredOnce = false;
         const expireBeforeReserve: Statement.Transformer = (statement) =>
           expiredOnce ||

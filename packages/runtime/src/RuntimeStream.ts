@@ -542,7 +542,9 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
           activity.owner = undefined;
           idled++;
         });
+      let startupOutcome: "ready" | "failed" | "interrupted" | undefined;
       const settleStartup = Effect.sync(() => {
+        if (startupOutcome === undefined) startupOutcome = "interrupted";
         Deferred.doneUnsafe(startupSettled, Effect.void);
       });
       /**
@@ -582,7 +584,10 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
                     )
               )
             );
-            if (startup) yield* settleStartup;
+            if (startup) {
+              startupOutcome = "ready";
+              yield* settleStartup;
+            }
             if (closeReason !== undefined) return;
             if (startup) {
               executionReady = true;
@@ -603,6 +608,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
             Effect.catch((error) =>
               Effect.sync(() => {
                 if (startup && closeReason === undefined) {
+                  startupOutcome = "failed";
                   startFailure = {
                     outcome: error.code === "source_unavailable" ? "failure" : "refused",
                     code: error.code,
@@ -733,11 +739,16 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
                   yield* Effect.raceFirst(Deferred.await(startupSettled), Fiber.await(startupHold));
                 const now = yield* Clock.currentTimeMillis;
                 const activity = entry.activity;
+                const startupFields =
+                  startFailure ??
+                  (startupOutcome === "interrupted"
+                    ? { outcome: "interrupted" as const }
+                    : undefined);
                 yield* WideEvents.enrich({
                   ...documentSubscriptions.metrics(),
                   bytes,
                   closeReason: closeReason ?? "disconnected",
-                  ...startFailure,
+                  ...startupFields,
                   ...(activity === undefined ? {} : { idled, reactivated }),
                   limits: [
                     {

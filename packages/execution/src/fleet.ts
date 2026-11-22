@@ -75,7 +75,7 @@ const checkHousekeeping = Effect.flatMap(housekeepingGuard, (guard) => guard);
  */
 interface Search {
   readonly startedAt: number;
-  found: "bound" | "spare" | "launch";
+  found?: "bound" | "spare" | "launch";
   until?: number;
 }
 export interface Options {
@@ -381,6 +381,7 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
     Effect.mapError((cause) => new FleetError({ operation: "drain", cause }))
   );
   const minimumSpares = minimumSparesOf(config);
+  const lastBudgetWarningAt = new Map<string, number>();
   const isolate = <A, E, R>(taskId: string, work: Effect.Effect<A, E, R>) =>
     work.pipe(
       Effect.timeout(config.get("execution.pool.wait")),
@@ -442,11 +443,11 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
           );
           const reserved: string[] = [];
           const budget = config.get("execution.fleet.budget");
-          let budgetExhausted = false;
+          let budgetSpares: number | undefined;
           for (let count = measured.spares; count < target; count++) {
             yield* guard;
             const taskId = yield* random.uuidV4();
-            const outcome = yield* store.reserve(
+            const result = yield* store.reserve(
               taskId,
               revision,
               options.replicaId,
@@ -454,19 +455,25 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
               yield* Clock.currentTimeMillis,
               budget
             );
-            if (outcome !== "reserved") {
-              budgetExhausted = outcome === "budget";
+            if (result.outcome !== "reserved") {
+              if (result.outcome === "budget") budgetSpares = result.spares;
               break;
             }
             reserved.push(taskId);
           }
-          if (budgetExhausted)
-            yield* Effect.logWarning("Execution fleet budget exhausted", {
-              revision,
-              budget,
-              target,
-              spares: measured.spares + reserved.length
-            });
+          if (budgetSpares !== undefined) {
+            const warnAt = yield* Clock.currentTimeMillis;
+            const last = lastBudgetWarningAt.get(revision);
+            if (
+              last === undefined ||
+              warnAt - last >= config.get("execution.housekeeping.interval")
+            ) {
+              lastBudgetWarningAt.set(revision, warnAt);
+              yield* Effect.logWarning(
+                `Execution fleet budget exhausted revision=${revision} budget=${budget} target=${target} spares=${budgetSpares}`
+              );
+            }
+          }
           yield* Effect.forEach(
             reserved,
             (taskId) =>
@@ -692,11 +699,14 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
       // A warm company's active binding needs no claim. `protect` still decides admission
       // against the same epoch, state and task; any miss takes the claim loop, which fences.
       const warm = (yield* store.findAdmissible(companyId))[0];
-      if (warm) return warm;
+      if (warm) {
+        search.found ??= "bound";
+        return warm;
+      }
       if (caller === "prewarm") return yield* busy(0);
       const wait = yield* limits.get({ companyId, limitId: "execution.pool.wait" });
       search.until ??= search.startedAt + wait.value;
-      if (search.found === "bound") search.found = "spare";
+      if (search.found === undefined || search.found === "bound") search.found = "spare";
       return yield* Effect.gen(function* () {
         let claimed: FleetStore.Binding | undefined;
         while (true) {
@@ -787,23 +797,24 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
   const lifecycle = ExecutionLifecycle.ExecutionLifecycle.of({
     connect: Effect.fn("Fleet.connect")(function* (companyId) {
       const now = yield* Clock.currentTimeMillis;
-      const search: Search = { startedAt: now, found: "bound" };
+      const search: Search = { startedAt: now };
       const searched = Effect.flatMap(Clock.currentTimeMillis, (end) =>
-        WideEvents.enrich({ companyBind: search.found, bindWaitMs: Math.max(0, end - now) })
+        WideEvents.enrich({
+          ...(search.found === undefined ? {} : { companyBind: search.found }),
+          bindWaitMs: Math.max(0, end - now)
+        })
       );
-      yield* Effect.acquireRelease(
-        activity.hold(FleetStore.companyLock(companyId)).pipe(Effect.mapError(lifecycleFailure)),
-        (unlock) => releaseActivity(companyId, unlock)
-      ).pipe(Effect.asVoid);
-      yield* find(companyId, "page", search).pipe(
-        Effect.onExit((exit) =>
-          Exit.isSuccess(exit) || search.until !== undefined ? searched : Effect.void
-        )
-      );
-      // After the bind, so a binding an agent claimed meanwhile still starts the documents' clock.
-      yield* store
-        .touch(companyId, yield* Clock.currentTimeMillis)
-        .pipe(Effect.mapError(lifecycleFailure));
+      yield* Effect.gen(function* () {
+        yield* Effect.acquireRelease(
+          activity.hold(FleetStore.companyLock(companyId)).pipe(Effect.mapError(lifecycleFailure)),
+          (unlock) => releaseActivity(companyId, unlock)
+        ).pipe(Effect.asVoid);
+        yield* find(companyId, "page", search);
+        // After the bind, so a binding an agent claimed meanwhile still starts the documents' clock.
+        yield* store
+          .touch(companyId, yield* Clock.currentTimeMillis)
+          .pipe(Effect.mapError(lifecycleFailure));
+      }).pipe(Effect.onExit(() => searched));
     }),
     prewarm: Effect.fn("Fleet.prewarm")(
       function* (companyId) {
@@ -871,9 +882,12 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
       }
       // The call's event says how it found its company's server and how long it waited, a
       // refused wait included.
-      const search: Search = { startedAt: now, found: "bound" };
+      const search: Search = { startedAt: now };
       const searched = Effect.flatMap(Clock.currentTimeMillis, (end) =>
-        WideEvents.enrich({ companyBind: search.found, bindWaitMs: end - now })
+        WideEvents.enrich({
+          ...(search.found === undefined ? {} : { companyBind: search.found }),
+          bindWaitMs: Math.max(0, end - now)
+        })
       );
       return yield* Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
