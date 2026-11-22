@@ -779,11 +779,15 @@ it.layer(layer, { excludeTestServices: true, timeout: 60_000 })("model calls", (
       const scene = yield* setup();
       const sql = yield* SqlClient.SqlClient;
       // 2.6 s left, 800 ms of it spent opening the journal row: the door has until 1.6 s.
-      const slow = yield* relay(scene, scripted(() => text("never")), {
-        deadlineMs: 2_600,
-        journalMs: 800,
-        reauthorize: Effect.sleep("3 seconds").pipe(Effect.as(scene.binding().identity!))
-      });
+      const slow = yield* relay(
+        scene,
+        scripted(() => text("never")),
+        {
+          deadlineMs: 2_600,
+          journalMs: 800,
+          reauthorize: Effect.sleep("3 seconds").pipe(Effect.as(scene.binding().identity!))
+        }
+      );
       const started = Date.now();
       const reply = yield* slow.send("models.generate", generateArgs());
       const elapsed = Date.now() - started;

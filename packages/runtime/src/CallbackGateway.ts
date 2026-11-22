@@ -479,9 +479,7 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
         if (request.body !== undefined) return yield* new Runtime.InvalidRequest({});
         if (handler.transport === "bytes-get") {
           const body = yield* perform(
-            entered(
-              handler.run(request.args).pipe(Effect.provideService(Binding.Binding, binding))
-            )
+            entered(handler.run(request.args).pipe(Effect.provideService(Binding.Binding, binding)))
           );
           capability.counters.peakFileBytes = Math.max(
             capability.counters.peakFileBytes,

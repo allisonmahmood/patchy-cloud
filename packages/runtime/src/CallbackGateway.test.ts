@@ -1229,43 +1229,42 @@ it.layer(
         assert.strictEqual(recorded.filter((event) => event.type === "model").length, 1);
       }).pipe(Effect.scoped)
   );
-  it.effect(
-    "a model call's refusal is stored once, marked, even in the last refusal slot",
-    () =>
-      Effect.gen(function* () {
-        const capabilities = yield* InvocationCapabilities.make;
-        const limit = yield* ContractLimits.get("tier2.callbacks.bytes");
-        const count = yield* ContractLimits.get("tier2.callbacks.count");
-        const gateway = yield* CallbackGateway.make({
-          "models.generate": {
-            kind: "integration",
-            fence: "action",
-            connectionId: () => "role",
-            run: () => Effect.succeed({ text: "ok", usage: { inputTokens: null, outputTokens: null } })
-          }
-        }).pipe(Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities));
-        const call = { op: "models.generate", args: { connection: "writer" } };
-        const requestBytes = new TextEncoder().encode(JSON.stringify(call)).byteLength;
-        // The door refuses, and its refusal doesn't fit what is left of the call tree's bytes.
-        const action = yield* Fixtures.issue(capabilities, {
-          kind: "action",
-          tree: { bytes: limit - requestBytes - 20 },
-          reauthorize: Effect.fail(new Runtime.SessionExpired({}))
+  it.effect("a model call's refusal is stored once, marked, even in the last refusal slot", () =>
+    Effect.gen(function* () {
+      const capabilities = yield* InvocationCapabilities.make;
+      const limit = yield* ContractLimits.get("tier2.callbacks.bytes");
+      const count = yield* ContractLimits.get("tier2.callbacks.count");
+      const gateway = yield* CallbackGateway.make({
+        "models.generate": {
+          kind: "integration",
+          fence: "action",
+          connectionId: () => "role",
+          run: () =>
+            Effect.succeed({ text: "ok", usage: { inputTokens: null, outputTokens: null } })
+        }
+      }).pipe(Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities));
+      const call = { op: "models.generate", args: { connection: "writer" } };
+      const requestBytes = new TextEncoder().encode(JSON.stringify(call)).byteLength;
+      // The door refuses, and its refusal doesn't fit what is left of the call tree's bytes.
+      const action = yield* Fixtures.issue(capabilities, {
+        kind: "action",
+        tree: { bytes: limit - requestBytes - 20 },
+        reauthorize: Effect.fail(new Runtime.SessionExpired({}))
+      });
+      while (action.refusals.length < count - 1)
+        action.refusals.push({
+          failure: { ok: false, source: "patchy", code: "busy", error: "filler" },
+          status: 429
         });
-        while (action.refusals.length < count - 1)
-          action.refusals.push({
-            failure: { ok: false, source: "patchy", code: "busy", error: "filler" },
-            status: 429
-          });
-        const reply = yield* gateway.callback(action.token, action.attempt, call);
-        assert.deepInclude(reply, { ok: false, details: { sent: false } });
-        // What the guest got is what the host can match when the handler relays it.
-        const relayed = canonicalArgs(reply);
-        assert.isTrue(
-          action.refusals.some((entry) => canonicalArgs(entry.failure) === relayed),
-          "the refusal the guest got is stored"
-        );
-      }).pipe(Effect.scoped)
+      const reply = yield* gateway.callback(action.token, action.attempt, call);
+      assert.deepInclude(reply, { ok: false, details: { sent: false } });
+      // What the guest got is what the host can match when the handler relays it.
+      const relayed = canonicalArgs(reply);
+      assert.isTrue(
+        action.refusals.some((entry) => canonicalArgs(entry.failure) === relayed),
+        "the refusal the guest got is stored"
+      );
+    }).pipe(Effect.scoped)
   );
   it.effect("IMAP runs only in actions, read-only ones included, and caps its arguments", () =>
     Effect.gen(function* () {
