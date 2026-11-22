@@ -724,10 +724,16 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             })
           );
           if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
-          // A host reads a version that declares a model role, but publishing one waits on the
-          // check that its provider is usable and on hosts before it reading the declaration.
-          if (Object.values(manifest.uses).some((use) => use.kind === "models"))
-            return rejected("invalid_manifest", "A model role can't be declared yet.");
+          // A model role is declared only while the host's Models switch is on; a host with it
+          // off still reads a version that declares one.
+          if (
+            !connectionStore.integrations.includes("models") &&
+            Object.values(manifest.uses).some((use) => use.kind === "models")
+          )
+            return rejected(
+              "invalid_manifest",
+              "Models isn't available on this server, so a model role can't be declared."
+            );
           if (manifest.tier > 2) return rejected("tier_mismatch", "Tier 3 is not served yet.");
           if (manifest.tier === 2 && !tier2Enabled)
             return rejected("tier_mismatch", "Tier 2 requires the fleet executor in production.");

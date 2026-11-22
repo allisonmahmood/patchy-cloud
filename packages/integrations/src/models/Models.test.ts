@@ -767,6 +767,21 @@ it.layer(layer)("Models", (it) => {
           Effect.flip(off.disconnect({ ...who, id: provider.id }))
         ]);
         assert.isTrue(hidden.every((error) => error._tag === "ConnectionNotFound"));
+        // A role's guest block holds with the switch off, so a retained version that declares it
+        // stays closed to guests; and nothing resolves a role to publish against.
+        yield* store.blockGuests({ ...who, id: role.id, block: true });
+        assert.deepStrictEqual([...(yield* off.blockingGuests([role.id]))], [role.id]);
+        assert.strictEqual(
+          (yield* Effect.flip(
+            off.resolve(who.companyId, {
+              kind: "models",
+              handle: "triage",
+              id: role.id,
+              revision: 1
+            })
+          ))._tag,
+          "ConnectionNotConnected"
+        );
 
         // The ordinary connection reads the same either way, from the store and the API.
         assert.deepStrictEqual(

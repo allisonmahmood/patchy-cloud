@@ -141,6 +141,11 @@ export const layer = (metadata: ReadonlyArray<DevConnection> = []) => {
           revision: item.connection.metadataRevision
         });
       },
+      // Dev declares no model role: Models are an admin's, on the instance.
+      resolveProviders: (_companyId, roleIds) =>
+        roleIds.length === 0
+          ? Effect.void
+          : Effect.fail(new ConnectionStore.ConnectionNotConnected({})),
       poolCredentials: unavailable,
       connect: unavailable,
       test: unavailable,
