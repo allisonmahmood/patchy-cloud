@@ -231,7 +231,11 @@ export const make = Effect.gen(function* () {
         })
       )
       .pipe(
-        Effect.flatMap((callback) => gateway.callback(token, identity.success, callback, true)),
+        Effect.flatMap((callback) =>
+          gateway.callback(token, identity.success, callback, {
+            modelCall: request.headers["x-patchy-model-call"]
+          })
+        ),
         Effect.catchTags({
           CapabilityRefused: (error) =>
             Effect.succeed(capabilities.rememberRefusal(capability, error.failure, 403)),

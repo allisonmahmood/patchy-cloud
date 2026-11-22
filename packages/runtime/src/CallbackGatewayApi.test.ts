@@ -1,5 +1,5 @@
 import { assert, it } from "@effect/vitest";
-import { FilePutUpload } from "@patchy/api";
+import { FilePutUpload, RuntimeCode, RuntimeFailure } from "@patchy/api";
 import { ContractLimits } from "@patchy/limits";
 import * as Testing from "@patchy/sql/testing";
 import * as Effect from "effect/Effect";
@@ -20,6 +20,19 @@ const headers = (capability: InvocationCapabilities.Capability) => ({
   "x-patchy-attempt-id": capability.attempt.attemptId,
   "x-patchy-process-generation": String(capability.attempt.processGeneration)
 });
+/**
+ * A reply as a loader from before model calls decodes it: strictly, and without the two codes
+ * model calls brought. A reply it can't decode reaches its guest as a lost one.
+ */
+const olderLoaderReply = Schema.decodeUnknownSync(
+  Schema.Struct({
+    ...RuntimeFailure.fields,
+    code: Schema.Literals(
+      RuntimeCode.literals.filter((code) => code !== "output_truncated" && code !== "model_refused")
+    )
+  }),
+  { onExcessProperty: "error" }
+);
 const fetchJson = Effect.fnUntraced(function* (url: string, init: RequestInit) {
   const response = yield* Effect.tryPromise(() => fetch(url, init));
   return yield* Effect.tryPromise(() => response.json());
@@ -311,6 +324,71 @@ it.layer(
         "tier2.callbacks.fileBytes": 3
       })
     )
+  );
+
+  it.effect(
+    "a model call from an execution task of an older release is refused in words its loader reads, nothing sent",
+    () =>
+      Effect.gen(function* () {
+        const capabilities = yield* InvocationCapabilities.make;
+        let ran = 0;
+        const gateway = yield* CallbackGateway.make({
+          "tables.get": { kind: "read", run: () => Effect.succeed(null) },
+          "models.generate": {
+            kind: "integration",
+            fence: "action",
+            connectionId: () => "role",
+            run: () =>
+              Effect.sync(() => {
+                ran++;
+                return { text: "ok", usage: { inputTokens: null, outputTokens: null } };
+              })
+          }
+        }).pipe(Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities));
+        const listener = yield* CallbackGatewayApi.listen().pipe(
+          Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities),
+          Effect.provideService(CallbackGateway.CallbackGateway, gateway)
+        );
+        const capability = yield* Fixtures.issue(capabilities, { kind: "action" });
+        const send = (op: string, marked?: string) =>
+          fetchJson(listener.url, {
+            method: "POST",
+            headers: {
+              ...headers(capability),
+              "content-type": "application/json",
+              ...(marked === undefined ? {} : { "x-patchy-model-call": marked })
+            },
+            body: JSON.stringify({ op, args: { connection: "writer", table: "notes" } })
+          });
+        // Unmarked: its task's proxy held no model permit, and its loader decodes replies strictly
+        // with the codes it knew, which this refusal keeps to.
+        const older = yield* send("models.generate");
+        assert.deepStrictEqual(olderLoaderReply(older), {
+          ok: false,
+          source: "patchy",
+          code: "source_unavailable",
+          error:
+            "This patch runs on an execution task from an older release, which can't call models, so nothing was sent. Try again shortly.",
+          details: { sent: false, reason: "execution" }
+        });
+        assert.strictEqual(ran, 0);
+        // Marked, it runs; a mark that doesn't name the call's own operation is a fault.
+        assert.deepStrictEqual(yield* send("models.generate", "models.generate"), {
+          ok: true,
+          value: { text: "ok", usage: { inputTokens: null, outputTokens: null } }
+        });
+        assert.strictEqual(ran, 1);
+        assert.include(yield* send("models.generate", "models.decide"), {
+          ok: false,
+          code: "invalid_request"
+        });
+        assert.include(yield* send("tables.get", "models.generate"), {
+          ok: false,
+          code: "invalid_request"
+        });
+        assert.deepStrictEqual(yield* send("tables.get"), { ok: true, value: null });
+        assert.strictEqual(ran, 1);
+      }).pipe(Effect.scoped)
   );
 
   it.effect(

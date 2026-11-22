@@ -166,6 +166,19 @@ const bounded = (
   ...limitRefusal(id, value)
 });
 
+/**
+ * What the private listener read with a callback from an execution task, which charged its count
+ * and bytes. In-process callers, which have no execution task between them and the host, pass none.
+ */
+export interface Wire {
+  /**
+   * The model operation the task's loader marked the call as, which its proxy forwards only
+   * while it holds a model permit for the call. Loader and proxy ship in one image, so the mark
+   * also says the loader reads every reply a model call can get.
+   */
+  readonly modelCall: string | undefined;
+}
+
 export class CallbackGateway extends Context.Service<
   CallbackGateway,
   {
@@ -173,8 +186,7 @@ export class CallbackGateway extends Context.Service<
       token: string,
       attempt: InvocationCapabilities.AttemptIdentity,
       input: GuestProtocol.Callback,
-      /** The private listener already charged this request's count and bytes. */
-      transportCharged?: boolean
+      wire?: Wire
     ) => Effect.Effect<GuestProtocol.CallbackReply>;
   }
 >()("@patchy/runtime/CallbackGateway") {}
@@ -221,9 +233,10 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
     token: string,
     attempt: InvocationCapabilities.AttemptIdentity,
     input: GuestProtocol.Callback,
-    transportCharged: boolean,
+    wire: Wire | undefined,
     call: Call
   ): Effect.fn.Return<GuestProtocol.CallbackReply> {
+    const transportCharged = wire !== undefined;
     const resolved = yield* Effect.result(capabilities.resolve(token, attempt));
     if (resolved._tag === "Failure") return resolved.failure.failure;
     const capability = resolved.success;
@@ -328,6 +341,25 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
     // running are a place its work takes as it is handed off, below. The patch's client holds the
     // rest, so a refusal here means a client past its contract.
     const model = isModelCall(request.op);
+    // A model call from an execution task must carry the task's mark for it. One that arrives
+    // without came through a task of an older release, whose proxy holds no model permit and whose
+    // loader can't read every reply a model call gets, so it is refused in words that loader reads,
+    // nothing sent; the task is replaced as Patchy updates. A mark naming another operation is a
+    // fault in the task.
+    if (wire !== undefined && wire.modelCall !== (model ? request.op : undefined))
+      return model && wire.modelCall === undefined
+        ? remember(
+            {
+              ok: false,
+              source: "patchy",
+              code: "source_unavailable",
+              error:
+                "This patch runs on an execution task from an older release, which can't call models, so nothing was sent. Try again shortly.",
+              details: { sent: false, reason: "execution" }
+            },
+            503
+          )
+        : remember(refused("invalid_request", "Malformed callback."), 400);
     if (model) {
       if (
         Buffer.byteLength(encodeJson({ op: request.op, args: request.args })) > limits.modelIngress
@@ -745,10 +777,10 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
     token: string,
     attempt: InvocationCapabilities.AttemptIdentity,
     input: GuestProtocol.Callback,
-    transportCharged = false
+    wire?: Wire
   ): Effect.fn.Return<GuestProtocol.CallbackReply> {
     const call: Call = { started: false };
-    const reply = yield* respond(token, attempt, input, transportCharged, call);
+    const reply = yield* respond(token, attempt, input, wire, call);
     const capability = call.capability;
     // A model call's one stored refusal is the reply the guest receives, so a handler that
     // relays it is matched with its status and operation.
