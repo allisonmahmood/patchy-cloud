@@ -29,6 +29,7 @@ import {
 import {
   ids,
   type LiveConnection,
+  type ModelRole,
   offlineConnections,
   type OfflineConnection,
   type Scenario
@@ -419,6 +420,59 @@ export const saveConnections = Effect.fn("saveConnections")(
     }
   },
   // Every connection with its snapshot, or none, so a resumed `up` never finds one without it.
+  (effect) => Effect.flatMap(SqlClient.SqlClient, (sql) => sql.withTransaction(effect))
+);
+
+/** The scenario's OpenAI provider's id, and a role's, stable so a resumed `up` finds them. */
+export const modelsProviderId = (scenario: Scenario) =>
+  `conn_env_${scenario.company.handle}_openai_main`;
+export const modelRoleId = (scenario: Scenario, role: ModelRole) =>
+  `conn_env_${scenario.company.handle}_models_${role.handle}`;
+
+/**
+ * Saves the scenario's OpenAI provider, with an invented key sealed by the instance's own keys,
+ * and each of its model roles on it, the rows the store's connect and create write. A row already
+ * saved under its id is left be, so a resumed `up` changes nothing.
+ */
+export const saveModels = Effect.fn("saveModels")(
+  function* (scenario: Scenario) {
+    const roles = scenario.models ?? [];
+    if (roles.length === 0) return;
+    const sql = yield* SqlClient.SqlClient;
+    const keys = yield* CredentialKeys.CredentialKeys;
+    const cryptography = yield* Cryptography.Cryptography;
+    const publisher = scenario.people.find((person) => person.key === scenario.publisher)!;
+    const { companyId, userId } = ids(scenario, publisher);
+    const providerId = modelsProviderId(scenario);
+    const sealed = yield* keys.encrypt(
+      { companyId, id: providerId, integration: "openai" },
+      Redacted.make(`sk-dev-${yield* cryptography.token(24)}`)
+    );
+    yield* sql`INSERT INTO connections
+      (id, company_id, integration, handle, description, mode, status, display, credentials,
+        key_id, credential_revision, metadata_revision, created_by)
+      VALUES (${providerId}, ${companyId}, 'openai', 'main', '', 'company', 'connected', '{}',
+        ${sealed.credentials}, ${sealed.keyId}, 1, 1, ${userId})
+      ON CONFLICT DO NOTHING`;
+    for (const role of roles) {
+      const id = modelRoleId(scenario, role);
+      const inserted = yield* sql`INSERT INTO connections
+        (id, company_id, integration, handle, description, mode, status, display, credentials,
+          key_id, credential_revision, metadata_revision, created_by)
+        VALUES (${id}, ${companyId}, 'models', ${role.handle}, ${role.description}, 'company',
+          'connected', '{}', '', '', 1, 1, ${userId})
+        ON CONFLICT DO NOTHING RETURNING id`;
+      if (inserted.length === 0) continue;
+      yield* sql`INSERT INTO model_roles (connection_id, company_id, kind, provider_id, model)
+        VALUES (${id}, ${companyId}, ${role.kind}, ${providerId}, ${role.model})`;
+      yield* sql`INSERT INTO connection_snapshots
+        (company_id, connection_id, integration, revision, snapshot, created_at)
+        VALUES (${companyId}, ${id}, 'models', 1,
+          ${metadataJson({ integration: "models", snapshot: { version: 1, kind: role.kind } })}::jsonb -> 'snapshot',
+          now())`;
+    }
+  },
+  // The provider with every role and its snapshot, or none of them.
   (effect) => Effect.flatMap(SqlClient.SqlClient, (sql) => sql.withTransaction(effect))
 );
 

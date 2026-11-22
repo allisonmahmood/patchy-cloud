@@ -79,10 +79,10 @@ const tokens = (text: string) => Math.max(1, Math.ceil(text.length / 4));
 const wordsOf = (text: string) => text.toLowerCase().match(/[a-z0-9]+/g) ?? [];
 /** A word's first five letters, so "charged" and "charges" read as one word. */
 const stem = (word: string) => word.slice(0, 5);
-/** How many of `other`'s longer words `text` shares, by their stems. */
-const shares = (text: string, other: string) => {
+/** How many of `other`'s words of at least `least` letters `text` shares, by their stems. */
+const shares = (text: string, other: string, least = 4) => {
   const stems = new Set(wordsOf(text).map(stem));
-  return wordsOf(other).filter((word) => word.length > 3 && stems.has(stem(word))).length;
+  return wordsOf(other).filter((word) => word.length >= least && stems.has(stem(word))).length;
 };
 const urgent = ["urgent", "asap", "today", "now", "down", "outage", "blocked", "immediately"];
 
@@ -148,7 +148,8 @@ const decide = (input: string, questions: ReadonlyArray<Question>, refuse: boole
     return {
       type: "predicate",
       name: question.name,
-      probability: shares(input, question.instructions) > 0 ? 0.8 : 0.1
+      // A statement's short words, "this" or "that", say nothing of whether it holds.
+      probability: shares(input, question.instructions, 5) > 0 ? 0.8 : 0.1
     };
   });
 

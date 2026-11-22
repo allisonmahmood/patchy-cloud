@@ -430,7 +430,10 @@ this instance and simulates its sends; `attio` is Northwind Sales with
 Platform with `github/platform` seeded from the developer's development GitHub App;
 `imap` is Fernhill
 Supplies with `imap/invoices` connected to a dev mailbox in Docker on this machine,
-holding the scenario's supplier mail; `guests` is Harbor Works
+holding the scenario's supplier mail; `models` is Juniper Works with an OpenAI
+provider, a decision role and a text role seeded offline, and a tier 2 Request
+triage whose one action calls both, against the dev runner's fake provider;
+`guests` is Harbor Works
 with a tier 1 and a tier 2 patch, both shared with Jo at a second company, Pine
 Studio, and brightline shares Kudos with Taylor at Cedar Works. `up` shares a
 patch's `guests` through the CLI as the publisher. `up` is idempotent and resumes a
@@ -960,6 +963,20 @@ down` and `reset` delete those inboxes with the test key, needing no instance,
   production's `start.ts` never includes that network. `up` skips the connection
   when Docker isn't answering, restarts a stopped mailbox, and `down` and `reset`
   remove it.
+  Model calls go to a fake provider: the dev runner's supervisor starts it on
+  loopback (`packages/integrations/src/models/Fake.ts`) and hands its address to
+  `scripts/dev/src/server.ts` as `PATCHY_DEV_MODELS_URL`, so no dev instance
+  reaches a real provider; production's `start.ts` brings OpenAI's one address
+  and has no way to another. The fake answers OpenAI's Responses and Decisions
+  calls in their documented shapes, from the input, and a marker in the input,
+  such as `[fake:hang]` or `[fake:rate]`, asks for each other way a call ends;
+  the module's header lists them. Each request is a `[models]` line in
+  `dev.log`, without its content. The offline suites use the same fake: the
+  test server sends model calls to a loopback port nothing listens on unless a
+  suite starts it, and `apps/server/src/ModelCalls.test.ts` runs every way a
+  call ends through workerd to the page. `pnpm dev up models` seeds the
+  provider and roles straight into the database, as the store writes them,
+  with an invented key.
   GitHub is GitHub itself, through the development App, "Patchy Cloud Dev". Its
   five `PATCHY_GITHUB_APP_*` settings go in `~/.config/patchy-cloud/dev.env`, and
   the dev runner hands them to the instance's server in either sign-in mode;

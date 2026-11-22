@@ -72,7 +72,7 @@ it.layer(Platform)("scenarios", (it) => {
       const error = yield* Effect.flip(loadScenario(repo, "nope"));
       expect(error._tag).toBe("ScenarioNotFound");
       expect(error.message).toContain(
-        "brightline, dense, github, guests, imap, kit-room, pidgeon, team"
+        "brightline, dense, github, guests, imap, kit-room, models, pidgeon, team"
       );
     })
   );
@@ -125,6 +125,30 @@ it.layer(Platform)("scenarios", (it) => {
       );
       const error = yield* Effect.flip(loadScenario(root, "loose"));
       expect(error.message).toContain("desk names pidgeon/support");
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect("takes a patch's model roles from its models, and only gpt-6-luna to decide", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped();
+      const write = (name: string, model: string) =>
+        Effect.andThen(
+          fs.makeDirectory(path.join(root, "scenarios", name), { recursive: true }),
+          fs.writeFileString(
+            path.join(root, "scenarios", name, "scenario.json"),
+            `{"company":{"name":"Roles","handle":"roles"},"publisher":"a",
+              "people":[{"key":"a","name":"A","email":"a@roles.example","role":"admin"}],
+              "models":[{"handle":"triage","kind":"decision","description":"Routes","model":"${model}"}],
+              "patches":[{"repo":"desk","tier":2,"description":"Desk","connections":["models/triage"]}]}`
+          )
+        );
+      yield* write("deciding", "gpt-6-luna");
+      expect((yield* loadScenario(root, "deciding")).scenario.models).toHaveLength(1);
+      yield* write("writing", "gpt-5-mini");
+      const error = yield* Effect.flip(loadScenario(root, "writing"));
+      expect(error.message).toContain("only gpt-6-luna decides");
     }).pipe(Effect.scoped)
   );
 

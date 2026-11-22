@@ -1,0 +1,43 @@
+{
+  "company": {
+    "name": "Juniper Works",
+    "handle": "juniper"
+  },
+  "people": [
+    {
+      "key": "allison",
+      "name": "Allison Mahmood",
+      "email": "allison@juniperworks.example",
+      "role": "admin"
+    },
+    {
+      "key": "sam",
+      "name": "Sam Ortega",
+      "email": "sam@juniperworks.example",
+      "role": "member"
+    }
+  ],
+  "publisher": "allison",
+  "models": [
+    {
+      "handle": "triage",
+      "kind": "decision",
+      "description": "Routes a support request to a team and rates how urgent it is.",
+      "model": "gpt-6-luna"
+    },
+    {
+      "handle": "writer",
+      "kind": "text",
+      "description": "Writes short notes and reply plans about support requests.",
+      "model": "gpt-5-mini"
+    }
+  ],
+  "patches": [
+    {
+      "repo": "request-triage",
+      "tier": 2,
+      "connections": ["models/triage", "models/writer"],
+      "description": "Juniper's support requests triaged by the company's model roles: a team and an urgency with their probabilities, a line about the request and a typed reply plan, in one action."
+    }
+  ]
+}
