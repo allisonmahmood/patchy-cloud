@@ -268,11 +268,14 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
     call: Call
   ): Effect.fn.Return<GuestProtocol.CallbackReply> {
     const transportCharged = wire !== undefined;
+    // Classified first: a model call whose attempt is fenced after the listener read it still
+    // says nothing was sent.
+    const modelCall = isModelCall(input.op);
     const resolved = yield* Effect.result(capabilities.resolve(token, attempt));
-    if (resolved._tag === "Failure") return resolved.failure.failure;
+    if (resolved._tag === "Failure")
+      return modelCall ? unsent(resolved.failure.failure) : resolved.failure.failure;
     const capability = resolved.success;
     call.capability = capability;
-    const modelCall = isModelCall(input.op);
     // An integration's refusal is recorded with its operation, so a handler that relays it keeps
     // that integration's details. The record stays with the host: published guests decode
     // replies strictly and predate the field. Only actions use integrations, and actions never
