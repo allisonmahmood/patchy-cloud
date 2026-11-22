@@ -814,6 +814,34 @@ it.layer(layer, { excludeTestServices: true, timeout: 60_000 })("model calls", (
     }).pipe(Effect.scoped)
   );
 
+  it.effect(
+    "journal a call ended while it waited at the host as a failure, and one ended after it was sent as unknown",
+    () =>
+      Effect.gen(function* () {
+        const scene = yield* setup();
+        const sql = yield* SqlClient.SqlClient;
+        const provider = scripted((_, body) => (held(body) ? "hang" : text("answered")));
+        const action = yield* relay(scene, provider);
+        // The first is sent and held; the second waits for the provider's one place, unsent.
+        const sent = yield* Effect.forkChild(action.send("models.generate", generateArgs("hold")));
+        while (provider.sent.length === 0) yield* Effect.sleep("5 millis");
+        const queued = yield* Effect.forkChild(action.send("models.generate", generateArgs()));
+        yield* Effect.sleep("100 millis");
+        assert.strictEqual(provider.sent.length, 1);
+        yield* action.end;
+        yield* Fiber.join(sent);
+        yield* Fiber.join(queued);
+        yield* Effect.sleep("100 millis");
+        const rows = yield* sql<{ readonly outcome: string; readonly outcome_code: string }>`
+          SELECT outcome, outcome_code FROM runtime_calls
+          WHERE company_id = ${scene.owner.company.id} AND op = 'models.generate'
+          ORDER BY at, id`;
+        assert.deepStrictEqual(rows, [
+          { outcome: "unknown", outcome_code: "unknown_outcome" },
+          { outcome: "failure", outcome_code: "access_denied" }
+        ]);
+      }).pipe(Effect.scoped)
+  );
   it.effect("journal what the caller was told when the action ends at a stalled door", () =>
     Effect.gen(function* () {
       const scene = yield* setup();

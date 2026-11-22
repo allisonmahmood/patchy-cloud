@@ -515,6 +515,8 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
               : Infinity
         )
       );
+      // A model call's dispatch, which its source marks as the request reaches the transport.
+      const dispatch = { sent: false };
       const effectivePrincipal = viewerAuthority(request.op)
         ? capability.binding.identity!.user.id
         : "patch";
@@ -526,7 +528,8 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
         ...(handler.kind === "read" ? {} : { deadline: now + deadlineMs }),
         ...(handler.fence === "action" && capability.modelPool !== undefined
           ? { modelPool: capability.modelPool }
-          : {})
+          : {}),
+        ...(modelCall ? { modelDispatch: dispatch } : {})
       });
       /**
        * The handler's work, marking the call started as it is entered: past every check, the
@@ -660,14 +663,16 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
             : Option.none();
           const reply = Exit.isSuccess(result) ? result.value : undefined;
           if (Exit.isFailure(result)) capability.mutation.value?.abort(result.cause);
-          // A model call refused before its handler ran, or one that says it sent nothing, has a
-          // known outcome: it failed, and no provider was asked.
+          // A model call refused before its handler ran, one that says it sent nothing, or one
+          // ended before its request reached the transport, such as while it waited at the host,
+          // has a known outcome: it failed, and no provider was asked.
           const unsent =
             modelCall &&
             (!call.started ||
               (Option.isSome(failure) &&
                 "details" in failure.value &&
-                failure.value.details?.sent === false));
+                failure.value.details?.sent === false) ||
+              (Exit.isFailure(result) && Option.isNone(failure) && !dispatch.sent));
           // A model call sent and then cut off with no answer is the design's lost reply: bytes
           // left, and whether the provider acted on them is unknown.
           const lost =
