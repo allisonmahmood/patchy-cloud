@@ -1,4 +1,3 @@
-import type { Integration } from "@patchy/api";
 import { Cryptography } from "@patchy/core";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
@@ -7,6 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
+import type * as Models from "./models/Models.js";
 
 export class InvalidCredentialKeys extends Schema.TaggedError<InvalidCredentialKeys>()(
   "InvalidCredentialKeys",
@@ -43,10 +43,11 @@ export class CredentialDecryptionFailed extends Schema.TaggedError<CredentialDec
 
 export type CredentialError = CredentialEncryptionFailed | CredentialDecryptionFailed;
 
+/** What sealed credentials are bound to: a provider's are bound to its integration as any other's. */
 export interface Identity {
   readonly companyId: string;
   readonly id: string;
-  readonly integration: Integration;
+  readonly integration: Models.Kind;
 }
 
 export interface EncryptedCredentials {

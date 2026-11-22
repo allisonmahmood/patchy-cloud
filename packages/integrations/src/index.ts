@@ -33,5 +33,6 @@ export * as GithubAccess from "./github/Access.js";
 export * as GithubFlows from "./github/Flows.js";
 export * as GithubConnection from "./github/Connection.js";
 export * as GithubOperations from "./github/Operations.js";
+export * as Models from "./models/Models.js";
 export { migrations } from "./migrations.js";
 export * as PatchVisibility from "./PatchVisibility.js";

@@ -116,6 +116,13 @@ const connectionDetailLines = (connection: typeof ConnectionDetail.Type) => {
       : [])
   ];
   if (connection.snapshot === null) return [...lines, "Snapshot: unavailable"];
+  if (connection.integration === "models")
+    return [
+      ...lines,
+      `Kind: ${connection.snapshot.kind}`,
+      `Snapshot revision: ${connection.snapshot.revision}`,
+      `Taken at: ${connection.snapshot.takenAt}`
+    ];
   if (connection.integration === "pidgeon") {
     const snapshot = connection.snapshot;
     return [

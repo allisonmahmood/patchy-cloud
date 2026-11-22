@@ -88,7 +88,10 @@ export const services = (
     Layer.provideMerge(PatchVisibilityTest.layer),
     Layer.provideMerge(Teams.layer),
     Layer.provideMerge(Testing.layer()),
-    Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env))),
+    // Models are on in tests, as in the dev runner.
+    Layer.provide(
+      ConfigProvider.layer(ConfigProvider.fromUnknown({ ...env, PATCHY_MODELS: "true" }))
+    ),
     Layer.provideMerge(NodeCryptography.layer)
   );
 
