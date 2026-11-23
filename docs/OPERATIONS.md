@@ -291,12 +291,14 @@ before it.
   197 to 203 of 288, 187 to 191 of 320) and stayed there; three first rounds of
   256 stopped short of that, at 130 to 160, as first rounds on macOS did before.
   Every run finished and no process was ended. In every run of 288 and 320 and
-  one of 256, one more action's 32 ordinary callbacks were still waiting at ten
-  seconds, as a full count makes them; in the other five runs they passed, 32 in
-  10 and 11 ms and 256 in 46 to 48 ms. Before the change most runs past the
-  limit failed, their late calls arriving while the next phase was sampled, and
-  two ended the workerd process. With the limit at 512, measured before the
-  change only, all 256 were held.
+  one of 256, one more action making 32 ordinary callbacks had not returned at
+  ten seconds, as a full count leaves it: the script times the whole action, so
+  this doesn't say whether the action or its callbacks were the ones waiting. In
+  the other five runs it returned, with 32 callbacks in 10 and 11 ms and with
+  256 in 46 to 48 ms. Before the change most runs past the limit failed, their
+  late calls arriving while the next phase was sampled, and two ended the
+  workerd process. With the limit at 512, measured before the change only, all
+  256 were held.
 - `measureModels.ts`'s probe answered with a median of 0.1 ms, none timed out
   and none failed, in every phase of every one of those runs: an invoke no
   longer goes through fetch, so the callbacks a full count leaves in fetch are
@@ -326,10 +328,11 @@ before it.
   host share one count, Bun's 256; its probes of its workerd processes are
   outside it. With Models off, one company bound to a task, four host replicas
   (as during a deploy) each running `tier2.actions.company` (8) actions with
-  `tier2.callbacks.outstanding` (8) callbacks open, the task holds 256 callback
-  requests and 32 invokes: 288, past the count before counting queries or
-  mutations, so the rest wait their turn. Models adds up to 32 held model calls
-  per task, each keeping its place while the host answers.
+  `tier2.callbacks.outstanding` (8) callbacks open, the task is asked for 256
+  callback requests beside its 32 invokes: 288 for 256 places before counting
+  queries or mutations, so with every invoke sent 224 callbacks are forwarded
+  and 32 wait their turn. Models adds up to 32 held model calls per task, each
+  keeping its place while the host answers.
 - Raising Bun's limit to 512, which the count follows, would leave that load
   room by this arithmetic, but it is an estimate, not a reserve, so production
   doesn't set it.
