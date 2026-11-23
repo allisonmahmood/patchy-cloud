@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 // Node's structural comparison ignores object key order while preserving array order.
 import { isDeepStrictEqual } from "node:util";
-import { Manifest } from "@patchy/api";
+import { Manifest, isShared } from "@patchy/api";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -20,7 +20,7 @@ const canonical = (definition: Definition): Definition =>
   "columns" in definition
     ? {
         ...definition,
-        shared: definition.shared ?? false,
+        shared: isShared(definition),
         columns: Object.fromEntries(
           Object.entries(definition.columns).map(([name, column]) => [
             name,
@@ -34,7 +34,7 @@ const canonical = (definition: Definition): Definition =>
           ])
         )
       }
-    : { ...definition, shared: definition.shared ?? false };
+    : { ...definition, shared: isShared(definition) };
 
 /** Compare executed definitions with the previous generation, before replacing it. */
 export const primitiveReminders = Effect.fn("primitiveReminders")(function* (
