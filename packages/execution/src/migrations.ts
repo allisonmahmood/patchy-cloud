@@ -108,5 +108,13 @@ export const migrations: Migrations = {
   "0025_agent_idle": ddl(
     `ALTER TABLE execution_bindings ADD COLUMN agent_activity_at DOUBLE PRECISION NOT NULL DEFAULT 0`,
     `ALTER TABLE execution_binding_history ADD COLUMN agent_only BOOLEAN`
+  ),
+  // Cold companies waiting on an empty spare pool, one row per company so duplicate waiters
+  // collapse and housekeeping counts them alongside the wake rate.
+  "0046_execution_pool_waits": ddl(
+    `CREATE TABLE execution_pool_waits (
+      company_id TEXT PRIMARY KEY,
+      until DOUBLE PRECISION NOT NULL
+    )`
   )
 };

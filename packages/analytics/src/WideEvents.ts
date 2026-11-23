@@ -99,9 +99,10 @@ const invocationMetrics = {
    */
   rebound: Schema.optionalKey(Schema.Boolean),
   /**
-   * How a tier 2 call found its company's server: already `bound`, a ready `spare` bound to it,
-   * or a `launch` it waited for because the pool was empty, and how long admission waited for
-   * it, a wait refused at `execution.pool.wait` included.
+   * How a tier 2 call or stream startup bind found its company's server: already `bound`, a ready
+   * `spare` bound to it, or a `launch` it waited for because the pool was empty, and how long
+   * admission waited for it, a wait refused at `execution.pool.wait` included. On a `stream` event
+   * this records the initial startup bind only; background re-holds after idling leave it as it was.
    */
   companyBind: Schema.optionalKey(Schema.Literals(["bound", "spare", "launch"])),
   bindWaitMs: Schema.optionalKey(Schema.Number)
@@ -398,6 +399,8 @@ export const StreamEvent = Schema.Struct({
   versionId: attribution.versionId,
   viewerId: attribution.viewerId,
   tier: attribution.tier,
+  companyBind: invocationMetrics.companyBind,
+  bindWaitMs: invocationMetrics.bindWaitMs,
   ...documentFields,
   ...streamMetrics
 });
@@ -551,6 +554,10 @@ export const capture = Effect.map(
     <A, E, R>(work: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
       Effect.provideService(work, current, event)
 );
+
+/** Run work outside any enclosing wide event, so its enrichments never land on the caller's. */
+export const detach = <A, E, R>(work: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+  Effect.provideService(work, current, undefined);
 
 /** Add disjoint measurements; elapsed invocation time is never additive. */
 export const add = (

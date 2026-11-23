@@ -8,7 +8,7 @@ import { primitiveReminders } from "./primitiveReminders.js";
 import { RELEASE, MANIFEST_VERSION } from "./release.js";
 
 it.effect(
-  "ignores explicit defaults and redescribed definitions but notices a newly unique index",
+  "ignores explicit defaults and redescribed definitions but notices an unshare and a newly unique index",
   () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -33,17 +33,25 @@ it.effect(
       yield* fs.writeFileString(path.join(generated, "manifest.json"), JSON.stringify(before));
       const explicit: typeof Manifest.Type = {
         ...before,
-        files: { documents: { description: "Documents by filename.", shared: false } },
+        files: { documents: { description: "Documents by filename.", shared: true } },
         tables: {
           notes: {
             description: "Notes keyed by title.",
             columns: { title: { kind: "text", optional: false } },
             indexes: { byTitle: { columns: ["title"], unique: false } },
-            shared: false
+            shared: true
           }
         }
       };
       assert.deepStrictEqual(yield* primitiveReminders(root, explicit), []);
+      // An omitted flag shares, so `shared: false` is a real change.
+      const unshared: typeof Manifest.Type = {
+        ...before,
+        files: { documents: { description: "Documents by filename.", shared: false } }
+      };
+      assert.deepStrictEqual(yield* primitiveReminders(root, unshared), [
+        "Store `documents` changed since its last generation; check that its description still holds: 'Documents by filename.'"
+      ]);
       const changed: typeof Manifest.Type = {
         ...explicit,
         tables: {

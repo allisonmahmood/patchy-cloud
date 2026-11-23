@@ -862,7 +862,7 @@ const services = OperatingLimits.layer
 const setupFleet = Effect.fn("EcsFleetTest.setup")(function* () {
   yield* TestClock.setTime(1_000_000);
   const sql = yield* SqlClient.SqlClient;
-  yield* sql`TRUNCATE execution_deployments, execution_housekeeping, execution_breakers CASCADE`;
+  yield* sql`TRUNCATE execution_deployments, execution_housekeeping, execution_breakers, execution_pool_waits CASCADE`;
   yield* sql`INSERT INTO execution_rollout(singleton) VALUES (true)`;
   const aws = yield* cloud;
   const host = Effect.fn("EcsFleetTest.host")(function* (replicaId: string) {

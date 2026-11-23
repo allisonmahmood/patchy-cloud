@@ -113,6 +113,7 @@ const baselineSnapshot = (
           name,
           description: definition.description,
           resourceRevision: "0",
+          // Inventory responses always carry the stored live boolean (unlike manifests, which default true via `isShared`).
           shared: definition.shared === true,
           createdAt: epoch
         })
@@ -154,6 +155,7 @@ const baselineSnapshot = (
           patchId,
           name,
           description: definition.description,
+          // Inventory responses always carry the stored live boolean (unlike manifests, which default true via `isShared`).
           shared: definition.shared === true,
           resourceRevision: "0"
         })
