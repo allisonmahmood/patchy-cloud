@@ -425,22 +425,43 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
       }).pipe(Effect.catchTags({ SchemaError: Effect.die }));
       const replenishLock = yield* Semaphore.make(1);
       const inventoryRecorded = yield* Deferred.make<void>();
+      const window = config.get("execution.pool.wakeWindow");
+      const grace = config.get("execution.pool.wait");
+      const targetOf = (
+        measured: { readonly wakes: number; readonly coldStart: number; readonly waiting: number },
+        isCurrent: boolean
+      ) => {
+        const baseline = Math.ceil(
+          Math.max(minimumSpares, isCurrent ? (measured.wakes / window) * measured.coldStart : 0)
+        );
+        return isCurrent ? baseline + measured.waiting : baseline;
+      };
+      // Reclaim surplus ready spares of the current revision once their retry grace passes. Runs
+      // beside `replenish` so slow provider stops never block reservations using free budget slots.
+      const trimSurplus = Effect.gen(function* () {
+        yield* Deferred.await(inventoryRecorded);
+        const rollout = yield* store.rollout;
+        if (rollout.currentRevision === null) return;
+        const currentNow = yield* Clock.currentTimeMillis;
+        const measured = yield* store.target(currentNow, window, rollout.currentRevision);
+        const keep = targetOf(measured, true);
+        if (measured.readySpares <= keep) return;
+        yield* guard;
+        const trimmed = yield* store.trimSpares(rollout.currentRevision, keep, currentNow - grace);
+        yield* Effect.forEach(
+          trimmed,
+          (taskId) => isolate(taskId, drainTask(taskId, "deployment")),
+          { concurrency: 8, discard: true }
+        );
+      });
       const replenish = Effect.gen(function* () {
         yield* Deferred.await(inventoryRecorded);
         const rollout = yield* store.rollout;
         const revisions = [...new Set([rollout.stagedRevision, rollout.currentRevision])];
         for (const revision of revisions) {
           if (revision === null) continue;
-          const window = config.get("execution.pool.wakeWindow");
           const measured = yield* store.target(yield* Clock.currentTimeMillis, window, revision);
-          const target = Math.ceil(
-            Math.max(
-              minimumSpares,
-              revision === rollout.currentRevision
-                ? (measured.wakes / window) * measured.coldStart
-                : 0
-            )
-          );
+          const target = targetOf(measured, revision === rollout.currentRevision);
           const reserved: string[] = [];
           const budget = config.get("execution.fleet.budget");
           let budgetSpares: number | undefined;
@@ -619,7 +640,7 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
         );
       });
       const work = Effect.gen(function* () {
-        yield* Effect.all([reconcileTasks, reconcileBindings, replenish], {
+        yield* Effect.all([reconcileTasks, reconcileBindings, trimSurplus, replenish], {
           concurrency: "unbounded"
         }).pipe(
           // Slow or unhealthy bindings must not prevent subsequent spare replenishment.
@@ -631,6 +652,11 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
           )
         );
         yield* guard;
+        yield* store.sweepWaits(yield* Clock.currentTimeMillis).pipe(
+          Effect.catchTags({
+            SqlError: () => Effect.logWarning("Execution pool wait sweep failed")
+          })
+        );
         const rollout = yield* store.rollout;
         if (
           rollout.currentRevision === null &&
@@ -693,7 +719,8 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
   /**
    * The company's admissible binding, claiming a spare for `caller` when it has none and
    * waiting for a launched one when the pool is empty, until the search's one
-   * `execution.pool.wait` runs out. It records how it found the server on `search`. A
+   * `execution.pool.wait` runs out. An empty-pool miss records the company's wait inside `claim`
+   * so housekeeping counts it across replicas. It records how it found the server on `search`. A
    * prewarm's work is refused at once instead: its prewarm already claimed what it could.
    */
   const find = Effect.fn("Fleet.find")(
@@ -708,6 +735,7 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
       if (caller === "prewarm") return yield* busy(0);
       const wait = yield* limits.get({ companyId, limitId: "execution.pool.wait" });
       search.until ??= search.startedAt + wait.value;
+      const until = search.until;
       return yield* Effect.gen(function* () {
         let claimed: FleetStore.Binding | undefined;
         while (true) {
@@ -719,7 +747,9 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
               options.replicaId,
               now,
               now - search.startedAt,
-              FleetStore.clocksOf(caller, now)
+              FleetStore.clocksOf(caller, now),
+              undefined,
+              until
             );
             if (claimed === undefined) search.found = "launch";
           }

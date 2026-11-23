@@ -154,7 +154,7 @@ PGlite dev has one connection. It does not reproduce production connection conte
 | `execution.fleet.budget` | operating | 100 | tasks | host | Maximum live tasks across bound companies, draining tasks and spares | `busy` | No | deployment |
 | `execution.housekeeping.interval` | operating | 5000 | milliseconds | host | Interval between fleet reconciliation and replenishment passes | None | No | deployment |
 | `execution.housekeeping.lease` | operating | 15000 | milliseconds | host | Exclusive fleet housekeeping ownership window | None | No | deployment |
-| `execution.pool.spares` | operating | 2 | tasks | host | Global spare floor; target is max(floor, wake rate times measured cold start) within fleet budget | None | No | deployment |
+| `execution.pool.spares` | operating | 2 | tasks | host | Global spare floor; target is ceil(max(floor, wake rate times measured cold start)) plus waiting companies (current revision only), within fleet budget | None | No | deployment |
 | `execution.pool.wakeWindow` | operating | 900000 | milliseconds | host | Observation window for company wake rate | None | No | deployment |
 | `execution.pool.wait` | operating | 40000 | milliseconds | company | Empty-pool wait before start_failed, outside the handler's deadline; held calls are never replayed, and a worker agent's call is refused with 15 seconds to wait | `busy` | Yes | deployment |
 | `execution.company.idle` | operating | 1800000 | milliseconds | company | Release after no active tier 2 documents and no in-flight work, from the last document letting go or page work settling; worker agents' calls never touch it | None | Yes | deployment |
