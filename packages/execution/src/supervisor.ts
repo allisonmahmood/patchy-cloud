@@ -43,19 +43,22 @@ const decodeInvoke = Schema.decodeUnknownEffect(Management.InvokeRequest, strict
 const decodeStop = Schema.decodeUnknownEffect(Management.StopRequest, strict);
 const decodeStats = Schema.decodeUnknownEffect(Management.StatsRequest, strict);
 const decodeTouch = Schema.decodeUnknownEffect(Management.TouchRequest, strict);
-/** How many requests Bun's fetch runs at once, the ceiling invokes had while they went through it. */
+/** How many requests Bun's fetch runs at once, which invokes and callbacks once shared with probes. */
 const bunFetchesAtOnce = 256;
 /**
- * Invokes in flight to workers at once, across the task. They keep the ceiling they had when they
- * shared fetch with callbacks and probes: past it each waits its turn in order, inside the
- * dispatch, after its attempt is registered with the watchdog, as it waited in fetch's queue. A
- * burst of invokes alone behaves exactly as it did then; only held callbacks no longer count
- * against it. Binds, probes and startup checks never share it. Tests inject a small one.
+ * Invokes and forwarded callbacks in flight at once across the task, together: the slots they took
+ * in fetch's queue when every request this supervisor made went through it. Each waits its turn
+ * where it waited there, first come first served: an invoke inside its dispatch, after its attempt
+ * is registered; a callback around its forward to the host, after its body is read. So the task
+ * runs as much of that work at once as before, in the same order. What differs: binds, health
+ * probes and startup checks are outside it (they no longer take a slot, about two per process, so
+ * the task can run that much more), and the watchdog's deadline kill counts only attempts that
+ * have been sent. The number is fixed, under Node too, and ignores a Bun override of fetch's
+ * count. Tests inject a small one.
  */
-export const InvokesAtOnce = Context.Reference<number>(
-  "@patchy/execution/supervisor/InvokesAtOnce",
-  { defaultValue: () => bunFetchesAtOnce }
-);
+export const FetchSlots = Context.Reference<number>("@patchy/execution/supervisor/FetchSlots", {
+  defaultValue: () => bunFetchesAtOnce
+});
 const killGrace = 1_000;
 const idleWatch = 1_000;
 const standbyQuiet = 1_000;
@@ -139,6 +142,12 @@ interface Invocation {
   readonly capability: string;
   readonly target: string;
   readonly result: Deferred.Deferred<GuestProtocol.InvokeReply, SupervisorError>;
+  /**
+   * When it took its slot and its request started. Only then can its deadline end the process, a
+   * second past its deadline or, sent late, a second past its sending, so the loader's answer to a
+   * late call always arrives first.
+   */
+  dispatchedAt?: number;
 }
 interface Resident {
   readonly binding: GuestProtocol.BundleBinding;
@@ -201,7 +210,8 @@ export class Supervisor extends Context.Service<
 export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
   const cryptography = yield* Cryptography.Cryptography;
   // Callbacks forwarded to the host go through the runtime's fetch; everything sent to this
-  // supervisor's own processes goes through `workers`, so it never waits behind them.
+  // supervisor's own processes goes through `workers`, outside fetch's queue. Invokes and
+  // forwarded callbacks share `slots` below; binds and probes never take one.
   const http = yield* HttpClient.HttpClient;
   const workers = yield* WorkerHttp.WorkerHttp;
   const scope = yield* Effect.scope;
@@ -236,7 +246,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
   const callbackUrls = new Set(options.callbackUrls);
   const reports = new Map<string, Management.ProcessReport>();
   const admission = yield* Semaphore.make(1);
-  const invokes = yield* Semaphore.make(yield* InvokesAtOnce);
+  const slots = yield* Semaphore.make(yield* FetchSlots);
   let companyId: string | null = null;
   let bindingEpoch = 0;
   let generation = 0;
@@ -502,6 +512,8 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
         };
         if (request.headers["x-patchy-callback"] !== undefined)
           headers["x-patchy-callback"] = request.headers["x-patchy-callback"];
+        // Its slot, in order, held until the host's answer is read, as fetch's was.
+        yield* slots.takeScoped(1);
         const response = yield* http
           .execute(
             HttpClientRequest.post(invocation.target).pipe(
@@ -521,6 +533,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
               : { "x-patchy-file-body": response.headers["x-patchy-file-body"] }
         });
       }).pipe(
+        Effect.scoped,
         Effect.raceFirst(Deferred.await(resident.dead)),
         Effect.timeout(Math.max(1, invocation.attempt.deadline - Date.now())),
         Effect.catchTags({
@@ -693,7 +706,9 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
         yield* terminate(resident, "memory");
       else if (
         [...resident.invocations.values()].some(
-          ({ attempt }) => now >= attempt.deadline + killGrace
+          ({ attempt, dispatchedAt }) =>
+            dispatchedAt !== undefined &&
+            now >= Math.max(attempt.deadline, dispatchedAt) + killGrace
         )
       )
         yield* terminate(resident, "deadline");
@@ -991,20 +1006,24 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
             processGeneration: resident.generation,
             deadline: request.deadline
           };
-          resident.invocations.set(key, {
+          const registered: Invocation = {
             attempt,
             epoch,
             capability: request.callback.capability,
             target: request.callback.url,
             result
-          });
+          };
+          resident.invocations.set(key, registered);
           resident.callsServed++;
           resident.speculative = false;
           let uncertain = false;
-          // Its turn under the invoke ceiling, in order. Waiting, it takes nothing; sent, it holds
-          // its turn until the loader answers or the request is abandoned.
-          const send = invokes.withPermit(
-            engine.invoke({ ...request, callback: { ...request.callback, url: target } })
+          // Its slot, in order. Waiting, it takes nothing and its deadline ends nothing; sent, even
+          // late, it holds the slot until the loader answers or the request is abandoned.
+          const send = slots.withPermit(
+            Effect.suspend(() => {
+              registered.dispatchedAt = Date.now();
+              return engine.invoke({ ...request, callback: { ...request.callback, url: target } });
+            })
           );
           // The supervisor owns dispatch. Losing the HTTP caller must not erase a running deadline.
           yield* send.pipe(

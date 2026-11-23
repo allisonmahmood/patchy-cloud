@@ -1,22 +1,26 @@
 /**
  * Shows, under the Bun running it, whether an execution task's supervisor keeps healthy processes
- * when callbacks to the host fill the runtime's fetch, which runs 256 at once, and when invokes
- * alone come in a burst. It starts a real supervisor and workerd and a loopback host, then runs
- * these phases, all by default or those named:
- * - `crowd`: a baseline of the probes of the process under test while it holds one call; then
- *   more held callbacks than Bun runs at once, kept past `execution.stall`, with one short call
- *   sent behind them; then every call and callback accounted for;
+ * while its invokes and forwarded callbacks fill the 256 slots they share, as they filled fetch's
+ * 256. It starts a real supervisor and workerd and a loopback host, then runs these phases, all
+ * by default or those named:
+ * - `crowd`: a baseline of the process under test holding one call; then more callbacks than
+ *   the shared slots admit, held past `execution.stall`, with a short call sent behind them that
+ *   waits its turn; then every call and callback accounted for;
  * - `fan-out`: one call fanning out 400 callbacks that the host answers 8 at a time;
  * - `burst`: 352 calls at once, each holding 1.375 MiB for 1.2 s within a 3 s deadline, which
- *   only fits a process's 512 MiB if no more than 256 run at once;
- * - `stall`: a process that really stalls, which must be ended for `stall` at `execution.stall`.
+ *   fits a process's 512 MiB only if no more than 256 run at once;
+ * - `mixed`: twenty calls retaining 100 MiB between them and holding 160 callbacks, then 200
+ *   calls each holding 2 MiB for 1.2 s, which fit only in the slots the twenty leave;
+ * - `queued`: 256 long calls to one process, then a short call to a second process that waits
+ *   for a slot past its deadline and a second, and must not get its process ended;
+ * - `stall`: a process that really stalls, ended for `stall` at `execution.stall`.
  * Probes are timed from the request to the end of the body read, and only the process under
  * test's. The run fails at once if a healthy process's call is ended `process_killed`, and at the
  * end if anything it expects did not happen. Nothing outside this machine is reached.
  *
- *   bun --conditions=development scripts/dev/src/crowdedProbes.ts [crowd] [fan-out] [burst] [stall]
+ *   bun --conditions=development scripts/dev/src/crowdedProbes.ts [phase...]
  */
-// @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalDate:off globalDateInEffect:off globalFetch:off -- a loopback host paced by its own timers, wall-clock deadlines like the supervisor's own, and a Web Response wrapping a probe body already read.
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalDate:off globalDateInEffect:off globalFetch:off globalJsonInEffect:off -- a loopback host paced by its own timers and reading callback bodies, wall-clock deadlines like the supervisor's own, and a Web Response wrapping a probe body already read.
 import { createServer, type ServerResponse } from "node:http";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import { NodeCryptography, Cryptography } from "@patchy/core";
@@ -53,7 +57,8 @@ class Unexpected extends Schema.TaggedError<Unexpected>()("Unexpected", {
 }
 
 /**
- * `crowd.fanOut` holds `args.callbacks` callbacks open at once and says how they ended; `spaced`
+ * `crowd.fanOut` waits `args.after` ms, keeps `args.retain` bytes, then holds `args.callbacks`
+ * callbacks open at once, each with its sequence number, and says how they ended; `spaced`
  * starts them eight at a time, 2 ms apart, so no burst overflows a listen backlog (128 on
  * macOS). `crowd.burst` holds `args.bytes` for `args.ms`, from a pool of buffers it reuses, so its
  * memory follows how many run at once rather than when garbage is collected. `crowd.spin` never
@@ -71,18 +76,20 @@ export default { async fetch(request, env, ctx) {
     pool.push(held);
     return Response.json({ ok: true, value: { ok: held.length === input.args.bytes ? 1 : 0, busy: 0, other: 0 } });
   }
+  if (input.args.after) await new Promise((resolve) => setTimeout(resolve, input.args.after));
+  const retained = new Uint8Array(input.args.retain ?? 0).fill(1);
   const calls = [];
-  for (let index = 0; index < input.args.callbacks; index++) {
-    calls.push(ctx.props.callbacks.call({ op: "hold", args: {} }));
-    if (input.args.spaced && index % 8 === 7) await new Promise((resolve) => setTimeout(resolve, 2));
+  for (let seq = 0; seq < (input.args.callbacks ?? 0); seq++) {
+    calls.push(ctx.props.callbacks.call({ op: "hold", args: { seq } }));
+    if (input.args.spaced && seq % 8 === 7) await new Promise((resolve) => setTimeout(resolve, 2));
   }
   const replies = await Promise.all(calls);
-  const ended = { ok: 0, busy: 0, other: 0 };
+  const ended = { ok: 0, busy: 0, other: retained.length === (input.args.retain ?? 0) ? 0 : 1 };
   for (const reply of replies) ended[reply.ok ? "ok" : reply.code === "busy" ? "busy" : "other"]++;
   return Response.json({ ok: true, value: ended });
 }};`;
 const companyId = "com_crowded";
-/** More callbacks than Bun's fetch runs at once: 40 calls of 8, as eight actions of eight do. */
+/** More callbacks than the shared slots admit: 40 calls of 8, as eight actions of eight do. */
 const crowdCalls = 40;
 const callbacksPerCall = 8;
 const fanOut = 400;
@@ -91,12 +98,18 @@ const burstCalls = 352;
 const burstBytes = 1.375 * 1024 ** 2;
 const burstMs = 1_200;
 const burstDeadline = 3_000;
+const slots = 256;
 const stall = registry["execution.stall"].default;
+const queryDeadline = registry["tier2.query.deadline"].default;
+/** Every probe of the process under test is answered within this, through its body. */
+const probeBound = 100;
+const phaseNames = ["crowd", "fan-out", "burst", "mixed", "queued", "stall"] as const;
+type Phase = (typeof phaseNames)[number];
 
 /**
- * A loopback host counting each invocation's arrivals and answers. It holds every callback until
- * `release`, then answers each at once, or with `serve(n)` answers n at a time, 5 ms each, the
- * rest waiting at it.
+ * A loopback host counting arrivals and answers by callback id, `<invocation>#<sequence>`. It
+ * holds every callback until `release`, then answers each at once, or with `serve(n)` answers n
+ * at a time, 5 ms each, the rest waiting at it.
  */
 const host = Effect.acquireRelease(
   Effect.promise(async () => {
@@ -106,6 +119,8 @@ const host = Effect.acquireRelease(
     let mode: "hold" | "answer" | { readonly serving: number } = "hold";
     let inService = 0;
     let mostWaiting = 0;
+    const count = (counts: Map<string, number>, id: string) =>
+      counts.set(id, (counts.get(id) ?? 0) + 1);
     const answer = (response: ServerResponse) => {
       response.setHeader("content-type", "application/json");
       response.end(JSON.stringify({ ok: true, value: "answered" }));
@@ -123,15 +138,24 @@ const host = Effect.acquireRelease(
       }
     };
     const server = createServer((request, response) => {
-      const invocationId = String(request.headers["x-patchy-invocation-id"]);
-      received.set(invocationId, (received.get(invocationId) ?? 0) + 1);
-      response.once("finish", () =>
-        answered.set(invocationId, (answered.get(invocationId) ?? 0) + 1)
-      );
-      if (mode === "answer") return answer(response);
-      held.push(response);
-      mostWaiting = Math.max(mostWaiting, held.length);
-      pump();
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk: Buffer) => chunks.push(chunk));
+      request.once("end", () => {
+        const invocationId = String(request.headers["x-patchy-invocation-id"]);
+        let sequence: string;
+        try {
+          sequence = String(JSON.parse(Buffer.concat(chunks).toString("utf8")).args.seq);
+        } catch {
+          sequence = "unreadable";
+        }
+        const id = `${invocationId}#${sequence}`;
+        count(received, id);
+        response.once("finish", () => count(answered, id));
+        if (mode === "answer") return answer(response);
+        held.push(response);
+        mostWaiting = Math.max(mostWaiting, held.length);
+        pump();
+      });
     });
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
@@ -171,21 +195,26 @@ const host = Effect.acquireRelease(
 );
 
 /**
- * Times one version's process's probes, from the request to the end of its body, on whichever
- * client carries them: a supervisor from before the worker client sends them through fetch. A
- * process is known by the address its version's bind went to.
+ * Watches both clients, whichever carries what (a supervisor from before the worker client sends
+ * everything through fetch): times one version's process's probes, from the request to the end of
+ * its body, and counts invokes in flight. A process is known by the address its bind went to.
  */
-const timedProbes = () => {
+const watching = () => {
   const probes: Array<number | "timed out"> = [];
   const addresses = new Map<string, string>();
   let watched: string | undefined;
-  const timing = (client: HttpClient.HttpClient) =>
+  let invokesInFlight = 0;
+  const watch = (client: HttpClient.HttpClient) =>
     client.pipe(
       HttpClient.transform((response, request) => {
         const url = new URL(request.url);
         if (url.pathname === "/bind" && request.body._tag === "Uint8Array") {
           const { versionId } = JSON.parse(new TextDecoder().decode(request.body.body));
           addresses.set(String(versionId), url.origin);
+        }
+        if (url.pathname === "/invoke") {
+          invokesInFlight++;
+          return response.pipe(Effect.ensuring(Effect.sync(() => invokesInFlight--)));
         }
         if (url.pathname !== "/healthz" || url.origin !== addresses.get(watched ?? ""))
           return response;
@@ -207,18 +236,25 @@ const timedProbes = () => {
       })
     );
   return {
-    timing,
+    watch,
+    invokesInFlight: () => invokesInFlight,
     /** Times this version's probes from now on, forgetting any before. */
-    watch: (versionId: string) => {
+    probesOf: (versionId: string) => {
       watched = versionId;
       probes.length = 0;
     },
-    describe: () => {
+    /** The probes so far, and whether every one answered within the bound. */
+    probes: () => {
       const answered = probes.filter((probe) => probe !== "timed out").sort((a, b) => a - b);
       const timedOut = probes.length - answered.length;
-      if (answered.length === 0) return `Probes: none answered; ${timedOut} timed out.`;
-      const median = answered[Math.floor(answered.length / 2)]!;
-      return `Probes: ${answered.length} answered, median ${median.toFixed(1)} ms, slowest ${answered.at(-1)!.toFixed(1)} ms; ${timedOut} timed out.`;
+      const slowest = answered.at(-1) ?? Number.POSITIVE_INFINITY;
+      return {
+        within: timedOut === 0 && answered.length > 0 && slowest <= probeBound,
+        text:
+          answered.length === 0
+            ? `Probes: none answered; ${timedOut} timed out.`
+            : `Probes: ${answered.length} answered, median ${answered[Math.floor(answered.length / 2)]!.toFixed(1)} ms, slowest ${slowest.toFixed(1)} ms; ${timedOut} timed out.`
+      };
     }
   };
 };
@@ -229,7 +265,7 @@ const invocation = (
   invocationId: string,
   handler: string,
   deadline: number,
-  args: Record<string, number | boolean> = { callbacks: 0 }
+  args: Record<string, number | boolean> = {}
 ): Parameters<Service["invoke"]>[0] => {
   if (bound.binding === undefined || bound.processGeneration === undefined)
     throw new Error("The version did not load");
@@ -307,22 +343,29 @@ const tally = (values: ReadonlyArray<string>) => {
 };
 const mib = (bytes: number, digits = 0) => `${(bytes / 1024 ** 2).toFixed(digits)} MiB`;
 
-const phases = new Set(process.argv.slice(2));
-const runs = (phase: "crowd" | "fan-out" | "burst" | "stall") =>
-  phases.size === 0 || phases.has(phase);
-
 const program = Effect.gen(function* () {
+  const named = process.argv.slice(2);
+  const unknown = named.filter((name) => !phaseNames.some((phase) => phase === name));
+  if (unknown.length > 0)
+    return yield* new Unexpected({
+      failures: [`phases ${unknown.join(", ")} to exist; there are ${phaseNames.join(", ")}`]
+    });
+  const runs = (phase: Phase) => named.length === 0 || named.includes(phase);
   const cryptography = yield* Cryptography.Cryptography;
   const callbacks = yield* host;
-  const probes = timedProbes();
+  const watched = watching();
   const setting = yield* Config.option(Config.String("BUN_CONFIG_MAX_HTTP_REQUESTS"));
-  const fetches = setting._tag === "Some" ? Number(setting.value) : 256;
   yield* Console.log(
     `Bun ${process.versions.bun ?? "(not Bun)"}, BUN_CONFIG_MAX_HTTP_REQUESTS ${setting._tag === "Some" ? setting.value : "unset"}.`
   );
-  const supervisor = yield* Supervisor.make({ callbackUrls: [callbacks.url], standby: true }).pipe(
-    Effect.provideService(HttpClient.HttpClient, probes.timing(yield* HttpClient.HttpClient)),
-    Effect.provideService(WorkerHttp.WorkerHttp, probes.timing(yield* WorkerHttp.WorkerHttp))
+  // Aggregate residency is not under test: the phases keep several large processes resident.
+  const supervisor = yield* Supervisor.make({
+    callbackUrls: [callbacks.url],
+    standby: true,
+    operatingLimits: { "execution.residency.bytes": 8 * 1024 ** 3 }
+  }).pipe(
+    Effect.provideService(HttpClient.HttpClient, watched.watch(yield* HttpClient.HttpClient)),
+    Effect.provideService(WorkerHttp.WorkerHttp, watched.watch(yield* WorkerHttp.WorkerHttp))
   );
   const killed = yield* Deferred.make<never, FalseKill>();
   const call = calls(supervisor, killed);
@@ -344,23 +387,59 @@ const program = Effect.gen(function* () {
       }
     });
   });
-  /** Every callback of these calls arrived at the host, and was answered, `each` times. */
-  const accounted = (ids: ReadonlyArray<string>, each: number) => {
-    const arrivals = ids.map((invocationId) => callbacks.received.get(invocationId) ?? 0);
-    const answers = ids.map((invocationId) => callbacks.answered.get(invocationId) ?? 0);
-    expect(
-      arrivals.every((count) => count === each) && answers.every((count) => count === each),
-      `every call's ${each} callbacks to arrive and be answered once`
-    );
-    return `Arrivals at the host: ${arrivals.reduce((total, count) => total + count, 0)}; ${tally(arrivals.map((count) => (count === 0 ? "with none" : `with ${count}`)))}. Answers: ${answers.reduce((total, count) => total + count, 0)}.`;
-  };
   const healthy: Array<{ readonly name: string; readonly bound: Bound }> = [];
+  const resident = Effect.fnUntraced(function* (name: string, versionId: string) {
+    const bound = yield* bind(versionId);
+    healthy.push({ name, bound });
+    return bound;
+  });
+  /**
+   * Each callback of these calls, by id, arrived at the host once and was answered once, and no
+   * other callback of theirs arrived.
+   */
+  const accounted = (expected: ReadonlyArray<readonly [string, number]>) => {
+    const ids = expected.flatMap(([invocationId, count]) =>
+      Array.from({ length: count }, (_, sequence) => `${invocationId}#${sequence}`)
+    );
+    const own = new Set(expected.map(([invocationId]) => invocationId));
+    const extra = [...callbacks.received.keys()].filter(
+      (id) => own.has(id.split("#")[0]!) && !ids.includes(id)
+    );
+    const missing = ids.filter((id) => (callbacks.received.get(id) ?? 0) === 0).length;
+    const repeated = ids.filter((id) => (callbacks.received.get(id) ?? 0) > 1).length;
+    const unanswered = ids.filter((id) => callbacks.answered.get(id) !== 1).length;
+    expect(
+      missing === 0 && repeated === 0 && unanswered === 0 && extra.length === 0,
+      `every callback of ${callsOf(expected.length)} to arrive and be answered once, by id`
+    );
+    return `Callbacks by id: ${ids.length} expected; ${missing} missing, ${repeated} arrived more than once, ${unanswered} not answered exactly once, ${extra.length} unexpected.`;
+  };
+  /** The highest resident memory the process reached while `effect` ran, sampled every 50 ms. */
+  const peakOf = <A, E, R>(bound: Bound, effect: Effect.Effect<A, E, R>) =>
+    Effect.gen(function* () {
+      const pid = (yield* supervisor.stats({ bindingEpoch: 1 })).processes.find(
+        (entry) => entry.processGeneration === bound.processGeneration
+      )!.pid;
+      let peak = 0;
+      const sampling = yield* Effect.gen(function* () {
+        while (true) {
+          const sampled = (yield* supervisor.stats({ bindingEpoch: 1 })).processes.find(
+            (entry) => entry.pid === pid
+          );
+          peak = Math.max(peak, sampled?.rssBytes ?? 0, sampled?.peakRssBytes ?? 0);
+          yield* Effect.sleep(50);
+        }
+      }).pipe(Effect.forkChild);
+      const result = yield* effect;
+      yield* Effect.sleep(200);
+      yield* Fiber.interrupt(sampling);
+      return { result, peak };
+    });
 
   const crowd = Effect.gen(function* () {
     // A baseline: the process under test holding a single call.
-    const crowded = yield* bind("ver_crowded");
-    healthy.push({ name: "the crowded process", bound: crowded });
-    probes.watch("ver_crowded");
+    const crowded = yield* resident("the crowded process", "ver_crowded");
+    watched.probesOf("ver_crowded");
     callbacks.hold();
     const single = yield* call(
       invocation(crowded, callbacks.url, "inv_baseline", "crowd.fanOut", Date.now() + 60_000, {
@@ -368,13 +447,20 @@ const program = Effect.gen(function* () {
       })
     ).pipe(Effect.forkChild);
     yield* Effect.sleep(3_000);
-    yield* Console.log(`Baseline, one call held 3000 ms. ${probes.describe()}`);
+    const baseline = watched.probes();
+    yield* Console.log(`Baseline, one call held 3000 ms. ${baseline.text}`);
+    expect(baseline.within, `every baseline probe to answer within ${probeBound} ms`);
     callbacks.release();
-    yield* Fiber.join(single);
+    const baselined = yield* Fiber.join(single);
+    expect(
+      baselined.ended === "returned" && baselined.ok === 1,
+      "the baseline call to return with its callback answered"
+    );
+    yield* Console.log(`  ${accounted([["inv_baseline", 1]])}`);
 
-    // More held callbacks than Bun runs at once, past the stall window, and a short call behind.
+    // More callbacks than the slots admit, held past the stall window, and a short call behind.
     yield* Console.log(
-      `Crowd: ${crowdCalls} calls of ${callbacksPerCall} callbacks each, ${crowdCalls * callbacksPerCall} callbacks held ${stall + 2_000} ms.`
+      `Crowd: ${crowdCalls} calls of ${callbacksPerCall} callbacks each, ${crowdCalls * callbacksPerCall} callbacks, held ${stall + 2_000} ms.`
     );
     callbacks.hold();
     const deadline = Date.now() + 60_000;
@@ -391,38 +477,44 @@ const program = Effect.gen(function* () {
       )
     );
     yield* Effect.sleep(1_000);
-    probes.watch("ver_crowded");
-    const watching = yield* watchProcess(
-      supervisor,
-      crowded.processGeneration!,
-      stall + 2_000
-    ).pipe(Effect.forkChild);
+    watched.probesOf("ver_crowded");
+    const ending = yield* watchProcess(supervisor, crowded.processGeneration!, stall + 2_000).pipe(
+      Effect.forkChild
+    );
     yield* Effect.sleep(1_000);
-    const queryDeadline = registry["tier2.query.deadline"].default;
     const sent = Date.now();
     const short = yield* call(
       invocation(crowded, callbacks.url, "inv_short", "crowd.fanOut", sent + queryDeadline)
-    ).pipe(Effect.map((end) => ({ end, ms: Date.now() - sent })));
-    const ended = yield* Fiber.join(watching);
+    ).pipe(
+      Effect.map((end) => ({ end, ms: Date.now() - sent })),
+      Effect.forkChild
+    );
+    const ended = yield* Fiber.join(ending);
     yield* Console.log(
       ended === undefined
         ? "  The process lived."
         : `  The process was ended (${ended.cause}) ${ended.at} ms into the hold.`
     );
     expect(ended === undefined, "the crowded process to live");
-    yield* Console.log(`  ${probes.describe()}`);
-    yield* Console.log(
-      `  A short call sent behind the crowd, ${queryDeadline} ms deadline: ${short.end.ended}, ${short.ms} ms after it was sent.`
-    );
-    expect(
-      short.end.ended === "returned" && short.ms < queryDeadline,
-      "the short call to return within its deadline"
-    );
+    const probes = watched.probes();
+    yield* Console.log(`  ${probes.text}`);
+    expect(probes.within, `every crowded probe to answer within ${probeBound} ms`);
     const holding = callbacks.held();
-    yield* Console.log(`  The host was holding ${holding} callbacks: fetch runs ${fetches}.`);
-    expect(holding === fetches, `fetch's queue to fill, ${fetches} callbacks held`);
+    const invoking = watched.invokesInFlight();
+    yield* Console.log(
+      `  The host was holding ${holding} callbacks, and ${invoking} invokes were in flight: ${holding + invoking} of ${slots} slots.`
+    );
+    expect(holding + invoking === slots, `the ${slots} slots to be full`);
     callbacks.release();
     const crowdEnded: ReadonlyArray<Called> = yield* Fiber.joinAll(fibers);
+    const { end: shortEnd, ms: shortMs } = yield* Fiber.join(short);
+    yield* Console.log(
+      `  A short call sent behind the crowd, ${queryDeadline} ms deadline, waited its turn: ${shortEnd.ended}, ${shortMs} ms after it was sent.`
+    );
+    expect(
+      shortEnd.ended === "outcome deadline" && shortMs > queryDeadline,
+      "the short call to wait for a slot until the crowd was answered, then be answered late"
+    );
     const sum = (key: "ok" | "busy" | "other") =>
       crowdEnded.reduce((total, end) => total + end[key], 0);
     yield* Console.log(`  Calls: ${tally(crowdEnded.map((end) => end.ended))}.`);
@@ -433,12 +525,13 @@ const program = Effect.gen(function* () {
       crowdEnded.every((end) => end.ended === "returned" && end.ok === callbacksPerCall),
       "every crowd call to return with all its callbacks answered"
     );
-    yield* Console.log(`  ${accounted(ids, callbacksPerCall)}`);
+    yield* Console.log(
+      `  ${accounted(ids.map((invocationId) => [invocationId, callbacksPerCall] as const))}`
+    );
   });
 
   const wide = Effect.gen(function* () {
-    const fanned = yield* bind("ver_fan_out");
-    healthy.push({ name: "the fanning-out process", bound: fanned });
+    const fanned = yield* resident("the fanning-out process", "ver_fan_out");
     callbacks.serve(8);
     const started = Date.now();
     const end = yield* call(
@@ -451,46 +544,128 @@ const program = Effect.gen(function* () {
       `Fan-out: one call of ${fanOut} callbacks, the host answering 8 at a time: ${end.ended}, ${end.ok} answered, ${end.busy} busy, ${end.other} other, in ${Date.now() - started} ms; at most ${callbacks.mostWaiting()} waited at the host.`
     );
     expect(end.ended === "returned" && end.ok === fanOut, "all 400 callbacks to be answered");
-    yield* Console.log(`  ${accounted(["inv_fan_out"], fanOut)}`);
+    yield* Console.log(`  ${accounted([["inv_fan_out", fanOut]])}`);
   });
 
   const burst = Effect.gen(function* () {
-    const bursting = yield* bind("ver_burst");
-    healthy.push({ name: "the bursting process", bound: bursting });
-    const pid = (yield* supervisor.stats({ bindingEpoch: 1 })).processes.find(
-      (entry) => entry.processGeneration === bursting.processGeneration
-    )!.pid;
-    let peak = 0;
-    const sampling = yield* Effect.gen(function* () {
-      while (true) {
-        const sampled = (yield* supervisor.stats({ bindingEpoch: 1 })).processes.find(
-          (entry) => entry.pid === pid
-        );
-        peak = Math.max(peak, sampled?.rssBytes ?? 0, sampled?.peakRssBytes ?? 0);
-        yield* Effect.sleep(50);
-      }
-    }).pipe(Effect.forkChild);
+    const bursting = yield* resident("the bursting process", "ver_burst");
     const started = Date.now();
     const deadline = started + burstDeadline;
-    const ended = yield* Effect.forEach(
-      Array.from({ length: burstCalls }, (_, index) => `inv_burst_${index}`),
-      (invocationId) =>
-        call(
-          invocation(bursting, callbacks.url, invocationId, "crowd.burst", deadline, {
-            bytes: burstBytes,
-            ms: burstMs
-          })
-        ).pipe(Effect.map((end) => ({ ...end, ms: Date.now() - started }))),
-      { concurrency: "unbounded" }
+    const { result: ended, peak } = yield* peakOf(
+      bursting,
+      Effect.forEach(
+        Array.from({ length: burstCalls }, (_, index) => `inv_burst_${index}`),
+        (invocationId) =>
+          call(
+            invocation(bursting, callbacks.url, invocationId, "crowd.burst", deadline, {
+              bytes: burstBytes,
+              ms: burstMs
+            })
+          ).pipe(Effect.map((end) => ({ ...end, ms: Date.now() - started }))),
+        { concurrency: "unbounded" }
+      )
     );
-    yield* Effect.sleep(200);
-    yield* Fiber.interrupt(sampling);
     yield* Console.log(
       `Burst: ${burstCalls} calls at once, each holding ${mib(burstBytes, 3)} for ${burstMs} ms, ${burstDeadline} ms deadline: ${tally(ended.map((end) => end.ended))}; the last ended ${Math.max(...ended.map((end) => end.ms))} ms in; the process peaked at ${mib(peak)}.`
     );
     expect(
       ended.every((end) => end.ended === "returned" && end.ok === 1),
       "every burst call to return"
+    );
+  });
+
+  const mixed = Effect.gen(function* () {
+    const mixing = yield* resident("the mixed-load process", "ver_mixed");
+    callbacks.hold();
+    const holders = Array.from({ length: 20 }, (_, index) => `inv_holder_${index}`);
+    const deadline = Date.now() + 60_000;
+    const { result, peak } = yield* peakOf(
+      mixing,
+      Effect.gen(function* () {
+        // Twenty calls keep 5 MiB each and hold 8 callbacks each: 180 of the slots.
+        const holding = yield* Effect.forEach(holders, (invocationId) =>
+          call(
+            invocation(mixing, callbacks.url, invocationId, "crowd.fanOut", deadline, {
+              callbacks: 8,
+              retain: 5 * 1024 ** 2
+            })
+          ).pipe(
+            Effect.forkChild,
+            Effect.tap(() => Effect.sleep(25))
+          )
+        );
+        const holdingBy = Date.now() + 10_000;
+        while (callbacks.held() < 160 && Date.now() < holdingBy) yield* Effect.sleep(20);
+        expect(callbacks.held() === 160, "the twenty calls to hold 160 callbacks");
+        // 200 calls of 2 MiB for 1.2 s at once; only the 76 slots left run at a time.
+        const started = Date.now();
+        const bursts = yield* Effect.forEach(
+          Array.from({ length: 200 }, (_, index) => `inv_mixed_${index}`),
+          (invocationId) =>
+            call(
+              invocation(mixing, callbacks.url, invocationId, "crowd.burst", deadline, {
+                bytes: 2 * 1024 ** 2,
+                ms: burstMs
+              })
+            ),
+          { concurrency: "unbounded" }
+        );
+        const burstMsTaken = Date.now() - started;
+        callbacks.release();
+        const held: ReadonlyArray<Called> = yield* Fiber.joinAll(holding);
+        return { bursts, held, burstMsTaken };
+      })
+    );
+    yield* Console.log(
+      `Mixed: 20 calls keeping 100 MiB between them and holding 160 callbacks, then 200 calls each holding 2 MiB for ${burstMs} ms: ${tally([...result.held, ...result.bursts].map((end) => end.ended))}; the 200 took ${result.burstMsTaken} ms; the process peaked at ${mib(peak)}.`
+    );
+    expect(
+      result.bursts.every((end) => end.ended === "returned" && end.ok === 1) &&
+        result.held.every((end) => end.ended === "returned" && end.ok === 8 && end.other === 0),
+      "all 220 mixed calls to return"
+    );
+    yield* Console.log(`  ${accounted(holders.map((invocationId) => [invocationId, 8] as const))}`);
+  });
+
+  const queued = Effect.gen(function* () {
+    const busy = yield* resident("the process full of long calls", "ver_queued_busy");
+    const quiet = yield* resident("the process with only a queued call", "ver_queued_quiet");
+    const long = 5_500;
+    const deadline = Date.now() + 60_000;
+    // Spaced, so no burst of connections overflows the worker's listen backlog (128 on macOS).
+    const fibers = yield* Effect.forEach(
+      Array.from({ length: slots }, (_, index) => `inv_long_${index}`),
+      (invocationId) =>
+        call(
+          invocation(busy, callbacks.url, invocationId, "crowd.burst", deadline, {
+            bytes: 0,
+            ms: long
+          })
+        ).pipe(
+          Effect.forkChild,
+          Effect.tap(() => Effect.sleep(2))
+        )
+    );
+    const sent = Date.now();
+    const short = yield* call(
+      invocation(quiet, callbacks.url, "inv_queued", "crowd.fanOut", sent + queryDeadline)
+    );
+    const shortMs = Date.now() - sent;
+    const longEnded: ReadonlyArray<Called> = yield* Fiber.joinAll(fibers);
+    const report = (yield* supervisor.stats({ bindingEpoch: 1 })).reports.find(
+      (entry) => entry.processGeneration === quiet.processGeneration
+    );
+    yield* Console.log(
+      `Queued: ${slots} calls of ${long} ms to one process, then a ${queryDeadline} ms call to another: it ended ${short.ended}, ${shortMs} ms after it was sent; the long calls: ${tally(longEnded.map((end) => end.ended))}. ${report === undefined ? "The second process lived." : `The second process was ended (${report.cause}).`}`
+    );
+    expect(
+      short.ended === "outcome deadline" && shortMs >= queryDeadline + 1_000,
+      "the queued call to wait past its deadline and a second, then be answered late"
+    );
+    expect(report === undefined, "the process with only a queued call to live");
+    expect(
+      longEnded.every((end) => end.ended === "returned"),
+      "every long call to return"
     );
   });
 
@@ -507,13 +682,18 @@ const program = Effect.gen(function* () {
         ? `Stall: a spinning call's process was still running ${stall + 5_000} ms later.`
         : `Stall: a spinning call's process was ended (${stalled.cause}) ${stalled.at} ms after the call was sent.`
     );
-    expect(stalled?.cause === "stall", "the spinning process to be ended for stall");
+    expect(
+      stalled?.cause === "stall" && stalled.at >= stall && stalled.at < stall + 1_000,
+      `the spinning process to be ended for stall within a second of ${stall} ms`
+    );
   });
 
   yield* Effect.gen(function* () {
     if (runs("crowd")) yield* crowd;
     if (runs("fan-out")) yield* wide;
     if (runs("burst")) yield* burst;
+    if (runs("mixed")) yield* mixed;
+    if (runs("queued")) yield* queued;
     if (runs("stall")) yield* stalling;
   }).pipe(Effect.raceFirst(Deferred.await(killed)));
   // Their calls have finished; a healthy process is still resident, with no report.

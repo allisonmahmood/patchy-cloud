@@ -945,27 +945,39 @@ kills, child crashes and supervisor shutdown all close that scope.
 The supervisor sends everything for its own workerd processes (binds, invokes,
 health probes and the startup check) over `node:http` on loopback, a fresh
 connection for each request, never pooled. Only the callbacks it forwards to the
-host go through the runtime's fetch. Under Bun the two don't share a queue: fetch
-runs 256 requests at once in a process (`BUN_CONFIG_MAX_HTTP_REQUESTS`, which
-production leaves unset) and queues the rest, so callbacks past that wait in the
-runtime within their deadlines, as they always have, while a probe or an invoke
-never waits behind them. Held callbacks can therefore no longer get a healthy
-process ended as stalled, or a call ended at its deadline before its process
-received it, through the runtime's shared fetch queue. CPU contention, socket
-admission and memory can still affect a worker.
+host go through the runtime's fetch, which under Bun runs 256 requests at once in
+a process and queues the rest (`BUN_CONFIG_MAX_HTTP_REQUESTS`, which production
+leaves unset).
 
-Invokes keep the ceiling fetch gave them: at most 256 in flight to workers at once
-across the task. Past it each waits its turn in order, inside the dispatch and
-after its attempt is registered with the watchdog, as it waited in fetch's queue,
-so a burst of invokes alone behaves exactly as it did before; only held callbacks
-no longer count against it. Binds, probes and startup checks don't share that
-ceiling. The startup check now reads the whole 2xx body within its five-second
-budget, where fetch accepted the headers and cancelled the body. Fetch overrides,
-fetch-specific logging and proxy settings no longer apply to worker traffic.
-`bun --conditions=development scripts/dev/src/crowdedProbes.ts` holds more
-callbacks open than Bun runs at once past the stall window, fans one call out to
-400 callbacks, sends a burst of 352 invokes, and fails if a healthy process is
-ended or anything it expects doesn't happen.
+Invokes and forwarded callbacks share 256 slots across the task, first come first
+served, standing where fetch's 256 stood when every request the supervisor made
+went through it: an invoke waits for its slot inside its dispatch, after its
+attempt is registered with the watchdog; a callback waits around its forward to
+the host, after its body is read. With at most 256 of them in fetch, fetch itself
+never queues them. So the task runs as much of that work at once, in the same
+order, as it did, with two differences. Binds, health probes and startup checks
+are outside the slots, so they never wait behind it; each process no longer
+takes about two slots for them, so the task can run that much more. And the
+watchdog's deadline kill counts only an attempt that has been sent: one still
+waiting for a slot past its deadline ends nothing, and is sent when its turn
+comes, which the loader answers `deadline` without running the handler; one sent
+after its deadline has a second from its sending. The 256 is fixed: it applies
+under Node too, and ignores `BUN_CONFIG_MAX_HTTP_REQUESTS`. As before, calls
+holding every slot while their callbacks wait for one end at their deadlines; the
+process is no longer ended for it.
+
+So held callbacks can no longer get a healthy process ended as stalled, or ended
+for a call it was never sent, through the runtime's shared fetch queue. CPU
+contention, socket admission and memory can still affect a worker, and a burst of
+requests to one now reaches its listen backlog as fresh connections. The startup
+check reads the whole 2xx body within its five-second budget, where fetch
+accepted the headers and cancelled the body. Fetch overrides, fetch-specific
+logging and proxy settings no longer apply to worker traffic.
+`bun --conditions=development scripts/dev/src/crowdedProbes.ts` fills the slots
+with held callbacks past the stall window, fans one call out to 400 callbacks,
+sends a burst of 352 invokes and a mixed load, queues a short call behind a full
+count, stalls a process, and fails if a healthy process is ended or anything it
+expects doesn't happen.
 
 The local adapter runs its supervisor in the host process, reaching its
 processes the same way; its callbacks share the host's fetch. Its aggregate RSS
