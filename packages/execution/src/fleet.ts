@@ -722,8 +722,6 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
               FleetStore.clocksOf(caller, now)
             );
             if (claimed === undefined) search.found = "launch";
-            else if (search.found === undefined)
-              search.found = claimed.state === "active" ? "bound" : "spare";
           }
           if (claimed) {
             if (!(yield* store.isAdmissibleTask(claimed.taskId))) {
@@ -733,6 +731,8 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
               claimed = undefined;
               continue;
             }
+            if (search.found !== "launch")
+              search.found = claimed.state === "active" ? (search.found ?? "bound") : "spare";
             if (claimed.state === "active") return claimed;
             const reply = yield* provider
               .bind(claimed.taskId, {

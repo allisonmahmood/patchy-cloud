@@ -1858,6 +1858,7 @@ it.layer(services)("host fleet controller", (it) => {
   it.effect("never admits the epoch an adoption replaced between the warm read and the hold", () =>
     Effect.gen(function* () {
       const { sql, companyId, left, bundle } = yield* setupMemory("adopt-race");
+      const captured = yield* recording;
       const store = yield* FleetStore.make;
       const warm = yield* left.lifecycle.acquire(companyId, bundle.patchId, "page");
       yield* warm.release;
@@ -1881,8 +1882,11 @@ it.layer(services)("host fleet controller", (it) => {
         )
         .pipe(Effect.forkChild);
       yield* Deferred.await(adopting);
-      const call = yield* left.lifecycle
-        .acquire(companyId, bundle.patchId, "page")
+      const call = yield* captured.events
+        .withEvent(
+          { type: "request", tier: 2 },
+          left.lifecycle.acquire(companyId, bundle.patchId, "page")
+        )
         .pipe(Effect.forkChild);
       yield* lockWait("the call's hold waits behind the adoption");
       yield* Deferred.succeed(commit, undefined);
@@ -1890,6 +1894,9 @@ it.layer(services)("host fleet controller", (it) => {
       assert.isAbove(adopted.bindingEpoch, warm.binding.bindingEpoch);
       // `protect` refuses the old epoch, and the claim loop finishes binding the adopted one.
       const admission = yield* Fiber.join(call);
+      const event = yield* captured.take;
+      if (event.type !== "request") return assert.fail(`a ${event.type} event`);
+      assert.strictEqual(event.companyBind, "spare");
       assert.deepStrictEqual(admission.binding, {
         taskId: warm.binding.taskId,
         bindingEpoch: adopted.bindingEpoch
@@ -1903,6 +1910,7 @@ it.layer(services)("host fleet controller", (it) => {
     () =>
       Effect.gen(function* () {
         const { sql, provider, companyId, left, bundle } = yield* setupMemory("retired");
+        const captured = yield* recording;
         const old = yield* left.lifecycle.acquire(companyId, bundle.patchId, "page");
         yield* old.release;
         const next = yield* Fleet.make({
@@ -1915,7 +1923,13 @@ it.layer(services)("host fleet controller", (it) => {
         assert.isTrue(yield* next.promoteDeployment("retired-next"));
         // Retired without the drain that would fence the binding first.
         yield* sql`UPDATE execution_deployments SET retired = true WHERE revision = 'retired'`;
-        const fresh = yield* left.lifecycle.acquire(companyId, bundle.patchId, "page");
+        const fresh = yield* captured.events.withEvent(
+          { type: "request", tier: 2 },
+          left.lifecycle.acquire(companyId, bundle.patchId, "page")
+        );
+        const event = yield* captured.take;
+        if (event.type !== "request") return assert.fail(`a ${event.type} event`);
+        assert.strictEqual(event.companyBind, "spare");
         assert.notStrictEqual(fresh.binding.taskId, old.binding.taskId);
         const tasks = yield* provider.list;
         assert.strictEqual(
