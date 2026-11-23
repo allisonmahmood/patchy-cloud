@@ -145,6 +145,14 @@ Done when `pnpm dev status` exits 0.
   loopback because the dev runner starts it from `scripts/dev/src/server.ts`;
   a production host never can. `pnpm test:imap` is the live tier, on Dovecot
   and GreenMail in Docker, with no secrets.
+  Model roles here call a fake provider the dev runner starts on loopback, never
+  a real one, and need no key: `pnpm dev up models` seeds an OpenAI provider, a
+  decision role and a text role, and publishes Request triage, whose page shows
+  a decision, a line and a typed value, or how the call ended with its code. A
+  marker in the request, such as `[fake:hang]`, `[fake:rate]` or
+  `[fake:refuse]`, picks how it ends; `packages/integrations/src/models/Fake.ts`
+  lists them. Each call is a `[models]` line in `dev.log`. `patchy dev` refuses
+  a model role, so try a change to one by publishing.
   GitHub here is the person's development GitHub App: its `PATCHY_GITHUB_APP_*`
   settings in their dev.env reach the instance's server, and without them GitHub
   isn't offered. Its sign-in returns only to the callback the App registers, so

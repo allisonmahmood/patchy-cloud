@@ -669,8 +669,10 @@ export const generate = Effect.fn("Project.generate")(function* (
           message: `uses requires tier 2, so patchy.config.ts is unchanged. Set tier 2, then add "${change.alias}" again and reach it from server handlers.`
         })
       : refused;
+  // A model role has no builder skill yet, so removing the last one removes none.
   if (
     removedKind &&
+    removedKind !== "models" &&
     !Object.values(manifest.uses).some((declaration) => declaration.kind === removedKind)
   ) {
     const skill =
@@ -984,7 +986,8 @@ export const add = Effect.fn("Project.add")(function* (
     });
   const client = yield* Api.client(token);
   const instance = yield* Instance.Instance;
-  let declaration: Declaration;
+  // `patchy add` doesn't declare a model role yet: that comes with discovering one.
+  let declaration: Exclude<Declaration, { readonly kind: "models" }>;
   let defaultAlias: string;
   if (integration === "members") {
     if (Option.isSome(target) || (Option.isSome(as) && as.value !== "members"))

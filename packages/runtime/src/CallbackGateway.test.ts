@@ -1181,20 +1181,12 @@ it.layer(
       }).pipe(Effect.scoped)
   );
   it.effect(
-    "a model call fenced as its handler's work is checked says nothing was sent, with its record",
+    "a model call whose action ends at its last check says nothing was sent, with its record",
     () =>
       Effect.gen(function* () {
-        const real = yield* InvocationCapabilities.make;
+        const capabilities = yield* InvocationCapabilities.make;
         const recorded: WideEvents.WideEvent[] = [];
         const ran: string[] = [];
-        // The action ends exactly as the handler's work checks the capability again.
-        const capabilities = InvocationCapabilities.InvocationCapabilities.of({
-          ...real,
-          performEffect: (capability, effect) =>
-            real
-              .end(capability.token, "returned")
-              .pipe(Effect.andThen(real.performEffect(capability, effect)))
-        });
         const gateway = yield* CallbackGateway.make({
           "models.generate": {
             kind: "integration",
@@ -1218,7 +1210,16 @@ it.layer(
             )
           )
         );
-        const action = yield* Fixtures.issue(real, { kind: "action" });
+        // The action ends exactly as the door answers; the gateway's own check of the capability,
+        // the last before the handler's work, refuses the call.
+        let token = "";
+        const action = yield* Fixtures.issue(capabilities, {
+          kind: "action",
+          reauthorize: Effect.suspend(() => capabilities.end(token, "returned")).pipe(
+            Effect.as(Fixtures.identity)
+          )
+        });
+        token = action.token;
         const reply = yield* gateway.callback(action.token, action.attempt, {
           op: "models.generate",
           args: { connection: "writer" }
@@ -1227,6 +1228,31 @@ it.layer(
         assert.deepStrictEqual(ran, []);
         yield* Effect.yieldNow;
         assert.strictEqual(recorded.filter((event) => event.type === "model").length, 1);
+      }).pipe(Effect.scoped)
+  );
+  it.effect(
+    "a model call whose attempt ends once the listener has read it says nothing was sent",
+    () =>
+      Effect.gen(function* () {
+        const capabilities = yield* InvocationCapabilities.make;
+        const gateway = yield* CallbackGateway.make({
+          "models.generate": {
+            kind: "integration",
+            fence: "action",
+            connectionId: () => "role",
+            run: () => Effect.die("A fenced model call must not reach its handler.")
+          }
+        }).pipe(Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities));
+        const action = yield* Fixtures.issue(capabilities, { kind: "action" });
+        // The listener read the marked call; the attempt ended before the gateway resolved it.
+        yield* capabilities.end(action.token, "returned");
+        const reply = yield* gateway.callback(
+          action.token,
+          action.attempt,
+          { op: "models.generate", args: { connection: "writer" } },
+          { modelCall: "models.generate" }
+        );
+        assert.deepInclude(reply, { ok: false, details: { sent: false } });
       }).pipe(Effect.scoped)
   );
   it.effect("a model call's refusal is stored once, marked, even in the last refusal slot", () =>

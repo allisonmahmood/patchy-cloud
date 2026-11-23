@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { executeConfig } from "./config.js";
 import * as ConfigExecution from "./executeConfig.js";
 import { MANIFEST_VERSION, RELEASE } from "./release.js";
+import { guestAliases } from "./serverBuild.js";
 
 const builders = new URL("./config.ts", import.meta.url).href;
 const encodeManifest = Schema.encodeSync(Manifest);
@@ -24,7 +25,7 @@ const fixture = async (
   await writeFile(join(directory, "package.json"), '{"type":"module"}');
   await writeFile(
     path,
-    `import { defineConfig, table, t, files, members, postgres, sharedTable, sharedStore } from ${JSON.stringify(builders)};\n${source}`
+    `import { defineConfig, table, t, files, members, models, postgres, sharedTable, sharedStore } from ${JSON.stringify(builders)};\n${source}`
   );
   if (index !== null) {
     await mkdir(join(directory, "patchy/_generated"), { recursive: true });
@@ -309,6 +310,40 @@ describe("executeConfig", () => {
       });
     }
   );
+
+  it("stamps a model role only with its kind, which the build hands the guest", async () => {
+    const source =
+      'export default defineConfig({ name: "sorter", tier: 2, uses: { triage: models("triage"), writer: models("writer") } });';
+    const stamp = (alias: string, modelKind?: "decision" | "text") => ({
+      alias,
+      id: `conn_${alias}`,
+      revision: 1,
+      declaration: { kind: "models", handle: alias, id: `conn_${alias}`, revision: 1 },
+      ...(modelKind === undefined ? {} : { modelKind })
+    });
+    const index = (writer?: "decision" | "text") => ({
+      release: RELEASE,
+      manifestVersion: MANIFEST_VERSION,
+      uses: [stamp("triage", "decision"), stamp("writer", writer)]
+    });
+    // The stamps and the kinds come from one read of the index, so they can't disagree.
+    const { manifest: stamped, modelKinds: kinds } = await ConfigExecution.executeStamped(
+      await fixture(source, index("text"))
+    );
+    expect(stamped.uses).toEqual({
+      triage: { kind: "models", handle: "triage", id: "conn_triage", revision: 1 },
+      writer: { kind: "models", handle: "writer", id: "conn_writer", revision: 1 }
+    });
+    expect(kinds).toEqual({ triage: "decision", writer: "text" });
+    expect(guestAliases(stamped.uses, kinds).models).toEqual({
+      triage: "decision",
+      writer: "text"
+    });
+    // An index from before kinds were stamped is stale: the guest couldn't give it a client.
+    await expect(executeConfig(await fixture(source, index()))).rejects.toThrow(
+      ConfigExecution.StaleGenerated
+    );
+  });
 
   it("refuses declarations without generated stamps instead of inventing ids or revisions", async () => {
     const path = await fixture(

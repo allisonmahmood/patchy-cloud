@@ -695,7 +695,8 @@ export class ConnectionsGroup extends HttpApiGroup.make("connections", { topLeve
           "Connected entries carry a copy-ready add hint; disconnected entries carry reason " +
           "`not_connected` and a /settings/integrations hint. A model role is listed only while " +
           "the host's Models switch is on. It is connected only while it and its provider are, " +
-          "and then its hint says no patch can declare one yet; otherwise it is disconnected, " +
+          "and then its hint names models(handle) in patchy.config.ts and a refresh; otherwise " +
+          "it is disconnected, " +
           "with reason `not_connected` and a hint saying why. No role's hint names an add or a " +
           "page. A bare all or all=true also includes " +
           "every offered integration's connected state. integrations names, comma-separated, the " +

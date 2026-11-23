@@ -19,6 +19,42 @@ export const callbackFileTooLarge = {
   ...callbackFileLimit
 } as const satisfies RuntimeFailure;
 
+/** What one model call's arguments may take, refused before they are read or sent anywhere. */
+export const modelIngressLimit = limitRefusal("models.ingress.bytes");
+/**
+ * The refusal of a model call past `models.ingress.bytes`, with nothing sent: the loader gives it
+ * before sending, and the host as it reads, in these words.
+ */
+export const modelIngressTooLarge = {
+  ok: false,
+  source: "patchy",
+  error: "The model call exceeds models.ingress.bytes, so nothing was sent.",
+  ...modelIngressLimit,
+  details: { sent: false }
+} as const satisfies RuntimeFailure;
+/**
+ * The execution task's proxy's own refusal of a model call past the cap, before or as it reads:
+ * only a loader that didn't measure the call sends one, so its words say where it was stopped.
+ */
+export const modelIngressAtProxy = {
+  ...modelIngressTooLarge,
+  error:
+    "The model call exceeds models.ingress.bytes at the execution task's proxy, so nothing was sent."
+} as const satisfies RuntimeFailure;
+/** The status a page sees for a refusal an execution task gave, by its code. */
+export const refusalStatus = (code: RuntimeFailure["code"]): number =>
+  code === "busy"
+    ? 429
+    : code === "too_large"
+      ? 413
+      : code === "access_denied"
+        ? 403
+        : code === "invalid_request"
+          ? 400
+          : code === "timeout"
+            ? 504
+            : 503;
+
 const identity = Schema.NonEmptyString;
 const sha256 = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/));
 const milliseconds = Schema.Number.check(Schema.isFinite(), Schema.isGreaterThanOrEqualTo(0));
@@ -104,9 +140,41 @@ export const InspectionReply = Schema.Union([
   RuntimeFailure
 ]);
 export type InspectionReply = typeof InspectionReply.Type;
+/**
+ * A refusal the execution task itself gave one of the attempt's model calls, the loader or its
+ * proxy, as the guest got it, with the status and operation a host relays it under. Only these,
+ * from the task's own record, and the host's own refusals does a host relay from a guest: a guest's
+ * claim alone never makes one.
+ */
+export const ExecutionRefusal = Schema.Struct({
+  failure: RuntimeFailure,
+  status: Schema.Int.check(Schema.isBetween({ minimum: 400, maximum: 599 })),
+  operation: identity
+});
+export type ExecutionRefusal = typeof ExecutionRefusal.Type;
+/** The distinct refusals one attempt's record holds; past it, a further one isn't relayed. */
+export const executionRefusalLimit = 32;
+/**
+ * What makes a record's refusal distinct: its words and its operation, so two operations given
+ * the same refusal are both kept and a host can see it can't tell which one a guest relayed.
+ */
+export const refusalKey = (refusal: ExecutionRefusal): string =>
+  JSON.stringify([refusal.operation, refusal.failure]);
+
 /** Engine observations are separate from guest claims; only the host classifies settlement. */
 export const InvokeReply = Schema.Union([
-  Schema.Struct({ outcome: Schema.Literal("returned"), reply: GuestReply, guestMs: milliseconds }),
+  Schema.Struct({
+    outcome: Schema.Literal("returned"),
+    reply: GuestReply,
+    guestMs: milliseconds,
+    /**
+     * Absent when the task gave none. Older hosts' providers drop the key before their strict
+     * decode, and older tasks never send it.
+     */
+    refusals: Schema.optionalKey(
+      Schema.Array(ExecutionRefusal).check(Schema.isMaxLength(executionRefusalLimit))
+    )
+  }),
   Schema.Struct({ outcome: Schema.Literal("deadline"), guestMs: milliseconds }),
   Schema.Struct({ outcome: Schema.Literal("guest_failed"), guestMs: milliseconds })
 ]);

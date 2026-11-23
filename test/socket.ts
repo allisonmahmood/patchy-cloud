@@ -77,3 +77,62 @@ export const stalledUpload = (
         : `${start}content-length: ${body.declared}\r\n\r\n`
     );
   });
+
+/** A request head without its length, and its whole body. */
+export interface WholeRequest {
+  readonly head: string;
+  readonly body: string;
+}
+/** Two requests' answers on one connection; the second's is absent if the server closed first. */
+export interface ReusedAnswers {
+  readonly first: { readonly status: number; readonly connection: string | undefined };
+  readonly second: { readonly status: number } | undefined;
+}
+
+/**
+ * Sends `first` with its body, waits for its whole answer, then sends `second` on the same
+ * connection, as a keep-alive client reuses one. Waits up to `waitMs` for each answer.
+ */
+export const twoRequests = (
+  port: number,
+  first: WholeRequest,
+  second: WholeRequest,
+  waitMs = 3_000
+): Promise<ReusedAnswers> =>
+  new Promise((resolve, reject) => {
+    let buffered = Buffer.alloc(0);
+    let answered: ReusedAnswers["first"] | undefined;
+    let finished = false;
+    const socket = connect(port, "127.0.0.1");
+    const finish = (second: ReusedAnswers["second"]) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      socket.destroy();
+      if (answered === undefined) reject(new Error("The first request got no whole answer."));
+      else resolve({ first: answered, second });
+    };
+    const timer = setTimeout(() => finish(undefined), 2 * waitMs);
+    const send = ({ head, body }: WholeRequest) =>
+      socket.write(
+        `${head.trim().replaceAll("\n", "\r\n")}\r\ncontent-length: ${Buffer.byteLength(body)}\r\n\r\n${body}`
+      );
+    socket.on("error", () => {});
+    socket.on("close", () => finish(undefined));
+    socket.on("data", (chunk) => {
+      buffered = Buffer.concat([buffered, chunk]);
+      const answer = answerOf(buffered);
+      if (answer === undefined || answer.missing > 0) return;
+      const end = buffered.indexOf("\r\n\r\n");
+      const head = buffered.subarray(0, end).toString("latin1");
+      buffered = buffered.subarray(end + 4 + Buffer.byteLength(answer.body));
+      if (answered === undefined) {
+        answered = {
+          status: answer.status,
+          connection: /^connection: *(\S+) *$/im.exec(head)?.[1]?.toLowerCase()
+        };
+        send(second);
+      } else finish({ status: answer.status });
+    });
+    send(first);
+  });

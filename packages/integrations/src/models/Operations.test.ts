@@ -732,6 +732,11 @@ it.layer(layer, { excludeTestServices: true, timeout: 60_000 })("model calls", (
       capability,
       /** Ends the action, as its deadline or its return would. */
       end: capabilities.end(capability.token, "returned"),
+      /**
+       * Ends the action as its return would, then waits for its callbacks' work, their journal
+       * rows included, as the host does before it answers; true when all of it finished.
+       */
+      settle: capabilities.settle(capability.token, "returned"),
       send: (op: string, args: Record<string, unknown>, body?: GuestProtocol.Callback["body"]) =>
         gateway.callback(capability.token, capability.attempt, {
           op,
@@ -814,6 +819,44 @@ it.layer(layer, { excludeTestServices: true, timeout: 60_000 })("model calls", (
     }).pipe(Effect.scoped)
   );
 
+  it.effect(
+    "journal a call ended while it waited at the host as a failure, and one ended after it was sent as unknown",
+    () =>
+      Effect.gen(function* () {
+        const scene = yield* setup();
+        const sql = yield* SqlClient.SqlClient;
+        const provider = scripted((_, body) => (held(body) ? "hang" : text("answered")));
+        const admission = yield* Admission.Admission;
+        const action = yield* relay(scene, provider);
+        // The first is sent and held, with the provider's one place.
+        const sent = yield* Effect.forkChild(action.send("models.generate", generateArgs("hold")));
+        while (provider.sent.length === 0) yield* Effect.sleep("5 millis");
+        // The second is in the host's queue once a probe that may not wait is refused for the
+        // queue's one place rather than the provider's; before that, it is refused for the
+        // provider's, and either way it takes nothing.
+        const queued = yield* Effect.forkChild(action.send("models.generate", generateArgs()));
+        const probe = Effect.flip(Effect.scoped(admission.acquire(scene.provider.id, 0)));
+        let refused = yield* probe;
+        for (let tries = 0; tries < 1_000 && refused.limitId !== "models.queue.waiting"; tries++) {
+          yield* Effect.sleep("2 millis");
+          refused = yield* probe;
+        }
+        assert.strictEqual(refused.limitId, "models.queue.waiting");
+        assert.strictEqual(provider.sent.length, 1);
+        // Ended there, and every callback's work finished, journal rows written, before reading.
+        assert.isTrue(yield* action.settle);
+        yield* Fiber.join(sent);
+        yield* Fiber.join(queued);
+        const rows = yield* sql<{ readonly outcome: string; readonly outcome_code: string }>`
+          SELECT outcome, outcome_code FROM runtime_calls
+          WHERE company_id = ${scene.owner.company.id} AND op = 'models.generate'
+          ORDER BY at, id`;
+        assert.deepStrictEqual(rows, [
+          { outcome: "unknown", outcome_code: "unknown_outcome" },
+          { outcome: "failure", outcome_code: "access_denied" }
+        ]);
+      }).pipe(Effect.scoped)
+  );
   it.effect("journal what the caller was told when the action ends at a stalled door", () =>
     Effect.gen(function* () {
       const scene = yield* setup();
@@ -1019,6 +1062,25 @@ it.layer(layer, { excludeTestServices: true, timeout: 60_000 })("model calls", (
     }).pipe(Effect.scoped)
   );
 
+  it.effect("record a call its action left open after sending it as sent and unanswered", () =>
+    Effect.gen(function* () {
+      events.length = 0;
+      const scene = yield* setup();
+      const provider = scripted(() => "hang");
+      const made = yield* handlers(provider);
+      // The action ends while the provider still holds the request: its work is interrupted.
+      const open = yield* Effect.forkChild(
+        call(made, "models.generate", generateArgs(), scene.binding())
+      );
+      while (provider.sent.length === 0) yield* Effect.sleep(10);
+      yield* Fiber.interrupt(open);
+      yield* settled;
+      assert.deepStrictEqual(
+        modelEvents().map((event) => [event.code, event.sent, event.outcome]),
+        [[undefined, true, "interrupted"]]
+      );
+    }).pipe(Effect.scoped)
+  );
   it.effect("record the pool move's peaks on the action's event, not the attempt's", () =>
     Effect.gen(function* () {
       events.length = 0;

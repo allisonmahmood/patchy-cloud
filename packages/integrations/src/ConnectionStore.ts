@@ -656,11 +656,26 @@ export class ConnectionStore extends Context.Service<
       input: Identity,
       report?: (connection: Connection) => Effect.Effect<void>
     ) => Effect.Effect<Deleted, ConnectionError>;
-    /** Hold the connection lock until the declaring version commits in the caller's platform transaction. */
+    /**
+     * Hold the connection lock until the declaring version commits in the caller's platform
+     * transaction. A model role is found only while the switch is on, and only while it isn't
+     * paused; its provider is `resolveProviders`'.
+     */
     readonly resolve: (
       companyId: string,
       declaration: ConnectionDeclaration
     ) => Effect.Effect<ConnectionDeclaration, ResolveError>;
+    /**
+     * After every role a version declares is resolved, hold each one's provider, shared and in id
+     * order, until the caller's transaction ends, so no pause or key change lands between the
+     * check and the commit; and refuse a role whose provider is paused or of an integration this
+     * release doesn't know, which no call could reach. Roles first, then providers, as a remap
+     * takes them, so the two never wait on each other.
+     */
+    readonly resolveProviders: (
+      companyId: string,
+      roleIds: ReadonlyArray<string>
+    ) => Effect.Effect<void, ConnectionNotConnected | ConnectionStorageFailed>;
     /**
      * Live identity and credential revision, never the published metadata stamp. Decrypt only to
      * create a pool. A paused IMAP connection refuses `auth_failed`, so nothing logs in with it.

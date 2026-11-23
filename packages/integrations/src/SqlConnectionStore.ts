@@ -2273,6 +2273,26 @@ export const knowing = (known: ReadonlyArray<Models.Kind>) =>
       },
       Effect.catchTags(safe("resolve"))
     );
+    const resolveProviders = Effect.fn("ConnectionStore.resolveProviders")(
+      function* (companyId: string, roleIds: ReadonlyArray<string>) {
+        if (roleIds.length === 0) return;
+        // Each role's row is already held by `resolve`, so the provider it maps to can't move.
+        const mapped = yield* sql<{
+          readonly roleId: string;
+          readonly providerId: string;
+        }>`SELECT connection_id AS "roleId", provider_id AS "providerId" FROM model_roles
+          WHERE company_id = ${companyId} AND connection_id IN ${sql.in(roleIds)}`;
+        if (roleIds.some((id) => !mapped.some((row) => row.roleId === id)))
+          return yield* new ConnectionNotConnected({});
+        for (const providerId of [...new Set(mapped.map((row) => row.providerId))].sort()) {
+          const [provider] = yield* sql<{ readonly status: string }>`SELECT p.status
+            FROM connections p WHERE p.company_id = ${companyId} AND p.id = ${providerId}
+              AND ${knownProvider} FOR SHARE`;
+          if (provider?.status !== "connected") return yield* new ConnectionNotConnected({});
+        }
+      },
+      Effect.catchTags({ SqlError: safe("resolve").SqlError })
+    );
     const poolCredentials = Effect.fn("ConnectionStore.poolCredentials")(
       function* (
         companyId: string,
@@ -2695,6 +2715,7 @@ export const knowing = (known: ReadonlyArray<Models.Kind>) =>
       blockingGuests,
       delete: remove,
       resolve,
+      resolveProviders,
       poolCredentials,
       claimDraft,
       recordDraft,

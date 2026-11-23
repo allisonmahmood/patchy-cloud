@@ -605,10 +605,10 @@ it.layer(layer)("Models", (it) => {
               listed.connections.map((row) => `${row.integration}/${row.handle}`),
               ["models/triage"]
             );
-            // No patch can declare a role yet, so its hint offers no add.
+            // A role is declared in config, not added, so its hint says how and offers no add.
             assert.deepInclude(listed.connections[0], {
               status: "connected",
-              hint: "No patch can declare a model role yet."
+              hint: 'Declare it in patchy.config.ts as models("triage"), then run patchy refresh.'
             });
             assert.deepStrictEqual(
               listed.offered?.map((offer) => offer.integration),
@@ -767,6 +767,21 @@ it.layer(layer)("Models", (it) => {
           Effect.flip(off.disconnect({ ...who, id: provider.id }))
         ]);
         assert.isTrue(hidden.every((error) => error._tag === "ConnectionNotFound"));
+        // A role's guest block holds with the switch off, so a retained version that declares it
+        // stays closed to guests; and nothing resolves a role to publish against.
+        yield* store.blockGuests({ ...who, id: role.id, block: true });
+        assert.deepStrictEqual([...(yield* off.blockingGuests([role.id]))], [role.id]);
+        assert.strictEqual(
+          (yield* Effect.flip(
+            off.resolve(who.companyId, {
+              kind: "models",
+              handle: "triage",
+              id: role.id,
+              revision: 1
+            })
+          ))._tag,
+          "ConnectionNotConnected"
+        );
 
         // The ordinary connection reads the same either way, from the store and the API.
         assert.deepStrictEqual(

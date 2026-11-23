@@ -61,7 +61,7 @@ import {
   sourceOf,
   tokenOf
 } from "./scenario.js";
-import { saveConnections, seedGithub } from "./connections.js";
+import { saveConnections, saveModels, seedGithub } from "./connections.js";
 import { writeHistory } from "./history.js";
 
 /** A step's command ran and exited non-zero; its output was printed to stderr. */
@@ -974,8 +974,10 @@ const materialize = Effect.fn("materialize")(function* (
   const githubSeed = connections.some((connection) => connection.integration === "github")
     ? yield* readGithubSeed(devEnv)
     : Option.none();
-  // Offline connections first: they need nothing from outside.
+  // Offline connections first: they need nothing from outside. Model roles too: their provider's
+  // key is invented, and the instance's model calls go to the dev runner's fake.
   yield* saveConnections(scenario);
+  yield* saveModels(scenario);
   // Connections not made, so the patches declaring them can't publish either.
   const skipped = new Set<string>();
   for (const connection of connections) {

@@ -623,6 +623,21 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
                       status: trusted.status,
                       ...(operation === undefined ? {} : { integrationOperation: operation })
                     });
+                  // Or one the execution task itself gave this attempt's model call, from the
+                  // record its loader and proxy keep, which the guest never writes; as above,
+                  // the same refusal given two operations names neither.
+                  const given = (observed.refusals ?? []).filter(
+                    (entry) => canonicalArgs(entry.failure) === relayed
+                  );
+                  const first = given[0];
+                  if (first !== undefined) {
+                    const named = given.every((entry) => entry.operation === first.operation);
+                    return yield* new CallbackRefusal({
+                      failure: first.failure,
+                      status: first.status,
+                      ...(named ? { integrationOperation: first.operation } : {})
+                    });
+                  }
                   return yield* new HandlerFailed({ correlationId: binding.correlationId });
                 }
               }

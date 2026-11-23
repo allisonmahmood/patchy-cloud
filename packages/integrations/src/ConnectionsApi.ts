@@ -80,9 +80,9 @@ export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =
           return HttpServerResponse.jsonUnsafe(
             encodeConnections({
               connections: rows.map((row) => {
-                // No patch can declare a role yet, nor does any page change one, so its hint
-                // names neither. A role whose provider is paused, or of an integration this
-                // release doesn't know, reaches nothing, so it reads as paused.
+                // A usable role's hint says how a patch declares it; no page changes one yet. A
+                // role whose provider is paused, or of an integration this release doesn't know,
+                // reaches nothing, so it reads as paused.
                 const role =
                   row.integration !== "models"
                     ? undefined
@@ -103,7 +103,9 @@ export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =
                               reason: "not_connected" as const,
                               hint: "Its model provider is paused, so patches can't use it until an administrator resumes the provider."
                             }
-                          : { hint: "No patch can declare a model role yet." };
+                          : {
+                              hint: `Declare it in patchy.config.ts as models("${row.handle}"), then run patchy refresh.`
+                            };
                 // An IMAP login its mail server refused fails every call until an admin fixes it, so it says so.
                 const paused = row.integration === "imap" && row.display.paused !== undefined;
                 // A GitHub account that suspended the App refuses every call until it's unsuspended there.

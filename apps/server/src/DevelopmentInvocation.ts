@@ -2,6 +2,7 @@ import type * as WideEvents from "@patchy/analytics/wide-events";
 import type { CompanyDatabases, Inventory } from "@patchy/company-database";
 import * as Local from "@patchy/execution/local";
 import type { OperatingLimits } from "@patchy/limits";
+import * as DeploymentConfig from "@patchy/limits/deployment-config";
 import type { InvalidLimit } from "@patchy/limits/deployment-config";
 import { MutationTransaction, QuerySnapshot } from "@patchy/primitives";
 import {
@@ -68,6 +69,8 @@ export const make: (
     return yield* new Executor.ExecutionError({ operation: "bind", reason: "production_refused" });
 
   const scope = yield* Effect.scope;
+  // The execution task's own model permits, from the same setting an execution task reads.
+  const deployment = yield* DeploymentConfig.load;
   const context = yield* Effect.context<
     HttpClient.HttpClient | WideEvents.WideEvents | Cryptography.Cryptography
   >();
@@ -84,7 +87,13 @@ export const make: (
   ) {
     let cached = companies.get(companyId);
     if (cached === undefined) {
-      cached = yield* Local.make({ companyId, callbackUrls: [listener.url] }).pipe(
+      cached = yield* Local.make({
+        companyId,
+        callbackUrls: [listener.url],
+        operatingLimits: {
+          "models.execution.inFlight": deployment.get("models.execution.inFlight")
+        }
+      }).pipe(
         Effect.provideContext(context),
         Scope.provide(scope),
         Effect.catchTags({

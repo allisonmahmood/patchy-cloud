@@ -47,6 +47,7 @@ import {
   Shared,
   CURRENT_RELEASE,
   WIRE_VERSION,
+  Manifest,
   sharedTableId,
   sharedStoreId,
   repoLimits
@@ -2364,7 +2365,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
     })
   );
 
-  it.effect("refuses to publish a model role declaration until roles are declarable", () =>
+  it.effect("refuses to publish a model role declaration while Models is off", () =>
     Effect.gen(function* () {
       const api = yield* client.pipe(Effect.provide(Fixtures.as(admin)));
       const patches = yield* Patches.Patches;
@@ -2383,8 +2384,10 @@ it.layer(publishLayer)("publish attempts", (it) => {
       });
       assert.strictEqual(response.status, 422);
       const body = yield* response.json;
-      assert.include(body, { code: "invalid_manifest" });
-      assert.include(JSON.stringify(body), "model role");
+      assert.include(body, {
+        code: "invalid_manifest",
+        error: "Models isn't available on this server, so a model role can't be declared."
+      });
       assert.strictEqual(yield* patches.countQuotaPatches(admin.user.id), before);
     })
   );
@@ -3336,6 +3339,211 @@ const agentBundle = (tools: string) =>
     });
     return built.outputFiles[0]!.text;
   });
+
+/** Publishing with the host's Models switch on, over the same store, keys and database. */
+const modelsLayer = Layer.mergeAll(PatchesApi.layer, HttpServer.layerServices).pipe(
+  Layer.provideMerge(Fixtures.authorization),
+  Layer.provideMerge(Layer.mergeAll(Content.layer, Limits.layer)),
+  Layer.provideMerge(
+    Layer.mergeAll(GuestGrants.layer.pipe(Layer.provideMerge(Patches.layer)), looks, memoryStore)
+  ),
+  Layer.provideMerge(recordingAnalytics),
+  Layer.provideMerge(
+    Layer.mergeAll(InvocationLog.layer, Layer.merge(Users.layer, Teams.layer), Companies.layer)
+  ),
+  Layer.provideMerge(Fixtures.database),
+  Layer.provide(publishConfig(CURRENT_RELEASE, 100, 100, 100, { PATCHY_MODELS: "true" }))
+);
+
+/**
+ * A stored version's role, exactly as every release that reads one reads it: the release before
+ * this one read this shape strictly, so a version published here is one it can serve.
+ */
+const storedRole = (id: string) => ({ kind: "models" as const, handle: "triage", id, revision: 1 });
+
+/** The admin's OpenAI key and a decision role on it, and every change they report. */
+const modelRole = Effect.fn("test.modelRole")(function* (handle: string) {
+  const store = yield* ConnectionStore.ConnectionStore;
+  const who = { companyId: admin.company.id, userId: admin.user.id };
+  const reports: Array<ConnectionStore.ModelsChanged> = [];
+  const report: ConnectionStore.ModelsReport = (changed) =>
+    Effect.sync(() => void reports.push(changed));
+  const provider = yield* store.connectProvider(
+    {
+      ...who,
+      provider: "openai",
+      handle: `${handle}-key`,
+      credentials: Redacted.make("sk-publish-test")
+    },
+    report
+  );
+  const role = yield* store.createRole(
+    {
+      ...who,
+      handle,
+      kind: "decision",
+      description: "Sorts requests",
+      providerId: provider.id,
+      model: "gpt-6-luna"
+    },
+    report
+  );
+  return {
+    store,
+    who,
+    reports,
+    report,
+    provider,
+    role,
+    declaration: {
+      kind: "models" as const,
+      handle,
+      id: role.id,
+      revision: role.metadataRevision
+    }
+  };
+});
+
+it.layer(Layer.fresh(modelsLayer))("model role declaration publishing", (it) => {
+  it.effect("publishes a usable role, stored in the shape the release before reads", () =>
+    Effect.gen(function* () {
+      const { declaration, role } = yield* modelRole("triage");
+      const api = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const created = yield* api.publish({
+        payload: yield* consumingRequest({
+          html: html("Sorts requests"),
+          manifest: { ...Fixtures.manifest, name: "role-sorter", uses: { triage: declaration } }
+        })
+      });
+      const sql = yield* SqlClient.SqlClient;
+      const [stored] = yield* sql<{ readonly manifest: { readonly uses: unknown } }>`SELECT manifest
+        FROM patch_versions WHERE id = ${created.versionId}`;
+      assert.deepStrictEqual(stored?.manifest.uses, { triage: storedRole(role.id) });
+      assert.deepStrictEqual(
+        Schema.decodeUnknownSync(Manifest, { onExcessProperty: "error" })(stored?.manifest).uses,
+        { triage: storedRole(role.id) }
+      );
+    })
+  );
+
+  it.effect("refuses a role that is paused, on a paused provider, stale or not the owner's", () =>
+    Effect.gen(function* () {
+      const { store, who, provider, role, declaration } = yield* modelRole("refusals");
+      const api = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const publish = (uses: Record<string, typeof declaration>) =>
+        Effect.flatMap(
+          consumingRequest({
+            html: html("Refused role"),
+            manifest: { ...Fixtures.manifest, name: "refused-role", uses }
+          }),
+          (payload) => api.publish({ payload, responseMode: "response-only" })
+        );
+      const refused = Effect.fnUntraced(function* (
+        uses: Record<string, typeof declaration>,
+        code: string
+      ) {
+        const response = yield* publish(uses);
+        assert.strictEqual(response.status, code === "connection_access_denied" ? 400 : 422);
+        assert.include(yield* response.json, { code });
+      });
+      yield* store.changeModels({ ...who, id: role.id, change: { kind: "pause" } });
+      yield* refused({ triage: declaration }, "connection_not_connected");
+      yield* store.changeModels({ ...who, id: role.id, change: { kind: "resume" } });
+      const resumed = {
+        ...declaration,
+        revision: (yield* store.get(who.companyId, role.id)).metadataRevision
+      };
+      yield* store.changeModels({ ...who, id: provider.id, change: { kind: "pause" } });
+      yield* refused({ triage: resumed }, "connection_not_connected");
+      yield* store.changeModels({ ...who, id: provider.id, change: { kind: "resume" } });
+      yield* refused({ triage: { ...resumed, revision: resumed.revision + 1 } }, "stale_generated");
+      const team = yield* (yield* Teams.Teams).create({
+        companyId: admin.company.id,
+        actorId: admin.user.id,
+        name: "Role builders"
+      });
+      yield* store.setAudience({
+        ...who,
+        id: role.id,
+        audience: { kind: "teams", teamIds: [team.id] }
+      });
+      yield* refused({ triage: resumed }, "connection_access_denied");
+    })
+  );
+
+  it.effect("a role's delete waiting on a publish that declares it is refused once it lands", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const { store, who, role, declaration } = yield* modelRole("delete-race");
+      const input = Fixtures.recordInput(uploader, {
+        manifest: { ...Fixtures.manifest, tier: 2, uses: { triage: declaration } }
+      });
+      const ran = yield* Deferred.make<number>();
+      const commit = yield* Deferred.make<void>();
+      const publishing = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* Fixtures.record(input);
+            const [session] = yield* sql<{ readonly pid: number }>`SELECT pg_backend_pid() AS pid`;
+            if (session !== undefined) yield* Deferred.succeed(ran, session.pid);
+            yield* Deferred.await(commit);
+          })
+        )
+        .pipe(Effect.forkScoped);
+      const holder = yield* Deferred.await(ran);
+      const deleting = yield* store
+        .changeModels({ ...who, id: role.id, change: { kind: "delete" } })
+        .pipe(Effect.result, Effect.forkScoped);
+      yield* sql`SELECT pid FROM pg_stat_activity WHERE ${holder} = ANY(pg_blocking_pids(pid))`.pipe(
+        Effect.repeat({ until: (rows) => rows.length > 0 })
+      );
+      yield* Deferred.succeed(commit, undefined);
+      yield* Fiber.join(publishing);
+      const deleted = yield* Fiber.join(deleting);
+      assert.strictEqual(
+        Result.isFailure(deleted) ? deleted.failure._tag : "deleted",
+        "ConnectionInUse"
+      );
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect("a provider's pause waiting on a publish names the patch that publish makes", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const { store, who, provider, report, declaration } = yield* modelRole("pause-race");
+      const input = Fixtures.recordInput(uploader, {
+        manifest: {
+          ...Fixtures.manifest,
+          tier: 2,
+          name: "paused-sorter",
+          uses: { triage: declaration }
+        }
+      });
+      const ran = yield* Deferred.make<number>();
+      const commit = yield* Deferred.make<void>();
+      const publishing = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* Fixtures.record(input);
+            const [session] = yield* sql<{ readonly pid: number }>`SELECT pg_backend_pid() AS pid`;
+            if (session !== undefined) yield* Deferred.succeed(ran, session.pid);
+            yield* Deferred.await(commit);
+          })
+        )
+        .pipe(Effect.forkScoped);
+      const holder = yield* Deferred.await(ran);
+      const pausing = yield* store
+        .changeModels({ ...who, id: provider.id, change: { kind: "pause" } }, report)
+        .pipe(Effect.forkScoped);
+      yield* sql`SELECT pid FROM pg_stat_activity WHERE ${holder} = ANY(pg_blocking_pids(pid))`.pipe(
+        Effect.repeat({ until: (rows) => rows.length > 0 })
+      );
+      yield* Deferred.succeed(commit, undefined);
+      yield* Fiber.join(publishing);
+      assert.deepStrictEqual((yield* Fiber.join(pausing)).affected, ["paused-sorter"]);
+    }).pipe(Effect.scoped)
+  );
+});
 
 it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
   it.effect(

@@ -6,6 +6,9 @@
  *
  * `PATCHY_DEV_MAILBOXES` names the file listing them, which is read again for every session, so
  * a mailbox added to a running instance works at once. A missing file means none.
+ *
+ * Model calls go to `PATCHY_DEV_MODELS_URL`, the fake model provider the supervisor runs on
+ * loopback, and without it nowhere (`devModels.ts`): a dev instance never reaches a real one.
  */
 // @effect-diagnostics nodeBuiltinImport:off -- the network seam asks synchronously, once per session.
 import { readFileSync } from "node:fs";
@@ -16,6 +19,13 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { ImapNetwork } from "@patchy/integrations";
 import { launch } from "@patchy/server/launch";
+import { devModels } from "./devModels.js";
+import { directLoopback } from "./directLoopback.js";
+
+// The runner already starts this with loopback exempt from any proxy. Started by hand it is not,
+// so it exempts itself before anything is fetched: a model call reaches the fake, never a proxy.
+// oxlint-disable-next-line no-restricted-properties -- sets the exemption Bun's fetch reads; reads nothing.
+Object.assign(process.env, directLoopback);
 
 const decode = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Array(ImapNetwork.LoopbackServer))
@@ -33,5 +43,6 @@ launch(
     Effect.map(Config.option(Config.String("PATCHY_DEV_MAILBOXES")), (file) =>
       ImapNetwork.loopback(Option.isSome(file) ? listed(file.value) : () => [])
     )
-  )
+  ),
+  devModels
 );

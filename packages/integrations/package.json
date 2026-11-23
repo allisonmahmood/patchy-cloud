@@ -6,6 +6,11 @@
   "type": "module",
   "description": "Company connections, encrypted credentials and Postgres schema discovery.",
   "exports": {
+    "./models-fake": {
+      "development": "./src/models/Fake.ts",
+      "types": "./dist/models/Fake.d.ts",
+      "import": "./dist/models/Fake.js"
+    },
     "./dev": {
       "development": "./src/dev.ts",
       "types": "./dist/dev.d.ts",

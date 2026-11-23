@@ -285,7 +285,9 @@ export const makeHandlers = Effect.gen(function* () {
     run: (args) =>
       Effect.gen(function* () {
         const binding = yield* Binding.Binding;
-        const attempt: Source.Attempt = { sent: false };
+        // The gateway's own record of the call's dispatch, when it gave one, so it knows as it
+        // journals the call whether anything was sent.
+        const attempt: Source.Attempt = binding.modelDispatch ?? { sent: false };
         const started = yield* Clock.currentTimeMillis;
         const cutoff = Math.max(0, (binding.deadline ?? started + ACTION_MS) - CUTOFF_MS - started);
         // Captured here, inside the action's event, so the pool move records its limits there.

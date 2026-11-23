@@ -1,4 +1,5 @@
 import { defineConfig, mergeConfig } from "vitest/config";
+import { directLoopback } from "./scripts/dev/src/directLoopback.js";
 import base from "./vitest.config.js";
 
 /**
@@ -40,4 +41,11 @@ const nodeOnly = [
   "scripts/dev/src/runtimes.test.ts"
 ];
 
-export default mergeConfig(base, defineConfig({ test: { exclude: nodeOnly } }));
+/**
+ * Bun's fetch hands even a loopback request to a proxy the environment names, past the offline
+ * fetch guard, so the suites' own servers and fakes are exempt, as the dev runner exempts them.
+ */
+export default mergeConfig(
+  base,
+  defineConfig({ test: { exclude: nodeOnly, env: { ...directLoopback } } })
+);

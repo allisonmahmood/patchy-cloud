@@ -158,7 +158,9 @@ it.live(
                 yield* Deferred.await(waiting);
               }
               return yield* gateway.callback(token, attempt, input, charged);
-            })
+            }),
+          admitModelCall: gateway.admitModelCall,
+          refuseModelCall: gateway.refuseModelCall
         })
       );
       const source = yield* Effect.promise(

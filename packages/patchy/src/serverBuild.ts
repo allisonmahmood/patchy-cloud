@@ -8,7 +8,7 @@ import { runToolchain } from "./toolchain.js";
 /**
  * The declared aliases the guest builds its own clients for, by kind: a shared store's and a
  * Pidgeon, Attio, IMAP or GitHub connection's differ from a shared table's and a Postgres
- * connection's.
+ * connection's. A model role's comes with its kind, so its client has that kind's one call.
  */
 export interface GuestAliases {
   readonly sharedStores: readonly string[];
@@ -16,9 +16,12 @@ export interface GuestAliases {
   readonly attio: readonly string[];
   readonly imap: readonly string[];
   readonly github: readonly string[];
+  readonly models: Readonly<Record<string, "decision" | "text">>;
 }
 export const guestAliases = (
-  uses: Readonly<Record<string, { readonly kind: string }>>
+  uses: Readonly<Record<string, { readonly kind: string }>>,
+  /** Each model role's kind, by alias, from the generated index; see `modelKinds`. */
+  models: Readonly<Record<string, "decision" | "text">> = {}
 ): GuestAliases => {
   const of = (kind: string) =>
     Object.entries(uses)
@@ -29,7 +32,14 @@ export const guestAliases = (
     pidgeon: of("pidgeon"),
     attio: of("attio"),
     imap: of("imap"),
-    github: of("github")
+    github: of("github"),
+    // Stamping refuses an index that names a role without its kind, so each has one here.
+    models: Object.fromEntries(
+      of("models").flatMap((alias) => {
+        const kind = models[alias];
+        return kind === undefined ? [] : [[alias, kind] as const];
+      })
+    )
   };
 };
 
@@ -125,7 +135,7 @@ const buildConfig = (
     ),
     ...agentPaths.map((file, index) => `import * as agent${index} from ${JSON.stringify(file)};`),
     // Computed keys, so a file named __proto__ is a key rather than the object's prototype.
-    `export default createGuest({${modules.map((name, index) => `[${JSON.stringify(name)}]: module${index}`).join(",")}},${JSON.stringify(aliases.sharedStores)},{${agent.files.map((name, index) => `[${JSON.stringify(name)}]: agent${index}`).join(",")}},${JSON.stringify(aliases.pidgeon)},${JSON.stringify(aliases.attio)},${JSON.stringify(aliases.imap)},${JSON.stringify(aliases.github)});`
+    `export default createGuest({${modules.map((name, index) => `[${JSON.stringify(name)}]: module${index}`).join(",")}},${JSON.stringify(aliases.sharedStores)},{${agent.files.map((name, index) => `[${JSON.stringify(name)}]: agent${index}`).join(",")}},${JSON.stringify(aliases.pidgeon)},${JSON.stringify(aliases.attio)},${JSON.stringify(aliases.imap)},${JSON.stringify(aliases.github)},${JSON.stringify(aliases.models)});`
   ].join("\n");
   return {
     configFile: false,

@@ -209,6 +209,9 @@ export class AppStack extends Stack {
           essential: true,
           user: "0",
           command: ["bun", "dist/exec.js"],
+          // Each open request holds about two sockets; the open-file limit is stated, not left to
+          // the platform's default (docs/OPERATIONS.md, Models).
+          ulimits: [{ name: "nofile", softLimit: 65535, hardLimit: 65535 }],
           linuxParameters: { capabilities: { drop: execDroppedCapabilities } },
           portMappings: [{ containerPort: port.management, protocol: "tcp" }],
           stopTimeout: 120,
@@ -354,7 +357,10 @@ export class AppStack extends Stack {
         EXECUTION_MANAGEMENT_SECRET: management(props.secretSlot),
         ...(previous && { EXECUTION_MANAGEMENT_PREVIOUS_SECRET: management(previous.secretSlot) })
       },
-      logging: ecs.LogDrivers.awsLogs({ logGroup: hostLogs, streamPrefix: "host" })
+      logging: ecs.LogDrivers.awsLogs({ logGroup: hostLogs, streamPrefix: "host" }),
+      // Each open request holds about two sockets; the open-file limit is stated, not left to
+      // the platform's default.
+      ulimits: [{ name: ecs.UlimitName.NOFILE, softLimit: 65535, hardLimit: 65535 }]
     });
 
     const loadBalancer = new elbv2.ApplicationLoadBalancer(this, "LoadBalancer", {

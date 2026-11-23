@@ -20,6 +20,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { applyDevSeed } from "@patchy/auth/seed";
+import * as FakeModels from "@patchy/integrations/models-fake";
 import { Patches } from "@patchy/patches";
 import { migrations } from "@patchy/server/migrations";
 import { layerFromUrl, migrate } from "@patchy/sql";
@@ -34,6 +35,7 @@ import {
 import { DATABASE_NAME, Plan, signInOf } from "./plan.js";
 import { alive } from "./process.js";
 import { PG_FLAGS, PG_PASSWORD, PG_USER } from "./postgres.js";
+import { directLoopback } from "./directLoopback.js";
 import { bun, realNode } from "./runtimes.js";
 import { loadScenario, seedScenario } from "./scenario.js";
 import { FAILED, layout, writeEnv, writePlan } from "./state.js";
@@ -144,6 +146,16 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
   const say = (line: string) => write("dev", line);
 
   yield* say(`supervisor pid=${process.pid} worktree=${plan.worktree}`);
+
+  // The fake model provider, on loopback in this process, so the server's model calls never
+  // reach a real one. Each request it answers is a line, without its content.
+  const models = yield* FakeModels.start({
+    onEntry: (entry) =>
+      enqueue("models")(
+        `${entry.path} ${entry.mode || "answer"} status=${entry.status} ms=${entry.durationMs ?? "-"} closedEarly=${entry.closedEarly}`
+      )
+  });
+  yield* say(`fake model provider ${models.url}`);
 
   // Postgres: initdb once per state dir, then a normal start/stop pair. The
   // durability flags are off because a dev database is disposable.
@@ -306,8 +318,14 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
           PATCHY_STORAGE_DIR: files.storageDir,
           PATCHY_PUBLIC_BASE_URL: plan.apiUrl,
           PATCHY_DEV_MAILBOXES: files.mailboxes,
-          // Models stay off in production until they're done; here they're on.
-          PATCHY_MODELS: "true"
+          // Models stay off in production until they're done; here they're on, against the fake.
+          PATCHY_MODELS: "true",
+          PATCHY_DEV_MODELS_URL: models.url,
+          // Bun's outbound request limit raised past its 256, which production leaves alone: the
+          // local executor's invokes and callbacks share this one process with the server's own.
+          BUN_CONFIG_MAX_HTTP_REQUESTS: "512",
+          // The fake and the local executor are on loopback: no proxy a `.env` names sits between.
+          ...directLoopback
         },
         extendEnv: false,
         stdin: "ignore",

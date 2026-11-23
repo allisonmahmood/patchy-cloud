@@ -154,6 +154,30 @@ it("gives hosts and company boxes a full vCPU, and the fleet 24 boxes with three
   });
 });
 
+it("pins hosts' and company boxes' open files, and leaves Bun's outbound requests at its own", () => {
+  // Bun's outbound limit stays its default until it is measured on the deployed task size
+  // (docs/OPERATIONS.md, Models).
+  for (const family of ["patchy-production-host", "patchy-production-exec"])
+    template.hasResourceProperties("AWS::ECS::TaskDefinition", {
+      Family: family,
+      ContainerDefinitions: [
+        Match.objectLike({
+          Ulimits: [{ Name: "nofile", SoftLimit: 65535, HardLimit: 65535 }]
+        })
+      ]
+    });
+  template.hasResourceProperties("AWS::ECS::TaskDefinition", {
+    Family: "patchy-production-host",
+    ContainerDefinitions: [
+      Match.objectLike({
+        Environment: Match.not(
+          Match.arrayWith([Match.objectLike({ Name: "BUN_CONFIG_MAX_HTTP_REQUESTS" })])
+        )
+      })
+    ]
+  });
+});
+
 it("lets only this repository's production environment assume the deploy role", () => {
   base.hasResourceProperties("AWS::IAM::Role", {
     RoleName: "patchy-production-deploy",

@@ -1316,7 +1316,7 @@ export const registry = {
     unit: "bytes",
     scope: "viewer",
     measure:
-      "Encoded arguments of one model call, checked by the host's callback gateway once the callback is read; nothing past it is queued or sent",
+      "Encoded arguments of one model call, refused before sending by the execution task's loader, before reading by its proxy when the declared length passes it, and as it is read by its proxy and the host; nothing past it is queued or sent",
     refusal: "too_large",
     overridable: false
   },
@@ -1382,7 +1382,7 @@ export const registry = {
   },
   "models.outbound.host": {
     kind: "operating",
-    default: 64,
+    default: 32,
     unit: "requests",
     scope: "host",
     measure:
@@ -1407,6 +1407,16 @@ export const registry = {
     scope: "host",
     measure:
       "Model calls waiting in one server process's admission queue for both permits; past it a call is refused at once, nothing sent",
+    refusal: "busy",
+    overridable: false
+  },
+  "models.execution.inFlight": {
+    kind: "operating",
+    default: 32,
+    unit: "callbacks",
+    scope: "company",
+    measure:
+      "Model calls one execution task's callback proxy holds at once, from before it reads a call's body until it has read the host's reply; past it a call is refused at once, nothing sent",
     refusal: "busy",
     overridable: false
   },

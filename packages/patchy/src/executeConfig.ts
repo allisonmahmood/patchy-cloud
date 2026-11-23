@@ -19,6 +19,8 @@ import {
   AttioDeclaration,
   ImapDeclaration,
   GithubDeclaration,
+  ModelRoleKind,
+  ModelsDeclaration,
   SharedTableDeclaration,
   SharedStoreDeclaration,
   sharedStoreId,
@@ -85,13 +87,6 @@ export interface ExecutedManifest {
           readonly id: string;
           readonly revision: number;
         })
-      // A model role, which a stored version may declare; config can't name one yet.
-      | {
-          readonly kind: "models";
-          readonly handle: string;
-          readonly id: string;
-          readonly revision: number;
-        }
     >
   >;
 }
@@ -135,6 +130,10 @@ const configSchema = Schema.Struct({
         handle: GithubDeclaration.fields.handle
       }),
       Schema.Struct({
+        kind: ModelsDeclaration.fields.kind,
+        handle: ModelsDeclaration.fields.handle
+      }),
+      Schema.Struct({
         kind: SharedStoreDeclaration.fields.kind,
         patchId: SharedStoreDeclaration.fields.patchId,
         store: SharedStoreDeclaration.fields.store
@@ -161,10 +160,13 @@ const generatedIndexSchema = Schema.Struct({
         AttioDeclaration,
         ImapDeclaration,
         GithubDeclaration,
+        ModelsDeclaration,
         SharedTableDeclaration,
         SharedStoreDeclaration
       ]),
-      revision: PostgresDeclaration.fields.revision
+      revision: PostgresDeclaration.fields.revision,
+      /** A model role's kind, from its snapshot; the build hands it to the guest. */
+      modelKind: Schema.optionalKey(ModelRoleKind)
     })
   )
 });
@@ -330,11 +332,30 @@ export async function executeConfig(
   path: string,
   options?: { readonly resolve: false; readonly source?: string }
 ): Promise<ExecutedManifest | UnresolvedManifest> {
+  const { config, absolutePath } = await evaluate(path, options?.source);
+  if (options?.resolve === false) return config;
+  return (await stamp(config, absolutePath)).manifest;
+}
+
+/**
+ * Executes config for publishing and stamps it, with each model role's kind, from one read of the
+ * generated index: a refresh landing meanwhile can't leave the manifest and the kinds the build
+ * hands the guest disagreeing.
+ */
+export async function executeStamped(path: string): Promise<{
+  readonly manifest: ExecutedManifest;
+  readonly modelKinds: Readonly<Record<string, ModelRoleKind>>;
+}> {
+  const { config, absolutePath } = await evaluate(path);
+  return stamp(config, absolutePath);
+}
+
+const evaluate = async (path: string, source?: string) => {
   const absolutePath = resolve(path);
   const executed =
-    options?.source === undefined
+    source === undefined
       ? await runConfig(absolutePath)
-      : await runEditedConfig(absolutePath, options.source);
+      : await runEditedConfig(absolutePath, source);
   const described = describedColumn(executed);
   if (described !== undefined) throw described;
   if (field(executed, "tier") === 0) throw new TierZero();
@@ -353,17 +374,31 @@ export async function executeConfig(
     if (name !== undefined) throw new PrimitiveNameCollision({ definitionName: name, cause });
     throw cause;
   }
-  if (options?.resolve === false) {
-    return config;
-  }
+  return { config, absolutePath };
+};
+
+const stamp = async (config: UnresolvedManifest, absolutePath: string) => {
   const refused = usesRefusal(config.tier, Object.keys(config.uses));
   if (refused !== undefined) throw new LowerTierUses(refused);
   const indexPath = resolve(dirname(absolutePath), "patchy/_generated/index.json");
   const index = await readFile(indexPath, "utf8").catch((cause: unknown) => {
     throw new StaleGenerated({ cause });
   });
-  return resolveStamps(config, index);
-}
+  return { manifest: resolveStamps(config, index), modelKinds: modelKinds(index) };
+};
+
+/**
+ * Each declared model role's kind, by alias, from a generated index's JSON source, as the build
+ * hands them to the guest: a decision role's client has `decide` alone and a text role's
+ * `generate`. Read from the same source `resolveStamps` accepted; `executeStamped` reads both.
+ */
+export const modelKinds = (source: string): Readonly<Record<string, ModelRoleKind>> => {
+  const kinds: Record<string, ModelRoleKind> = {};
+  for (const stamp of decodeIndex(source).uses)
+    if (stamp.declaration.kind === "models" && stamp.modelKind !== undefined)
+      kinds[stamp.alias] = stamp.modelKind;
+  return kinds;
+};
 
 /**
  * Stamps an evaluated config from a generated index's JSON source. Refuses, as
@@ -415,6 +450,10 @@ export const resolveStamps = (config: UnresolvedManifest, source: string): Execu
         (generated.kind !== "imap" || declaration.handle !== generated.handle)) ||
       (declaration.kind === "github" &&
         (generated.kind !== "github" || declaration.handle !== generated.handle)) ||
+      (declaration.kind === "models" &&
+        (generated.kind !== "models" ||
+          declaration.handle !== generated.handle ||
+          stamp.modelKind === undefined)) ||
       (declaration.kind === "sharedStore" &&
         (generated.kind !== "sharedStore" ||
           declaration.patchId !== generated.patchId ||

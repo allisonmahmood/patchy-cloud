@@ -209,6 +209,20 @@ export const OfflineConnection = Schema.Struct({
 });
 export type OfflineConnection = typeof OfflineConnection.Type;
 
+/**
+ * A model role `up` seeds, mapped to the scenario's one OpenAI provider, `openai/main`, whose key
+ * is invented: the instance sends model calls to the dev runner's fake provider, which answers any
+ * key and never a real one. Patches declare a role as `models/<handle>`.
+ */
+export const ModelRole = Schema.Struct({
+  handle: Slug,
+  kind: Schema.Literals(["decision", "text"]),
+  description: Schema.NonEmptyString,
+  /** The model id it's mapped to: a decision role's must be `gpt-6-luna`, the one that decides. */
+  model: Schema.NonEmptyString
+});
+export type ModelRole = typeof ModelRole.Type;
+
 // An offline connection has a state and a live one doesn't, so the offline one is tried first.
 export const ScenarioConnection = Schema.Union([OfflineConnection, LiveConnection]);
 export type ScenarioConnection = typeof ScenarioConnection.Type;
@@ -266,6 +280,7 @@ export const Scenario = Schema.Struct({
     )
   ),
   connections: Schema.optionalKey(Schema.Array(ScenarioConnection)),
+  models: Schema.optionalKey(Schema.Array(ModelRole)),
   /**
    * General requests, which Patchy's team writes and every company's matching sees, each with its
    * status and an optional public note, such as how to use what shipped.
@@ -389,11 +404,19 @@ export const loadScenario = Effect.fn("loadScenario")(function* (worktree: strin
     return yield* invalid(
       `${misread.integration}/${misread.handle} names a reason: only a GitHub connection that needs attention has one.`
     );
-  const connections = new Set(
-    (scenario.connections ?? []).map(
+  const connections = new Set([
+    ...(scenario.connections ?? []).map(
       (connection) => `${connection.integration}/${connection.handle}`
-    )
+    ),
+    ...(scenario.models ?? []).map((role) => `models/${role.handle}`)
+  ]);
+  const deciding = (scenario.models ?? []).find(
+    (role) => role.kind === "decision" && role.model !== "gpt-6-luna"
   );
+  if (deciding !== undefined)
+    return yield* invalid(
+      `models/${deciding.handle} is a decision role on ${deciding.model}: only gpt-6-luna decides.`
+    );
   const people = new Map(scenario.people.map((person) => [person.key, person]));
   const home = (person: Person) => person.company ?? scenario.company.handle;
   for (const patch of scenario.patches) {

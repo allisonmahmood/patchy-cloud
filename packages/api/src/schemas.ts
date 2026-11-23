@@ -623,7 +623,9 @@ export const GithubDeclaration = Schema.Struct({
 });
 /**
  * A company model role: a decision role or a text role, which an admin maps to a provider and a
- * model. A host reads one a stored version declares; publishing one is refused for now.
+ * model. Its kind is the role's snapshot, never part of the declaration, so this shape is the one
+ * every release that reads a role reads. Generation and publishing resolve one only while the
+ * host's Models switch is on; a host with it off still reads one a stored version declares.
  */
 export const ModelsDeclaration = Schema.Struct({
   ...PostgresDeclaration.fields,
@@ -799,6 +801,11 @@ export const GenerationManifest = Schema.Struct({
         revision: Schema.optionalKey(Revision)
       }),
       Schema.Struct({
+        ...ModelsDeclaration.fields,
+        id: Schema.optionalKey(NonEmptyText),
+        revision: Schema.optionalKey(Revision)
+      }),
+      Schema.Struct({
         ...SharedTableDeclaration.fields,
         id: Schema.optionalKey(NonEmptyText),
         revision: Schema.optionalKey(Revision)
@@ -953,6 +960,11 @@ export const DeclarationMetadata = Schema.Struct({
   github: Schema.Record(
     Schema.String,
     Schema.Struct({ declaration: GithubDeclaration, snapshot: GithubSnapshot })
+  ).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
+  // As for Pidgeon: a release before Models generates none.
+  models: Schema.Record(
+    Schema.String,
+    Schema.Struct({ declaration: ModelsDeclaration, snapshot: ModelsSnapshot })
   ).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
   // `companyWide`: whether everyone in the company can open the source, so `patchy dev`'s
   // colleague, on none of the developer's teams, can read it. A release before teams sends none,

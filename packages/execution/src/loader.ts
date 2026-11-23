@@ -46,6 +46,8 @@ interface LiveAttempt {
   readonly reference: AttemptReference;
   readonly callback: GuestProtocol.Invoke["callback"];
   readonly callbackService: Fetcher;
+  /** The refusals this loader gave the attempt's model calls, distinct, returned with its reply. */
+  readonly refusals: Map<string, GuestProtocol.ExecutionRefusal>;
 }
 const strict = { onExcessProperty: "error" } as const;
 const decodeBind = Schema.decodeUnknownSync(GuestProtocol.BindRequest, strict);
@@ -69,6 +71,32 @@ const endedCallback = (reference: AttemptReference) =>
   Date.now() >= reference.deadline
     ? refusal("timeout", "The invocation callback deadline has passed.")
     : refusal("access_denied", "The invocation callback has ended.");
+/**
+ * A model call is marked for the proxy, which holds a model permit for it and tells the host it
+ * did. Its refusals given here, before anything leaves the loader, say nothing was sent; one given
+ * once the call has gone to the proxy says nothing, which reads as unknown.
+ */
+const isModelCall = (op: unknown) => op === "models.decide" || op === "models.generate";
+const unsent = (model: boolean, reply: GuestProtocol.CallbackReply): GuestProtocol.CallbackReply =>
+  model && !reply.ok && reply.source === "patchy"
+    ? { ...reply, details: { ...reply.details, sent: false } }
+    : reply;
+/**
+ * Keeps a refusal this loader gives a live attempt's model call, as the guest gets it, so the host
+ * can tell it from one patch code makes up; then gives it.
+ */
+const recorded = (
+  live: LiveAttempt,
+  operation: string | undefined,
+  reply: GuestProtocol.CallbackReply
+): GuestProtocol.CallbackReply => {
+  if (operation === undefined || reply.ok || reply.source !== "patchy") return reply;
+  const given = { failure: reply, status: GuestProtocol.refusalStatus(reply.code), operation };
+  const key = GuestProtocol.refusalKey(given);
+  if (!live.refusals.has(key) && live.refusals.size < GuestProtocol.executionRefusalLimit)
+    live.refusals.set(key, given);
+  return reply;
+};
 const identity = (binding: GuestProtocol.BundleBinding) =>
   JSON.stringify([binding.companyId, binding.patchId, binding.versionId]);
 
@@ -159,7 +187,12 @@ async function invoke(
     deadline: request.deadline,
     serial: ++serial
   };
-  const live = { reference, callback: request.callback, callbackService };
+  const live: LiveAttempt = {
+    reference,
+    callback: request.callback,
+    callbackService,
+    refusals: new Map()
+  };
   activeAttempts.add(attemptKey);
   attempts.set(reference.serial, live);
   const started = Date.now();
@@ -190,8 +223,14 @@ async function invoke(
         } satisfies GuestProtocol.GuestRequest)
       });
     const reply = decodeGuestReply(await response.json());
-    // Even a late return remains guest data. Only the host knows whether effects committed.
-    return json({ outcome: "returned", reply, guestMs: Date.now() - started });
+    // Even a late return remains guest data. Only the host knows whether effects committed. The
+    // refusals beside it are the loader's own, which the guest never writes.
+    return json({
+      outcome: "returned",
+      reply,
+      guestMs: Date.now() - started,
+      ...(live.refusals.size === 0 ? {} : { refusals: [...live.refusals.values()] })
+    });
   } catch {
     return json({ outcome: "guest_failed", guestMs: Date.now() - started });
   } finally {
@@ -290,20 +329,52 @@ async function readFileBody(response: Response): Promise<Uint8Array | undefined>
 /** Props name one immutable dispatch, not a reusable invocation registry key. */
 export class Callbacks extends WorkerEntrypoint<Environment, AttemptReference> {
   async call(input: unknown): Promise<GuestProtocol.CallbackReply> {
-    if (liveAttempt(this.ctx.props) === undefined) return endedCallback(this.ctx.props);
+    const modelOp =
+      typeof input === "object" && input !== null && "op" in input && isModelCall(input.op)
+        ? String(input.op)
+        : undefined;
+    const model = modelOp !== undefined;
+    const first = liveAttempt(this.ctx.props);
+    if (first === undefined) return unsent(model, endedCallback(this.ctx.props));
     let operation: GuestProtocol.Callback;
     try {
       operation = decodeCallback(input);
     } catch {
-      return refusal("invalid_request", "Malformed callback.");
+      return recorded(
+        first,
+        modelOp,
+        unsent(model, refusal("invalid_request", "Malformed callback."))
+      );
     }
+    // A model call is JSON alone: framed with a file, its arguments would ride in a header the
+    // size check below never measures.
+    if (model && operation.body !== undefined)
+      return recorded(
+        first,
+        modelOp,
+        unsent(
+          model,
+          refusal("invalid_request", "A model call carries no file, so nothing was sent.")
+        )
+      );
     if (
       operation.body !== undefined &&
       operation.body.bytes.byteLength > GuestProtocol.callbackFileLimit.value
     )
-      return GuestProtocol.callbackFileTooLarge;
+      return recorded(first, modelOp, unsent(model, GuestProtocol.callbackFileTooLarge));
     const live = liveAttempt(this.ctx.props);
-    if (live === undefined) return endedCallback(this.ctx.props);
+    if (live === undefined) return unsent(model, endedCallback(this.ctx.props));
+    const payload =
+      operation.body === undefined
+        ? ({ kind: "json", text: JSON.stringify(operation) } as const)
+        : ({ kind: "file", file: operation.body } as const);
+    // A model call's arguments past their cap never leave: the loader knows their size already.
+    if (
+      model &&
+      payload.kind === "json" &&
+      new TextEncoder().encode(payload.text).byteLength > GuestProtocol.modelIngressLimit.value
+    )
+      return recorded(live, modelOp, GuestProtocol.modelIngressTooLarge);
     try {
       const headers = new Headers({
         authorization: `Bearer ${live.callback.capability}`,
@@ -311,17 +382,18 @@ export class Callbacks extends WorkerEntrypoint<Environment, AttemptReference> {
         "x-patchy-attempt-id": live.reference.attemptId,
         "x-patchy-process-generation": String(live.reference.processGeneration)
       });
+      if (isModelCall(operation.op)) headers.set("x-patchy-model-call", operation.op);
       let body: BodyInit;
-      if (operation.body === undefined) {
+      if (payload.kind === "json") {
         headers.set("content-type", "application/json");
-        body = JSON.stringify(operation);
+        body = payload.text;
       } else {
-        headers.set("content-type", operation.body.contentType);
+        headers.set("content-type", payload.file.contentType);
         headers.set(
           "x-patchy-callback",
           encodeURIComponent(JSON.stringify({ op: operation.op, args: operation.args }))
         );
-        body = operation.body.bytes as Uint8Array<ArrayBuffer>;
+        body = payload.file.bytes as Uint8Array<ArrayBuffer>;
       }
       const response = await live.callbackService.fetch(live.callback.url, {
         method: "POST",
@@ -346,10 +418,13 @@ export class Callbacks extends WorkerEntrypoint<Environment, AttemptReference> {
       if (liveAttempt(this.ctx.props) !== live) return endedCallback(this.ctx.props);
       return reply;
     } catch {
-      // A lost reply says nothing about commit. Settlement and safe retry belong to the host.
-      return Date.now() >= live.reference.deadline
-        ? refusal("timeout", "The invocation callback deadline has passed.")
-        : refusal("source_unavailable", "The invocation callback could not complete.");
+      // A lost reply says nothing about commit. Settlement and safe retry belong to the host. A
+      // model call's, given while its attempt is still live, is kept: its outcome stays unknown.
+      const lost =
+        Date.now() >= live.reference.deadline
+          ? refusal("timeout", "The invocation callback deadline has passed.")
+          : refusal("source_unavailable", "The invocation callback could not complete.");
+      return liveAttempt(this.ctx.props) === live ? recorded(live, modelOp, lost) : lost;
     }
   }
 }

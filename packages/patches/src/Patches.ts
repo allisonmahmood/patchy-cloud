@@ -2180,6 +2180,7 @@ export const make = Effect.gen(function* () {
     ownerUserId: string
   ) {
     const warnings: string[] = [];
+    const roles: string[] = [];
     // Lock connections in stable order when called inside the publish transaction.
     const declarations = Object.values(manifest.uses)
       .filter((declaration) => declaration.kind !== "members")
@@ -2191,8 +2192,10 @@ export const make = Effect.gen(function* () {
         declaration.kind === "pidgeon" ||
         declaration.kind === "attio" ||
         declaration.kind === "imap" ||
-        declaration.kind === "github"
+        declaration.kind === "github" ||
+        declaration.kind === "models"
       ) {
+        if (declaration.kind === "models") roles.push(declaration.id);
         // Resolving refuses a connection that isn't there; one gone since can't be built with.
         yield* connections.resolve(companyId, declaration);
         if (
@@ -2203,9 +2206,6 @@ export const make = Effect.gen(function* () {
           return yield* new ConnectionStore.ConnectionAccessDenied();
         continue;
       }
-      // Publishing refuses a model role before it gets here; nothing resolves one yet.
-      if (declaration.kind === "models")
-        return yield* new ConnectionStore.ConnectionNotConnected({});
       const resource =
         declaration.kind === "sharedTable"
           ? { table: declaration.table }
@@ -2224,6 +2224,9 @@ export const make = Effect.gen(function* () {
           `Shared ${declaration.kind === "sharedTable" ? "table" : "store"} \`${source.id}\`: declared schema revision ${declaration.revision} is behind source schema revision ${source.schemaRevision}.`
         );
     }
+    // Every role is held above, so a delete can't count it undeclared before this version
+    // commits; then their providers, which must be connected for any call to reach them.
+    yield* connections.resolveProviders(companyId, roles);
     return warnings;
   });
 

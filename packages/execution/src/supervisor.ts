@@ -1,7 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalDateInEffect:off globalJsonInEffect:off -- residency uses wall time and OS RSS; tuple keys encode already-validated identities without delimiter collisions.
 import { createServer } from "node:http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import { closeAfterAnswer, limitRefusal, limitRefusalFields } from "@patchy/api";
+import {
+  closeAfterAnswer,
+  limitRefusal,
+  limitRefusalFields,
+  type RuntimeFailure
+} from "@patchy/api";
 import * as GuestProtocol from "@patchy/api/guest";
 import * as Management from "@patchy/api/management";
 import { registry } from "@patchy/limits/registry";
@@ -95,22 +100,65 @@ class CallbackBodyTooLarge extends Schema.TaggedError<CallbackBodyTooLarge>()(
     return `The callback body has ${this.actual} bytes; the maximum is ${this.max}.`;
   }
 }
-const readCallbackBody = Effect.fnUntraced(function* <E, R>(
-  stream: Stream.Stream<Uint8Array, E, R>
+/** A host's reply past what the proxy reads back: the call reached the host, so its outcome is unknown. */
+class CallbackReplyTooLarge extends Schema.TaggedError<CallbackReplyTooLarge>()(
+  "CallbackReplyTooLarge",
+  { actual: Schema.Number, max: Schema.Number }
 ) {
+  override get message() {
+    return `The callback reply has ${this.actual} bytes; the maximum is ${this.max}.`;
+  }
+}
+/**
+ * A body read up to `max` and no further. With its length declared, into one buffer of that size,
+ * so it is never held twice; otherwise collected, then joined.
+ */
+const readCallbackBody = Effect.fnUntraced(function* <E, R>(
+  stream: Stream.Stream<Uint8Array, E, R>,
+  max: number = GuestProtocol.callbackFileLimit.value,
+  declared?: number
+) {
+  if (
+    declared !== undefined &&
+    Number.isSafeInteger(declared) &&
+    declared >= 0 &&
+    declared <= max
+  ) {
+    const bytes = new Uint8Array(declared);
+    let length = 0;
+    yield* Stream.runForEach(stream, (chunk) => {
+      if (length + chunk.byteLength > declared)
+        return Effect.fail(new CallbackBodyTooLarge({ actual: length + chunk.byteLength, max }));
+      bytes.set(chunk, length);
+      length += chunk.byteLength;
+      return Effect.void;
+    });
+    return length === declared ? bytes : bytes.subarray(0, length);
+  }
   const chunks: Uint8Array[] = [];
   let length = 0;
   yield* Stream.runForEach(stream, (chunk) => {
     length += chunk.byteLength;
-    if (length > GuestProtocol.callbackFileLimit.value)
-      return Effect.fail(
-        new CallbackBodyTooLarge({ actual: length, max: GuestProtocol.callbackFileLimit.value })
-      );
+    if (length > max) return Effect.fail(new CallbackBodyTooLarge({ actual: length, max }));
     chunks.push(chunk);
     return Effect.void;
   });
-  return Buffer.concat(chunks, length);
+  return chunks.length === 1 ? chunks[0]! : Buffer.concat(chunks, length);
 });
+const declaredLength = (value: string | undefined) => {
+  const length = value === undefined ? Number.NaN : Number(value);
+  return Number.isSafeInteger(length) && length >= 0 ? length : undefined;
+};
+
+/**
+ * The header naming a model call's operation, which the loader sets from the operation it
+ * decoded. The proxy takes a model permit for the call before reading its body and forwards the
+ * header only once it holds one; the host checks it against the body. The loader and the proxy
+ * ship in one image, so the header tells the host the call came through both.
+ */
+const modelCallHeader = "x-patchy-model-call";
+const isModelCall = (op: string | undefined): op is "models.decide" | "models.generate" =>
+  op === "models.decide" || op === "models.generate";
 
 const operatingLimitIds = [
   "execution.probe.interval",
@@ -118,7 +166,8 @@ const operatingLimitIds = [
   "execution.residency.processes",
   "execution.residency.bytes",
   "execution.process.idle",
-  "execution.process.load"
+  "execution.process.load",
+  "models.execution.inFlight"
 ] as const;
 type SupervisorLimitId = (typeof operatingLimitIds)[number];
 
@@ -165,6 +214,8 @@ interface Invocation {
   readonly capability: string;
   readonly target: string;
   readonly result: Deferred.Deferred<GuestProtocol.InvokeReply, SupervisorError>;
+  /** The refusals this proxy gave the attempt's model calls, distinct, returned with its reply. */
+  readonly refusals: Map<string, GuestProtocol.ExecutionRefusal>;
   /**
    * When its request was sent, holding its slot. Only then can its deadline end the process: a
    * second past its deadline or, sent late, a second past its sending, so the loader's answer to a
@@ -202,6 +253,8 @@ interface Resident {
   peakRssBytes: number;
   peakProcesses: number;
   peakAggregateRssBytes: number;
+  /** The task's model calls in flight at their highest as this process's calls took a permit. */
+  peakModelCalls: number;
   cpuSeconds: number;
   callsServed: number;
 }
@@ -230,6 +283,28 @@ export class Supervisor extends Context.Service<
   }
 >()("@patchy/execution/supervisor") {}
 
+/**
+ * The reply with every refusal the task gave the attempt's model calls: the loader's, then this
+ * proxy's, distinct and bounded. A reply the task gave none keeps no field, as older hosts read it.
+ */
+const withRefusals = (
+  reply: GuestProtocol.InvokeReply,
+  given: ReadonlyMap<string, GuestProtocol.ExecutionRefusal>
+): GuestProtocol.InvokeReply => {
+  if (reply.outcome !== "returned") return reply;
+  const all = new Map<string, GuestProtocol.ExecutionRefusal>();
+  for (const refusal of [...(reply.refusals ?? []), ...given.values()]) {
+    const key = GuestProtocol.refusalKey(refusal);
+    if (!all.has(key) && all.size < GuestProtocol.executionRefusalLimit) all.set(key, refusal);
+  }
+  return {
+    outcome: reply.outcome,
+    reply: reply.reply,
+    guestMs: reply.guestMs,
+    ...(all.size === 0 ? {} : { refusals: [...all.values()] })
+  };
+};
+
 export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
   const cryptography = yield* Cryptography.Cryptography;
   // Callbacks forwarded to the host go through the runtime's fetch; everything sent to this
@@ -244,7 +319,8 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
       !operatingLimitIds.some((key) => key === id) ||
       !Number.isFinite(value) ||
       value <= 0 ||
-      (id === "execution.residency.processes" && !Number.isSafeInteger(value)) ||
+      ((id === "execution.residency.processes" || id === "models.execution.inFlight") &&
+        !Number.isSafeInteger(value)) ||
       (id === "execution.probe.interval" && value >= registry["execution.stall"].default)
     )
       return yield* new SupervisorError({ operation: "bind", reason: "protocol" });
@@ -412,7 +488,19 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
             value: limit("execution.residency.bytes"),
             peak: resident.peakAggregateRssBytes,
             configRevision
-          }
+          },
+          // Only a process whose patch asked for a model: the proxy's refusals never reach the
+          // host, so this peak is where they show.
+          ...(resident.peakModelCalls === 0
+            ? []
+            : [
+                {
+                  limitId: "models.execution.inFlight",
+                  value: limit("models.execution.inFlight"),
+                  peak: resident.peakModelCalls,
+                  configRevision
+                }
+              ])
         ]
       }
     };
@@ -474,36 +562,77 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
   if (proxy.address._tag === "UnixPathAddress")
     return yield* new SupervisorError({ operation: "bind", reason: "transport" });
   const proxyBase = `http://127.0.0.1:${proxy.address.port}`;
-  const refusedCallback = () =>
-    HttpServerResponse.jsonUnsafe(
-      {
-        ok: false,
-        source: "patchy",
-        code: "access_denied",
-        error: "The invocation callback has ended."
-      },
-      { status: 403 }
-    );
+  /**
+   * The task's model calls between taking a permit and reading the host's reply, across every
+   * process. Each is given back by the call that took it, however that call ends.
+   */
+  let modelCallsInFlight = 0;
+  /**
+   * The proxy's own answer. A model call's says nothing was sent when the proxy gives it before
+   * forwarding the call; one given after is about a call the host may have made, so it says
+   * nothing, which reads as unknown. Every other call's answer is as it always was.
+   */
+  const shaped = (failure: RuntimeFailure, unsent: boolean): RuntimeFailure =>
+    unsent ? { ...failure, details: { ...failure.details, sent: false } } : failure;
+  const respond = (failure: RuntimeFailure, status: number | undefined) =>
+    HttpServerResponse.jsonUnsafe(failure, status === undefined ? undefined : { status });
+  const ended: RuntimeFailure = {
+    ok: false,
+    source: "patchy",
+    code: "access_denied",
+    error: "The invocation callback has ended."
+  };
   yield* proxy.serve(
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
+      // Classified before anything can refuse it, so every refusal a model call gets before it
+      // reaches the host says nothing was sent. The mark comes from the loader, never the guest.
+      const marked = request.headers[modelCallHeader];
+      const modelCall = isModelCall(marked) ? marked : undefined;
+      const model = modelCall !== undefined;
       const resident = callbacks.get(request.url);
-      if (request.method !== "POST" || resident === undefined) return refusedCallback();
+      if (request.method !== "POST" || resident === undefined)
+        return respond(shaped(ended, model), 403);
       const invocation = resident.invocations.get(
         attemptKey({
           invocationId: request.headers["x-patchy-invocation-id"] ?? "",
           attemptId: request.headers["x-patchy-attempt-id"] ?? ""
         })
       );
-      if (invocation === undefined) return refusedCallback();
+      if (invocation === undefined) return respond(shaped(ended, model), 403);
+      /** Set as the call is handed to the host: before it, nothing the call asked for was done. */
+      let forwarded = false;
+      /**
+       * The proxy's own refusal of this call. A model call's is kept on its attempt, as the guest
+       * gets it, so the host can relay it when the guest does and tell it from one patch code
+       * makes up.
+       */
+      const refuse = (failure: RuntimeFailure, status?: number) => {
+        const given = shaped(failure, model && !forwarded);
+        if (modelCall !== undefined) {
+          const record = {
+            failure: given,
+            status: status ?? GuestProtocol.refusalStatus(given.code),
+            operation: modelCall
+          };
+          const key = GuestProtocol.refusalKey(record);
+          if (
+            !invocation.refusals.has(key) &&
+            invocation.refusals.size < GuestProtocol.executionRefusalLimit
+          )
+            invocation.refusals.set(key, record);
+        }
+        return respond(given, status);
+      };
       const live = () =>
         resident.alive &&
         invocation.epoch === bindingEpoch &&
         resident.invocations.get(attemptKey(invocation.attempt)) === invocation &&
         request.headers["x-patchy-process-generation"] === String(resident.generation) &&
         request.headers.authorization === `Bearer ${invocation.capability}`;
+      const refusedCallback = () => refuse(ended, 403);
       const deadlineCallback = () =>
-        HttpServerResponse.jsonUnsafe({
+        refuse({
           ok: false,
           source: "patchy",
           code: "timeout",
@@ -514,7 +643,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
           ? refusedCallback()
           : Date.now() >= invocation.attempt.deadline
             ? deadlineCallback()
-            : HttpServerResponse.jsonUnsafe({
+            : refuse({
                 ok: false,
                 source: "patchy",
                 code: "source_unavailable",
@@ -522,11 +651,20 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
               });
       if (!live()) return refusedCallback();
       if (Date.now() >= invocation.attempt.deadline) return deadlineCallback();
-      return yield* Effect.gen(function* () {
+      const declared = declaredLength(request.headers["content-length"]);
+      // A model call declared past its cap is refused unread, before it asks for a permit; its
+      // connection closes after, so nothing more of it is taken.
+      if (model && declared !== undefined && declared > GuestProtocol.modelIngressLimit.value) {
+        yield* closeAfterAnswer;
+        return refuse(GuestProtocol.modelIngressAtProxy, 413);
+      }
+      const proxied = Effect.gen(function* () {
         // A request body over the limit stops being read; its 413 closes the connection.
-        const body = yield* readCallbackBody(request.stream).pipe(
-          Effect.tapErrorTag("CallbackBodyTooLarge", () => closeAfterAnswer)
-        );
+        const body = yield* readCallbackBody(
+          request.stream,
+          model ? GuestProtocol.modelIngressLimit.value : GuestProtocol.callbackFileLimit.value,
+          declared
+        ).pipe(Effect.tapErrorTag("CallbackBodyTooLarge", () => closeAfterAnswer));
         if (!live()) return refusedCallback();
         const headers: Record<string, string> = {
           authorization: `Bearer ${invocation.capability}`,
@@ -538,8 +676,11 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
         };
         if (request.headers["x-patchy-callback"] !== undefined)
           headers["x-patchy-callback"] = request.headers["x-patchy-callback"];
-        // Its slot, in order, from its forward until the host's answer has been read.
+        if (modelCall !== undefined) headers[modelCallHeader] = modelCall;
+        // Its slot, in order, from its forward until the host's answer has been read. A call still
+        // waiting for one has not been handed to the host, so a model call refused there says so.
         yield* slots.takeScoped(1);
+        forwarded = true;
         const response = yield* http
           .execute(
             HttpClientRequest.post(invocation.target).pipe(
@@ -548,7 +689,16 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
             )
           )
           .pipe(Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }));
-        const bytes = yield* readCallbackBody(response.stream);
+        // The host's reply has its own overflow: the call reached the host by then.
+        const bytes = yield* readCallbackBody(
+          response.stream,
+          GuestProtocol.callbackFileLimit.value,
+          declaredLength(response.headers["content-length"])
+        ).pipe(
+          Effect.catchTag("CallbackBodyTooLarge", (error) =>
+            Effect.fail(new CallbackReplyTooLarge({ actual: error.actual, max: error.max }))
+          )
+        );
         if (!live()) return refusedCallback();
         return HttpServerResponse.uint8Array(bytes, {
           status: response.status,
@@ -565,13 +715,58 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
         Effect.catchTags({
           CallbackBodyTooLarge: () =>
             Effect.succeed(
-              HttpServerResponse.jsonUnsafe(GuestProtocol.callbackFileTooLarge, { status: 413 })
+              model
+                ? refuse(GuestProtocol.modelIngressAtProxy, 413)
+                : HttpServerResponse.jsonUnsafe(GuestProtocol.callbackFileTooLarge, { status: 413 })
+            ),
+          // A model call's outcome is unknown; any other call's answer is as it always was.
+          CallbackReplyTooLarge: () =>
+            Effect.succeed(
+              model
+                ? unavailableCallback()
+                : HttpServerResponse.jsonUnsafe(GuestProtocol.callbackFileTooLarge, { status: 413 })
             ),
           TimeoutError: () => Effect.succeed(deadlineCallback()),
           SupervisorError: () => Effect.succeed(refusedCallback()),
           HttpClientError: () => Effect.succeed(unavailableCallback()),
           HttpServerError: () => Effect.succeed(unavailableCallback())
         })
+      );
+      if (!model) return yield* proxied;
+      // A model call takes its permit here, past the attempt's checks and before its body is
+      // read, or is refused at once with nothing sent. The permit is the call's own: it is given
+      // back as the call ends, the page's request closing first included, so the proxy stops
+      // waiting on the host for a call nobody will read; the host still settles it.
+      const limitValue = limit("models.execution.inFlight");
+      return yield* Effect.acquireUseRelease(
+        Effect.sync(() => {
+          const admitted = modelCallsInFlight < limitValue;
+          if (admitted) modelCallsInFlight++;
+          resident.peakModelCalls = Math.max(
+            resident.peakModelCalls,
+            Math.min(modelCallsInFlight + (admitted ? 0 : 1), limitValue)
+          );
+          return admitted;
+        }),
+        (admitted) =>
+          admitted
+            ? Effect.interruptible(proxied)
+            : Effect.succeed(
+                refuse(
+                  {
+                    ok: false,
+                    source: "patchy",
+                    error:
+                      "Too many model calls are running in this company's execution task, so nothing was sent. Try again shortly.",
+                    ...limitRefusal("models.execution.inFlight", limitValue, 1)
+                  },
+                  429
+                )
+              ),
+        (admitted) =>
+          Effect.sync(() => {
+            if (admitted) modelCallsInFlight--;
+          })
       );
     })
   );
@@ -889,6 +1084,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
           peakRssBytes: 0,
           peakProcesses: 0,
           peakAggregateRssBytes: 0,
+          peakModelCalls: 0,
           cpuSeconds: 0,
           callsServed: 0
         };
@@ -1032,12 +1228,14 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
             processGeneration: resident.generation,
             deadline: request.deadline
           };
+          const refusals = new Map<string, GuestProtocol.ExecutionRefusal>();
           const registered: Invocation = {
             attempt,
             epoch,
             capability: request.callback.capability,
             target: request.callback.url,
-            result
+            result,
+            refusals
           };
           resident.invocations.set(key, registered);
           resident.callsServed++;
@@ -1060,6 +1258,8 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
             );
           // The supervisor owns dispatch. Losing the HTTP caller must not erase a running deadline.
           yield* send.pipe(
+            // The loader's refusals and this proxy's, both the task's own, ride the reply.
+            Effect.map((reply) => withRefusals(reply, refusals)),
             Effect.catchTags({
               ExecutionError: (cause) => {
                 uncertain = cause.reason === "transport";

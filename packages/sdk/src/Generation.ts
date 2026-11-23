@@ -14,6 +14,7 @@ import {
   type LookFiles,
   type LookRestore,
   type LookRevision,
+  type ModelRoleKind,
   type TableDefinition,
   usesRefusal
 } from "@patchy/api";
@@ -23,6 +24,7 @@ import {
   ConnectionStore,
   Github,
   Imap,
+  ModelsGenerate,
   Pidgeon,
   Postgres,
   PostHog
@@ -65,12 +67,21 @@ const labels = {
   pidgeon: "Pidgeon",
   attio: "Attio",
   imap: "Email (IMAP)",
-  github: "GitHub"
+  github: "GitHub",
+  models: "Model role"
 } as const;
 export class ConnectionNotConnected extends Schema.TaggedError<ConnectionNotConnected>()(
   "SdkConnectionNotConnected",
   {
-    integration: Schema.Literals(["postgres", "posthog", "pidgeon", "attio", "imap", "github"]),
+    integration: Schema.Literals([
+      "postgres",
+      "posthog",
+      "pidgeon",
+      "attio",
+      "imap",
+      "github",
+      "models"
+    ]),
     handle: Schema.String
   }
 ) {
@@ -135,7 +146,9 @@ export class GenerationUnavailable extends Schema.TaggedError<GenerationUnavaila
 const sharedSourceErrors = (
   declaration: Exclude<
     (typeof GenerateRequest.Type)["manifest"]["uses"][string],
-    { kind: "postgres" | "posthog" | "pidgeon" | "attio" | "imap" | "github" | "members" }
+    {
+      kind: "postgres" | "posthog" | "pidgeon" | "attio" | "imap" | "github" | "models" | "members";
+    }
   >
 ) => {
   const source =
@@ -296,10 +309,13 @@ export const generate = Effect.fn("Generation.generate")(function* (
   const uses: Array<
     (typeof Generated.Type)["uses"][number] & {
       declaration: (typeof GenerateRequest.Type)["manifest"]["uses"][string];
-      skill: string;
+      /** None yet for a model role; its builder skill is still to come. */
+      skill?: string;
       context: string;
       client: string;
       fixture?: string;
+      /** A model role's kind, which the build hands the guest so the client has its one call. */
+      modelKind?: ModelRoleKind;
     }
   > = [];
   const declarations: Array<{
@@ -317,6 +333,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
     attio: Record<string, (typeof DeclarationMetadata.Type)["attio"][string]>;
     imap: Record<string, (typeof DeclarationMetadata.Type)["imap"][string]>;
     github: Record<string, (typeof DeclarationMetadata.Type)["github"][string]>;
+    models: Record<string, (typeof DeclarationMetadata.Type)["models"][string]>;
     shared: Record<string, (typeof DeclarationMetadata.Type)["shared"][string]>;
   } = {
     postgres: Object.create(null),
@@ -325,6 +342,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
     attio: Object.create(null),
     imap: Object.create(null),
     github: Object.create(null),
+    models: Object.create(null),
     shared: Object.create(null)
   };
   const factories: Record<string, string> = Object.create(null);
@@ -335,7 +353,8 @@ export const generate = Effect.fn("Generation.generate")(function* (
       entry.kind === "pidgeon" ||
       entry.kind === "attio" ||
       entry.kind === "imap" ||
-      entry.kind === "github"
+      entry.kind === "github" ||
+      entry.kind === "models"
   )
     ? yield* connections.list(companyId, viewerId).pipe(
         Effect.mapError(
@@ -358,13 +377,16 @@ export const generate = Effect.fn("Generation.generate")(function* (
       declaration.kind === "pidgeon" ||
       declaration.kind === "attio" ||
       declaration.kind === "imap" ||
-      declaration.kind === "github"
+      declaration.kind === "github" ||
+      declaration.kind === "models"
     ) {
+      // A role is listed only while the host's Models switch is on, so it resolves only then,
+      // and only while its provider serves it too: as discovery reads it and publish checks it.
       const connection = available.find(
         (entry) =>
           entry.integration === declaration.kind &&
           entry.handle === declaration.handle &&
-          entry.status === "connected"
+          ConnectionStore.serving(entry)
       );
       if (connection === undefined)
         return yield* new ConnectionNotConnected({
@@ -482,6 +504,22 @@ export const generate = Effect.fn("Generation.generate")(function* (
           client
         });
         skills.add("patchy-github");
+      } else if (stored.integration === "models") {
+        // A role has no fixture and no builder skill yet; its kind decides the client's one call.
+        const declared = { kind: "models" as const, ...resolved };
+        metadata.models[alias] = { declaration: declared, snapshot: stored.snapshot };
+        const output = ModelsGenerate.generate({ ...described, kind: "models" }, stored.snapshot);
+        files.set(client, output.client);
+        files.set(context, output.context);
+        uses.push({
+          alias,
+          id: resolved.id,
+          revision: resolved.revision,
+          declaration: declared,
+          context,
+          client,
+          modelKind: stored.snapshot.kind
+        });
       } else if (stored.integration === "posthog") {
         // PostHog has no fixture: dev reads the real connection.
         const declared = { kind: "posthog" as const, ...resolved };

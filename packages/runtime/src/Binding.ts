@@ -47,5 +47,11 @@ export class Binding extends Context.Service<
      * refusal sends nothing.
      */
     readonly modelPool?: Effect.Effect<void, RuntimeError>;
+    /**
+     * A model call's dispatch, set only on a model call's binding: its source marks it sent as
+     * the request reaches the transport. The gateway reads it as it journals the call, so one
+     * interrupted before then is a known failure, nothing sent, not an unknown outcome.
+     */
+    readonly modelDispatch?: { sent: boolean };
   }
 >()("@patchy/runtime/Binding") {}
