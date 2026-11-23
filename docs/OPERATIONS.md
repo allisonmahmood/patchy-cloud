@@ -270,30 +270,37 @@ measured before production's switch goes on.
 loopback and none through a proxy, with `scripts/dev/src/measureModels.ts` (a
 real supervisor and workerd, as an execution task runs them, with a stand-in
 host) and `scripts/dev/src/measureModelsHost.ts` (a host's provider requests, to
-the fake). Only `measureModels.ts` probes: an outbound request from its own
+the fake). Only `measureModels.ts` probes: an outbound fetch from its own
 process, five per phase, each given up after two seconds, a timed-out one counted
 in the median as at least that and any other failure counted apart. A phase whose
 held count moved while it was sampled fails the run instead of mixing two loads.
+The second and third results below were measured again after the supervisor's
+requests to its own processes left fetch and its invokes and forwarded callbacks
+came to share one count (The execution service, below); the others are from
+before it.
 
 - Bun runs 256 fetches at once per process and queues the rest until one ends.
   An earlier, separate check (a Bun script holding fetches open to a loopback
   server and timing one more, given up after three seconds) found: with 255 open
   another answered in 6 ms; with 256 or 300 open it was still waiting at three
   seconds; with the limit at 512 and 300 open, 6 ms.
-- Past that limit, calls wait inside the process. At Bun's default, 288 and 320
-  model calls allowed, the calls reaching the stand-in host stopped near 256 less
-  the actions' invokes in flight (184 of 288 beside 72 invokes, 176 to 186 of 320
-  beside 80) and stayed there at least three seconds. In most runs the rest then
-  arrived while the next phase was sampled, which fails the run; in one run of
-  320, and one of 256 with 256 ordinary callbacks, the supervisor ended its
-  workerd process instead, for a cause those runs didn't record (the script now
-  prints it). With 256 allowed, a first round held 133 to 198 at the default and
-  167 to 256 at 512, for reasons these runs don't show; later rounds held 158 to
-  192 at the default and all 256 at 512.
+- Past the count, calls wait their turn in the supervisor. At Bun's default,
+  three runs each with 256, 288 and 320 model calls allowed, and three with 256
+  beside 256 ordinary callbacks: the calls reaching the stand-in host stopped
+  where they and the actions' invokes already sent made 256 (192 and 193 of 256,
+  197 to 203 of 288, 187 to 191 of 320) and stayed there; three first rounds of
+  256 stopped short of that, at 130 to 160, as first rounds on macOS did before.
+  Every run finished and no process was ended. In every run of 288 and 320 and
+  one of 256, one more action's 32 ordinary callbacks were still waiting at ten
+  seconds, as a full count makes them; in the other five runs they passed, 32 in
+  10 and 11 ms and 256 in 46 to 48 ms. Before the change most runs past the
+  limit failed, their late calls arriving while the next phase was sampled, and
+  two ended the workerd process. With the limit at 512, measured before the
+  change only, all 256 were held.
 - `measureModels.ts`'s probe answered with a median of 0.1 ms, none timed out
-  and none failed, in every phase of every run that finished, 256 calls at Bun's
-  default included; the runs past the limit at the default failed before
-  reporting one.
+  and none failed, in every phase of every one of those runs: an invoke no
+  longer goes through fetch, so the callbacks a full count leaves in fetch are
+  fewer than fetch runs at once.
 - A model call held at the execution task's proxy with a 1 KiB input costs the
   supervisor about 0.13 MiB and workerd 0.18 MiB, and about three sockets in the
   supervisor and two in workerd, which `nofile` 65535 covers many times over
@@ -315,16 +322,17 @@ held count moved while it was sampled fails the run instead of mixing two loads.
 
 **Derived** from those and the registry, not measured:
 
-- An execution task's invokes into workerd, its callbacks to the host and its
-  probes of its workerd processes share Bun's 256. With Models off, one company
-  bound to a task, four host replicas (as during a deploy) each running
-  `tier2.actions.company` (8) actions with `tier2.callbacks.outstanding` (8)
-  callbacks open, the task holds 256 callback requests and 32 invokes: 288, past
-  the limit before counting queries, mutations or probes. **At Bun's default, a
-  probe can queue behind ordinary requests today.** Models adds up to 32 held
-  model calls per task.
-- Raising the limit to 512 would leave that load room by this count, but the
-  count is an estimate, not a reserve, so production doesn't set it.
+- An execution task's invokes into workerd and the callbacks it forwards to the
+  host share one count, Bun's 256; its probes of its workerd processes are
+  outside it. With Models off, one company bound to a task, four host replicas
+  (as during a deploy) each running `tier2.actions.company` (8) actions with
+  `tier2.callbacks.outstanding` (8) callbacks open, the task holds 256 callback
+  requests and 32 invokes: 288, past the count before counting queries or
+  mutations, so the rest wait their turn. Models adds up to 32 held model calls
+  per task, each keeping its place while the host answers.
+- Raising Bun's limit to 512, which the count follows, would leave that load
+  room by this arithmetic, but it is an estimate, not a reserve, so production
+  doesn't set it.
 - 32 model calls held at the proxy is eight actions running four each, where the
   host lets 96 per company through each replica, so one company's heavy use can
   meet the proxy's `busy`.
@@ -333,10 +341,10 @@ held count moved while it was sampled fails the run instead of mixing two loads.
 **To measure on the deployed task sizes** (1 vCPU, 2 GiB Fargate on Linux, for
 hosts and execution tasks) before production's switch goes on: workerd's and the
 supervisor's memory over repeated rounds of `models.execution.inFlight` calls
-near the input cap, against the 512 MiB line; a probe's wait at the ordinary
-load above with and without 32 held model calls, at Bun's default and at a raised
-limit, to choose one; and a host's memory at `models.outbound.host` provider
-requests. Each script's header says how to run it.
+near the input cap, against the 512 MiB line; how long calls and callbacks wait
+for a place at the ordinary load above with and without 32 held model calls, at
+Bun's default and at a raised limit, to choose one; and a host's memory at
+`models.outbound.host` provider requests. Each script's header says how to run it.
 
 ### Initial credentials
 
@@ -1045,7 +1053,47 @@ require a privileged supervisor. Each resident scope kills and reaps its child
 before removing the temporary configuration directory. Clean stops, watchdog
 kills, child crashes and supervisor shutdown all close that scope.
 
-The local adapter runs its supervisor in the host process. Its aggregate RSS
+The supervisor sends everything for its own workerd processes (binds, invokes,
+health probes and the startup check) over `node:http` on loopback, a fresh
+connection for each request, never pooled. Only the callbacks it forwards to the
+host go through the runtime's fetch, which under Bun runs 256 requests at once in
+a process and queues the rest (`BUN_CONFIG_MAX_HTTP_REQUESTS`, which production
+leaves unset).
+
+Invokes and forwarded callbacks share the count the runtime's fetch ran at once
+when it carried every request the supervisor made: under Bun 256, or
+`BUN_CONFIG_MAX_HTTP_REQUESTS` read as Bun reads it; under Node, whose fetch
+queues nothing, no count. An invoke takes its place when its request is sent to
+its process, after its attempt is registered with the watchdog, and a callback
+when it is forwarded to the host, after its body is read; each keeps it until its
+answer has been read. Past the count each waits its turn, first come first served.
+While an attempt waits it still counts as active, keeping its process from idle
+reaping and eviction, as it did while it sat in fetch's queue. Binds, health
+probes and startup checks are outside the count and never wait for it. The
+watchdog's deadline kill exempts only attempts not yet sent: one still waiting
+past its deadline ends nothing, and when its turn comes it is sent and the loader
+answers it `deadline` without running the handler. A sent attempt past its
+deadline still ends its process a second later, or a second after its sending if
+it was sent late. Calls holding every place while their callbacks wait for one
+end at their deadlines, as before; the process is no longer ended for it. Several
+supervisors in one Bun process, as in the dev host, each have their own count,
+and the host's other fetches share the runtime's queue with their callbacks.
+
+So held callbacks can no longer get a healthy process ended as stalled, or ended
+for a call it was never sent, through the runtime's shared fetch queue. CPU
+contention, socket admission and memory can still affect a worker, and a burst of
+requests to one now reaches its listen backlog as fresh connections. The startup
+check reads the whole 2xx body within its five-second budget, where fetch
+accepted the headers and cancelled the body. Fetch overrides, fetch-specific
+logging and proxy settings no longer apply to worker traffic.
+`bun --conditions=development scripts/dev/src/crowdedProbes.ts` fills the slots
+with held callbacks past the stall window, fans one call out to 400 callbacks,
+sends a burst of 352 invokes and a mixed load, queues a short call behind a full
+count, stalls a process, and fails if a healthy process is ended or anything it
+expects doesn't happen.
+
+The local adapter runs its supervisor in the host process, reaching its
+processes the same way; its callbacks share the host's fetch. Its aggregate RSS
 ceiling counts only supervised workerd children, not PGlite, Vite, fixtures or
 other host allocations. Dedicated fleet execution tasks include their host RSS.
 The workerd process count, aggregate and per-process ceilings, and watchdog still

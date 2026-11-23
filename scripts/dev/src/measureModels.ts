@@ -10,7 +10,8 @@
  * the host in this process that holds each model call until told to answer, reading and dropping
  * its body. Actions call four at a time, as the guest's scheduler lets them. It prints one JSON
  * line per phase: the supervisor process's RSS and TCP sockets, workerd's RSS and sockets, and
- * how long an outbound request from this process waits, as a health probe's would, while
+ * how long an outbound fetch from this process waits, as a callback the supervisor forwards
+ * does once it has its place (the supervisor's health probes no longer go through fetch), while
  *
  * - `held`: `--calls` model calls sit in the proxy, each body `--body` bytes, forwarded and held;
  * - `ordinary`: `--ordinary` ordinary callbacks pass meanwhile;
@@ -25,6 +26,7 @@ import { createServer, type ServerResponse } from "node:http";
 import { promisify } from "node:util";
 import { NodeCryptography } from "@patchy/core";
 import * as Supervisor from "@patchy/execution/supervisor";
+import * as WorkerHttp from "@patchy/execution/worker-http";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -131,10 +133,10 @@ const rssOf = async (pid: number) => {
   return Number(stdout.trim()) * 1024;
 };
 /**
- * How long one outbound request from this process takes to come back, as a health probe's would:
- * five, each given up after `probeTimeoutMs` on its own, and their median. A probe queued behind a
- * full pool counts in the median as waiting at least that long, so a median it reaches is a lower
- * bound; a probe that fails any other way is counted apart and left out.
+ * How long one outbound fetch from this process takes to come back, as a forwarded callback's
+ * does: five, each given up after `probeTimeoutMs` on its own, and their median. A probe queued
+ * behind a full pool counts in the median as waiting at least that long, so a median it reaches
+ * is a lower bound; a probe that fails any other way is counted apart and left out.
  */
 const probeTimeoutMs = 2_000;
 /** The median of `waits`, a given-up probe's as `Infinity`: with an even count, the middle two's. */
@@ -198,8 +200,9 @@ const collect = () => {
 };
 const mib = (bytes: number) => Math.round((bytes / 2 ** 20) * 10) / 10;
 /**
- * Until `target` calls are held, or the count stops growing for `stallMs`: past the process's
- * outbound request limit, the rest wait inside Bun and never reach the host. Three seconds, since
+ * Until `target` calls are held, or the count stops growing for `stallMs`: past the count the
+ * supervisor's invokes and forwarded callbacks share, the rest wait their turn and don't reach
+ * the host. Three seconds, since
  * a first round's calls can land more than a second apart, as a burst of new connections that TCP
  * retries does; with one, a first round on macOS stopped at 130 to 201 of 256 with room to spare.
  */
@@ -412,7 +415,10 @@ await Effect.runPromise(
       await sample("cleanup", { cleanupMs, permitsBackMs, heldAgain });
     });
     yield* supervisor.stop({ bindingEpoch: 1 });
-  }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer]))
+  }).pipe(
+    Effect.scoped,
+    Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+  )
 );
 host.close();
 process.exit(0);

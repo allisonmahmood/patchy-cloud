@@ -17,6 +17,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Supervisor from "./supervisor.js";
+import * as WorkerHttp from "./workerHttp.js";
 import { NodeCryptography } from "@patchy/core";
 
 /**
@@ -228,7 +229,10 @@ it.live(
           { op: "tables.get", marked: undefined }
         ])
       );
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   20_000
 );
 
@@ -288,7 +292,10 @@ it.live(
           { versionId: "ver_second", peak: expect.objectContaining({ value: 2, peak: 2 }) }
         ])
       );
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   30_000
 );
 
@@ -319,7 +326,10 @@ it.live(
       expect(replies(yield* invoke(supervisor, second, target, "inv_free", [generate()]))).toEqual([
         { ok: true, value: "answered" }
       ]);
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   30_000
 );
 
@@ -347,7 +357,10 @@ it.live(
       });
       expect(answered[1]).toEqual({ ok: true, value: null });
       expect(target.seen).toEqual([{ op: "tables.get", marked: undefined }]);
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   20_000
 );
 
@@ -367,7 +380,10 @@ it.live(
         code: "source_unavailable",
         error: "The invocation callback could not complete."
       });
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   20_000
 );
 
@@ -472,7 +488,10 @@ it.live(
       });
       expect(answered[1]).toEqual({ ok: true, value: null });
       expect(target.seen).toEqual([{ op: "tables.get", marked: undefined }]);
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   20_000
 );
 
@@ -505,7 +524,10 @@ it.live(
       expect(large).toEqual(tooLarge);
       target.release();
       yield* Fiber.join(holding);
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   30_000
 );
 
@@ -527,7 +549,10 @@ it.live(
         code: "source_unavailable",
         error: "The invocation callback could not complete."
       });
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   30_000
 );
 
@@ -589,6 +614,9 @@ it.live(
       expect(streamed.headers.connection).toBe("close");
       target.release();
       yield* Fiber.join(streaming);
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   30_000
 );

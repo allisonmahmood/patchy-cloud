@@ -11,11 +11,13 @@ import * as GuestProtocol from "@patchy/api/guest";
 import * as Management from "@patchy/api/management";
 import { registry } from "@patchy/limits/registry";
 import * as Executor from "@patchy/runtime/executor";
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -26,6 +28,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Engine from "./engine.js";
+import * as WorkerHttp from "./workerHttp.js";
 import { sampleProcess, startWorkerd, type WorkerdError, type WorkerdProcess } from "./process.js";
 import { Cryptography } from "@patchy/core";
 
@@ -47,6 +50,43 @@ const decodeInvoke = Schema.decodeUnknownEffect(Management.InvokeRequest, strict
 const decodeStop = Schema.decodeUnknownEffect(Management.StopRequest, strict);
 const decodeStats = Schema.decodeUnknownEffect(Management.StatsRequest, strict);
 const decodeTouch = Schema.decodeUnknownEffect(Management.TouchRequest, strict);
+/** Bun's count of fetches at once, when its setting is absent or one it rejects. */
+const bunFetches = 256;
+/**
+ * How many fetches the runtime runs at once, queueing the rest. Under Bun: 256, or
+ * `BUN_CONFIG_MAX_HTTP_REQUESTS` read as Bun 1.4.4 reads it, Zig's `parseInt(u16, value, 10)`,
+ * so one leading `+` and underscores between digits, then 1 to 65535; Bun warns about anything
+ * else and keeps 256, as this does. Under Node, whose fetch queues nothing, there is no count.
+ */
+export const runtimeFetches = (runtime: {
+  readonly bun: string | undefined;
+  readonly setting: string | undefined;
+}): number => {
+  if (runtime.bun === undefined) return Number.POSITIVE_INFINITY;
+  const digits = runtime.setting?.startsWith("+") ? runtime.setting.slice(1) : runtime.setting;
+  if (digits === undefined || !/^\d(?:_*\d)*$/.test(digits)) return bunFetches;
+  const fetches = Number(digits.replaceAll("_", ""));
+  return fetches >= 1 && fetches <= 65_535 ? fetches : bunFetches;
+};
+const fetchSetting = Config.option(Config.String("BUN_CONFIG_MAX_HTTP_REQUESTS")).pipe(
+  Effect.map(Option.getOrUndefined),
+  Effect.orElseSucceed(() => undefined)
+);
+/**
+ * How many invokes and forwarded callbacks this supervisor has in flight at once, together: the
+ * count the runtime's fetch ran at once when every request it made went through it. An invoke
+ * takes its place when its request is sent, and a callback when it is forwarded to the host, each
+ * until its answer has been read; past the count each waits its turn, first come first served,
+ * and while an invoke waits its attempt still counts as active, keeping its process from idle
+ * reaping and eviction, as it did in fetch's queue. Binds, health probes and startup checks are
+ * outside it. The watchdog's deadline kill exempts only attempts not yet sent; a sent attempt past
+ * its deadline still ends its process. Undefined, the default, follows the runtime
+ * (`runtimeFetches`); tests inject one.
+ */
+export const FetchSlots = Context.Reference<number | undefined>(
+  "@patchy/execution/supervisor/FetchSlots",
+  { defaultValue: () => undefined }
+);
 const killGrace = 1_000;
 const idleWatch = 1_000;
 const standbyQuiet = 1_000;
@@ -176,6 +216,12 @@ interface Invocation {
   readonly result: Deferred.Deferred<GuestProtocol.InvokeReply, SupervisorError>;
   /** The refusals this proxy gave the attempt's model calls, distinct, returned with its reply. */
   readonly refusals: Map<string, GuestProtocol.ExecutionRefusal>;
+  /**
+   * When its request was sent, holding its slot. Only then can its deadline end the process: a
+   * second past its deadline or, sent late, a second past its sending, so the loader's answer to a
+   * late call always arrives first. An attempt not yet sent ends nothing.
+   */
+  dispatchedAt?: number;
 }
 interface Resident {
   readonly binding: GuestProtocol.BundleBinding;
@@ -261,7 +307,11 @@ const withRefusals = (
 
 export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
   const cryptography = yield* Cryptography.Cryptography;
+  // Callbacks forwarded to the host go through the runtime's fetch; everything sent to this
+  // supervisor's own processes goes through `workers`, outside fetch's queue. Invokes and
+  // forwarded callbacks share `slots` below; binds and probes never take one.
   const http = yield* HttpClient.HttpClient;
+  const workers = yield* WorkerHttp.WorkerHttp;
   const scope = yield* Effect.scope;
   const operatingLimits = { ...options.operatingLimits };
   for (const [id, value] of Object.entries(operatingLimits)) {
@@ -295,6 +345,10 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
   const callbackUrls = new Set(options.callbackUrls);
   const reports = new Map<string, Management.ProcessReport>();
   const admission = yield* Semaphore.make(1);
+  const slots = yield* Semaphore.make(
+    (yield* FetchSlots) ??
+      runtimeFetches({ bun: process.versions.bun, setting: yield* fetchSetting })
+  );
   let companyId: string | null = null;
   let bindingEpoch = 0;
   let generation = 0;
@@ -623,6 +677,9 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
         if (request.headers["x-patchy-callback"] !== undefined)
           headers["x-patchy-callback"] = request.headers["x-patchy-callback"];
         if (modelCall !== undefined) headers[modelCallHeader] = modelCall;
+        // Its slot, in order, from its forward until the host's answer has been read. A call still
+        // waiting for one has not been handed to the host, so a model call refused there says so.
+        yield* slots.takeScoped(1);
         forwarded = true;
         const response = yield* http
           .execute(
@@ -652,6 +709,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
               : { "x-patchy-file-body": response.headers["x-patchy-file-body"] }
         });
       }).pipe(
+        Effect.scoped,
         Effect.raceFirst(Deferred.await(resident.dead)),
         Effect.timeout(Math.max(1, invocation.attempt.deadline - Date.now())),
         Effect.catchTags({
@@ -718,7 +776,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
   ) {
     if (resident.process === undefined || resident.probing || !resident.alive) return;
     resident.probing = true;
-    yield* http.get(`${resident.process.url}/healthz`).pipe(
+    yield* workers.get(`${resident.process.url}/healthz`).pipe(
       Effect.tap((response) =>
         response.arrayBuffer.pipe(
           Effect.tap(() =>
@@ -869,7 +927,9 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
         yield* terminate(resident, "memory");
       else if (
         [...resident.invocations.values()].some(
-          ({ attempt }) => now >= attempt.deadline + killGrace
+          ({ attempt, dispatchedAt }) =>
+            dispatchedAt !== undefined &&
+            now >= Math.max(attempt.deadline, dispatchedAt) + killGrace
         )
       )
         yield* terminate(resident, "deadline");
@@ -1081,7 +1141,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
               ),
             SupervisorError: (cause) => failLoad(resident, cause, "load_failed")
           }),
-          Effect.provideService(HttpClient.HttpClient, http),
+          Effect.provideService(HttpClient.HttpClient, workers),
           Effect.forkIn(scope)
         );
         return resident;
@@ -1169,19 +1229,35 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
             deadline: request.deadline
           };
           const refusals = new Map<string, GuestProtocol.ExecutionRefusal>();
-          resident.invocations.set(key, {
+          const registered: Invocation = {
             attempt,
             epoch,
             capability: request.callback.capability,
             target: request.callback.url,
             result,
             refusals
-          });
+          };
+          resident.invocations.set(key, registered);
           resident.callsServed++;
           resident.speculative = false;
           let uncertain = false;
+          // Prepared first, its request then waits for a slot, in order, and holds it until the
+          // loader's answer is read or the request is abandoned. Waiting, it takes nothing and its
+          // deadline ends nothing.
+          const send = engine
+            .invoke({ ...request, callback: { ...request.callback, url: target } })
+            .pipe(
+              Effect.provideService(Engine.Dispatch, (sent) =>
+                slots.withPermit(
+                  Effect.suspend(() => {
+                    registered.dispatchedAt = Date.now();
+                    return sent;
+                  })
+                )
+              )
+            );
           // The supervisor owns dispatch. Losing the HTTP caller must not erase a running deadline.
-          yield* engine.invoke({ ...request, callback: { ...request.callback, url: target } }).pipe(
+          yield* send.pipe(
             // The loader's refusals and this proxy's, both the task's own, ride the reply.
             Effect.map((reply) => withRefusals(reply, refusals)),
             Effect.catchTags({
