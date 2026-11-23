@@ -1297,6 +1297,9 @@ it.live(
     Effect.gen(function* () {
       const host = yield* holdingHost;
       const { supervisor, crowded } = yield* crowd(host);
+      // The stall window runs from the process's last good probe, which is no earlier than its
+      // bind and can be before the call: so the lower bound is measured from before the bind.
+      const beforeBind = Date.now();
       const spinning = yield* bind(supervisor, "ver_stalling");
       const started = Date.now();
       yield* supervisor
@@ -1309,7 +1312,9 @@ it.live(
         .pipe(Effect.result, Effect.forkChild);
       const report = yield* reportFor(supervisor, spinning.processGeneration!);
       expect(report.cause).toBe("stall");
-      expect(report.endedAt - started).toBeGreaterThanOrEqual(registry["execution.stall"].default);
+      expect(report.endedAt - beforeBind).toBeGreaterThanOrEqual(
+        registry["execution.stall"].default
+      );
       expect(report.endedAt - started).toBeLessThan(registry["execution.stall"].default + 1_500);
       const after = yield* supervisor.stats({ bindingEpoch: 1 });
       expect(after.reports.map((entry) => entry.processGeneration)).toEqual([
