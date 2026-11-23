@@ -54,6 +54,7 @@ import { fieldRow } from "./field-row.js";
 import { flowOutcome } from "./flow-outcome.js";
 import { productLogos, type ProductLogo } from "./logos.js";
 import { listDetail } from "./list-detail.js";
+import { mainWithRail } from "./main-rail.js";
 import { productMark } from "./product-mark.js";
 import { refusal } from "./refusal.js";
 import {
@@ -439,7 +440,8 @@ const lists = demo(
     [
       "Hover (fine pointer, with a link)",
       "a faint tint; the whole row opens it, its own buttons and menu still pressable"
-    ]
+    ],
+    ["Description link", "a link ending its line, such as +5 more, pressable above the row's link"]
   ])}${stateTable("Table", [
     ["Rest", "muted 13px headers over 56px rows on hairlines"],
     ["Phone", "columns marked for it are left out; a wide table scrolls in its own wrapper"],
@@ -618,8 +620,77 @@ const disclosures = demo(
   ])
 );
 
+const railMenu = (id: string, label: string) =>
+  menu({
+    id,
+    label,
+    items: [
+      { kind: "post", label: "Pin patch", action: "#rows" },
+      { kind: "link", label: "About this patch", href: "#rows" }
+    ]
+  });
+
+/** Home's Tools beside its Pages: a table in the main column, a short list in the rail. */
+const toolsAndPages = mainWithRail({
+  main: region({
+    id: "g-tools",
+    title: "Tools",
+    body: table({
+      label: "Tools",
+      columns: [
+        { label: "Patch", grow: true },
+        { label: "Owner", hideOnPhone: true, nowrap: true },
+        { label: "Failures (24 h)", hideBelowWide: true, nowrap: true },
+        { label: "Share", hidden: true, hideOnPhone: true, align: "end", nowrap: true },
+        { label: "Actions", hidden: true, align: "end", nowrap: true }
+      ],
+      rows: [
+        [
+          `<div class="cell-name">${patch("calendar")}<div class="row-main"><span class="row-name"><a class="row-link" href="#rows">Studio calendar</a></span><span class="row-desc">Who's in, who's out, and what's due</span></div></div>`,
+          `<div class="cell-name">${avatar("ada@example.com", "Ada Lovelace")}<span>You</span></div>`,
+          '<span class="muted">None</span>',
+          `<span class="hide-below-wide">${linkButton("Share", "#rows", { kind: "quiet", size: "sm", icon: "share", ariaLabel: "Share Studio calendar" })}</span><span class="show-below-wide">${iconButton("Share Studio calendar", "share", { href: "#rows" })}</span>`,
+          railMenu("g-tools-calendar", "Studio calendar")
+        ],
+        [
+          `<div class="cell-name">${patch("spend")}<div class="row-main"><span class="row-name"><a class="row-link" href="#rows">Spend requests</a></span><span class="row-desc">Ask for money and keep the receipt</span><span class="show-below-wide"><a href="#rows">${badge("2 failed", "danger")}</a></span></div></div>`,
+          `<div class="cell-name">${avatar("grace@example.com", "Grace Hopper")}<span>Grace</span></div>`,
+          `<a href="#rows">${badge("2 failed", "danger")}</a>`,
+          "",
+          railMenu("g-tools-spend", "Spend requests")
+        ]
+      ]
+    })
+  }),
+  rail: region({
+    id: "g-pages",
+    title: "Pages",
+    body: `<div class="stack">${rows(
+      [
+        row({
+          lead: patch("brief", 1),
+          name: "Kickoff brief",
+          href: "#rows",
+          description: "Grace · 2 hours ago",
+          descriptionLink: { label: "+5 more", href: "#rows", ariaLabel: "5 more pages by Grace" },
+          unopened: true,
+          end: railMenu("g-pages-brief", "Kickoff brief")
+        }),
+        row({
+          lead: patch("notes", 1),
+          name: "Studio notes",
+          href: "#rows",
+          description: "You · 3 days ago",
+          end: railMenu("g-pages-notes", "Studio notes")
+        })
+      ],
+      true
+    )}<div class="meta"><a href="#rows">All 7 pages</a></div></div>`
+  })
+});
+
 const homeParts = demo(
-  "Attention rows, usual tiles and copy buttons",
+  "Attention rows, usual tiles, a main column with a rail and copy buttons",
   `<div class="stack">${rows(
     [
       attentionRow({
@@ -656,7 +727,7 @@ const homeParts = demo(
         href: "#rows"
       }))
     )
-  })}<div class="cluster">${copyButton("https://example.com/acme/kudos", { label: "Copy link", ariaLabel: "Copy link to Kudos", size: "sm" })}<code>acme/kudos</code>${copyButton("acme/kudos", { kind: "quiet", size: "sm", ariaLabel: "Copy the address" })}</div></div>`,
+  })}${toolsAndPages}<div class="cluster">${copyButton("https://example.com/acme/kudos", { label: "Copy link", ariaLabel: "Copy link to Kudos", size: "sm" })}<code>acme/kudos</code>${copyButton("acme/kudos", { kind: "quiet", size: "sm", ariaLabel: "Copy the address" })}</div></div>`,
   `${stateTable("Region", [
     ["Rest", "a section whose title names it as a landmark, for a page of several"]
   ])}${stateTable("Attention row", [
@@ -666,6 +737,13 @@ const homeParts = demo(
     ["Rest", "flat on a hairline: the mark, then the name over its kind and owner"],
     ["Hover (fine pointer)", "an ink edge and a lift"],
     ["Narrow", "two a row; on a phone the name alone"]
+  ])}${stateTable("Main with rail", [
+    ["Rest", "the main column, and a narrow rail beside it, such as Home's Tools and Pages"],
+    ["Narrow", "below 1024px the rail follows the main column"],
+    [
+      "Beside a rail",
+      "below 1280px a table's columns marked for it are left out, and what matters of them shows under the name"
+    ]
   ])}${stateTable("Copy button", [
     ["Without script", "not there, so nothing offers a copy that can't happen"],
     ["With script", "its label, then Copied"],

@@ -17,7 +17,7 @@ import {
   SetupLinks,
   SetupPrompts
 } from "@patchy/auth";
-import { escapeAttribute } from "@patchy/core";
+import { escapeAttribute, isPage } from "@patchy/core";
 import { ConnectionAttention } from "@patchy/integrations";
 import { GuestGrants, Patches } from "@patchy/patches";
 import { Limits } from "@patchy/limits";
@@ -44,7 +44,6 @@ import {
   pageErrors,
   prewarm,
   shareOverlay,
-  turnedAway,
   type Routes,
   type Sharing,
   withOverlay
@@ -145,33 +144,6 @@ const setupLine = Effect.fn("HomePages.setupLine")(function* () {
 });
 
 /**
- * How many guests each of the viewer's own live company patches has, by name, from the company's
- * guests in one read; nothing to read when they own none.
- */
-const guestCounts = Effect.fn("HomePages.guestCounts")(function* (
-  rows: readonly Patches.ReadPatch[]
-) {
-  const { viewer } = yield* context;
-  const counts = new Map<string, number>();
-  if (
-    !rows.some(
-      (row) =>
-        row.patch.state === "live" &&
-        row.patch.audience.kind !== "public" &&
-        row.owner.id === viewer.user.id
-    )
-  )
-    return counts;
-  for (const guest of yield* (yield* GuestGrants.GuestGrants).companyGuests(
-    viewer.company.id,
-    viewer.user.id
-  ))
-    for (const patch of guest.patches)
-      if (patch.state === "live") counts.set(patch.name, (counts.get(patch.name) ?? 0) + 1);
-  return counts;
-});
-
-/**
  * The company's connections that need an admin, for an admin's Home. A connection store that
  * can't answer leaves them out rather than taking Home down; the Integrations page says why.
  */
@@ -188,8 +160,8 @@ const connectionsNeedingAttention = Effect.fn("HomePages.connectionsNeedingAtten
 );
 
 /**
- * Home at `/`: what needs the viewer, their usual patches, what's new, theirs and their
- * colleagues', and what other companies shared with them. Search lives on All patches, so `?q=`
+ * Home at `/`: what needs the viewer, their usual patches, the company's tools and its recent
+ * pages, and what other companies shared with them. Search lives on All patches, so `?q=`
  * goes there. `?new` opens New patch over it. Until the viewer connects an agent, the Final step
  * sits over it at each sign-in for their first week or first three sign-ins, whichever lasts
  * longer, unless they pressed Later. A refused Share form draws it again with the dialog open.
@@ -203,7 +175,10 @@ export const page: (refused?: Sharing) => Page = Effect.fn("HomePages.page")(fun
   const signedIn = yield* RequireSession.SignedIn;
   const at = refused?.at ?? url;
   const patches = yield* Patches.Patches;
-  const rows = yield* patches.read({ ...access, state: "all" });
+  // Home lists what the viewer can open; All N pages counts what All patches' Pages lists, the
+  // pages they manage but can't open too.
+  const managed = yield* patches.read({ ...access, state: "all", managed: true });
+  const rows = managed.filter((row) => row.access.canOpen);
   const opens = new Map((yield* patches.opens(viewer.user.id)).map((open) => [open.patchId, open]));
   yield* prewarm(rows, opens);
   const now = yield* Clock.currentTimeMillis;
@@ -245,7 +220,6 @@ export const page: (refused?: Sharing) => Page = Effect.fn("HomePages.page")(fun
     .sharedWith(viewer.user.id)
     .pipe(Effect.catchTags({ ConnectionStorageFailed: Effect.die }));
   const calls = yield* callSummary(rows);
-  const guests = yield* guestCounts(rows);
   const ended = yield* endedAccess(viewer.user.id);
   const home = renderHome({
     rows,
@@ -264,8 +238,7 @@ export const page: (refused?: Sharing) => Page = Effect.fn("HomePages.page")(fun
     ...(calls === undefined ? {} : { calls }),
     connections: yield* connectionsNeedingAttention(),
     ended,
-    guests,
-    turnedAway: new Set(guests.size === 0 ? [] : ((yield* turnedAway(rows))?.keys() ?? [])),
+    pageCount: managed.filter((row) => row.patch.state === "live" && isPage(row)).length,
     shared
   });
   const overlay = newPatch ?? finalStep;

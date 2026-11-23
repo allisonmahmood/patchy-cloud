@@ -16,6 +16,7 @@ import { fieldRows } from "./field-rows.js";
 import { fields } from "./fields.js";
 import { flowParts } from "./flow-parts.js";
 import { listDetail } from "./list-detail.js";
+import { mainRail } from "./main-rail.js";
 import { marks } from "./marks.js";
 import { menus } from "./menus.js";
 import { navigation } from "./navigation.js";
@@ -64,6 +65,7 @@ export const chunks = {
   steps,
   tiles,
   listDetail,
+  mainRail,
   changeBar,
   flowParts,
   appShell,

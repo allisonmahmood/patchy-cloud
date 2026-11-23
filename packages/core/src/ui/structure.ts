@@ -94,17 +94,33 @@ export const facts = (pairs: ReadonlyArray<readonly [label: string, value: strin
  * One thing in a list: a mark, its name and one line, and what you can do at its end. With
  * `href` the whole row opens it, while its own buttons and menu stay pressable above the link.
  * `unopened` draws the name with `unopenedName`'s dot, for a patch the viewer has never opened.
+ * `descriptionLink` ends the line with a link of its own after a middle dot, such as "+5 more",
+ * pressable above the row's link too.
  */
 export const row = (spec: {
   readonly lead?: string;
   readonly name: string;
   readonly href?: string;
   readonly description?: string;
+  readonly descriptionLink?: {
+    readonly label: string;
+    readonly href: string;
+    /** Names where it leads when the label alone doesn't, such as "5 more pages by Priya". */
+    readonly ariaLabel?: string;
+  };
   readonly end?: string;
   readonly unopened?: boolean;
 }) => {
   const name = spec.unopened === true ? unopenedName(spec.name) : escapeHtml(spec.name);
-  return `<div class="row${spec.lead === undefined ? " row-plain" : ""}">${spec.lead ?? ""}<div class="row-main"><span class="row-name">${spec.href === undefined ? name : `<a class="row-link" href="${escapeAttribute(spec.href)}">${name}</a>`}</span>${spec.description === undefined ? "" : `<span class="row-desc">${escapeHtml(spec.description)}</span>`}</div><div class="row-end">${spec.end ?? ""}</div></div>`;
+  const link =
+    spec.descriptionLink === undefined
+      ? ""
+      : `<a href="${escapeAttribute(spec.descriptionLink.href)}"${spec.descriptionLink.ariaLabel === undefined ? "" : ` aria-label="${escapeAttribute(spec.descriptionLink.ariaLabel)}"`}>${escapeHtml(spec.descriptionLink.label)}</a>`;
+  const description = [
+    ...(spec.description === undefined ? [] : [escapeHtml(spec.description)]),
+    ...(link === "" ? [] : [link])
+  ];
+  return `<div class="row${spec.lead === undefined ? " row-plain" : ""}">${spec.lead ?? ""}<div class="row-main"><span class="row-name">${spec.href === undefined ? name : `<a class="row-link" href="${escapeAttribute(spec.href)}">${name}</a>`}</span>${description.length === 0 ? "" : `<span class="row-desc">${description.join(" · ")}</span>`}</div><div class="row-end">${spec.end ?? ""}</div></div>`;
 };
 
 /** Rows on hairlines, in a box when `boxed`. Items are `row` or `settingRow` output. */
@@ -118,6 +134,11 @@ export interface Column {
   readonly align?: "start" | "end";
   /** Left out on a phone, where the row keeps what matters. */
   readonly hideOnPhone?: boolean;
+  /**
+   * Left out below 1280px, where a rail beside the table leaves it narrow, and so on a phone too;
+   * a cell can say what matters of it under the name with `show-below-wide`.
+   */
+  readonly hideBelowWide?: boolean;
   /** For a column of one control, such as a row's menu, with no visible header. */
   readonly hidden?: boolean;
   /** Keeps its cells on one line, such as a time, a count or a button, so another column wraps. */
@@ -148,6 +169,7 @@ export const table = (spec: {
     [
       column?.align === "end" ? "r" : "",
       column?.hideOnPhone === true ? "hide-sm" : "",
+      column?.hideBelowWide === true ? "hide-below-wide" : "",
       column?.nowrap === true ? "nowrap" : "",
       column?.grow === true ? "cell-grow" : "",
       column?.readable === true ? "cell-readable" : ""

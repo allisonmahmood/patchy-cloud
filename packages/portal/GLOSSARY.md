@@ -9,7 +9,7 @@ Where a signed-in person finds and manages their company's patches: Home at `/`,
 _Avoid_: dashboard, directory
 
 **Home**:
-The signed-in landing at `/`, in the order people come for: **Needs attention**, **Your usual**, **New**, **Yours**, **From colleagues** and **Shared with you**. Each patch is called by its title, less a trailing company name as everywhere Patchy names a patch, and opened by it, and its menu holds About this patch. Below eight live patches Home reads whole, without Your usual and New. Its one or two notices come first: for a day after someone's first publication, "<title> is live" with Open and Copy link, and, until the viewer connects an agent and while the Final step isn't over it, Connect your agent, leading to `/guide`. Search lives on All patches, so `/?q=` goes to `/patches?q=`. `/?new` opens **New patch** over it. A company with nothing live says so in Home's place, with Shared with you after it.
+The signed-in landing at `/`, in the order people come for: **Needs attention**, **Your usual**, **Tools** with **Pages** beside it, and **Shared with you**. Each patch is called by its title, less a trailing company name as everywhere Patchy names a patch, and opened by it, and its menu holds Pin patch and About this patch. A person's own patches are All patches' Yours. Below eight live patches Home reads whole, without Your usual. Its one or two notices come first: for a day after someone's first publication, "<title> is live" with Open and Copy link, and, until the viewer connects an agent and while the Final step isn't over it, Connect your agent, leading to `/guide`. Search lives on All patches, so `/?q=` goes to `/patches?q=`. `/?new` opens **New patch** over it. A company with nothing live says so in Home's place, with Shared with you after it.
 _Avoid_: dashboard, landing, index (the alphabetical list beside the card it replaced), home page (the root is a sign-in door when signed out)
 
 **Needs attention** (Home):
@@ -24,20 +24,16 @@ _Avoid_: favorites, company pins, pinned pages (tools can be pinned too)
 Up to four tiles of the live patches the viewer opened most in the last 30 days, by their opens' halving score, and nothing else. Reopening a patch within ten minutes counts once, so flipping between two patches doesn't take it over. With no opens yet it is titled "Popular at" the company and holds the company's most-visited. A tile carries the mark, the title, and whether it is a tool or a page and whose. It reads only the viewer's own opens.
 _Avoid_: favourites, pinned, recent
 
-**New** (Home):
-Up to three of colleagues' patches made in the last week that the viewer hasn't opened, newest first, each with Open in a new tab and the [not opened yet](#not-opened-yet) dot. A public page is never new, since reading it signed out records no open.
-_Avoid_: unread, recent, latest
-
-**Yours** and **From colleagues**:
-Home's two tables of live patches, A–Z and never re-sorted. **Yours** holds the viewer's own, with who can open each (Company, Company and its guests, or Public), the call summary for tools (None, No calls yet or how many failed in 24 hours) and Share on every row, which opens the Share dialog over Home. **From colleagues** holds everyone else's, with owner and when it last changed and the [not opened yet](#not-opened-yet) dot, the first twelve, and See all on All patches. A phone keeps the title and menu, and a failing tool's count under its title. Core's `isPage` tells a tool (tier 2) from a page (tier 1), for the mark and the welcome page alike.
-_Avoid_: shelves, apps, documents, kinds (nothing is declared; the tier decides)
+**Tools** and **Pages** (Home):
+Home's two shelves of the company's live patches the viewer can open, split by tier with core's `isPage`: a tool is tier 2, a page tier 1, the welcome page included. **Tools** is a table of every live tool, A–Z and never re-sorted, with no cap: its owner (You for the viewer's own), the [call summary](#call-summary) on the rows the viewer manages, a column only when they manage a tool, and Share on their own rows, which opens the Share dialog over Home, before the row's menu. **Pages** is a narrow list beside it, under it below 1024px, of the pages whose served version was published in the last 14 days, so republishing brings one back: newest first, each owner's newest once, at most five, ending "+N more" for that owner's other pages in the window, a link to All patches' Pages narrowed to them. Under it, **All N pages** links to All patches' Pages and counts what that lists. With no live page Tools takes the width; with no live tool Pages takes the main column, every live page newest first, the first twelve, whatever their age. On a phone a tool keeps its title, a failing one's count under it, and its menu, which holds Share…; Pages follows Tools.
+_Avoid_: apps, documents, kinds (nothing is declared; the tier decides)
 
 **Shared with you**:
 Home's last section, of other companies' patches shared with the viewer as their [guest](../companies/GLOSSARY.md), each with its company and who shared it: each opens the patch, or, while its guests can't open it, says why, and one the viewer can open but never has carries the [not opened yet](#not-opened-yet) dot, unless it is public; its menu holds **Remove…**, which asks on a confirmation page and then ends the viewer's own grant. It stays when the company has nothing live.
 _Avoid_: shared patches, guest patches, inbox
 
 **Not opened yet**:
-The blue dot after the name of a live patch someone else owns that the viewer has no [open](../patches/GLOSSARY.md) of, like unread mail, on All patches under every filter and search and on Home in New, From colleagues and Shared with you; never on Yours, Your usual or the switcher. Opening the patch at its address clears it. Each page reads the viewer's opens once.
+The blue dot after the name of a live patch someone else owns that the viewer has no [open](../patches/GLOSSARY.md) of, like unread mail, on All patches under every filter and search and on Home in Tools, Pages and Shared with you; never on the viewer's own, Your usual or the switcher. Opening the patch at its address clears it. Each page reads the viewer's opens once.
 _Avoid_: new, unread, unseen (What's new's dot marks changes, not patches)
 
 **Switcher**:
