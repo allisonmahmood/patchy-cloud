@@ -1,5 +1,5 @@
 import * as WideEvents from "@patchy/analytics/wide-events";
-import type { PidgeonDev } from "@patchy/integrations/dev";
+import type { NotionDev, PidgeonDev } from "@patchy/integrations/dev";
 import type { Invocation } from "@patchy/runtime/dev";
 import * as Console from "effect/Console";
 import * as Context from "effect/Context";
@@ -42,17 +42,18 @@ export const invocation = Effect.fn("DevLog.invocation")(function* (
 });
 
 /**
- * A write dev answered itself instead of sending, such as a Pidgeon send: who made it, on which
- * connection, and its recipients and subject as recent calls name them.
+ * A write dev answered itself instead of sending, such as a Pidgeon send or a Notion update: who
+ * made it, on which connection, and what it names as recent calls name it.
  */
 export const simulated = Effect.fn("DevLog.simulated")(function* (
-  write: PidgeonDev.Simulated,
+  write: PidgeonDev.Simulated | NotionDev.Simulated,
   json: boolean
 ) {
+  const integration = write.connection.startsWith("notion/") ? "Notion" : "Pidgeon";
   yield* Console.log(
     json
       ? encodeJson({ type: "simulated", ...write })
-      : `${write.viewerId} ${write.connection} ${write.summary}: simulated in dev, nothing reached Pidgeon`
+      : `${write.viewerId} ${write.connection} ${write.summary}: simulated in dev, nothing reached ${integration}`
   );
 });
 

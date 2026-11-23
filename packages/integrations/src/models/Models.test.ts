@@ -739,7 +739,7 @@ it.layer(layer)("Models", (it) => {
           );
         assert.include((yield* switched({ PATCHY_MODELS: "true" })).integrations, "models");
         const off = yield* switched({});
-        assert.deepStrictEqual(off.integrations, before);
+        assert.deepStrictEqual(off.integrations, [...before, "notion"]);
 
         const refusals = yield* Effect.all([
           Effect.flip(off.providers(who.companyId)),

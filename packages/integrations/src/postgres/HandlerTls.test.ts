@@ -47,6 +47,7 @@ import * as Operations from "./Operations.js";
 import * as Source from "./Source.js";
 import * as PostHogSource from "../posthog/Source.js";
 import * as AttioSource from "../attio/Source.js";
+import * as NotionSource from "../notion/Source.js";
 import * as ImapTest from "../test/imap.js";
 import * as GithubTest from "../test/github.js";
 import * as PidgeonSource from "../pidgeon/Source.js";
@@ -276,6 +277,7 @@ it.layer(Layer.merge(services, Layer.effect(TlsSource, tlsPostgres)), {
             PostHogSource.layer,
             PidgeonSource.layer,
             AttioSource.layer,
+            NotionSource.layer,
             ImapTest.offline,
             GithubTest.unconfigured,
             Teams.layer
@@ -426,6 +428,7 @@ it.layer(Layer.merge(services, Layer.effect(TlsSource, tlsPostgres)), {
             PostHogSource.layer,
             PidgeonSource.layer,
             AttioSource.layer,
+            NotionSource.layer,
             ImapTest.offline,
             GithubTest.unconfigured,
             Teams.layer

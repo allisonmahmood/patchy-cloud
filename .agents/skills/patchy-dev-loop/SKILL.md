@@ -114,8 +114,10 @@ Done when `pnpm dev status` exits 0.
   Postgres declarations read invented fixtures. PostHog, Pidgeon, Attio, IMAP and
   GitHub declarations have none: `patchy dev` reads the real connection through this instance, as
   the CLI's key, and each read shows as a Dev call on the connection's page.
-  Pidgeon's sends, replies and triage are simulated in the dev process and never
-  sent; `pnpm patchy dev logs` names each with its recipients and subject.
+  Pidgeon's sends, replies and triage and Notion's writes are simulated in the dev
+  process and never sent; `pnpm patchy dev logs` names each, a send with its
+  recipients and subject, a Notion write with its data source, row and property
+  names.
   Connecting PostHog here takes a real key and project, so check dev reads
   through the suites' PostHog double unless the person hands you a disposable
   project.
@@ -137,6 +139,10 @@ Done when `pnpm dev status` exits 0.
   so and skips the connection; never ask for a key that can write. It only
   reads, so `down` has nothing to take down in Attio. Every run shares the
   workspace's 100 reads a second with the live tier and other environments.
+  Notion here is offline: `pnpm dev up notion` writes `notion/wiki` with a
+  canned Tasks and Projects schema and an invented token, so Test, Refresh and
+  Replace token reach Notion, which refuses it. Check connect and discovery over
+  the suites' scripted Notion (`packages/integrations/src/test/notion.ts`).
   IMAP here is a Dovecot mailbox in Docker on this machine: `pnpm dev up imap`
   starts it under `mail.fernhill.test`, puts the scenario's supplier mail in it,
   and connects `imap/invoices` through the connect page, with a password that's

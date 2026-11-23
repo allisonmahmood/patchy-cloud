@@ -130,6 +130,7 @@ export class TooLarge extends Schema.TaggedError<TooLarge>()("TooLarge", {
     "runtime.attio.bytes",
     "runtime.imap.bytes",
     "runtime.github.bytes",
+    "runtime.notion.bytes",
     "tier2.args.bytes",
     "runtime.result.bytes",
     "runtime.file.bytes",
@@ -421,6 +422,7 @@ export const config = Effect.all({
   attioBytes: ContractLimits.get("runtime.attio.bytes"),
   imapBytes: ContractLimits.get("runtime.imap.bytes"),
   githubBytes: ContractLimits.get("runtime.github.bytes"),
+  notionBytes: ContractLimits.get("runtime.notion.bytes"),
   serverArgsBytes: ContractLimits.get("tier2.args.bytes"),
   fileBytes: byteLimits.fileBytes,
   mutationDeadlineMs: ContractLimits.get("runtime.mutation.deadline"),
@@ -532,6 +534,7 @@ export const make = (
       settings.attioBytes,
       settings.imapBytes,
       settings.githubBytes,
+      settings.notionBytes,
       settings.serverArgsBytes + settings.callBytes
     );
     const maxCallLimitId =
@@ -551,7 +554,9 @@ export const make = (
                     ? "runtime.attio.bytes"
                     : maxCallBytes === settings.imapBytes
                       ? "runtime.imap.bytes"
-                      : "runtime.github.bytes";
+                      : maxCallBytes === settings.githubBytes
+                        ? "runtime.github.bytes"
+                        : "runtime.notion.bytes";
 
     const dispatch = <A>(
       input: typeof RuntimeEnvelope.Type,

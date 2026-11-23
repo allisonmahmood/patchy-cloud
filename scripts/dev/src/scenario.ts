@@ -181,11 +181,19 @@ export type LiveConnection = typeof LiveConnection.Type;
  * publishes, then leaves it in `state`: `connected`; `paused`, disconnected by the publisher; or
  * `needs-attention` for its integration's own reason, an Attio key a Test found writable, an IMAP
  * login the mail server refused, or, by its `reason`, a GitHub App uninstalled from its account,
- * its permissions changed, or a repository gone from its installation. Postgres, PostHog and
- * Pidgeon keep no such reason; a Pidgeon test key is its own, `test`.
+ * its permissions changed, or a repository gone from its installation. Postgres, PostHog,
+ * Pidgeon and Notion keep no such reason; a Pidgeon test key is its own, `test`.
  */
 export const OfflineConnection = Schema.Struct({
-  integration: Schema.Literals(["postgres", "posthog", "attio", "pidgeon", "imap", "github"]),
+  integration: Schema.Literals([
+    "postgres",
+    "posthog",
+    "attio",
+    "pidgeon",
+    "imap",
+    "github",
+    "notion"
+  ]),
   handle: Slug,
   description: Schema.NonEmptyString,
   state: Schema.Literals(["connected", "needs-attention", "paused"]),
@@ -372,7 +380,8 @@ export const loadScenario = Effect.fn("loadScenario")(function* (worktree: strin
       (connection.state === "needs-attention" &&
         (connection.integration === "postgres" ||
           connection.integration === "posthog" ||
-          connection.integration === "pidgeon")) ||
+          connection.integration === "pidgeon" ||
+          connection.integration === "notion")) ||
       (connection.test === true && connection.integration !== "pidgeon") ||
       (connection.suspended === true && connection.integration !== "github")
   );

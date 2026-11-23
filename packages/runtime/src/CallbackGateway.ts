@@ -2,6 +2,7 @@
 import { Buffer } from "node:buffer";
 import {
   FilePutUpload,
+  isNotionWrite,
   limitRefusal,
   runtimeBodyLimitId,
   type HandlerKind,
@@ -85,6 +86,15 @@ const connections: Readonly<Record<string, true>> = {
   "posthog.query": true,
   "pidgeon.read": true,
   "pidgeon.write": true,
+  "notion.listRows": true,
+  "notion.getRow": true,
+  "notion.markdown": true,
+  "notion.search": true,
+  "notion.listPeople": true,
+  "notion.create": true,
+  "notion.update": true,
+  "notion.trash": true,
+  "notion.restore": true,
   "attio.listRecords": true,
   "attio.getRecord": true,
   "attio.getManyRecords": true,
@@ -127,7 +137,8 @@ const writes = (op: string) =>
   Object.hasOwn(writeTable, op) ||
   op === "files.put" ||
   op === "files.delete" ||
-  op === "pidgeon.write";
+  op === "pidgeon.write" ||
+  isNotionWrite(op);
 const viewerAuthority = (op: string) =>
   Object.hasOwn(shared, op) ||
   op === "shared.files.get" ||
@@ -146,7 +157,8 @@ const bounded = (
     | "runtime.pidgeon.bytes"
     | "runtime.attio.bytes"
     | "runtime.imap.bytes"
-    | "runtime.github.bytes",
+    | "runtime.github.bytes"
+    | "runtime.notion.bytes",
   value: number
 ): RuntimeFailure => ({
   ok: false,
@@ -185,7 +197,8 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
     pidgeonBytes: ContractLimits.get("runtime.pidgeon.bytes"),
     attioBytes: ContractLimits.get("runtime.attio.bytes"),
     imapBytes: ContractLimits.get("runtime.imap.bytes"),
-    githubBytes: ContractLimits.get("runtime.github.bytes")
+    githubBytes: ContractLimits.get("runtime.github.bytes"),
+    notionBytes: ContractLimits.get("runtime.notion.bytes")
   });
   const callback = Effect.fn("CallbackGateway.callback")(function* (
     token: string,
@@ -280,7 +293,8 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
       argsLimitId === "runtime.pidgeon.bytes" ||
       argsLimitId === "runtime.attio.bytes" ||
       argsLimitId === "runtime.imap.bytes" ||
-      argsLimitId === "runtime.github.bytes"
+      argsLimitId === "runtime.github.bytes" ||
+      argsLimitId === "runtime.notion.bytes"
     ) {
       const maxBytes =
         argsLimitId === "runtime.postgres.bytes"
@@ -293,7 +307,9 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
                 ? limits.attioBytes
                 : argsLimitId === "runtime.imap.bytes"
                   ? limits.imapBytes
-                  : limits.githubBytes;
+                  : argsLimitId === "runtime.github.bytes"
+                    ? limits.githubBytes
+                    : limits.notionBytes;
       if (Buffer.byteLength(encodeJson({ op: request.op, args: request.args })) > maxBytes)
         return remember(bounded(argsLimitId, maxBytes), 413);
     }

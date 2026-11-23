@@ -214,6 +214,21 @@ const connectionDetailLines = (connection: typeof ConnectionDetail.Type) => {
       ...properties("Person properties", snapshot.personProperties)
     ];
   }
+  if (connection.integration === "notion") {
+    const snapshot = connection.snapshot;
+    return [
+      ...lines,
+      `Workspace: ${snapshot.workspace.name}`,
+      `Access: ${snapshot.access === "write" ? "read and write" : "read"}`,
+      `Snapshot revision: ${snapshot.revision}`,
+      `Taken at: ${snapshot.takenAt}`,
+      snapshot.dataSources.length === 0 ? "Data sources: none shared" : "Data sources:",
+      ...snapshot.dataSources.flatMap((source) => [
+        `  ${source.key} — ${source.title}`,
+        ...source.properties.map((property) => `    ${property.name}: ${property.type}`)
+      ])
+    ];
+  }
   const snapshot = connection.snapshot;
   lines.push(
     `Schema revision: ${snapshot.revision}`,

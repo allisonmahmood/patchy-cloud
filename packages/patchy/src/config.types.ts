@@ -10,6 +10,7 @@ import {
   attio,
   imap,
   github,
+  notion,
   sharedStore,
   sharedTable,
   t,
@@ -72,6 +73,7 @@ const config = defineConfig({
     crm: attio("crm"),
     invoices: imap("invoices"),
     repos: github("platform"),
+    tasks: notion("probe"),
     customers: sharedTable("abcdefghijkl", "customers"),
     logos: sharedStore("abcdefghijkl", "logos")
   }
@@ -116,6 +118,8 @@ export type ConfigAssertions = [
   Assert<Equal<typeof config.uses.invoices.handle, "invoices">>,
   Assert<Equal<typeof config.uses.repos.kind, "github">>,
   Assert<Equal<typeof config.uses.repos.handle, "platform">>,
+  Assert<Equal<typeof config.uses.tasks.kind, "notion">>,
+  Assert<Equal<typeof config.uses.tasks.handle, "probe">>,
   Assert<Equal<typeof config.uses.crm.handle, "crm">>,
   Assert<Equal<typeof config.uses.logos.store, "logos">>,
   Assert<Equal<typeof config.uses.logos.kind, "sharedStore">>,

@@ -33,6 +33,7 @@ import * as CredentialKeys from "../CredentialKeys.js";
 import * as PostgresSource from "../postgres/Source.js";
 import * as PostHogSource from "../posthog/Source.js";
 import * as AttioSource from "../attio/Source.js";
+import * as NotionSource from "../notion/Source.js";
 import * as ImapTest from "../test/imap.js";
 import * as GithubTest from "../test/github.js";
 import * as SqlConnectionStore from "../SqlConnectionStore.js";
@@ -128,6 +129,7 @@ const credentials = Layer.mergeAll(
   ),
   PostHogSource.layer,
   AttioSource.layer,
+  NotionSource.layer,
   ImapTest.offline,
   GithubTest.unconfigured
 );

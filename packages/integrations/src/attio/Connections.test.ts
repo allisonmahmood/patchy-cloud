@@ -12,6 +12,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as ConnectionStore from "../ConnectionStore.js";
 import * as CredentialKeys from "../CredentialKeys.js";
 import * as PidgeonSource from "../pidgeon/Source.js";
+import * as NotionSource from "../notion/Source.js";
 import * as ImapTest from "../test/imap.js";
 import * as GithubTest from "../test/github.js";
 import * as PostgresSource from "../postgres/Source.js";
@@ -46,6 +47,7 @@ const fixture = Layer.mergeAll(
   ),
   PostHogSource.layer,
   PidgeonSource.layer,
+  NotionSource.layer,
   ImapTest.offline,
   GithubTest.unconfigured
 ).pipe(
