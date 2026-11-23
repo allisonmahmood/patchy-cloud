@@ -21,6 +21,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Engine from "./engine.js";
+import * as WorkerHttp from "./workerHttp.js";
 import { sampleProcess, startWorkerd, type WorkerdError, type WorkerdProcess } from "./process.js";
 import { Cryptography } from "@patchy/core";
 
@@ -186,7 +187,10 @@ export class Supervisor extends Context.Service<
 
 export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
   const cryptography = yield* Cryptography.Cryptography;
+  // Callbacks forwarded to the host go through the runtime's fetch; everything sent to this
+  // supervisor's own processes goes through `workers`, so it never waits behind them.
   const http = yield* HttpClient.HttpClient;
+  const workers = yield* WorkerHttp.WorkerHttp;
   const scope = yield* Effect.scope;
   const operatingLimits = { ...options.operatingLimits };
   for (const [id, value] of Object.entries(operatingLimits)) {
@@ -524,7 +528,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
   ) {
     if (resident.process === undefined || resident.probing || !resident.alive) return;
     resident.probing = true;
-    yield* http.get(`${resident.process.url}/healthz`).pipe(
+    yield* workers.get(`${resident.process.url}/healthz`).pipe(
       Effect.tap((response) =>
         response.arrayBuffer.pipe(
           Effect.tap(() =>
@@ -886,7 +890,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
               ),
             SupervisorError: (cause) => failLoad(resident, cause, "load_failed")
           }),
-          Effect.provideService(HttpClient.HttpClient, http),
+          Effect.provideService(HttpClient.HttpClient, workers),
           Effect.forkIn(scope)
         );
         return resident;

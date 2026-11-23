@@ -942,7 +942,21 @@ require a privileged supervisor. Each resident scope kills and reaps its child
 before removing the temporary configuration directory. Clean stops, watchdog
 kills, child crashes and supervisor shutdown all close that scope.
 
-The local adapter runs its supervisor in the host process. Its aggregate RSS
+The supervisor sends everything for its own workerd processes (binds, invokes,
+health probes and the startup check) over `node:http` on loopback, a connection
+for each request, never pooled. Only the callbacks it forwards to the host go
+through the runtime's fetch. Under Bun the two don't share a queue: fetch runs
+256 requests at once in a process (`BUN_CONFIG_MAX_HTTP_REQUESTS`, which
+production leaves unset) and queues the rest, so callbacks past that wait in
+the runtime within their deadlines, as they always have, while a probe or an
+invoke never waits behind them. Callbacks the host holds open can't get a
+healthy process ended as stalled, or a call ended at its deadline before its
+process received it. `bun --conditions=development
+scripts/dev/src/crowdedProbes.ts` holds more callbacks open than Bun runs at
+once, past the stall window, and fails if a healthy process is ended.
+
+The local adapter runs its supervisor in the host process, reaching its
+processes the same way; its callbacks share the host's fetch. Its aggregate RSS
 ceiling counts only supervised workerd children, not PGlite, Vite, fixtures or
 other host allocations. Dedicated fleet execution tasks include their host RSS.
 The workerd process count, aggregate and per-process ceilings, and watchdog still

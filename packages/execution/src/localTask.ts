@@ -8,6 +8,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { NodeCryptography } from "@patchy/core";
 import * as Management from "./management.js";
 import * as Supervisor from "./supervisor.js";
+import * as WorkerHttp from "./workerHttp.js";
 
 // The owner passes only task configuration, never database, storage or login credentials.
 NodeRuntime.runMain(
@@ -81,5 +82,8 @@ NodeRuntime.runMain(
     }
     // An open IPC channel must not keep a stopped supervisor alive after its scope closes.
     if (process.connected) process.disconnect();
-  }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer]))
+  }).pipe(
+    Effect.scoped,
+    Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+  )
 );
