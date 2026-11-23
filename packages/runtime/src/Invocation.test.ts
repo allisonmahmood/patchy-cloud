@@ -1178,6 +1178,83 @@ it.layer(services)("Invocation", (it) => {
     })
   );
 
+  it.effect("relays a model call's refusal with the status it was given", () =>
+    Effect.gen(function* () {
+      const capabilities = yield* InvocationCapabilities.InvocationCapabilities;
+      const byteLimit = yield* ContractLimits.get("tier2.callbacks.bytes");
+      const call = { op: "models.generate", args: { connection: "writer" } };
+      const requestBytes = new TextEncoder().encode(JSON.stringify(call)).byteLength;
+      /** One model callback, relayed by the guest as its reply, as the patch reads it. */
+      const relayed = Effect.fn(function* (options: {
+        readonly door?: boolean;
+        readonly handler?: boolean;
+        readonly tight?: boolean;
+      }) {
+        const gateway = yield* CallbackGateway.make({
+          "models.generate": {
+            kind: "integration",
+            fence: "action",
+            connectionId: () => "role",
+            run: () =>
+              options.handler === true
+                ? Effect.fail({
+                    code: "source_unavailable" as const,
+                    status: 503,
+                    message: "The model provider failed to answer.",
+                    details: { sent: true, reason: "provider" }
+                  })
+                : Effect.succeed({ text: "ok", usage: { inputTokens: null, outputTokens: null } })
+          }
+        }).pipe(Effect.provide(RuntimeLog.layer));
+        const invocations = yield* makeInvocation((request) =>
+          Effect.gen(function* () {
+            const capability = yield* capabilities
+              .resolve(request.callback.capability, request)
+              .pipe(Effect.orDie);
+            // Too few of the call tree's bytes left for the refusal to be sent back as it is.
+            if (options.tight === true) capability.tree.bytes = byteLimit - requestBytes - 20;
+            const reply = yield* gateway.callback(request.callback.capability, request, call);
+            // The guest hands back the callback's JSON reply as its own.
+            if (reply.ok && "body" in reply)
+              return yield* Effect.die("a model call has no file body");
+            return { outcome: "returned" as const, reply, guestMs: 1 };
+          })
+        );
+        const failure = yield* invocations
+          .call(
+            { handler: "demo.action", args: {} },
+            {
+              ...binding,
+              correlationId: `model-relay-${Object.keys(options).join("-")}`,
+              ...(options.door === true
+                ? { reauthorize: Effect.fail(new Runtime.SessionExpired({})) }
+                : {})
+            }
+          )
+          .pipe(Effect.flip);
+        return {
+          code: Runtime.toFailure(failure).code,
+          status: "status" in failure ? failure.status : undefined
+        };
+      });
+      assert.deepStrictEqual(
+        [
+          yield* relayed({ door: true }),
+          yield* relayed({ door: true, tight: true }),
+          yield* relayed({ handler: true })
+        ],
+        [
+          // The door's refusal, with bytes to spare, keeps its own status.
+          { code: "session_expired", status: 401 },
+          // Without them the byte limit's refusal replaces it, with its status.
+          { code: "limit_exceeded", status: 429 },
+          // A refusal the handler gave keeps its status too.
+          { code: "source_unavailable", status: 503 }
+        ]
+      );
+    })
+  );
+
   it.effect("attributes only root timeouts while retaining handled nested deadline peaks", () =>
     Effect.gen(function* () {
       const queryDeadline = yield* ContractLimits.get("tier2.query.deadline");

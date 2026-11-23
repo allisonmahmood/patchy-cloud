@@ -4,6 +4,7 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Scheduler from "effect/Scheduler";
 import * as TestClock from "effect/testing/TestClock";
 import * as InvocationCapabilities from "./InvocationCapabilities.js";
 import * as Fixtures from "./test/callbacks.js";
@@ -202,4 +203,72 @@ it.effect("the scope sweeps replay tombstones after their configured retention",
     ),
     Effect.provide(NodeCryptography.layer)
   )
+);
+
+/**
+ * The hand-off from a callback's waiter to the work the service owns, cut at every step: the
+ * waiter yields after each operation, and the test interrupts it, or ends the action, that many
+ * steps in. Whatever was handed off is in the set the action's end cancels, and its settlement
+ * runs exactly once, whether the work ran, was cancelled, or never started.
+ */
+it.effect("a waiter interrupted at the hand-off leaves no work the action's end can't cancel", () =>
+  Effect.gen(function* () {
+    const capabilities = yield* InvocationCapabilities.make;
+    for (const budget of [1, 2, 3, 2048]) {
+      const capability = yield* Fixtures.issue(capabilities, { kind: "action" });
+      let started = 0;
+      let cancelled = 0;
+      const waiter = yield* Deferred.make<Fiber.Fiber<unknown, unknown>>();
+      // The work's first step is the page's request going away: its waiter is interrupted the
+      // moment the work it handed off begins.
+      const work = Effect.gen(function* () {
+        started++;
+        (yield* Deferred.await(waiter)).interruptUnsafe();
+        return yield* Effect.never;
+      }).pipe(Effect.onInterrupt(() => Effect.sync(() => void cancelled++)));
+      yield* Deferred.succeed(
+        waiter,
+        yield* Effect.forkChild(
+          capabilities
+            .execute(capability, work)
+            .pipe(Effect.provideService(Scheduler.MaxOpsBeforeYield, budget))
+        )
+      );
+      while (started === 0) yield* Effect.yieldNow;
+      for (let wait = 0; wait < 5; wait++) yield* Effect.yieldNow;
+      // The action ends: the work it handed off is cancelled with it.
+      yield* capabilities.settle(capability.token, "returned", 1_000);
+      assert.strictEqual(cancelled, started, `budget ${budget}`);
+    }
+  }).pipe(Effect.scoped, Effect.provide(NodeCryptography.layer))
+);
+
+it.effect("work cancelled before its first step still gives its place back, once", () =>
+  Effect.gen(function* () {
+    const capabilities = yield* InvocationCapabilities.make;
+    for (let step = 0; step < 12; step++) {
+      const capability = yield* Fixtures.issue(capabilities, { kind: "action" });
+      let taken = 0;
+      let given = 0;
+      const hold = {
+        take: () => {
+          taken++;
+          return true;
+        },
+        give: () => {
+          given++;
+        }
+      };
+      // On the ordinary budget the waiter forks and registers in one run, and the action's end,
+      // queued ahead of the new work, reaches it before its first step.
+      const waiter = yield* Effect.forkChild(capabilities.execute(capability, Effect.never, hold));
+      for (let wait = 0; wait < step; wait++) yield* Effect.yieldNow;
+      // The action ends: the work it owns is cancelled wherever its hand-off had got to.
+      yield* capabilities.end(capability.token, "returned");
+      yield* Fiber.await(waiter);
+      yield* capabilities.settle(capability.token, "returned", 1_000);
+      assert.isAtMost(taken, 1, `step ${step}`);
+      assert.strictEqual(given, taken, `step ${step}`);
+    }
+  }).pipe(Effect.scoped, Effect.provide(NodeCryptography.layer))
 );

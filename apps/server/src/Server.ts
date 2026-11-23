@@ -85,6 +85,10 @@ import {
   ImapSessions,
   ImapSource,
   type ImapNetwork,
+  Models,
+  ModelsAdmission,
+  ModelsOperations,
+  ModelsSource,
   PatchVisibility,
   PidgeonOperations
 } from "@patchy/integrations";
@@ -380,6 +384,9 @@ const services = Layer.mergeAll(
         Effect.provideService(FileStaging.FileStaging, staging)
       );
       const github = yield* GithubOperations.makeHandlers;
+      // Model calls are served only while the Models switch is on; off, no model operation is
+      // a handler here, so nothing reaches them.
+      const models = (yield* Models.enabled) ? yield* ModelsOperations.makeHandlers : {};
       const handlers = {
         me,
         ...tables,
@@ -390,7 +397,8 @@ const services = Layer.mergeAll(
         ...pidgeon,
         ...attio,
         ...imap,
-        ...github
+        ...github,
+        ...models
       };
       // Runtime tells the streams of each admitted call, which keeps its viewer's documents active.
       const runtime = RuntimeProduction.layer(handlers).pipe(
@@ -454,6 +462,8 @@ const services = Layer.mergeAll(
           Layer.provideMerge(Github.layer.pipe(Layer.provide(CredentialKeys.layer)))
         )
       ),
+      // One model source and one admission queue per process, which every door's model calls pass.
+      Layer.provideMerge(Layer.mergeAll(ModelsSource.layer, ModelsAdmission.layer)),
       Layer.provideMerge(Tables.layer),
       Layer.provideMerge(Analytics.layer),
       Layer.provideMerge(Inventory.layer),

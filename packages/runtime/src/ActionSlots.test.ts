@@ -1,9 +1,12 @@
 import { assert, it } from "@effect/vitest";
+import * as WideEvents from "@patchy/analytics/wide-events";
 import { OperatingLimits } from "@patchy/limits";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as TestClock from "effect/testing/TestClock";
 import * as ActionSlots from "./ActionSlots.js";
 import * as Runtime from "./Runtime.js";
@@ -58,7 +61,7 @@ const replica = (
     readonly models?: ActionSlots.Limits;
   } = {}
 ) => {
-  const slots = ActionSlots.make({ replica: options.replica ?? 64 });
+  const slots = ActionSlots.make({ replica: options.replica ?? 64, deploymentRevision: "test" });
   const ordinary = options.actions ?? actions(8, 2);
   const pool = options.models ?? models(24, 4);
   const admit = (holder: ActionSlots.Holder) => slots.admit(holder, ordinary);
@@ -303,4 +306,42 @@ it.effect(
       yield* elsewhere.release;
       assert.isNull(yield* slots.canAdmit(alice));
     })
+);
+
+it.effect("records the pool's limits with their peaks in the action's event as it moves", () =>
+  Effect.gen(function* () {
+    const events = yield* Queue.unbounded<WideEvents.WideEvent>();
+    const recording = WideEvents.layerWithSink.pipe(
+      Layer.provide(
+        Layer.succeed(WideEvents.Sink, { write: (event) => Queue.offer(events, event) })
+      )
+    );
+    const r = replica({ replica: 3, models: models(24, 1) });
+    yield* r.pooled(bob);
+    const limitsOf = Effect.fnUntraced(function* (holder: ActionSlots.Holder) {
+      const slot = yield* r.admit(holder);
+      yield* Effect.flatMap(WideEvents.WideEvents, (wide) =>
+        wide.withEvent({ type: "request" }, Effect.exit(r.transfer(slot)))
+      ).pipe(Effect.provide(recording));
+      const event = yield* Queue.take(events);
+      return (event.limits ?? [])
+        .filter((limit) => limit.limitId.startsWith("tier2.models."))
+        .map(({ limitId, value, peak, configRevision }) => [
+          limitId,
+          value,
+          peak,
+          configRevision.deploymentRevision
+        ]);
+    });
+    assert.deepStrictEqual(yield* limitsOf(alice), [
+      ["tier2.models.company", 24, 2, "test"],
+      ["tier2.models.viewer", 1, 1, "test"],
+      ["tier2.models.replica", 3, 2, "test"]
+    ]);
+    // Refused on the person's limit: the replica's wasn't checked.
+    assert.deepStrictEqual(yield* limitsOf(alice), [
+      ["tier2.models.company", 24, 3, "test"],
+      ["tier2.models.viewer", 1, 1, "test"]
+    ]);
+  })
 );

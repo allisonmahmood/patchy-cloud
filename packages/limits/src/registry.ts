@@ -1256,7 +1256,7 @@ export const registry = {
     unit: "actions",
     scope: "company",
     measure:
-      "Actions in the model pool per company per host replica. An action moves there from its action slots once, on its first model call, and stays until it ends; a refused move keeps its action slot. Not reached yet: no patch can call a model",
+      "Actions in the model pool per company per host replica. An action moves there from its action slots once, on its first model call, and stays until it ends; a refused move keeps its action slot. Reached only while the Models switch is on",
     refusal: "busy",
     overridable: true
   },
@@ -1266,7 +1266,7 @@ export const registry = {
     unit: "actions",
     scope: "viewer",
     measure:
-      "Actions in the model pool per person per host replica, across their patches, pages and worker agent. Not reached yet: no patch can call a model",
+      "Actions in the model pool per person per host replica, across their patches, pages and worker agent. Reached only while the Models switch is on",
     refusal: "busy",
     overridable: true
   },
@@ -1276,7 +1276,137 @@ export const registry = {
     unit: "actions",
     scope: "host",
     measure:
-      "Actions in the model pool per host replica, across companies. Not reached yet: no patch can call a model",
+      "Actions in the model pool per host replica, across companies. Reached only while the Models switch is on",
+    refusal: "busy",
+    overridable: false
+  },
+  "models.calls.inFlight": {
+    kind: "contract",
+    default: 4,
+    unit: "calls",
+    scope: "viewer",
+    measure:
+      "Model calls in flight per action, across every role alias; the patch's client holds the rest before they are sent, and the host refuses a fifth",
+    refusal: "busy",
+    overridable: false
+  },
+  "models.calls.perAction": {
+    kind: "contract",
+    default: 200,
+    unit: "calls",
+    scope: "viewer",
+    measure:
+      "Model call attempts per action, across every role alias, attempts refused for capacity included",
+    refusal: "limit_exceeded",
+    overridable: false
+  },
+  "models.generate.maxOutputTokens": {
+    kind: "contract",
+    default: 4000,
+    unit: "tokens",
+    scope: "viewer",
+    measure:
+      "The most a text call's maxOutputTokens may ask for, at least 16; sent as the provider's own output cap. More is refused invalid_request",
+    refusal: null,
+    overridable: false
+  },
+  "models.ingress.bytes": {
+    kind: "contract",
+    default: 1048576,
+    unit: "bytes",
+    scope: "viewer",
+    measure:
+      "Encoded arguments of one model call, checked by the host's callback gateway once the callback is read; nothing past it is queued or sent",
+    refusal: "too_large",
+    overridable: false
+  },
+  "models.request.bytes": {
+    kind: "contract",
+    default: 1048576,
+    unit: "bytes",
+    scope: "viewer",
+    measure:
+      "One provider request's body: instructions, input, questions and output schema together, measured as it would be sent",
+    refusal: "too_large",
+    overridable: false
+  },
+  "models.answer.bytes": {
+    kind: "contract",
+    default: 1048576,
+    unit: "bytes",
+    scope: "viewer",
+    measure:
+      "One provider answer read after decompression, a refusal's body included; past it nothing is decoded",
+    refusal: "too_large",
+    overridable: false
+  },
+  "models.output.depth": {
+    kind: "contract",
+    default: 5,
+    unit: "levels",
+    scope: "viewer",
+    measure:
+      "Nesting of a text call's typed output below its root object, checked before it is converted. Deeper is refused invalid_request",
+    refusal: null,
+    overridable: false
+  },
+  "models.output.nodes": {
+    kind: "contract",
+    default: 500,
+    unit: "nodes",
+    scope: "viewer",
+    measure:
+      "Fields, elements and enum values of a text call's typed output together, checked before it is converted. More is refused invalid_request",
+    refusal: null,
+    overridable: false
+  },
+  "models.send.floor": {
+    kind: "contract",
+    default: 2000,
+    unit: "milliseconds",
+    scope: "viewer",
+    measure:
+      "Least time left in the action for a model call to be sent, checked immediately before dispatch; a call waiting for capacity gives up early enough to keep it",
+    refusal: "timeout",
+    overridable: false
+  },
+  "models.cutoff": {
+    kind: "contract",
+    default: 1000,
+    unit: "milliseconds",
+    scope: "viewer",
+    measure:
+      "How long before the action's deadline Patchy closes a model call's connection, so the handler hears why",
+    refusal: "timeout",
+    overridable: false
+  },
+  "models.outbound.host": {
+    kind: "operating",
+    default: 64,
+    unit: "requests",
+    scope: "host",
+    measure:
+      "Provider requests in flight in one server process across every provider record; a call waits in the host's admission queue within its deadline",
+    refusal: "busy",
+    overridable: false
+  },
+  "models.outbound.provider": {
+    kind: "operating",
+    default: 16,
+    unit: "requests",
+    scope: "company",
+    measure:
+      "Provider requests in flight per provider record in one server process; a call waits in the host's admission queue within its deadline",
+    refusal: "busy",
+    overridable: false
+  },
+  "models.queue.waiting": {
+    kind: "operating",
+    default: 256,
+    unit: "calls",
+    scope: "host",
+    measure:
+      "Model calls waiting in one server process's admission queue for both permits; past it a call is refused at once, nothing sent",
     refusal: "busy",
     overridable: false
   },

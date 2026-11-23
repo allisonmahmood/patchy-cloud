@@ -41,6 +41,9 @@ export interface Counters {
   peakBytes: number;
   peakLogBytes: number;
   peakFileBytes: number;
+  /** Model call attempts across the call tree's action, refused ones included, and those running. */
+  modelCalls: number;
+  modelsInFlight: number;
   readonly operations: Set<string>;
   readonly logs: Array<Schema.Json>;
 }
@@ -61,6 +64,8 @@ export interface Capability {
     readonly operation?: string;
   }>;
   readonly run?: (args: unknown) => Effect.Effect<ServerCallReply, RuntimeError>;
+  /** An action's move into the model pool, which its model calls take (see `Binding.modelPool`). */
+  readonly modelPool?: Effect.Effect<void, RuntimeError>;
   /** Host-observed resource attempts, recorded before callback authorisation. */
   readonly onDependency?: (key: string) => void;
   readonly snapshot: { value?: Resource };
@@ -75,6 +80,7 @@ export interface Issue {
   readonly tree?: TreeBudget;
   readonly counters?: Counters;
   readonly run?: (args: unknown) => Effect.Effect<ServerCallReply, RuntimeError>;
+  readonly modelPool?: Effect.Effect<void, RuntimeError>;
   readonly onDependency?: (key: string) => void;
 }
 
@@ -84,6 +90,21 @@ export interface RetainedResource {
   readonly settled: Effect.Effect<void>;
   /** Synchronously fences disposal and prevents returning this resource to a pool. */
   readonly destroy: () => void;
+}
+
+/** A place a callback's work holds while it runs, such as one of an action's model calls. */
+export interface Hold {
+  /** Takes the place, or answers false when none is free; checked and taken in one step. */
+  readonly take: () => boolean;
+  /** Gives it back, once, as the work's fiber exits. */
+  readonly give: () => void;
+}
+
+/** The work's `Hold` had no place free, so it was never handed off. */
+export class HoldRefused extends Schema.TaggedError<HoldRefused>()("HoldRefused", {}) {
+  override get message() {
+    return "The callback's work found no place free, so it was not run.";
+  }
 }
 
 export class CapabilityRefused extends Schema.TaggedError<CapabilityRefused>()(
@@ -132,18 +153,39 @@ export class InvocationCapabilities extends Context.Service<
       capability: Capability,
       effect: Effect.Effect<A, E, R>
     ) => Effect.Effect<A, E | CapabilityRefused, R>;
-    readonly chargeCallback: (capability: Capability) => RuntimeFailure | undefined;
-    readonly chargeBytes: (capability: Capability, bytes: number) => RuntimeFailure | undefined;
+    /** Counts a callback, refusing past `tier2.callbacks.count`; `stored: false` keeps the refusal. */
+    readonly chargeCallback: (
+      capability: Capability,
+      options?: { readonly stored?: boolean }
+    ) => RuntimeFailure | undefined;
+    /**
+     * Charges bytes to the call tree, refusing past `tier2.callbacks.bytes`. `counted` charges a
+     * reply that must reach its caller whatever the budget says, and refuses nothing.
+     * `stored: false` answers the refusal without remembering it, for a caller that remembers the
+     * refusal it actually gives.
+     */
+    readonly chargeBytes: (
+      capability: Capability,
+      bytes: number,
+      options?: { readonly counted?: boolean; readonly stored?: boolean }
+    ) => RuntimeFailure | undefined;
     readonly rememberRefusal: (
       capability: Capability,
       failure: RuntimeFailure,
       status: number,
       operation?: string
     ) => RuntimeFailure;
+    /**
+     * Runs a callback's work as a fiber the service owns, not the request waiting for it, in the
+     * set the action's end cancels. With `hold`, the work takes a place before it is handed off
+     * and gives it back when its fiber exits, however it ends, before its first step included;
+     * no place free refuses `HoldRefused` and hands nothing off.
+     */
     readonly execute: <A, E, R>(
       capability: Capability,
-      effect: Effect.Effect<A, E, R>
-    ) => Effect.Effect<A, E | CapabilityRefused, R>;
+      effect: Effect.Effect<A, E, R>,
+      hold?: Hold
+    ) => Effect.Effect<A, E | CapabilityRefused | HoldRefused, R>;
   }
 >()("@patchy/runtime/InvocationCapabilities") {}
 
@@ -173,36 +215,38 @@ export const make = Effect.gen(function* () {
       });
     return failure;
   };
-  const chargeCallback: InvocationCapabilities["Service"]["chargeCallback"] = (capability) => {
+  const chargeCallback: InvocationCapabilities["Service"]["chargeCallback"] = (
+    capability,
+    options
+  ) => {
     capability.counters.callbacks++;
-    if (capability.counters.callbacks > countLimit)
-      return rememberRefusal(
-        capability,
-        {
-          ok: false,
-          source: "patchy",
-          error: "The invocation callback count is exhausted.",
-          ...limitRefusal("tier2.callbacks.count", countLimit)
-        },
-        429
-      );
+    if (capability.counters.callbacks <= countLimit) return undefined;
+    const refusal: RuntimeFailure = {
+      ok: false,
+      source: "patchy",
+      error: "The invocation callback count is exhausted.",
+      ...limitRefusal("tier2.callbacks.count", countLimit)
+    };
+    return options?.stored === false ? refusal : rememberRefusal(capability, refusal, 429);
   };
-  const chargeBytes: InvocationCapabilities["Service"]["chargeBytes"] = (capability, bytes) => {
+  const chargeBytes: InvocationCapabilities["Service"]["chargeBytes"] = (
+    capability,
+    bytes,
+    options
+  ) => {
     capability.counters.peakBytes = Math.max(
       capability.counters.peakBytes,
       capability.tree.bytes + bytes
     );
-    if (capability.tree.bytes + bytes > byteLimit)
-      return rememberRefusal(
-        capability,
-        {
-          ok: false,
-          source: "patchy",
-          error: "The invocation callback bytes are exhausted.",
-          ...limitRefusal("tier2.callbacks.bytes", byteLimit)
-        },
-        429
-      );
+    if (capability.tree.bytes + bytes > byteLimit && options?.counted !== true) {
+      const refusal: RuntimeFailure = {
+        ok: false,
+        source: "patchy",
+        error: "The invocation callback bytes are exhausted.",
+        ...limitRefusal("tier2.callbacks.bytes", byteLimit)
+      };
+      return options?.stored === false ? refusal : rememberRefusal(capability, refusal, 429);
+    }
     capability.tree.bytes += bytes;
   };
   interface Retained {
@@ -299,6 +343,8 @@ export const make = Effect.gen(function* () {
       peakBytes: 0,
       peakLogBytes: 0,
       peakFileBytes: 0,
+      modelCalls: 0,
+      modelsInFlight: 0,
       operations: new Set()
     };
     const observe = yield* WideEvents.capture;
@@ -326,6 +372,7 @@ export const make = Effect.gen(function* () {
       observe: <A, E, R>(work: Effect.Effect<A, E, R>) =>
         observe(work.pipe(Effect.provideService(DatabaseMeter.current, meter))),
       ...(input.run === undefined ? {} : { run: input.run }),
+      ...(input.modelPool === undefined ? {} : { modelPool: input.modelPool }),
       ...(input.onDependency === undefined ? {} : { onDependency: input.onDependency }),
       counters,
       logs: counters.logs,
@@ -381,7 +428,7 @@ export const make = Effect.gen(function* () {
         )
       );
     });
-  const execute = <A, E, R>(capability: Capability, effect: Effect.Effect<A, E, R>) =>
+  const execute = <A, E, R>(capability: Capability, effect: Effect.Effect<A, E, R>, hold?: Hold) =>
     Effect.gen(function* () {
       yield* resolve(capability.token, capability.attempt);
       const entry = entries.get(capability.token)!;
@@ -408,10 +455,33 @@ export const make = Effect.gen(function* () {
           );
         })
       );
-      // The service owns callback effects, not the HTTP request that waits for their reply.
-      const fiber = yield* Effect.forkIn(job, scope);
-      entry.fibers.add(fiber);
-      fiber.addObserver(() => entry.fibers.delete(fiber));
+      // The hand-off alone can't be interrupted: taking the place, forking the work the service
+      // owns, putting it in the set the action's end cancels and tying the place to the fiber's
+      // exit. Before it a waiter that goes away forks nothing; after it, only its wait ends. The
+      // fiber's observer runs however the fiber exits, interrupted before its first step
+      // included, where an `ensuring` inside it would never run.
+      //
+      // The scheduler may still run other fibers between the fork and the `map` that registers
+      // it. An action ended in that gap doesn't cancel the new fiber, and `settle` doesn't wait
+      // for it; that is harmless, because the work resolves the capability again before it does
+      // anything, as the gateway does again before entering a handler, so it is refused there and
+      // ends, and its observer gives the place back. The waiter's continuation is queued ahead of
+      // anything the new fiber awaits, so it registers the fiber before the work gets further.
+      const fiber = yield* Effect.uninterruptible(
+        Effect.suspend(() => {
+          if (hold !== undefined && !hold.take()) return Effect.fail(new HoldRefused());
+          return Effect.forkIn(job, scope).pipe(
+            Effect.map((forked) => {
+              entry.fibers.add(forked);
+              forked.addObserver(() => {
+                entry.fibers.delete(forked);
+                hold?.give();
+              });
+              return forked;
+            })
+          );
+        })
+      );
       const value = yield* Fiber.await(fiber).pipe(
         Effect.flatMap((exit): Effect.Effect<A, E | CapabilityRefused> => {
           if (entry.reason !== undefined)

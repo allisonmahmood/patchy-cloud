@@ -211,6 +211,10 @@ interface PlatformBehavior {
   readonly actionLimits: (
     companyId: string
   ) => Effect.Effect<ActionSlots.Limits, Runtime.RuntimeError>;
+  /** The company's model pool limits, read when one of its actions first calls a model. */
+  readonly modelLimits: (
+    companyId: string
+  ) => Effect.Effect<ActionSlots.Limits, Runtime.RuntimeError>;
   readonly settleQuietQuery: (record: QueryRollups.Record) => Effect.Effect<void>;
 }
 
@@ -247,7 +251,10 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
     fileBytes: ContractLimits.get("tier2.callbacks.fileBytes")
   });
   const codecs = new WeakMap<typeof Manifest.Type, Map<string, CompiledHandler>>();
-  const slots = ActionSlots.make({ replica: deployment.get("tier2.models.replica") });
+  const slots = ActionSlots.make({
+    replica: deployment.get("tier2.models.replica"),
+    deploymentRevision: yield* deployment.revision
+  });
 
   const call = Effect.fn("Invocation.call")(function* (
     args: unknown,
@@ -515,6 +522,16 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
                 ...(observation === undefined ? {} : { onDependency: observation.onDependency }),
                 tree,
                 ...(counters === undefined ? {} : { counters }),
+                ...(slot === undefined || platform === undefined
+                  ? {}
+                  : {
+                      modelPool: platform.modelLimits(binding.companyId).pipe(
+                        Effect.flatMap(slot.transfer),
+                        Effect.catchTags({
+                          SlotReleased: (cause) => Effect.fail(new Runtime.AccessDenied({ cause }))
+                        })
+                      )
+                    }),
                 ...(descriptor.kind !== "action"
                   ? {}
                   : {
@@ -1006,6 +1023,13 @@ export const make = Effect.fn("Invocation.makeProduction")(function* (options: {
         .getMany({
           companyId,
           limits: { company: "tier2.actions.company", viewer: "tier2.actions.viewer" }
+        })
+        .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))),
+    modelLimits: (companyId) =>
+      operating
+        .getMany({
+          companyId,
+          limits: { company: "tier2.models.company", viewer: "tier2.models.viewer" }
         })
         .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))),
     settleQuietQuery: rollups.settle

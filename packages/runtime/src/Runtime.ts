@@ -151,7 +151,12 @@ export class TooLarge extends Schema.TaggedError<TooLarge>()("TooLarge", {
 export class Timeout extends Schema.TaggedError<Timeout>()("Timeout", {
   ...diagnostics,
   deadlineMs: Schema.Int,
-  limitId: Schema.Literals(["runtime.mutation.deadline", "integration.deadline"])
+  limitId: Schema.Literals([
+    "runtime.mutation.deadline",
+    "integration.deadline",
+    "tier2.action.deadline",
+    "models.cutoff"
+  ])
 }) {
   readonly code = "timeout" as const;
   readonly status = 504;
@@ -308,6 +313,11 @@ export const toFailure = (error: RuntimeError): RuntimeFailure => {
 
 interface HandlerMetadata {
   readonly kind: "read" | "mutation" | "integration";
+  /**
+   * `action`: an integration call that may take what is left of its action, as a model call
+   * does, cutting itself off before the action's deadline, instead of `integration.deadline`.
+   */
+  readonly fence?: "action";
   readonly resource?: (args: unknown) => string | null;
   readonly rowCount?: (value: unknown) => number | null;
   /** The bytes a successful call moved, for recent calls; most calls record none. */
@@ -352,6 +362,7 @@ export const handler = <
     readonly bytes?: Handler["bytes"];
     readonly connectionId?: Handler["connectionId"];
     readonly sql?: Handler["sql"];
+    readonly fence?: Handler["fence"];
   },
   run: (args: Input["Type"]) => Effect.Effect<Output["Type"], RuntimeError, Binding.Binding>
 ): JsonHandler => {
@@ -364,6 +375,7 @@ export const handler = <
     ...(definition.bytes === undefined ? {} : { bytes: definition.bytes }),
     ...(definition.connectionId === undefined ? {} : { connectionId: definition.connectionId }),
     ...(definition.sql === undefined ? {} : { sql: definition.sql }),
+    ...(definition.fence === undefined ? {} : { fence: definition.fence }),
     run: (args) =>
       decode(args).pipe(
         Effect.mapError((cause) => new InvalidRequest({ cause })),

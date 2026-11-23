@@ -235,6 +235,19 @@ starts it again, rather than every connection read queueing behind it. A release
 reads only the provider integrations it knows: a role mapped to one it doesn't
 know is unavailable there, and nothing is made or remapped to that provider.
 
+With the switch on, a published action's model calls run on the host (ADR-0016).
+The server reaches only `https://api.openai.com/v1`, so its egress needs that
+address; the execution service reaches nothing new. Three process settings bound
+them, read from `PATCHY_LIMITS_JSON` like every operating limit:
+`models.outbound.host` (provider requests in flight in one server process, 64),
+`models.outbound.provider` (per provider record in one process, 16) and
+`models.queue.waiting` (calls waiting for both, 256). Every model call in a
+process passes the one admission queue they bound; today that is published
+actions' calls, and `patchy dev`'s door and an admin's test call will join them
+when those land.
+They aren't set in the task definitions yet: the values stay their registry
+defaults until they are chosen from measurements.
+
 ### Initial credentials
 
 Startup migrates but creates no credential. For normal use, sign in at `/join`,

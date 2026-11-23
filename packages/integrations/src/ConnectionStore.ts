@@ -150,6 +150,13 @@ export const ModelProvider = Schema.Struct({
   createdBy: Schema.String
 });
 export type ModelProvider = typeof ModelProvider.Type;
+/** A model call's role, provider and owner authority, as `modelCall` read them together. */
+export interface ModelCall {
+  readonly role: ModelsConnection;
+  readonly provider: ModelProvider | undefined;
+  readonly ownerCanUse: boolean;
+  readonly key?: Redacted.Redacted<string>;
+}
 /** Where a connection reads, in its integration's terms; credentials of one target share it. */
 export type Target = {
   readonly [C in Connection as C["integration"]]: Pick<C, "integration" | "display">;
@@ -725,6 +732,18 @@ export class ConnectionStore extends Context.Service<
     readonly providers: (
       companyId: string
     ) => Effect.Effect<ReadonlyArray<ModelProvider>, ConnectionError>;
+    /**
+     * What a model call is checked against, read together from one snapshot: the role, its
+     * provider as this release reads it (none when it doesn't know its integration), whether the
+     * patch's current owner may build with the role, and, with `key`, the provider's key from
+     * that same read, decrypted for the one call about to be sent and never kept past it.
+     */
+    readonly modelCall: (input: {
+      readonly companyId: string;
+      readonly patchId: string;
+      readonly roleId: string;
+      readonly key: boolean;
+    }) => Effect.Effect<ModelCall, ConnectionError>;
     /** Keeps a provider's key, sealed as every connection's credentials are. Nothing is called. */
     readonly connectProvider: (
       input: ProviderInput,

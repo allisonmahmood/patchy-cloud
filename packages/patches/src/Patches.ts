@@ -2203,6 +2203,9 @@ export const make = Effect.gen(function* () {
           return yield* new ConnectionStore.ConnectionAccessDenied();
         continue;
       }
+      // Publishing refuses a model role before it gets here; nothing resolves one yet.
+      if (declaration.kind === "models")
+        return yield* new ConnectionStore.ConnectionNotConnected({});
       const resource =
         declaration.kind === "sharedTable"
           ? { table: declaration.table }
