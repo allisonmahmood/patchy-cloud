@@ -1,5 +1,6 @@
 import * as GuestProtocol from "@patchy/api/guest";
 import * as Executor from "@patchy/runtime/executor";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -12,6 +13,15 @@ const decodeInvoke = Schema.decodeUnknownEffect(GuestProtocol.Invoke, strict);
 const decodeBindReply = Schema.decodeUnknownEffect(GuestProtocol.BindReply, strict);
 const decodeInvokeReply = Schema.decodeUnknownEffect(GuestProtocol.InvokeReply, strict);
 
+/**
+ * Wraps each request the engine sends, from the moment the prepared request is handed to the
+ * transport until its answer has been read. By default it adds nothing; the supervisor puts
+ * invokes under its slots here.
+ */
+export const Dispatch = Context.Reference<
+  <A, E, R>(request: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>
+>("@patchy/execution/engine/Dispatch", { defaultValue: () => (request) => request });
+
 /** Adapts a running loader. Its caller owns the process and any invocation cancellation. */
 export const make = Effect.fn("ExecutionEngine.make")(function* (options: {
   readonly url: string;
@@ -22,19 +32,26 @@ export const make = Effect.fn("ExecutionEngine.make")(function* (options: {
     operation: "bind" | "invoke",
     body: GuestProtocol.BindRequest | GuestProtocol.Invoke
   ) {
-    const response = yield* http
-      .execute(
-        HttpClientRequest.post(`${base}/${operation}`).pipe(HttpClientRequest.bodyJsonUnsafe(body))
-      )
-      .pipe(
-        Effect.mapError(
-          (cause) => new Executor.ExecutionError({ operation, reason: "transport", cause })
-        )
-      );
-    const value = yield* response.json.pipe(
-      Effect.mapError(
-        (cause) => new Executor.ExecutionError({ operation, reason: "protocol", cause })
-      )
+    const request = HttpClientRequest.post(`${base}/${operation}`).pipe(
+      HttpClientRequest.bodyJsonUnsafe(body)
+    );
+    const dispatch = yield* Dispatch;
+    const { response, value } = yield* dispatch(
+      Effect.gen(function* () {
+        const response = yield* http
+          .execute(request)
+          .pipe(
+            Effect.mapError(
+              (cause) => new Executor.ExecutionError({ operation, reason: "transport", cause })
+            )
+          );
+        const value = yield* response.json.pipe(
+          Effect.mapError(
+            (cause) => new Executor.ExecutionError({ operation, reason: "protocol", cause })
+          )
+        );
+        return { response, value };
+      })
     );
     if (response.status !== 200) {
       const refusal = yield* decodeBindReply(value).pipe(

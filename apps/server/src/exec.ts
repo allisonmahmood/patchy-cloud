@@ -3,6 +3,7 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import { NodeCryptography } from "@patchy/core";
 import * as Management from "@patchy/execution/management";
 import * as Supervisor from "@patchy/execution/supervisor";
+import * as WorkerHttp from "@patchy/execution/worker-http";
 import * as DeploymentConfig from "@patchy/limits/deployment-config";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
@@ -47,6 +48,11 @@ NodeRuntime.runMain(
     return yield* Effect.never;
   }).pipe(
     Effect.scoped,
-    Effect.provide([FetchHttpClient.layer, NodeCrypto.layer, NodeCryptography.layer])
+    Effect.provide([
+      FetchHttpClient.layer,
+      WorkerHttp.layer,
+      NodeCrypto.layer,
+      NodeCryptography.layer
+    ])
   )
 );

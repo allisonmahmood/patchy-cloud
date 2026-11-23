@@ -18,6 +18,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Supervisor from "./supervisor.js";
+import * as WorkerHttp from "./workerHttp.js";
 import { NodeCryptography } from "@patchy/core";
 
 const companyId = "cmp_prewarm_residency";
@@ -148,7 +149,7 @@ it.live(
       assert.deepStrictEqual(stats.reports, []);
     }).pipe(
       Effect.scoped,
-      Effect.provide([FetchHttpClient.layer, NodeCryptography.layer]),
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer]),
       Effect.provide(WideEvents.layerNoop)
     ),
   30_000
@@ -184,7 +185,7 @@ it.live(
       assert.strictEqual(stats.reports[0]?.binding.versionId, "speculative");
     }).pipe(
       Effect.scoped,
-      Effect.provide([FetchHttpClient.layer, NodeCryptography.layer]),
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer]),
       Effect.provide(WideEvents.layerNoop)
     ),
   30_000

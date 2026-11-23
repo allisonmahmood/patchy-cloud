@@ -1,7 +1,8 @@
-// @effect-diagnostics nodeBuiltinImport:off globalFetch:off globalFetchInEffect:off globalTimers:off globalTimersInEffect:off globalDate:off globalJsonInEffect:off -- direct child ownership and wall-clock startup work under TestClock; JSON encodes validated callback config and pinned compatibility flags.
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalTimersInEffect:off globalDate:off globalJsonInEffect:off -- direct child ownership and wall-clock startup work under TestClock; JSON encodes validated callback config and pinned compatibility flags.
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 import { chown, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { get } from "node:http";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -254,6 +255,24 @@ export const sampleProcess = (
     catch: (cause) => new WorkerdError({ stage: "sample", reason: "request_failed", cause })
   });
 
+/**
+ * Whether a process answers its health check, false on any failure. `node:http` with a connection
+ * of its own, as the supervisor's own requests to its processes are: under Bun it never waits in
+ * fetch's queue behind callbacks the host holds open.
+ */
+const answersHealthCheck = (url: string, signal: AbortSignal) =>
+  new Promise<boolean>((resolve) => {
+    const request = get(`${url}/healthz`, { agent: false, signal }, (response) => {
+      const status = response.statusCode ?? 0;
+      response.once("end", () => resolve(status >= 200 && status < 300));
+      // The first to settle wins: a body cut short ends in one of these, never `end`.
+      response.once("error", () => resolve(false));
+      response.once("close", () => resolve(false));
+      response.resume();
+    });
+    request.once("error", () => resolve(false));
+  });
+
 /** A direct process for tests and inspection. The owning scope kills and reaps it. */
 export const startWorkerd = Effect.fn("Execution.startWorkerd")(function* (
   options: {
@@ -404,18 +423,17 @@ export const startWorkerd = Effect.fn("Execution.startWorkerd")(function* (
         )
           throw resource.failure("exited");
         const url = resource.url();
-        if (url !== undefined) {
-          const response = await fetch(`${url}/healthz`, {
-            signal: AbortSignal.any([
+        if (
+          url !== undefined &&
+          (await answersHealthCheck(
+            url,
+            AbortSignal.any([
               signal,
               AbortSignal.timeout(Math.max(1, Math.ceil(deadline - performance.now())))
             ])
-          }).catch(() => undefined);
-          if (response !== undefined) {
-            await response.body?.cancel();
-            if (response.ok) return url;
-          }
-        }
+          ))
+        )
+          return url;
         await delay(10, undefined, { signal });
       }
       throw resource.failure("timeout");
