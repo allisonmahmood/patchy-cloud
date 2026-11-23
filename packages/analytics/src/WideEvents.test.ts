@@ -565,3 +565,37 @@ it.effect("attributes wide events to viewers or the instance, never the company"
     );
   })
 );
+
+it.effect("keeps startup bind wait on stream events and isolates detached work", () =>
+  Effect.gen(function* () {
+    const sink = yield* recording;
+    yield* Effect.gen(function* () {
+      const events = yield* WideEvents.WideEvents;
+      yield* events.withEvent(
+        { type: "stream", tier: 2, documentId: "doc_1" },
+        Effect.gen(function* () {
+          yield* WideEvents.enrich({
+            companyBind: "launch",
+            bindWaitMs: 40_000,
+            outcome: "refused",
+            code: "busy",
+            limitId: "execution.pool.wait"
+          });
+          yield* WideEvents.detach(
+            WideEvents.enrich({ companyBind: "bound", bindWaitMs: 0, outcome: "success" })
+          );
+        })
+      );
+      const event = yield* sink.take;
+      assert.strictEqual(event.type, "stream");
+      assert.include(event, {
+        companyBind: "launch",
+        bindWaitMs: 40_000,
+        outcome: "refused",
+        code: "busy",
+        limitId: "execution.pool.wait"
+      });
+      assert.deepStrictEqual(decodeEvent(WideEvents.formatJson(event)), event);
+    }).pipe(Effect.provide(sink.layer));
+  })
+);

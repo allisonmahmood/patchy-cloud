@@ -442,6 +442,110 @@ filter type = "process" and ispresent(startMs)
 | stats count(*) as starts, pct(startMs, 50) as p50, pct(startMs, 90) as p90, max(startMs) as slowest by firstOnTask
 ```
 
+#### Monitoring the execution fleet
+
+Every tier 2 bind records `companyBind` (`bound`, `spare` or `launch`, once the path is
+known) and `bindWaitMs` on its wide event: on `request` / `re-run` events for agent and page
+invocations, and on `stream` events for a document's startup bind (`start_failed` and
+abandoned startup binds, which record `outcome = "interrupted"`, included; background re-holds
+after idling do not overwrite it, and idle reconnects leave it unset). All CloudWatch Logs
+Insights queries below target `/patchy/production/host`.
+
+Spare misses and bind waits across browser opens (`stream`, including `start_failed` and
+`interrupted` startup binds), invocations (`request`) and subscription reads (`re-run`):
+
+```
+filter type in ["stream", "request", "re-run"] and ispresent(bindWaitMs)
+| stats count(*) as opens, pct(bindWaitMs, 50) as p50, pct(bindWaitMs, 99) as p99, max(bindWaitMs) as slowest by type, companyBind, outcome
+```
+
+Pool wait (`execution.pool.wait`) refusals (browser `start_failed` streams and refused calls):
+
+```
+fields @timestamp, type, companyId, patchId, companyBind, bindWaitMs, code, closeReason
+| filter limitId = "execution.pool.wait" and outcome = "refused"
+| sort @timestamp desc
+| limit 50
+```
+
+Fleet budget exhaustion warnings: when housekeeping cannot reserve a spare because live tasks
+have reached `execution.fleet.budget`, it logs a single-line warning
+`Execution fleet budget exhausted revision=<rev> budget=<n> target=<n> spares=<n>` at most once
+per housekeeping interval per revision per host replica (it does not log when reservation stops
+because the lease was lost or the revision was retired):
+
+```
+fields @timestamp, @message
+| filter @message like /Execution fleet budget exhausted/
+| parse @message /revision=(?<revision>\S+) budget=(?<budget>\d+) target=(?<target>\d+) spares=(?<spares>\d+)/
+| display @timestamp, revision, budget, target, spares
+| sort @timestamp desc
+| limit 50
+```
+
+Residency `busy` refusals (`execution.residency.processes` and `execution.residency.bytes`):
+
+```
+fields @timestamp, type, companyId, patchId, versionId, limitId, handler
+| filter outcome = "refused" and code = "busy" and limitId like /^execution\.residency\./
+| sort @timestamp desc
+| limit 50
+```
+
+Binding `spareWaitMs` percentiles by release cause:
+
+```
+filter type = "binding"
+| stats count(*) as bindings, pct(spareWaitMs, 50) as p50, pct(spareWaitMs, 99) as p99, max(spareWaitMs) as slowest by releaseCause
+```
+
+Average process CPU utilization across finished processes (`cpuSeconds / (durationMs / 1000)`):
+
+```
+filter type = "process" and durationMs > 0
+| fields companyId, versionId, cause, cpuSeconds / (durationMs / 1000) as cpuUtil
+| stats count(*) as processes, avg(cpuUtil) as avgCpu, pct(cpuUtil, 95) as p95Cpu, max(cpuUtil) as maxCpu by cause
+```
+
+Two fleet sizing checks read the platform Postgres database directly (timestamps in both tables
+are epoch milliseconds):
+
+Peak concurrent bound tasks over the last 24 hours (`execution_binding_history`):
+
+```sql
+WITH window_bounds AS (
+  SELECT extract(epoch FROM now() - interval '24 hours') * 1000 AS since_ms
+),
+edges AS (
+  SELECT GREATEST(h.bound_at, w.since_ms) AS at_ms, 1 AS delta
+  FROM execution_binding_history h, window_bounds w
+  WHERE h.released_at IS NULL OR h.released_at > w.since_ms
+  UNION ALL
+  SELECT h.released_at AS at_ms, -1 AS delta
+  FROM execution_binding_history h, window_bounds w
+  WHERE h.released_at IS NOT NULL AND h.released_at > w.since_ms
+),
+running AS (
+  SELECT at_ms, sum(delta) OVER (ORDER BY at_ms, delta) AS concurrent
+  FROM edges
+)
+SELECT COALESCE(max(concurrent), 0) AS peak_concurrent_bound_tasks
+FROM running;
+```
+
+Cold-start latency (`ready_at - requested_at`, in milliseconds) p50 and p99 over the last 24 hours (`execution_tasks`):
+
+```sql
+SELECT
+  count(*) AS launches,
+  percentile_cont(0.50) WITHIN GROUP (ORDER BY ready_at - requested_at) AS p50_ms,
+  percentile_cont(0.99) WITHIN GROUP (ORDER BY ready_at - requested_at) AS p99_ms,
+  max(ready_at - requested_at) AS max_ms
+FROM execution_tasks
+WHERE ready_at IS NOT NULL
+  AND requested_at >= extract(epoch FROM now() - interval '24 hours') * 1000;
+```
+
 The patch repo's local runtime uses the same record with compact stdout output.
 `@patchy/analytics/wide-events` exposes `formatDev(event, { json: true })` and
 `layerDev({ json: true })` for full records. Structured `dev.log` retrieval belongs
