@@ -455,6 +455,110 @@ filter type = "process" and ispresent(startMs)
 | stats count(*) as starts, pct(startMs, 50) as p50, pct(startMs, 90) as p90, max(startMs) as slowest by firstOnTask
 ```
 
+#### Monitoring the execution fleet
+
+Every tier 2 bind records `companyBind` (`bound`, `spare` or `launch`, once the path is
+known) and `bindWaitMs` on its wide event: on `request` / `re-run` events for agent and page
+invocations, and on `stream` events for a document's startup bind (`start_failed` and
+abandoned startup binds, which record `outcome = "interrupted"`, included; background re-holds
+after idling do not overwrite it, and idle reconnects leave it unset). All CloudWatch Logs
+Insights queries below target `/patchy/production/host`.
+
+Spare misses and bind waits across browser opens (`stream`, including `start_failed` and
+`interrupted` startup binds), invocations (`request`) and subscription reads (`re-run`):
+
+```
+filter type in ["stream", "request", "re-run"] and ispresent(bindWaitMs)
+| stats count(*) as opens, pct(bindWaitMs, 50) as p50, pct(bindWaitMs, 99) as p99, max(bindWaitMs) as slowest by type, companyBind, outcome
+```
+
+Pool wait (`execution.pool.wait`) refusals (browser `start_failed` streams and refused calls):
+
+```
+fields @timestamp, type, companyId, patchId, companyBind, bindWaitMs, code, closeReason
+| filter limitId = "execution.pool.wait" and outcome = "refused"
+| sort @timestamp desc
+| limit 50
+```
+
+Fleet budget exhaustion warnings: when housekeeping cannot reserve a spare because live tasks
+have reached `execution.fleet.budget`, it logs a single-line warning
+`Execution fleet budget exhausted revision=<rev> budget=<n> target=<n> spares=<n>` at most once
+per housekeeping interval per revision per host replica (it does not log when reservation stops
+because the lease was lost or the revision was retired):
+
+```
+fields @timestamp, @message
+| filter @message like /Execution fleet budget exhausted/
+| parse @message /revision=(?<revision>\S+) budget=(?<budget>\d+) target=(?<target>\d+) spares=(?<spares>\d+)/
+| display @timestamp, revision, budget, target, spares
+| sort @timestamp desc
+| limit 50
+```
+
+Residency `busy` refusals (`execution.residency.processes` and `execution.residency.bytes`):
+
+```
+fields @timestamp, type, companyId, patchId, versionId, limitId, handler
+| filter outcome = "refused" and code = "busy" and limitId like /^execution\.residency\./
+| sort @timestamp desc
+| limit 50
+```
+
+Binding `spareWaitMs` percentiles by release cause:
+
+```
+filter type = "binding"
+| stats count(*) as bindings, pct(spareWaitMs, 50) as p50, pct(spareWaitMs, 99) as p99, max(spareWaitMs) as slowest by releaseCause
+```
+
+Average process CPU utilization across finished processes (`cpuSeconds / (durationMs / 1000)`):
+
+```
+filter type = "process" and durationMs > 0
+| fields companyId, versionId, cause, cpuSeconds / (durationMs / 1000) as cpuUtil
+| stats count(*) as processes, avg(cpuUtil) as avgCpu, pct(cpuUtil, 95) as p95Cpu, max(cpuUtil) as maxCpu by cause
+```
+
+Two fleet sizing checks read the platform Postgres database directly (timestamps in both tables
+are epoch milliseconds):
+
+Peak concurrent bound tasks over the last 24 hours (`execution_binding_history`):
+
+```sql
+WITH window_bounds AS (
+  SELECT extract(epoch FROM now() - interval '24 hours') * 1000 AS since_ms
+),
+edges AS (
+  SELECT GREATEST(h.bound_at, w.since_ms) AS at_ms, 1 AS delta
+  FROM execution_binding_history h, window_bounds w
+  WHERE h.released_at IS NULL OR h.released_at > w.since_ms
+  UNION ALL
+  SELECT h.released_at AS at_ms, -1 AS delta
+  FROM execution_binding_history h, window_bounds w
+  WHERE h.released_at IS NOT NULL AND h.released_at > w.since_ms
+),
+running AS (
+  SELECT at_ms, sum(delta) OVER (ORDER BY at_ms, delta) AS concurrent
+  FROM edges
+)
+SELECT COALESCE(max(concurrent), 0) AS peak_concurrent_bound_tasks
+FROM running;
+```
+
+Cold-start latency (`ready_at - requested_at`, in milliseconds) p50 and p99 over the last 24 hours (`execution_tasks`):
+
+```sql
+SELECT
+  count(*) AS launches,
+  percentile_cont(0.50) WITHIN GROUP (ORDER BY ready_at - requested_at) AS p50_ms,
+  percentile_cont(0.99) WITHIN GROUP (ORDER BY ready_at - requested_at) AS p99_ms,
+  max(ready_at - requested_at) AS max_ms
+FROM execution_tasks
+WHERE ready_at IS NOT NULL
+  AND requested_at >= extract(epoch FROM now() - interval '24 hours') * 1000;
+```
+
 The patch repo's local runtime uses the same record with compact stdout output.
 `@patchy/analytics/wide-events` exposes `formatDev(event, { json: true })` and
 `layerDev({ json: true })` for full records. Structured `dev.log` retrieval belongs
@@ -1208,9 +1312,10 @@ commit; the run fails if the digests differ. The app stack returns to that
 release, and promotion stages and promotes its revision. Its task sizes, fleet
 budget and spare floor come back with it, and its promotion needs its floor of
 ready spares inside its own budget. Every live task counts against that budget:
-bound boxes, draining tasks and the newer release's spares, which housekeeping
-never trims while that release is current. Going back to a smaller budget can
-therefore stall promotion with no company bound; when it does,
+bound boxes, draining tasks and the newer release's spares (housekeeping trims
+surplus current-revision spares above the active host's target after
+`execution.pool.wait`, never trimming below that target). Going back to a smaller
+budget can therefore stall promotion with no company bound; when it does,
 [free budget for the promotion](#freeing-budget-for-a-promotion).
 
 Migrations do not roll back. Each release must work against the schema the next
@@ -1274,7 +1379,8 @@ the PR's Release impact answers
 Releases before the full-vCPU fleet have a budget of 15 tasks and a floor of two
 spares, so a rollback to one is where this bites, but any promotion can stall
 the same way: every live task counts against the staged release's budget, and
-housekeeping never trims the current revision's spares. The run's promote step
+housekeeping never trims the current revision's spares below the active host's
+target. The run's promote step
 fails after five minutes, and the promote task's log says `Deployment revision
 <sha> did not reach <n> ready spares in time; it stays staged.` Count on the
 platform database, with the staged release's budget and floor for `<budget>` and
@@ -1437,6 +1543,66 @@ keep the new slot.
    nothing; rotation is complete only now.
 6. Remove the old slot's value from the secret. No release reads it any more, and
    the next rotation writes a new one there.
+
+### Sharing existing tables
+
+Tables and file stores are shared by default
+([#1259](https://github.com/allisonmahmood/patchy-cloud/issues/1259)): a publish
+shares every one it defines unless its definition says `shared: false`. Those
+provisioned before that release keep the flag their last publish wrote, which was
+unshared unless the config said `shared: true`, so a one-time flip shares them. It
+runs only with Allison's go, after that release's deploy run has succeeded and
+`/healthz/deep` names it, never as part of the Deploy workflow.
+
+`bun dist/fleet.js share-by-default` walks every ready company database, then
+re-checks `listReady` for any company database that finished provisioning during
+the pass. For each patch with inventory (including retired and soft-deleted
+patches, whose shared reads still enforce liveness), it skips one whose platform
+row is gone, leaving it to the reclamation sweep. Otherwise it locks the
+platform row, reads the patch's retained versions newest first, takes the
+company patch lock and shares each table and store that is unshared unless the
+newest retained version that defines it says `shared: false`; a table or store
+no retained version defines, such as one a failed publish left, is shared too.
+It only ever turns sharing on. A flag already on whose newest defining version
+says `shared: false`, left by a publish whose company provisioning committed but
+whose platform commit failed, stays on, since consumers may already read it, and
+is listed. Each change advances the resource's revision and the patch's schema
+revision and wakes its live queries on every host. Each patch commits on its
+own. It then re-enumerates the company's inventoried patches, checks every one
+again and fails if anything meant to be shared is still unshared. A `Busy` pool
+registry waits and retries for up to 90 seconds per company so runs over more
+than 100 ready company databases finish; a failing company is logged and skipped
+so the remaining companies still flip, and the command exits nonzero at the end
+if any company failed. It prints,
+per company, how many patches it checked, how many tables and stores it shared
+and how many patches it skipped, and each resource it left shared.
+
+Run it as a one-off task from the live host task definition, as the deploy runs
+promote, so the database settings never leave the task definition:
+
+```sh
+out() { aws cloudformation describe-stacks --stack-name patchy-production-app \
+  --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text; }
+task=$(aws ecs run-task --cluster patchy-production --task-definition "$(out HostTaskDefinitionArn)" \
+  --launch-type FARGATE --count 1 --started-by share-by-default \
+  --overrides '{"containerOverrides":[{"name":"host","command":["bun","dist/fleet.js","share-by-default"]}]}' \
+  --network-configuration "awsvpcConfiguration={subnets=[$(out HostSubnetIds)],securityGroups=[$(out HostSecurityGroupId)],assignPublicIp=ENABLED}" \
+  --query 'tasks[0].taskArn' --output text)
+[[ "$task" == arn:* ]] || { echo "The share-by-default task did not start."; exit 1; }
+aws ecs wait tasks-stopped --cluster patchy-production --tasks "$task"
+code=$(aws ecs describe-tasks --cluster patchy-production --tasks "$task" \
+  --query 'tasks[0].containers[0].exitCode' --output text)
+[[ "$code" == 0 ]] || { echo "share-by-default failed ($code); see host/host/${task##*/} in /patchy/production/host."; exit 1; }
+```
+
+Its output is in `/patchy/production/host`, stream `host/host/<task id>`. A run that
+fails partway has shared the patches before the failure; run it again. A rerun
+writes nothing, keeps every revision and wakes nothing, while config is sharing's
+only writer. The patch settings' sharing switch
+([#1261](https://github.com/allisonmahmood/patchy-cloud/issues/1261)) deletes the
+command before settings can opt anything out. On a local instance, run it from
+the checkout with the instance's env loaded:
+`(set -a; . .local/dev/env; set +a; pnpm exec bun --conditions=development apps/server/src/fleet.ts share-by-default)`.
 
 ## Deploying only the tier 2 spike
 

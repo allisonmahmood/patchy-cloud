@@ -934,9 +934,29 @@ it.layer(
         assert.deepStrictEqual(refused.dependants, expected);
         assert.deepStrictEqual(yield* service.inventory(source.patchId, uploader.user.id), before);
         yield* update(source.patchId, { manifest: unshared, force: true });
+        const afterUnshare = yield* service.inventory(source.patchId, reader.user.id);
+        assert.isFalse(afterUnshare.tables.notes!.shared);
+        assert.isDefined(afterUnshare.tables.notes!.columns.extra);
+        // Republishing without `shared` reshares without needing `force`, even with live dependants.
+        const reshared = yield* update(source.patchId, {
+          manifest: {
+            ...unshared,
+            tables: {
+              notes: {
+                description: unshared.tables.notes!.description,
+                columns: unshared.tables.notes!.columns,
+                indexes: {}
+              }
+            }
+          }
+        });
+        assert.include(reshared.warnings, "`notes` is now shared.");
+        assert.isTrue(
+          (yield* service.inventory(source.patchId, reader.user.id)).tables.notes!.shared
+        );
+        yield* update(source.patchId, { manifest: unshared, force: true });
         const inventory = yield* service.inventory(source.patchId, reader.user.id);
         assert.isFalse(inventory.tables.notes!.shared);
-        assert.isDefined(inventory.tables.notes!.columns.extra);
         yield* service.retire(source.patchId, owner, true);
         assert.instanceOf(
           yield* service
@@ -1009,7 +1029,7 @@ it.layer(
       const before = yield* stored(source.patchId);
       const unshared = {
         ...manifest,
-        files: { photos: { description: manifest.files.photos.description } }
+        files: { photos: { description: manifest.files.photos.description, shared: false } }
       };
       const attempt = input({ intent: "update", patchId: source.patchId, manifest: unshared });
       for (const operation of [

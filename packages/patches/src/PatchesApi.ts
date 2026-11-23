@@ -167,6 +167,7 @@ const primitiveSummary = (
   definition: { readonly description: string; readonly shared?: boolean },
   kind: "table" | "store"
 ): typeof PatchTableSummary.Type => {
+  // Inventory entries always carry the stored live boolean (omitted manifest flags default true via `isShared`).
   const common = { name, description: definition.description, shared: definition.shared === true };
   if (row.patch.state !== "live") {
     return {

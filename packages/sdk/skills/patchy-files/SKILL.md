@@ -36,11 +36,21 @@ Use distinct names for tables and file stores. Publishing a store definition
 replaces its description; omission and rollback preserve it. Description-only
 changes do not advance the schema revision.
 
-To publish read access to every file in the store, use
-`files("Company logos keyed by filename.", { shared: true })`. Sharing is
-whole-store, not per file. Omission and rollback preserve sharing. Publishing
-the store with `shared: false` or without `shared` unshares it; this refuses
-while other live patches depend on it unless publishing with `--force`.
+Files never leave your company. A shared store can be read by your company's
+other patches; an unshared store is reached only through its own patch. Every
+store is shared unless its definition says `shared: false`:
+`files("Signed contracts keyed by customer id.", { shared: false })`. Sharing
+is whole-store, not per file, and read-only: other patches read its files from
+tier 2 handlers and cannot write it.
+
+Leave stores shared unless their files must not reach other patches, such as
+per-person uploads that this patch's handlers filter by viewer. Do not opt out
+out of caution. Unsharing is not privacy from colleagues: anyone who can open
+the patch still reaches its files through it.
+
+Publishing the store with `shared: false` unshares it; this refuses while other
+live patches depend on it unless publishing with `--force`. Defining it again
+without `shared: false` shares it. Omission and rollback preserve sharing.
 See `../patchy-shared-stores/SKILL.md` for consumer access and recovery.
 
 From a tier 1 module under `src/`:

@@ -40,6 +40,7 @@ import {
   SDK_ENTRY_POINTS,
   type SharedTableDeclaration,
   TableDefinition,
+  isShared,
   sharedTableId,
   sharedStoreId
 } from "@patchy/api";
@@ -2439,7 +2440,7 @@ export const make = Effect.gen(function* () {
       input.force,
       input.ownerUserId,
       plan.sharing.filter(
-        (name) => (input.manifest.tables[name] ?? input.manifest.files[name])!.shared !== true
+        (name) => !isShared((input.manifest.tables[name] ?? input.manifest.files[name])!)
       )
     );
     if (snapshot !== null) {
@@ -2492,8 +2493,7 @@ export const make = Effect.gen(function* () {
                 input.force,
                 input.ownerUserId,
                 plan.sharing.filter(
-                  (name) =>
-                    (input.manifest.tables[name] ?? input.manifest.files[name])!.shared !== true
+                  (name) => !isShared((input.manifest.tables[name] ?? input.manifest.files[name])!)
                 )
               );
               return yield* tables.provision(input.patchId, input.manifest);
@@ -2669,7 +2669,7 @@ export const make = Effect.gen(function* () {
         );
         const resources = yield* provision({ ...input, companyId });
         const declaringPatches = resources.sharing.some(
-          (name) => (input.manifest.tables[name] ?? input.manifest.files[name])!.shared !== true
+          (name) => !isShared((input.manifest.tables[name] ?? input.manifest.files[name])!)
         )
           ? new Map(
               (yield* declaringPatchRows({
@@ -2679,7 +2679,7 @@ export const make = Effect.gen(function* () {
             )
           : new Map<string, number>();
         const sharingWarnings = resources.sharing.map((name) =>
-          (input.manifest.tables[name] ?? input.manifest.files[name])!.shared === true
+          isShared((input.manifest.tables[name] ?? input.manifest.files[name])!)
             ? `\`${name}\` is now shared.`
             : `\`${name}\` is no longer shared; ${declaringPatches.get(name) ?? 0} declaring patches are affected.`
         );

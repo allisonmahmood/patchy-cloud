@@ -75,7 +75,7 @@ const checkHousekeeping = Effect.flatMap(housekeepingGuard, (guard) => guard);
  */
 interface Search {
   readonly startedAt: number;
-  found: "bound" | "spare" | "launch";
+  found?: "bound" | "spare" | "launch";
   until?: number;
 }
 export interface Options {
@@ -381,6 +381,7 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
     Effect.mapError((cause) => new FleetError({ operation: "drain", cause }))
   );
   const minimumSpares = minimumSparesOf(config);
+  const lastBudgetWarningAt = new Map<string, number>();
   const isolate = <A, E, R>(taskId: string, work: Effect.Effect<A, E, R>) =>
     work.pipe(
       Effect.timeout(config.get("execution.pool.wait")),
@@ -424,38 +425,77 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
       }).pipe(Effect.catchTags({ SchemaError: Effect.die }));
       const replenishLock = yield* Semaphore.make(1);
       const inventoryRecorded = yield* Deferred.make<void>();
+      const window = config.get("execution.pool.wakeWindow");
+      const grace = config.get("execution.pool.wait");
+      const targetOf = (
+        measured: { readonly wakes: number; readonly coldStart: number; readonly waiting: number },
+        isCurrent: boolean
+      ) => {
+        const baseline = Math.ceil(
+          Math.max(minimumSpares, isCurrent ? (measured.wakes / window) * measured.coldStart : 0)
+        );
+        return isCurrent ? baseline + measured.waiting : baseline;
+      };
+      // Reclaim surplus ready spares of the current revision once their retry grace passes. Runs
+      // beside `replenish` so slow provider stops never block reservations using free budget slots.
+      const trimSurplus = Effect.gen(function* () {
+        yield* Deferred.await(inventoryRecorded);
+        const rollout = yield* store.rollout;
+        if (rollout.currentRevision === null) return;
+        const currentNow = yield* Clock.currentTimeMillis;
+        const measured = yield* store.target(currentNow, window, rollout.currentRevision);
+        const keep = targetOf(measured, true);
+        if (measured.readySpares <= keep) return;
+        yield* guard;
+        const trimmed = yield* store.trimSpares(rollout.currentRevision, keep, currentNow - grace);
+        yield* Effect.forEach(
+          trimmed,
+          (taskId) => isolate(taskId, drainTask(taskId, "deployment")),
+          { concurrency: 8, discard: true }
+        );
+      });
       const replenish = Effect.gen(function* () {
         yield* Deferred.await(inventoryRecorded);
         const rollout = yield* store.rollout;
         const revisions = [...new Set([rollout.stagedRevision, rollout.currentRevision])];
         for (const revision of revisions) {
           if (revision === null) continue;
-          const window = config.get("execution.pool.wakeWindow");
           const measured = yield* store.target(yield* Clock.currentTimeMillis, window, revision);
-          const target = Math.ceil(
-            Math.max(
-              minimumSpares,
-              revision === rollout.currentRevision
-                ? (measured.wakes / window) * measured.coldStart
-                : 0
-            )
-          );
+          const target = targetOf(measured, revision === rollout.currentRevision);
           const reserved: string[] = [];
+          const budget = config.get("execution.fleet.budget");
+          let budgetSpares: number | undefined;
           for (let count = measured.spares; count < target; count++) {
             yield* guard;
             const taskId = yield* random.uuidV4();
-            if (
-              !(yield* store.reserve(
-                taskId,
-                revision,
-                options.replicaId,
-                lease.leaseEpoch,
-                yield* Clock.currentTimeMillis,
-                config.get("execution.fleet.budget")
-              ))
-            )
+            const result = yield* store.reserve(
+              taskId,
+              revision,
+              options.replicaId,
+              lease.leaseEpoch,
+              yield* Clock.currentTimeMillis,
+              budget
+            );
+            if (result.outcome !== "reserved") {
+              if (result.outcome === "budget") budgetSpares = result.spares;
               break;
+            }
             reserved.push(taskId);
+          }
+          if (budgetSpares !== undefined) {
+            const warnAt = yield* Clock.currentTimeMillis;
+            const last = lastBudgetWarningAt.get(revision);
+            if (
+              last === undefined ||
+              warnAt - last >= config.get("execution.housekeeping.interval")
+            ) {
+              lastBudgetWarningAt.set(revision, warnAt);
+              // Keep this single-line and unannotated: ECS awslogs has no multiline grouping, so
+              // CloudWatch's `parse` query relies on all four fields landing on one line.
+              yield* Effect.logWarning(
+                `Execution fleet budget exhausted revision=${revision} budget=${budget} target=${target} spares=${budgetSpares}`
+              );
+            }
           }
           yield* Effect.forEach(
             reserved,
@@ -600,7 +640,7 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
         );
       });
       const work = Effect.gen(function* () {
-        yield* Effect.all([reconcileTasks, reconcileBindings, replenish], {
+        yield* Effect.all([reconcileTasks, reconcileBindings, trimSurplus, replenish], {
           concurrency: "unbounded"
         }).pipe(
           // Slow or unhealthy bindings must not prevent subsequent spare replenishment.
@@ -612,6 +652,11 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
           )
         );
         yield* guard;
+        yield* store.sweepWaits(yield* Clock.currentTimeMillis).pipe(
+          Effect.catchTags({
+            SqlError: () => Effect.logWarning("Execution pool wait sweep failed")
+          })
+        );
         const rollout = yield* store.rollout;
         if (
           rollout.currentRevision === null &&
@@ -674,7 +719,8 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
   /**
    * The company's admissible binding, claiming a spare for `caller` when it has none and
    * waiting for a launched one when the pool is empty, until the search's one
-   * `execution.pool.wait` runs out. It records how it found the server on `search`. A
+   * `execution.pool.wait` runs out. An empty-pool miss records the company's wait inside `claim`
+   * so housekeeping counts it across replicas. It records how it found the server on `search`. A
    * prewarm's work is refused at once instead: its prewarm already claimed what it could.
    */
   const find = Effect.fn("Fleet.find")(
@@ -682,24 +728,31 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
       // A warm company's active binding needs no claim. `protect` still decides admission
       // against the same epoch, state and task; any miss takes the claim loop, which fences.
       const warm = (yield* store.findAdmissible(companyId))[0];
-      if (warm) return warm;
+      if (warm) {
+        search.found ??= "bound";
+        return warm;
+      }
       if (caller === "prewarm") return yield* busy(0);
       const wait = yield* limits.get({ companyId, limitId: "execution.pool.wait" });
       search.until ??= search.startedAt + wait.value;
-      if (search.found === "bound") search.found = "spare";
+      const until = search.until;
       return yield* Effect.gen(function* () {
         let claimed: FleetStore.Binding | undefined;
         while (true) {
           const wake = changed;
           const now = yield* Clock.currentTimeMillis;
-          claimed ??= yield* store.claim(
-            companyId,
-            options.replicaId,
-            now,
-            now - search.startedAt,
-            FleetStore.clocksOf(caller, now)
-          );
-          if (claimed === undefined) search.found = "launch";
+          if (claimed === undefined) {
+            claimed = yield* store.claim(
+              companyId,
+              options.replicaId,
+              now,
+              now - search.startedAt,
+              FleetStore.clocksOf(caller, now),
+              undefined,
+              until
+            );
+            if (claimed === undefined) search.found = "launch";
+          }
           if (claimed) {
             if (!(yield* store.isAdmissibleTask(claimed.taskId))) {
               yield* fence(claimed, "deployment").pipe(
@@ -708,6 +761,8 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
               claimed = undefined;
               continue;
             }
+            if (search.found !== "launch")
+              search.found = claimed.state === "active" ? (search.found ?? "bound") : "spare";
             if (claimed.state === "active") return claimed;
             const reply = yield* provider
               .bind(claimed.taskId, {
@@ -776,15 +831,25 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
   }, Effect.orDie);
   const lifecycle = ExecutionLifecycle.ExecutionLifecycle.of({
     connect: Effect.fn("Fleet.connect")(function* (companyId) {
-      yield* Effect.acquireRelease(
-        activity.hold(FleetStore.companyLock(companyId)).pipe(Effect.mapError(lifecycleFailure)),
-        (unlock) => releaseActivity(companyId, unlock)
-      ).pipe(Effect.asVoid);
-      yield* ensure(companyId);
-      // After the bind, so a binding an agent claimed meanwhile still starts the documents' clock.
-      yield* store
-        .touch(companyId, yield* Clock.currentTimeMillis)
-        .pipe(Effect.mapError(lifecycleFailure));
+      const now = yield* Clock.currentTimeMillis;
+      const search: Search = { startedAt: now };
+      const searched = Effect.flatMap(Clock.currentTimeMillis, (end) =>
+        WideEvents.enrich({
+          ...(search.found === undefined ? {} : { companyBind: search.found }),
+          bindWaitMs: Math.max(0, end - now)
+        })
+      );
+      yield* Effect.gen(function* () {
+        yield* Effect.acquireRelease(
+          activity.hold(FleetStore.companyLock(companyId)).pipe(Effect.mapError(lifecycleFailure)),
+          (unlock) => releaseActivity(companyId, unlock)
+        ).pipe(Effect.asVoid);
+        yield* find(companyId, "page", search);
+        // After the bind, so a binding an agent claimed meanwhile still starts the documents' clock.
+        yield* store
+          .touch(companyId, yield* Clock.currentTimeMillis)
+          .pipe(Effect.mapError(lifecycleFailure));
+      }).pipe(Effect.onExit(() => searched));
     }),
     prewarm: Effect.fn("Fleet.prewarm")(
       function* (companyId) {
@@ -852,9 +917,12 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
       }
       // The call's event says how it found its company's server and how long it waited, a
       // refused wait included.
-      const search: Search = { startedAt: now, found: "bound" };
+      const search: Search = { startedAt: now };
       const searched = Effect.flatMap(Clock.currentTimeMillis, (end) =>
-        WideEvents.enrich({ companyBind: search.found, bindWaitMs: end - now })
+        WideEvents.enrich({
+          ...(search.found === undefined ? {} : { companyBind: search.found }),
+          bindWaitMs: Math.max(0, end - now)
+        })
       );
       return yield* Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {

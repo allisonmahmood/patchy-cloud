@@ -59,7 +59,9 @@ class Lease extends Schema.Class<Lease>("Fleet.Lease")({ leaseEpoch: Schema.Numb
 class Target extends Schema.Class<Target>("Fleet.Target")({
   wakes: Schema.Number,
   coldStart: Schema.Number,
-  spares: Schema.Number
+  spares: Schema.Number,
+  readySpares: Schema.Number,
+  waiting: Schema.Number
 }) {}
 class Rollout extends Schema.Class<Rollout>("Fleet.Rollout")({
   currentRevision: Schema.NullOr(Schema.String),
@@ -67,6 +69,11 @@ class Rollout extends Schema.Class<Rollout>("Fleet.Rollout")({
 }) {}
 class Pause extends Schema.Class<Pause>("Fleet.Pause")({ pausedUntil: Schema.Number }) {}
 class Flag extends Schema.Class<Flag>("Fleet.Flag")({ acquired: Schema.Boolean }) {}
+class ReserveRow extends Schema.Class<ReserveRow>("Fleet.ReserveRow")({
+  reserved: Schema.Boolean,
+  listed: Schema.Boolean,
+  spares: Schema.Number
+}) {}
 class AdmissibleTask extends Schema.Class<AdmissibleTask>("Fleet.AdmissibleTask")({
   admissible: Schema.Boolean
 }) {}
@@ -77,6 +84,7 @@ const decodeTargets = Schema.decodeUnknownEffect(Schema.Array(Target));
 const decodeRollouts = Schema.decodeUnknownEffect(Schema.Array(Rollout));
 const decodePauses = Schema.decodeUnknownEffect(Schema.Array(Pause));
 const decodeFlags = Schema.decodeUnknownEffect(Schema.Array(Flag));
+const decodeReserveRows = Schema.decodeUnknownEffect(Schema.Array(ReserveRow));
 const decodeAdmissibleTasks = Schema.decodeUnknownEffect(Schema.Array(AdmissibleTask));
 const reportJson = Schema.encodeSync(Schema.fromJsonString(Management.ProcessReport));
 
@@ -97,6 +105,13 @@ export interface Capacity {
   readonly reserve: number;
   readonly budget: number;
 }
+
+/** What a spare reservation came to, including the revision's live spare count when at budget. */
+export type ReserveResult =
+  | { readonly outcome: "reserved" }
+  | { readonly outcome: "lease_lost" }
+  | { readonly outcome: "retired" }
+  | { readonly outcome: "budget"; readonly spares: number };
 
 export const companyLock = (companyId: string) => `execution/company/${companyId}`;
 /** Held while a prewarm holds the company's task: it defers release without moving a clock. */
@@ -167,9 +182,11 @@ export const make = Effect.gen(function* () {
       FROM execution_binding_history WHERE company_id = ${company} ORDER BY binding_epoch`
   });
   /**
-   * Binds a spare to `company` with its two clocks as given, or answers its live binding. With
-   * `capacity`, it takes a spare only as that allows. The spares it counts stay locked until it
-   * commits, so concurrent claims never count the same one.
+   * Binds a spare to `company` with its two clocks as given, or answers its live binding, clearing
+   * any recorded pool wait for `company`. With `capacity`, it takes a spare only as that allows.
+   * On an empty-pool miss with `waitUntil`, it records or extends the company's wait inside the
+   * same per-company claim transaction so concurrent claims and misses never race. The spares it
+   * counts stay locked until it commits, so concurrent claims never count the same one.
    */
   const claim = Effect.fn("FleetStore.claim")(function* (
     company: string,
@@ -177,11 +194,15 @@ export const make = Effect.gen(function* () {
     now: number,
     waited: number,
     clocks: Clocks,
-    capacity?: Capacity
+    capacity?: Capacity,
+    waitUntil?: number
   ) {
     yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`execution/claim/${company}`}, 0))`;
     const existing = yield* findCompany(company);
-    if (existing[0]) return existing[0];
+    if (existing[0]) {
+      yield* sql`DELETE FROM execution_pool_waits WHERE company_id = ${company}`;
+      return existing[0];
+    }
     const reserve = capacity?.reserve ?? 0;
     const room =
       capacity === undefined
@@ -195,7 +216,14 @@ export const make = Effect.gen(function* () {
       WHERE task_id = (SELECT task_id FROM ready ORDER BY requested_at LIMIT 1)
         AND (SELECT count(*) FROM ready) > ${reserve} AND ${room}
       RETURNING ${taskColumns}`.pipe(Effect.flatMap(decodeTasks));
-    if (!spare[0]) return undefined;
+    if (!spare[0]) {
+      if (waitUntil !== undefined)
+        yield* sql`INSERT INTO execution_pool_waits (company_id, until)
+          VALUES (${company}, ${waitUntil})
+          ON CONFLICT (company_id) DO UPDATE SET until = EXCLUDED.until
+          WHERE execution_pool_waits.until < EXCLUDED.until`;
+      return undefined;
+    }
     const claimed = yield* sql`INSERT INTO execution_bindings
       (company_id, task_id, owner_id, state, bound_at, last_activity_at, idle_since, agent_activity_at, spare_wait_ms)
       VALUES (${company}, ${spare[0].taskId}, ${owner}, 'claiming', ${now}, ${clocks.lastActivityAt},
@@ -205,6 +233,7 @@ export const make = Effect.gen(function* () {
     yield* sql`INSERT INTO execution_binding_history
       (binding_id, binding_epoch, company_id, task_id, deployment_revision, bound_at, spare_wait_ms)
       VALUES (${binding.bindingId}, ${binding.bindingEpoch}, ${company}, ${binding.taskId}, ${spare[0].deploymentRevision}, ${now}, ${waited})`;
+    yield* sql`DELETE FROM execution_pool_waits WHERE company_id = ${company}`;
     return binding;
   }, sql.withTransaction);
   const activate = (binding: Binding) => sql`UPDATE execution_bindings SET state = 'active'
@@ -479,16 +508,30 @@ export const make = Effect.gen(function* () {
       WHERE owner_id = ${owner} AND lease_epoch = ${epoch} AND expires_at > ${now} FOR UPDATE`.pipe(
       Effect.flatMap(decodeLeases)
     );
-    if (!held[0]) return false;
-    const rows =
-      yield* sql`INSERT INTO execution_tasks(task_id, deployment_revision, state, requested_at)
-      SELECT ${taskId}, ${revision}, 'starting', ${now}
-      WHERE (SELECT count(*) FROM execution_tasks WHERE state <> 'stopped') < ${budget}
-        AND EXISTS (SELECT 1 FROM execution_deployments WHERE revision = ${revision} AND NOT retired)
-        AND EXISTS (SELECT 1 FROM execution_rollout WHERE singleton
-          AND (current_revision = ${revision} OR staged_revision = ${revision}))
-      RETURNING ${taskColumns}`.pipe(Effect.flatMap(decodeTasks));
-    return rows.length === 1;
+    if (!held[0]) return { outcome: "lease_lost" } as const;
+    const rows = yield* sql`WITH state AS (
+        SELECT
+          (SELECT count(*) FROM execution_tasks WHERE state <> 'stopped') < ${budget} AS room,
+          (EXISTS (SELECT 1 FROM execution_deployments WHERE revision = ${revision} AND NOT retired)
+            AND EXISTS (SELECT 1 FROM execution_rollout WHERE singleton
+              AND (current_revision = ${revision} OR staged_revision = ${revision}))) AS listed,
+          (SELECT count(*)::integer FROM execution_tasks
+            WHERE state IN ('starting', 'spare') AND deployment_revision = ${revision}) AS spares
+      ), inserted AS (
+        INSERT INTO execution_tasks(task_id, deployment_revision, state, requested_at)
+        SELECT ${taskId}, ${revision}, 'starting', ${now}
+        FROM state WHERE room AND listed
+        RETURNING task_id
+      )
+      SELECT
+        (SELECT count(*) > 0 FROM inserted) AS reserved,
+        state.listed,
+        state.spares
+      FROM state`.pipe(Effect.flatMap(decodeReserveRows));
+    const row = rows[0]!;
+    if (row.reserved) return { outcome: "reserved" } as const;
+    if (!row.listed) return { outcome: "retired" } as const;
+    return { outcome: "budget", spares: row.spares } as const;
   }, sql.withTransaction);
   const ready = (task: {
     taskId: string;
@@ -497,13 +540,46 @@ export const make = Effect.gen(function* () {
   }) => sql`UPDATE execution_tasks
     SET started_at = ${task.startedAt}, ready_at = ${task.readyAt}, state = 'spare'
     WHERE task_id = ${task.taskId} AND state = 'starting'`;
+  /**
+   * Fences ready spares of `revision` beyond the oldest `keep` unclaimed ready spares, newest
+   * first, whose readiness predates `readyBefore`. Locking inside the same statement ensures a
+   * concurrent claim can never make trimming dip below `keep`.
+   */
+  const trimSpares = (revision: string, keep: number, readyBefore: number) =>
+    sql<{ readonly taskId: string }>`WITH locked AS (
+        SELECT task_id, requested_at, ready_at
+        FROM execution_tasks
+        WHERE state = 'spare' AND deployment_revision = ${revision}
+        ORDER BY requested_at ASC
+        FOR UPDATE SKIP LOCKED
+      ), ranked AS (
+        SELECT task_id, ready_at, row_number() OVER (ORDER BY requested_at ASC) AS rank
+        FROM locked
+      )
+      UPDATE execution_tasks t SET state = 'stopping'
+      FROM ranked
+      WHERE t.task_id = ranked.task_id
+        AND t.state = 'spare'
+        AND ranked.rank > ${keep}
+        AND ranked.ready_at IS NOT NULL
+        AND ranked.ready_at <= ${readyBefore}
+      RETURNING t.task_id AS "taskId"`.pipe(Effect.map((rows) => rows.map((row) => row.taskId)));
+  const sweepWaits = (now: number) => sql`DELETE FROM execution_pool_waits WHERE until <= ${now}`;
   const target = (now: number, window: number, revision: string) =>
     sql`SELECT
     (SELECT count(*)::integer FROM execution_binding_history WHERE bound_at >= ${now - window}) AS wakes,
     COALESCE((SELECT avg(ready_at - requested_at) FROM execution_tasks WHERE ready_at IS NOT NULL
       AND requested_at >= ${now - window}), 0)::double precision AS "coldStart",
     (SELECT count(*)::integer FROM execution_tasks WHERE state IN ('starting', 'spare')
-      AND deployment_revision = ${revision}) AS spares`.pipe(
+      AND deployment_revision = ${revision}) AS spares,
+    (SELECT count(*)::integer FROM execution_tasks WHERE state = 'spare'
+      AND deployment_revision = ${revision}) AS "readySpares",
+    (SELECT count(*)::integer FROM execution_pool_waits w
+      WHERE w.until > ${now}
+        AND NOT EXISTS (
+          SELECT 1 FROM execution_bindings b
+          WHERE b.company_id = w.company_id AND b.state IN ('claiming', 'active')
+        )) AS waiting`.pipe(
       Effect.flatMap(decodeTargets),
       Effect.map((rows) => rows[0]!)
     );
@@ -610,6 +686,8 @@ export const make = Effect.gen(function* () {
     retireDeployment,
     reserve,
     ready,
+    trimSpares,
+    sweepWaits,
     target,
     pendingEvents,
     markEvent,
