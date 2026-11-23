@@ -1541,21 +1541,27 @@ unshared unless the config said `shared: true`, so a one-time flip shares them. 
 runs only with Allison's go, after that release's deploy run has succeeded and
 `/healthz/deep` names it, never as part of the Deploy workflow.
 
-`bun dist/fleet.js share-by-default` walks every ready company database. For each
-patch with inventory, it skips one whose platform row is gone, leaving it to the
-reclamation sweep. Otherwise it locks the platform row, reads the patch's newest
-version, takes the company patch lock and shares each table and store that is
-unshared unless that version defines it with `shared: false`; a table or store the
-version doesn't define at all, such as one a failed publish left, is shared too. It
-only ever turns sharing on. A flag already on whose newest version says
-`shared: false`, left by a publish whose company provisioning committed but whose
-platform commit failed, stays on, since consumers may already read it, and is
-listed. Each change advances the resource's revision and the patch's schema
-revision and wakes its live queries on every host. Each patch commits on its own.
-It then checks every patch again and exits nonzero if anything meant to be shared
-is still unshared. It prints, per company, how many patches it checked, how many
-tables and stores it shared and how many patches it skipped, and each resource it
-left shared.
+`bun dist/fleet.js share-by-default` walks every ready company database, then
+re-checks `listReady` for any company database that finished provisioning during
+the pass. For each patch with inventory (including retired and soft-deleted
+patches, whose shared reads still enforce liveness), it skips one whose platform
+row is gone, leaving it to the reclamation sweep. Otherwise it locks the
+platform row, reads the patch's retained versions newest first, takes the
+company patch lock and shares each table and store that is unshared unless the
+newest retained version that defines it says `shared: false`; a table or store
+no retained version defines, such as one a failed publish left, is shared too.
+It only ever turns sharing on. A flag already on whose newest defining version
+says `shared: false`, left by a publish whose company provisioning committed but
+whose platform commit failed, stays on, since consumers may already read it, and
+is listed. Each change advances the resource's revision and the patch's schema
+revision and wakes its live queries on every host. Each patch commits on its
+own. It then re-enumerates the company's inventoried patches, checks every one
+again and fails if anything meant to be shared is still unshared. A `Busy` pool
+registry waits and retries so runs over more than 100 ready company databases
+finish; a failing company is logged and skipped so the remaining companies still
+flip, and the command exits nonzero at the end if any company failed. It prints,
+per company, how many patches it checked, how many tables and stores it shared
+and how many patches it skipped, and each resource it left shared.
 
 Run it as a one-off task from the live host task definition, as the deploy runs
 promote, so the database settings never leave the task definition:
@@ -1568,9 +1574,11 @@ task=$(aws ecs run-task --cluster patchy-production --task-definition "$(out Hos
   --overrides '{"containerOverrides":[{"name":"host","command":["bun","dist/fleet.js","share-by-default"]}]}' \
   --network-configuration "awsvpcConfiguration={subnets=[$(out HostSubnetIds)],securityGroups=[$(out HostSecurityGroupId)],assignPublicIp=ENABLED}" \
   --query 'tasks[0].taskArn' --output text)
+[[ "$task" == arn:* ]] || { echo "The share-by-default task did not start."; exit 1; }
 aws ecs wait tasks-stopped --cluster patchy-production --tasks "$task"
-aws ecs describe-tasks --cluster patchy-production --tasks "$task" \
-  --query 'tasks[0].containers[0].exitCode' --output text
+code=$(aws ecs describe-tasks --cluster patchy-production --tasks "$task" \
+  --query 'tasks[0].containers[0].exitCode' --output text)
+[[ "$code" == 0 ]] || { echo "share-by-default failed ($code); see host/host/${task##*/} in /patchy/production/host."; exit 1; }
 ```
 
 Its output is in `/patchy/production/host`, stream `host/host/<task id>`. A run that

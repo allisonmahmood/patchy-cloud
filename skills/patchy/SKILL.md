@@ -108,8 +108,9 @@ A repo's **tier** is where its code runs, set by `tier` in `patchy.config.ts`:
   the patch's tables in one transaction, as a write across tables, or a value
   such as a total that several people change at once, needs. Handlers also
   reach outside the patch: other patches' tables and stores (every table and
-  file store can be read by the company's other tier 2 patches unless its patch
-  opted it out with `shared: false`) and the member directory, all read-only,
+  file store of a live same-company patch the viewer can open can be read by
+  the company's other tier 2 patches unless its patch opted it out with
+  `shared: false`) and the member directory, all read-only,
   and company connections (Postgres, PostHog, Attio, an IMAP mailbox and GitHub
   repositories' CI runs, job logs and pull requests, each read-only, and
   Pidgeon, which reads one inbox's email and, when its connection allows, sends

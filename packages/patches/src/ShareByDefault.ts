@@ -1,16 +1,17 @@
 /**
  * The one-time flip that came with sharing by default (#1259): every existing
- * table and file store becomes shared unless its patch's newest version says
- * `shared: false`. `bun dist/fleet.js share-by-default` runs it for each ready
- * company database, once the release is live; docs/OPERATIONS.md has the runbook.
- * It trusts config as sharing's only writer, so it goes before the patch settings
- * can change sharing (#1261).
+ * table and file store becomes shared unless the newest retained version that
+ * defines it says `shared: false`. `bun dist/fleet.js share-by-default` runs it
+ * for each ready company database, once the release is live; docs/OPERATIONS.md
+ * has the runbook. It trusts config as sharing's only writer, so it goes before
+ * the patch settings can change sharing (#1261).
  *
  * It only ever turns sharing on, so it needs neither the company dependency lock
  * nor the dependant guard that unsharing takes. A flag already on whose newest
- * version says `shared: false` (company provisioning committed, then the platform
- * publish failed; ADR-0009) stays on, since consumers may already read it, and is
- * reported. Each patch commits on its own; a rerun writes nothing and sends no wakes.
+ * defining version says `shared: false` (company provisioning committed, then
+ * the platform publish failed; ADR-0009) stays on, since consumers may already
+ * read it, and is reported. Each patch commits on its own; a rerun writes
+ * nothing and sends no wakes.
  */
 import { isShared } from "@patchy/api";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
@@ -36,9 +37,11 @@ export interface CompanyReport {
   readonly skipped: number;
   /** What this pass shared. */
   readonly shared: readonly Resource[];
-  /** Shared already, though the newest version says `shared: false`. */
+  /** Shared already, though the newest version that defines it says `shared: false`. */
   readonly leftShared: readonly Resource[];
 }
+
+const MAX_REPORTED_RESOURCES = 5;
 
 /** The closing check found resources meant to be shared that are still unshared. */
 export class UnsharedRemain extends Schema.TaggedError<UnsharedRemain>()("UnsharedRemain", {
@@ -46,18 +49,22 @@ export class UnsharedRemain extends Schema.TaggedError<UnsharedRemain>()("Unshar
   resources: Schema.Array(Resource)
 }) {
   override get message() {
-    return `${this.resources.length} resources in company ${this.companyId} are still unshared: ${this.resources
+    const shown = this.resources
+      .slice(0, MAX_REPORTED_RESOURCES)
       .map((resource) => `${resource.patchId}/${resource.name}`)
-      .join(", ")}.`;
+      .join(", ");
+    const extra = this.resources.length - MAX_REPORTED_RESOURCES;
+    const suffix = extra > 0 ? `, and ${extra} more` : "";
+    return `${this.resources.length} resources in company ${this.companyId} are still unshared: ${shown}${suffix}.`;
   }
 }
 
-// Only the sharing flags of the newest version's definitions; anything it omits is shared.
+// Only the sharing flags of each version's definitions; a resource no version defines is shared.
 const Definitions = Schema.Record(
   Schema.String,
   Schema.Struct({ shared: Schema.optionalKey(Schema.Boolean) })
 );
-const NewestVersion = Schema.Struct({
+const VersionManifest = Schema.Struct({
   manifest: Schema.Struct({
     tables: Schema.optionalKey(Definitions),
     files: Schema.optionalKey(Definitions)
@@ -85,11 +92,11 @@ export const company = Effect.fn("ShareByDefault.company")(function* (companyId:
     execute: (patchId) => sql`SELECT id FROM patches
       WHERE id = ${patchId} AND company_id = ${companyId} FOR UPDATE`
   });
-  const newestVersion = SqlSchema.findOneOption({
+  const versions = SqlSchema.findAll({
     Request: Schema.String,
-    Result: NewestVersion,
+    Result: VersionManifest,
     execute: (patchId) => sql`SELECT manifest FROM patch_versions
-      WHERE patch_id = ${patchId} ORDER BY version_number DESC LIMIT 1`
+      WHERE patch_id = ${patchId} ORDER BY version_number DESC`
   });
 
   /**
@@ -101,15 +108,17 @@ export const company = Effect.fn("ShareByDefault.company")(function* (companyId:
       .withTransaction(
         Effect.gen(function* () {
           if (Option.isNone(yield* lockRow(patchId))) return Option.none();
-          const manifest = Option.getOrUndefined(yield* newestVersion(patchId))?.manifest;
-          // What the newest version says, where it defines the resource at all.
+          const manifests = yield* versions(patchId);
+          // The newest retained version that defines this resource; omission keeps the earlier flag,
+          // and a resource no version defines (left behind by a failed publish) becomes shared.
           const meantShared = (kind: Resource["kind"], name: string) => {
-            const definitions = manifest?.[kind === "table" ? "tables" : "files"];
-            return (
-              definitions === undefined ||
-              !Object.hasOwn(definitions, name) ||
-              isShared(definitions[name]!)
-            );
+            const section = kind === "table" ? "tables" : "files";
+            for (const { manifest } of manifests) {
+              const definitions = manifest[section];
+              if (definitions !== undefined && Object.hasOwn(definitions, name))
+                return isShared(definitions[name]!);
+            }
+            return true;
           };
           return Option.some(
             yield* databases.withCompany(companyId)(
@@ -147,9 +156,15 @@ export const company = Effect.fn("ShareByDefault.company")(function* (companyId:
       )
       .pipe(Effect.catchTags({ SchemaError: Effect.die }));
 
-  const patchIds = (yield* databases
-    .withCompany(companyId)(inventoried(undefined))
-    .pipe(Effect.catchTags({ SchemaError: Effect.die }))).map((row) => row.patchId);
+  const listPatchIds = () =>
+    databases
+      .withCompany(companyId)(inventoried(undefined))
+      .pipe(
+        Effect.catchTags({ SchemaError: Effect.die }),
+        Effect.map((rows) => rows.map((row) => row.patchId))
+      );
+
+  const patchIds = yield* listPatchIds();
   let patches = 0;
   const shared: Resource[] = [];
   const leftShared: Resource[] = [];
@@ -161,7 +176,7 @@ export const company = Effect.fn("ShareByDefault.company")(function* (companyId:
     leftShared.push(...visited.value.leftShared);
   }
   const remaining: Resource[] = [];
-  for (const patchId of patchIds) {
+  for (const patchId of yield* listPatchIds()) {
     const visited = yield* visit(patchId, false);
     if (Option.isSome(visited)) remaining.push(...visited.value.shared);
   }
