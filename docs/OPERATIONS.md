@@ -1557,9 +1557,10 @@ is listed. Each change advances the resource's revision and the patch's schema
 revision and wakes its live queries on every host. Each patch commits on its
 own. It then re-enumerates the company's inventoried patches, checks every one
 again and fails if anything meant to be shared is still unshared. A `Busy` pool
-registry waits and retries so runs over more than 100 ready company databases
-finish; a failing company is logged and skipped so the remaining companies still
-flip, and the command exits nonzero at the end if any company failed. It prints,
+registry waits and retries for up to 90 seconds per company so runs over more
+than 100 ready company databases finish; a failing company is logged and skipped
+so the remaining companies still flip, and the command exits nonzero at the end
+if any company failed. It prints,
 per company, how many patches it checked, how many tables and stores it shared
 and how many patches it skipped, and each resource it left shared.
 

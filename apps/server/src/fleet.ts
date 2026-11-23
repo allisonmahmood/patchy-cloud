@@ -29,8 +29,10 @@ import * as Fleet from "@patchy/execution/fleet";
 import { ShareByDefault } from "@patchy/patches";
 import { Wakes, WakesPostgres } from "@patchy/runtime";
 import * as Sql from "@patchy/sql";
+import * as Cause from "effect/Cause";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -99,14 +101,14 @@ const shareByDefault = Command.make(
           schedule: Schedule.spaced("5 seconds"),
           while: isBusy
         }),
-        Effect.result
+        Effect.exit
       );
-      if (outcome._tag === "Failure") {
+      if (Exit.isFailure(outcome)) {
         failed.push(companyId);
-        yield* Console.error(`Company ${companyId}: failed (${outcome.failure.message})`);
+        yield* Console.error(`Company ${companyId}: failed\n${Cause.pretty(outcome.cause)}`);
         return;
       }
-      const report = outcome.success;
+      const report = outcome.value;
       yield* Console.log(
         `Company ${report.companyId}: checked ${report.patches} patches and shared ${report.shared.length} tables and stores; skipped ${report.skipped} patches with no platform row.`
       );
