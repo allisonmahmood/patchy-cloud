@@ -10,6 +10,7 @@ import * as Queue from "effect/Queue";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Local from "./local.js";
 import * as Supervisor from "./supervisor.js";
+import * as WorkerHttp from "./workerHttp.js";
 import { NodeCryptography } from "@patchy/core";
 
 const callbackUrl = "http://127.0.0.1:32124/callback";
@@ -113,6 +114,7 @@ it.live(
     }).pipe(
       Effect.scoped,
       Effect.provide(FetchHttpClient.layer),
+      Effect.provide(WorkerHttp.layer),
       Effect.provide(NodeCryptography.layer)
     ),
   20_000

@@ -8,15 +8,19 @@ import { expect, it } from "@effect/vitest";
 import * as GuestProtocol from "@patchy/api/guest";
 import * as Management from "@patchy/api/management";
 import { registry } from "@patchy/limits/registry";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as References from "effect/References";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Supervisor from "./supervisor.js";
+import * as WorkerHttp from "./workerHttp.js";
 import { NodeCryptography } from "@patchy/core";
 
 const source = `
@@ -32,6 +36,11 @@ export default { async fetch(request, env, ctx) {
     }
   }
   if (input.handler === "demo.callback") return Response.json(await ctx.props.callbacks.call({ op: "hold", args: {} }));
+  if (input.handler === "demo.fanOut") {
+    if (input.args.after) await new Promise((resolve) => setTimeout(resolve, input.args.after));
+    const calls = Array.from({ length: input.args.callbacks ?? 0 }, () => ctx.props.callbacks.call({ op: "hold", args: {} }));
+    return Response.json({ ok: true, value: await Promise.all(calls) });
+  }
   if (input.handler === "demo.grow") memory.push(new Uint8Array(input.args.bytes).fill(165));
   if (input.handler === "demo.growAndHold") {
     memory.push(new Uint8Array(input.args.bytes).fill(165));
@@ -183,7 +192,10 @@ it.live("keeps a loaded process callable across issuing-host replacement", () =>
       outcome: "returned",
       reply: { ok: true, value: "first host" }
     });
-  }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer]))
+  }).pipe(
+    Effect.scoped,
+    Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+  )
 );
 
 /** This test process's live workerd children, by pid. */
@@ -247,7 +259,10 @@ it.live.skipIf(process.platform !== "linux")(
       ).toMatchObject({ pid: replacement });
       yield* supervisor.stop({ bindingEpoch: 1 });
       expect(yield* workerdChildren()).toEqual(new Set());
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   20_000
 );
 
@@ -297,7 +312,10 @@ it.live.skipIf(process.platform !== "linux")(
         expect(["stopped", "process_killed"]).toContain(result.failure.reason);
       expect((yield* supervisor.stats({ bindingEpoch: 1 })).processes).toEqual([]);
       yield* childrenWhen((pids) => pids.size === 0);
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   20_000
 );
 
@@ -317,7 +335,10 @@ it.live.skipIf(process.platform !== "linux")(
       expect(resident!.pid).not.toBe(pid);
       yield* reaped(pid);
       expect((yield* supervisor.stats({ bindingEpoch: 1 })).reports).toEqual([]);
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   20_000
 );
 
@@ -338,7 +359,10 @@ it.live.skipIf(process.platform !== "linux")(
       expect((yield* supervisor.stats({ bindingEpoch: 1 })).processes).toEqual([
         expect.objectContaining({ processGeneration: loaded.processGeneration })
       ]);
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   20_000
 );
 
@@ -381,7 +405,10 @@ it.live.skipIf(process.platform !== "linux")(
       }
       yield* childrenWhen((pids) => pids.size === 2);
       expect(Date.now() - discarded).toBeGreaterThanOrEqual(9_000);
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   30_000
 );
 
@@ -421,7 +448,10 @@ it.live.skipIf(process.platform !== "linux")(
       expect(loaded).toMatchObject({ bindingEpoch: 2 });
       yield* supervisor.stop({ bindingEpoch: 2 });
       yield* childrenWhen((pids) => pids.size === 0);
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   20_000
 );
 
@@ -444,7 +474,7 @@ it.live.skipIf(process.platform !== "linux")(
           expect(yield* workerdChildren()).toEqual(new Set());
           expect((yield* supervisor.stats({ bindingEpoch: 0 })).aggregateRssBytes).toBe(0);
         }).pipe(Effect.scoped);
-    }).pipe(Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])),
   20_000
 );
 
@@ -460,7 +490,7 @@ it.live("rejects a probe interval that cannot enforce the six-second stall bound
       })
     ),
     Effect.scoped,
-    Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])
+    Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
   )
 );
 
@@ -518,7 +548,10 @@ it.live(
         report.event.limits?.find((entry) => entry.limitId === "execution.residency.bytes")?.peak
       ).toBeGreaterThanOrEqual(ceiling);
       expect((yield* supervisor.stats({ bindingEpoch: 1 })).aggregateRssBytes).toBe(0);
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   20_000
 );
 
@@ -544,7 +577,10 @@ it.live(
       expect(loaded[0].processGeneration).toBe(loaded[1].processGeneration);
       expect(loaded[2].processGeneration).not.toBe(loaded[0].processGeneration);
       expect((yield* supervisor.stats({ bindingEpoch: 1 })).processes).toHaveLength(2);
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   20_000
 );
 
@@ -597,7 +633,10 @@ it.live(
           _tag: "Failure",
           failure: { reason: "stale_epoch" }
         });
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   20_000
 );
 
@@ -639,7 +678,10 @@ it.live(
         outcome: "returned",
         reply: { ok: false, source: "patchy", code: "timeout" }
       });
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   20_000
 );
 
@@ -649,7 +691,7 @@ it.live(
     Effect.gen(function* () {
       const host = yield* listener(idleHost);
       let refuse = false;
-      const http = (yield* HttpClient.HttpClient).pipe(
+      const workers = (yield* WorkerHttp.WorkerHttp).pipe(
         HttpClient.mapRequest((request) =>
           refuse && request.url.endsWith("/invoke")
             ? HttpClientRequest.setUrl(request, request.url.replace(/\/invoke$/, "/unknown"))
@@ -663,7 +705,7 @@ it.live(
           "execution.process.idle": 2_000,
           "execution.probe.interval": 25
         }
-      }).pipe(Effect.provideService(HttpClient.HttpClient, http));
+      }).pipe(Effect.provideService(WorkerHttp.WorkerHttp, workers));
       const loaded = yield* bind(supervisor, "ver_refused");
       refuse = true;
       const rejected = invocation(loaded, host.url, "reply", { deadline: Date.now() + 200 });
@@ -685,7 +727,10 @@ it.live(
         callsServed: 2,
         invocations: []
       });
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   20_000
 );
 
@@ -756,7 +801,10 @@ it.live(
         (yield* supervisor.stats({ bindingEpoch: 1, acknowledgeReports: [report.reportId] }))
           .reports
       ).not.toContainEqual(report);
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   30_000
 );
 
@@ -779,7 +827,10 @@ it.live(
       expect(report.invocations).toEqual([
         expect.objectContaining({ invocationId: request.request.invocationId })
       ]);
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   20_000
 );
 
@@ -810,7 +861,10 @@ it.live(
           peak: report.peakRssBytes
         })
       );
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   45_000
 );
 
@@ -837,7 +891,10 @@ it.live(
       expect(firstEvent.startMs).toBeLessThanOrEqual(firstEvent.durationMs);
       expect(secondEvent.firstOnTask).toBe(false);
       expect(secondEvent.startMs).toBeGreaterThan(0);
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   20_000
 );
 
@@ -883,7 +940,10 @@ it.live(
       yield* bind(claimed, "ver_guessed");
       yield* bind(claimed, "ver_new");
       expect(yield* resident(claimed)).toEqual(["ver_guessed", "ver_new"]);
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   20_000
 );
 
@@ -911,7 +971,10 @@ it.live(
       expect(
         yield* supervisor.invoke(invocation(first, host.url)).pipe(Effect.result)
       ).toMatchObject({ _tag: "Failure", failure: { reason: "stale_generation" } });
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   20_000
 );
 
@@ -928,7 +991,7 @@ it.live(
         reached.resolve();
       });
       let probes = 0;
-      const http = (yield* HttpClient.HttpClient).pipe(
+      const workers = (yield* WorkerHttp.WorkerHttp).pipe(
         HttpClient.mapRequest((request) => {
           if (request.url.endsWith("/healthz")) probes++;
           return request;
@@ -937,7 +1000,7 @@ it.live(
       const supervisor = yield* Supervisor.make({
         callbackUrls: [host.url],
         operatingLimits: { ...largeAggregate, "execution.probe.interval": 25 }
-      }).pipe(Effect.provideService(HttpClient.HttpClient, http));
+      }).pipe(Effect.provideService(WorkerHttp.WorkerHttp, workers));
       const loaded = yield* bind(supervisor, "ver_watched");
       probes = 0;
       yield* Effect.sleep(3_000);
@@ -956,9 +1019,723 @@ it.live(
       expect(idle).toBeGreaterThanOrEqual(2);
       expect(idle).toBeLessThanOrEqual(4);
       expect(busy).toBeGreaterThan(40);
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   20_000
 );
+
+/**
+ * Bun's fetch as far as these tests need it, standing in for the host client: `fetches` requests
+ * at once, the rest queued in order until one answers.
+ */
+const runtimeQueue = Effect.fnUntraced(function* (fetches: number) {
+  const running = yield* Semaphore.make(fetches);
+  return (yield* HttpClient.HttpClient).pipe(
+    HttpClient.transform((response) => running.withPermit(response))
+  );
+});
+/**
+ * The supervisor's two clients, watched, with gates the test opens. The order in which the worker
+ * client is handed each invoke (`invoke <id>`) and gets its answer's headers (`answered <id>`), and
+ * the host client each callback (`callback <id>`) and its answer's headers (`answered callback
+ * <id>`). `holdAnswer` keeps an invoke's answer from the supervisor until released; `holdBody`
+ * hands over its headers at once and its body only when released (`released <id>`). Probes are
+ * recorded by process, with when each was sent.
+ */
+const observed = Effect.gen(function* () {
+  const sent: string[] = [];
+  const addresses = new Map<string, string>();
+  const probes: Array<{ readonly origin: string; readonly started: number; answered: boolean }> =
+    [];
+  const answers = new Map<string, PromiseWithResolvers<void>>();
+  const bodies = new Map<string, PromiseWithResolvers<void>>();
+  const workers = (yield* WorkerHttp.WorkerHttp).pipe(
+    HttpClient.transform((response, request) =>
+      Effect.gen(function* () {
+        const url = new URL(request.url);
+        const body =
+          request.body._tag === "Uint8Array"
+            ? JSON.parse(new TextDecoder().decode(request.body.body))
+            : undefined;
+        if (url.pathname === "/bind") addresses.set(String(body.versionId), url.origin);
+        if (url.pathname === "/healthz") {
+          const probe = { origin: url.origin, started: Date.now(), answered: false };
+          probes.push(probe);
+          const answer = yield* response;
+          probe.answered = answer.status === 200;
+          return answer;
+        }
+        if (url.pathname !== "/invoke") return yield* response;
+        const invocationId = String(body.invocationId);
+        sent.push(`invoke ${invocationId}`);
+        const answer = yield* response;
+        const answerGate = answers.get(invocationId);
+        if (answerGate !== undefined) yield* Effect.promise(() => answerGate.promise);
+        sent.push(`answered ${invocationId}`);
+        const bodyGate = bodies.get(invocationId);
+        if (bodyGate === undefined) return answer;
+        const bytes = new Uint8Array(yield* answer.arrayBuffer);
+        const stream = new ReadableStream<Uint8Array>({
+          async pull(controller) {
+            await bodyGate.promise;
+            controller.enqueue(bytes);
+            controller.close();
+          }
+        });
+        return HttpClientResponse.fromWeb(
+          request,
+          new Response(stream, { status: answer.status, headers: answer.headers })
+        );
+      })
+    )
+  );
+  const host = (yield* HttpClient.HttpClient).pipe(
+    HttpClient.transform((response, request) =>
+      Effect.suspend(() => {
+        const invocationId = request.headers["x-patchy-invocation-id"];
+        sent.push(`callback ${invocationId}`);
+        return response.pipe(
+          Effect.tap(() => Effect.sync(() => sent.push(`answered callback ${invocationId}`)))
+        );
+      })
+    )
+  );
+  const gate = (gates: Map<string, PromiseWithResolvers<void>>, invocationId: string) => {
+    const opened = Promise.withResolvers<void>();
+    gates.set(invocationId, opened);
+    return () => {
+      sent.push(`released ${invocationId}`);
+      opened.resolve();
+    };
+  };
+  /** Waits for a probe of this version's process, sent no earlier than `since`, to be answered. */
+  const probedAfter = (versionId: string, since: number) =>
+    Effect.gen(function* () {
+      while (
+        !probes.some(
+          (probe) =>
+            probe.origin === addresses.get(versionId) && probe.started >= since && probe.answered
+        )
+      )
+        yield* Effect.sleep(10);
+    }).pipe(Effect.timeout(5_000));
+  /** Waits for a probe of any process, sent from now, to be answered. */
+  const probe = Effect.suspend(() => {
+    const since = Date.now();
+    return Effect.gen(function* () {
+      while (!probes.some((probe) => probe.started >= since && probe.answered))
+        yield* Effect.sleep(10);
+    }).pipe(Effect.timeout(5_000));
+  });
+  /** Waits for an entry in the order things were sent. */
+  const seen = (entry: string) =>
+    Effect.gen(function* () {
+      while (!sent.includes(entry)) yield* Effect.sleep(10);
+    }).pipe(Effect.timeout(5_000));
+  return {
+    workers,
+    host,
+    sent,
+    probe,
+    probedAfter,
+    seen,
+    holdAnswer: (invocationId: string) => gate(answers, invocationId),
+    holdBody: (invocationId: string) => gate(bodies, invocationId)
+  };
+});
+/**
+ * A host that holds every callback until `answer` or `release`, counting each invocation's
+ * arrivals; `headers` sends a held callback's headers and `finish` its body later. A callback its
+ * sender abandons stops being held.
+ */
+const holdingHost = Effect.gen(function* () {
+  const held: Array<{ readonly invocationId: string; readonly response: ServerResponse }> = [];
+  const received = new Map<string, number>();
+  const { url } = yield* listener((request, response) => {
+    if (request.method !== "POST") return void response.end();
+    const invocationId = String(request.headers["x-patchy-invocation-id"]);
+    received.set(invocationId, (received.get(invocationId) ?? 0) + 1);
+    const entry = { invocationId, response };
+    held.push(entry);
+    response.once("close", () => {
+      const index = held.indexOf(entry);
+      if (index !== -1) held.splice(index, 1);
+    });
+  });
+  const reply = (response: ServerResponse) => {
+    if (!response.headersSent) response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify({ ok: true, value: "released" }));
+  };
+  const heldOf = (invocationId: string) =>
+    held.filter((entry) => entry.invocationId === invocationId);
+  /** Answers the callbacks held for one invocation. */
+  const answer = (invocationId: string) => {
+    for (const entry of heldOf(invocationId)) {
+      held.splice(held.indexOf(entry), 1);
+      reply(entry.response);
+    }
+  };
+  /** Sends the headers of the callbacks held for one invocation, keeping their bodies. */
+  const headers = (invocationId: string) => {
+    for (const { response } of heldOf(invocationId)) {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.flushHeaders();
+    }
+  };
+  /** Answers every held callback, and each that arrives after, until interrupted. */
+  const release = Effect.gen(function* () {
+    while (true) {
+      for (const entry of held.splice(0)) reply(entry.response);
+      yield* Effect.sleep(10);
+    }
+  });
+  const holding = (count: number) =>
+    Effect.gen(function* () {
+      while (held.length < count) yield* Effect.sleep(10);
+    }).pipe(Effect.timeout(5_000));
+  /** Waits until a callback of this invocation is held. */
+  const heldFor = (invocationId: string) =>
+    Effect.gen(function* () {
+      while (heldOf(invocationId).length === 0) yield* Effect.sleep(10);
+    }).pipe(Effect.timeout(5_000));
+  return { url, received, answer, headers, release, holding, heldFor };
+});
+/** Waits until a process has this many attempts registered with the watchdog. */
+const registered = (
+  supervisor: Supervisor.Supervisor["Service"],
+  bound: Management.BindReply,
+  count: number
+) =>
+  statsWhen(
+    supervisor,
+    (stats) =>
+      stats.processes.find((entry) => entry.processGeneration === bound.processGeneration)
+        ?.activeInvocations === count
+  );
+/**
+ * A supervisor whose host client runs eight requests at once, as Bun's fetch runs 256: the host
+ * holds every callback, so three calls of four callbacks keep more open than it runs.
+ */
+const crowd = Effect.fnUntraced(function* (host: Effect.Success<typeof holdingHost>) {
+  const watched = yield* observed;
+  const supervisor = yield* Supervisor.make({
+    callbackUrls: [host.url],
+    operatingLimits: { ...largeAggregate, "execution.probe.interval": 25 }
+  }).pipe(
+    Effect.provideService(HttpClient.HttpClient, yield* runtimeQueue(8)),
+    Effect.provideService(WorkerHttp.WorkerHttp, watched.workers)
+  );
+  const crowded = yield* bind(supervisor, "ver_crowded");
+  const calls = yield* Effect.forEach(
+    [0, 1, 2],
+    (call) =>
+      supervisor.invoke(
+        invocation(crowded, host.url, "fanOut", {
+          invocationId: `inv_crowded_${call}`,
+          args: { callbacks: 4 }
+        })
+      ),
+    { concurrency: "unbounded" }
+  ).pipe(Effect.forkChild);
+  yield* host.holding(5);
+  return { supervisor, crowded, calls, watched };
+});
+
+it.live(
+  "keeps a process probed and serving past the stall window while the host holds more callbacks than the runtime's fetch runs",
+  () =>
+    Effect.gen(function* () {
+      const host = yield* holdingHost;
+      const { supervisor, crowded, calls, watched } = yield* crowd(host);
+      yield* Effect.sleep(registry["execution.stall"].default + 500);
+      const held = yield* supervisor.stats({ bindingEpoch: 1 });
+      expect(held.reports).toEqual([]);
+      expect(held.processes).toEqual([
+        expect.objectContaining({
+          processGeneration: crowded.processGeneration,
+          activeInvocations: 3
+        })
+      ]);
+      // Its probes still answer.
+      yield* watched.probe;
+      // A new call is sent as soon as it is dispatched, and completes.
+      const started = Date.now();
+      expect(
+        yield* supervisor.invoke(
+          invocation(crowded, host.url, "reply", { invocationId: "inv_new" })
+        )
+      ).toMatchObject({ outcome: "returned", reply: { ok: true, value: "alive" } });
+      expect(Date.now() - started).toBeLessThan(1_000);
+      // Answered, every callback completes, the queued ones included, each once.
+      yield* host.release.pipe(Effect.forkChild);
+      const released = { ok: true, value: "released" };
+      expect(yield* Fiber.join(calls)).toMatchObject(
+        Array.from({ length: 3 }, () => ({
+          outcome: "returned",
+          reply: { ok: true, value: [released, released, released, released] }
+        }))
+      );
+      expect(host.received).toEqual(
+        new Map([
+          ["inv_crowded_0", 4],
+          ["inv_crowded_1", 4],
+          ["inv_crowded_2", 4]
+        ])
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
+  30_000
+);
+
+it.live(
+  "still ends a process that really stalls at the stall bound while a crowded sibling lives",
+  () =>
+    Effect.gen(function* () {
+      const host = yield* holdingHost;
+      const { supervisor, crowded } = yield* crowd(host);
+      // The stall window runs from the process's last good probe, which is no earlier than its
+      // bind and can be before the call: so the lower bound is measured from before the bind.
+      const beforeBind = Date.now();
+      const spinning = yield* bind(supervisor, "ver_stalling");
+      const started = Date.now();
+      yield* supervisor
+        .invoke(
+          invocation(spinning, host.url, "spin", {
+            invocationId: "inv_stalling",
+            deadline: Date.now() + 30_000
+          })
+        )
+        .pipe(Effect.result, Effect.forkChild);
+      const report = yield* reportFor(supervisor, spinning.processGeneration!);
+      expect(report.cause).toBe("stall");
+      expect(report.endedAt - beforeBind).toBeGreaterThanOrEqual(
+        registry["execution.stall"].default
+      );
+      expect(report.endedAt - started).toBeLessThan(registry["execution.stall"].default + 1_500);
+      const after = yield* supervisor.stats({ bindingEpoch: 1 });
+      expect(after.reports.map((entry) => entry.processGeneration)).toEqual([
+        spinning.processGeneration
+      ]);
+      expect(after.processes).toEqual([
+        expect.objectContaining({
+          processGeneration: crowded.processGeneration,
+          activeInvocations: 3
+        })
+      ]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
+  30_000
+);
+
+/**
+ * A supervisor with `slots` shared by its invokes and forwarded callbacks, or the runtime's count
+ * when not given, its clients watched.
+ */
+const sharing = Effect.fnUntraced(function* (
+  host: Effect.Success<typeof holdingHost>,
+  slots: number | undefined
+) {
+  const watched = yield* observed;
+  const supervisor = yield* Supervisor.make({
+    callbackUrls: [host.url],
+    operatingLimits: { ...largeAggregate, "execution.probe.interval": 25 }
+  }).pipe(
+    Effect.provideService(HttpClient.HttpClient, watched.host),
+    Effect.provideService(WorkerHttp.WorkerHttp, watched.workers),
+    slots === undefined ? (make) => make : Effect.provideService(Supervisor.FetchSlots, slots)
+  );
+  const call = (
+    bound: Management.BindReply,
+    invocationId: string,
+    args: { readonly callbacks?: number },
+    overrides: Partial<GuestProtocol.Invoke> = {}
+  ) =>
+    supervisor
+      .invoke(invocation(bound, host.url, "fanOut", { invocationId, args, ...overrides }))
+      .pipe(Effect.result, Effect.forkChild({ startImmediately: true }));
+  /**
+   * Waits until a probe of this process, sent from now, has been answered: by then a request that
+   * was free to go has gone, so one still unsent is waiting.
+   */
+  const settled = (bound: Management.BindReply) =>
+    watched.probedAfter(bound.binding!.versionId, Date.now());
+  let round = 0;
+  /**
+   * Exactly two slots free: a call and its held callback take them, so the next call is sent only
+   * once the callback has been answered. One slot short, the callback is never forwarded; one
+   * over, or a callback not counted, the next call goes at once.
+   */
+  const twoSlotsFree = Effect.fnUntraced(function* (bound: Management.BindReply) {
+    round++;
+    const holder = `inv_holder_${round}`;
+    const next = `inv_next_${round}`;
+    const holding = yield* call(bound, holder, { callbacks: 1 });
+    yield* host.heldFor(holder);
+    const waiting = yield* call(bound, next, {});
+    yield* registered(supervisor, bound, 2);
+    yield* settled(bound);
+    expect(watched.sent).not.toContain(`invoke ${next}`);
+    host.answer(holder);
+    expect(yield* Fiber.joinAll([holding, waiting])).toMatchObject([
+      { _tag: "Success" },
+      { _tag: "Success" }
+    ]);
+    expect(watched.sent.indexOf(`invoke ${next}`)).toBeGreaterThan(
+      watched.sent.indexOf(`answered callback ${holder}`)
+    );
+  });
+  return { supervisor, call, settled, twoSlotsFree, ...watched };
+});
+const killed = { _tag: "Failure", failure: { reason: "process_killed" } };
+
+it.live(
+  "admits invokes and forwarded callbacks against one count, first come first served, while probes and binds go straight through",
+  () =>
+    Effect.gen(function* () {
+      const host = yield* holdingHost;
+      const { supervisor, call, sent, probedAfter, seen, settled, holdAnswer } = yield* sharing(
+        host,
+        2
+      );
+      const loaded = yield* bind(supervisor, "ver_shared");
+      // A call whose answer is held and a second call take both slots, so the second's callback
+      // can't be forwarded; probes and a bind go straight through.
+      const releaseFirst = holdAnswer("inv_first");
+      const first = yield* call(loaded, "inv_first", {});
+      yield* seen("invoke inv_first");
+      const second = yield* call(loaded, "inv_second", { callbacks: 1 });
+      yield* seen("invoke inv_second");
+      yield* probedAfter("ver_shared", Date.now());
+      expect(yield* bind(supervisor, "ver_shared_other").pipe(Effect.timeout(5_000))).toMatchObject(
+        { binding: { versionId: "ver_shared_other" } }
+      );
+      yield* probedAfter("ver_shared", Date.now());
+      expect(sent).toEqual(["invoke inv_first", "invoke inv_second"]);
+      // The first answer frees a slot, and the waiting callback takes it.
+      releaseFirst();
+      expect(yield* Fiber.join(first)).toMatchObject({ _tag: "Success" });
+      yield* host.heldFor("inv_second");
+      expect(sent).toEqual([
+        "invoke inv_first",
+        "invoke inv_second",
+        "released inv_first",
+        "answered inv_first",
+        "callback inv_second"
+      ]);
+      // With the call and its callback holding both, a third call waits, registered, until the
+      // callback has been answered.
+      const third = yield* call(loaded, "inv_third", {});
+      yield* registered(supervisor, loaded, 2);
+      yield* settled(loaded);
+      expect(sent).not.toContain("invoke inv_third");
+      host.answer("inv_second");
+      expect(yield* Fiber.joinAll([second, third])).toMatchObject([
+        { _tag: "Success" },
+        { _tag: "Success" }
+      ]);
+      expect(sent.indexOf("invoke inv_third")).toBeGreaterThan(
+        sent.indexOf("answered callback inv_second")
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
+  30_000
+);
+
+it.live(
+  "ends no process for an attempt still waiting for a slot past its deadline, sends it late, and still ends one for a sent attempt",
+  () =>
+    Effect.gen(function* () {
+      const host = yield* holdingHost;
+      const { supervisor, call, sent, seen, probedAfter, holdAnswer } = yield* sharing(host, 1);
+      const busy = yield* bind(supervisor, "ver_busy");
+      const quiet = yield* bind(supervisor, "ver_quiet");
+      // A call to one process whose answer is held takes the only slot.
+      const releaseLong = holdAnswer("inv_long");
+      const long = yield* call(busy, "inv_long", {});
+      yield* seen("invoke inv_long");
+      const deadline = Date.now() + 300;
+      const short = yield* supervisor
+        .invoke(invocation(quiet, host.url, "reply", { invocationId: "inv_short", deadline }))
+        .pipe(Effect.result, Effect.forkChild);
+      yield* registered(supervisor, quiet, 1);
+      // The watchdog has looked at that process past the short call's deadline and its second,
+      // and probed it rather than ending it.
+      yield* probedAfter("ver_quiet", deadline + 1_000);
+      expect(sent).not.toContain("invoke inv_short");
+      // Sent once the long call answers, late, the loader answers it as late without running it.
+      releaseLong();
+      expect(yield* Fiber.join(short)).toMatchObject({
+        _tag: "Success",
+        success: { outcome: "deadline", guestMs: 0 }
+      });
+      expect(sent.indexOf("invoke inv_short")).toBeGreaterThan(sent.indexOf("released inv_long"));
+      expect(yield* Fiber.join(long)).toMatchObject({ _tag: "Success" });
+      const after = yield* supervisor.stats({ bindingEpoch: 1 });
+      expect(after.reports).toEqual([]);
+      expect(after.processes.map((entry) => entry.processGeneration).sort()).toEqual(
+        [busy.processGeneration, quiet.processGeneration].sort()
+      );
+      // A sent attempt that runs past its deadline still ends its process a second after it.
+      const spinDeadline = Date.now() + 3_000;
+      const spinning = yield* supervisor
+        .invoke(
+          invocation(quiet, host.url, "spin", { invocationId: "inv_spin", deadline: spinDeadline })
+        )
+        .pipe(Effect.result, Effect.forkChild);
+      yield* seen("invoke inv_spin");
+      expect(Date.now()).toBeLessThan(spinDeadline);
+      expect(yield* Fiber.join(spinning)).toMatchObject(killed);
+      const report = yield* reportFor(supervisor, quiet.processGeneration!);
+      expect(report.cause).toBe("deadline");
+      expect(report.endedAt).toBeGreaterThanOrEqual(spinDeadline + 1_000);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
+  30_000
+);
+
+it.live(
+  "keeps a slot until its answer's body has been read, for an invoke and a forwarded callback",
+  () =>
+    Effect.gen(function* () {
+      const host = yield* holdingHost;
+      const { supervisor, call, sent, seen, settled, holdAnswer, holdBody } = yield* sharing(
+        host,
+        2
+      );
+      const loaded = yield* bind(supervisor, "ver_bodies");
+      // One slot held by an answer not yet given, the other by an answer whose headers are in.
+      const releaseHeld = holdAnswer("inv_held");
+      const held = yield* call(loaded, "inv_held", {});
+      yield* seen("invoke inv_held");
+      const releaseBody = holdBody("inv_body");
+      const reading = yield* call(loaded, "inv_body", {});
+      yield* seen("answered inv_body");
+      const afterBody = yield* call(loaded, "inv_after_body", {});
+      yield* registered(supervisor, loaded, 3);
+      yield* settled(loaded);
+      expect(sent).not.toContain("invoke inv_after_body");
+      releaseBody();
+      expect(yield* Fiber.joinAll([reading, afterBody])).toMatchObject([
+        { _tag: "Success" },
+        { _tag: "Success" }
+      ]);
+      expect(sent.indexOf("invoke inv_after_body")).toBeGreaterThan(
+        sent.indexOf("released inv_body")
+      );
+      releaseHeld();
+      expect(yield* Fiber.join(held)).toMatchObject({ _tag: "Success" });
+      // A call and its forwarded callback take both slots; the callback's headers are in, its
+      // body not yet, and the next call waits for the body.
+      const forwarding = yield* call(loaded, "inv_forwarding", { callbacks: 1 });
+      yield* host.heldFor("inv_forwarding");
+      host.headers("inv_forwarding");
+      yield* seen("answered callback inv_forwarding");
+      const afterCallback = yield* call(loaded, "inv_after_callback", {});
+      yield* registered(supervisor, loaded, 2);
+      yield* settled(loaded);
+      expect(sent).not.toContain("invoke inv_after_callback");
+      sent.push("finished callback inv_forwarding");
+      host.answer("inv_forwarding");
+      expect(yield* Fiber.joinAll([forwarding, afterCallback])).toMatchObject([
+        { _tag: "Success" },
+        { _tag: "Success" }
+      ]);
+      expect(sent.indexOf("invoke inv_after_callback")).toBeGreaterThan(
+        sent.indexOf("finished callback inv_forwarding")
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
+  30_000
+);
+
+it.live(
+  "takes no slot for a callback cancelled while it waits for one, and serves the next waiter",
+  () =>
+    Effect.gen(function* () {
+      const host = yield* holdingHost;
+      const { supervisor, call, sent, seen, holdAnswer, twoSlotsFree } = yield* sharing(host, 2);
+      const loaded = yield* bind(supervisor, "ver_cancelled");
+      // A held answer and a call take both slots, so the call's callback waits for one, and a
+      // call after it waits too.
+      const releaseHeld = holdAnswer("inv_held");
+      const held = yield* call(loaded, "inv_held", {});
+      yield* seen("invoke inv_held");
+      const cancelled = yield* call(
+        loaded,
+        "inv_cancelled",
+        { callbacks: 1 },
+        { deadline: Date.now() + 1_000 }
+      );
+      yield* seen("invoke inv_cancelled");
+      const next = yield* call(loaded, "inv_next_waiter", {});
+      yield* registered(supervisor, loaded, 3);
+      // At its deadline the waiting callback is cancelled, never forwarded; its call returns, and
+      // the slot it gives back goes to the call that waited after it.
+      expect(yield* Fiber.join(cancelled)).toMatchObject({
+        _tag: "Success",
+        success: { outcome: "returned", reply: { ok: true, value: [{ code: "timeout" }] } }
+      });
+      expect(yield* Fiber.join(next)).toMatchObject({ _tag: "Success" });
+      expect(sent).not.toContain("callback inv_cancelled");
+      expect(sent).not.toContain("released inv_held");
+      releaseHeld();
+      expect(yield* Fiber.join(held)).toMatchObject({ _tag: "Success" });
+      yield* twoSlotsFree(loaded);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
+  30_000
+);
+
+it.live(
+  "gives every slot back once, however an invoke or a callback ends",
+  () =>
+    Effect.gen(function* () {
+      const host = yield* holdingHost;
+      const { supervisor, call, holdAnswer, twoSlotsFree } = yield* sharing(host, 2);
+      const first = yield* bind(supervisor, "ver_slots");
+      yield* twoSlotsFree(first);
+      // A callback answered, then its call.
+      const answered = yield* call(first, "inv_answered", { callbacks: 1 });
+      yield* host.heldFor("inv_answered");
+      host.answer("inv_answered");
+      expect(yield* Fiber.join(answered)).toMatchObject({ _tag: "Success" });
+      yield* twoSlotsFree(first);
+      // A callback at its deadline, then its call.
+      const expiring = yield* call(
+        first,
+        "inv_expiring",
+        { callbacks: 1 },
+        { deadline: Date.now() + 1_000 }
+      );
+      yield* host.heldFor("inv_expiring");
+      expect(yield* Fiber.join(expiring)).toMatchObject({
+        _tag: "Success",
+        success: { outcome: "returned", reply: { ok: true, value: [{ code: "timeout" }] } }
+      });
+      yield* twoSlotsFree(first);
+      // A call and its forwarded callback when their process ends.
+      const ending = yield* call(first, "inv_ending", { callbacks: 1 });
+      yield* host.heldFor("inv_ending");
+      yield* supervisor.stop({ bindingEpoch: 1, processGeneration: first.processGeneration });
+      expect(yield* Fiber.join(ending)).toMatchObject(killed);
+      const second = yield* bind(supervisor, "ver_slots_second");
+      yield* twoSlotsFree(second);
+      // Two sent calls whose answers are held, and one still waiting, when their process ends.
+      const dispatched = yield* Effect.forEach(["inv_sent_0", "inv_sent_1"], (invocationId) => {
+        holdAnswer(invocationId);
+        return call(second, invocationId, {});
+      });
+      const waiting = yield* call(second, "inv_waiting", {});
+      yield* registered(supervisor, second, 3);
+      yield* supervisor.stop({ bindingEpoch: 1, processGeneration: second.processGeneration });
+      expect(yield* Fiber.joinAll([...dispatched, waiting])).toMatchObject([
+        killed,
+        killed,
+        killed
+      ]);
+      yield* twoSlotsFree(yield* bind(supervisor, "ver_slots_third"));
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
+  60_000
+);
+
+it.live("counts the runtime's own fetches at once, unless a count is given", () =>
+  Effect.gen(function* () {
+    const host = yield* holdingHost;
+    const { supervisor, call, sent, seen, settled, holdAnswer } = yield* sharing(
+      host,
+      undefined
+    ).pipe(
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.fromUnknown({ BUN_CONFIG_MAX_HTTP_REQUESTS: "1" })
+      )
+    );
+    const loaded = yield* bind(supervisor, "ver_runtime");
+    const releaseFirst = holdAnswer("inv_runtime_first");
+    const first = yield* call(loaded, "inv_runtime_first", {});
+    yield* seen("invoke inv_runtime_first");
+    const second = yield* call(loaded, "inv_runtime_second", {});
+    if (process.versions.bun === undefined) {
+      // Node's fetch queues nothing, so neither does this.
+      yield* seen("invoke inv_runtime_second");
+    } else {
+      // Bun runs one fetch at once here, so the second call waits for the first.
+      yield* registered(supervisor, loaded, 2);
+      yield* settled(loaded);
+      expect(sent).not.toContain("invoke inv_runtime_second");
+    }
+    releaseFirst();
+    expect(yield* Fiber.joinAll([first, second])).toMatchObject([
+      { _tag: "Success" },
+      { _tag: "Success" }
+    ]);
+    if (process.versions.bun !== undefined)
+      expect(sent.indexOf("invoke inv_runtime_second")).toBeGreaterThan(
+        sent.indexOf("released inv_runtime_first")
+      );
+  }).pipe(
+    Effect.scoped,
+    Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+  )
+);
+
+it("reads the runtime's fetches at once as Bun 1.4.4 does, and none under Node", () => {
+  // Measured: the fetches Bun 1.4.4 runs at once under each value.
+  const measured: Record<string, number> = {
+    "": 256,
+    "2": 2,
+    "0002": 2,
+    "+2": 2,
+    "0_2": 2,
+    "1__0": 10,
+    "+0_2": 2,
+    "1": 1,
+    "65535": 65_535,
+    _2: 256,
+    "2_": 256,
+    "+_2": 256,
+    "++2": 256,
+    "+": 256,
+    "-0": 256,
+    "-2": 256,
+    " 2": 256,
+    "2 ": 256,
+    "2.0": 256,
+    "2e0": 256,
+    "0x2": 256,
+    "0b10": 256,
+    "0": 256,
+    "65536": 256,
+    "1,0": 256,
+    "2a": 256
+  };
+  for (const [setting, fetches] of Object.entries(measured))
+    expect([setting, Supervisor.runtimeFetches({ bun: "1.4.4", setting })]).toEqual([
+      setting,
+      fetches
+    ]);
+  expect(Supervisor.runtimeFetches({ bun: "1.4.4", setting: undefined })).toBe(256);
+  expect(Supervisor.runtimeFetches({ bun: undefined, setting: "2" })).toBe(
+    Number.POSITIVE_INFINITY
+  );
+});
 
 it.live(
   "keeps a touched process past its idle window and loads nothing for a version it doesn't hold",
@@ -1000,7 +1777,10 @@ it.live(
       });
       expect(yield* touch(supervisor, "ver_kept")).toEqual({ outcome: "absent", idleMs: 2_000 });
       expect((yield* supervisor.stats({ bindingEpoch: 1 })).processes).toEqual([]);
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   20_000
 );
 
@@ -1041,7 +1821,10 @@ it.live(
       });
       expect(outcomes).toContain("loading");
       expect(outcomes).not.toContain("touched");
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   20_000
 );
 
@@ -1101,7 +1884,10 @@ it.live(
       expect(after.reports).toEqual([
         expect.objectContaining({ processGeneration: first.processGeneration, cause: "evicted" })
       ]);
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   30_000
 );
 
@@ -1180,7 +1966,10 @@ it.live(
         freshReport.event.limits?.find((entry) => entry.limitId === "execution.residency.bytes")
           ?.peak
       ).toBeLessThan(ceiling);
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   30_000
 );
 
@@ -1238,7 +2027,10 @@ it.live(
         expect.objectContaining({ processGeneration: target.processGeneration })
       ]);
       pressure.length = 0;
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   20_000
 );
 
@@ -1288,7 +2080,10 @@ it.live(
       });
       const report = yield* reportFor(supervisor, loaded.processGeneration!);
       expect(report).toMatchObject({ cause: "idle", callsServed: 1, invocations: [] });
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   20_000
 );
 
@@ -1325,7 +2120,10 @@ it.live(
           }
         ]
       });
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   15_000
 );
 
@@ -1369,7 +2167,10 @@ it.live(
         outcome: "returned",
         reply: { ok: true, value: "alive" }
       });
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   20_000
 );
 
@@ -1406,7 +2207,10 @@ it.live(
       const report = yield* reportFor(supervisor, generation);
       expect(report.cause).toBe("stall");
       expect(report.endedAt - started).toBeGreaterThanOrEqual(6_000);
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   20_000
 );
 
@@ -1487,7 +2291,10 @@ it.live(
       expect(
         yield* supervisor.bind({ companyId: "com_other", bindingEpoch: 3 }).pipe(Effect.result)
       ).toMatchObject({ _tag: "Failure", failure: { reason: "stopped" } });
-    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
   20_000
 );
 
@@ -1542,6 +2349,6 @@ it.live(
         });
       }).pipe(Effect.scoped);
       expect(() => process.kill(survivingPid, 0)).toThrow();
-    }).pipe(Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+    }).pipe(Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])),
   20_000
 );

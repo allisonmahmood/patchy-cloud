@@ -1,11 +1,13 @@
 import * as WideEvents from "@patchy/analytics/wide-events";
 import * as Executor from "@patchy/runtime/executor";
 import * as Config from "effect/Config";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Supervisor from "./supervisor.js";
 import * as TaskProvider from "./TaskProvider.js";
+import * as WorkerHttp from "./workerHttp.js";
 
 export interface Options extends Omit<Supervisor.Options, "residencyAccounting"> {
   readonly companyId: string;
@@ -35,7 +37,12 @@ export const make = Effect.fn("LocalExecutor.make")(
         reason: "production_refused"
       });
     const events = yield* WideEvents.WideEvents;
-    const supervisor = yield* Supervisor.make({ ...options, residencyAccounting: "workerd-only" });
+    // Its processes are reached as a task's are, by a client that lives as long as the executor.
+    const workers = Context.get(yield* Layer.build(WorkerHttp.layer), WorkerHttp.WorkerHttp);
+    const supervisor = yield* Supervisor.make({
+      ...options,
+      residencyAccounting: "workerd-only"
+    }).pipe(Effect.provideService(WorkerHttp.WorkerHttp, workers));
     const bindingEpoch = 1;
     yield* supervisor.bind({ companyId: options.companyId, bindingEpoch });
     // As the fleet's collection does: emit, then acknowledge so the supervisor lets them go.
