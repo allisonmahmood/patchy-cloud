@@ -1,8 +1,8 @@
 /**
  * Shows, under the Bun running it, whether an execution task's supervisor keeps healthy processes
- * while its invokes and forwarded callbacks fill the 256 slots they share, as they filled fetch's
- * 256. It starts a real supervisor and workerd and a loopback host, then runs these phases, all
- * by default or those named:
+ * while its invokes and forwarded callbacks fill the slots they share: as many as Bun's fetch runs
+ * at once, 256 unless `BUN_CONFIG_MAX_HTTP_REQUESTS` says otherwise. It starts a real supervisor
+ * and workerd and a loopback host, then runs these phases, all by default or those named:
  * - `crowd`: a baseline of the process under test holding one call; then more callbacks than
  *   the shared slots admit, held past `execution.stall`, with a short call sent behind them that
  *   waits its turn; then every call and callback accounted for;
@@ -10,12 +10,13 @@
  * - `burst`: 352 calls at once, each holding 1.375 MiB for 1.2 s within a 3 s deadline, which
  *   fits a process's 512 MiB only if no more than 256 run at once;
  * - `mixed`: twenty calls retaining 100 MiB between them and holding 160 callbacks, then 200
- *   calls each holding 2 MiB for 1.2 s, which fit only in the slots the twenty leave;
+ *   calls each holding 2 MiB for 1.2 s, which fit only in the slots the twenty leave; the most
+ *   invokes and callbacks in flight at once must stay within the slots;
  * - `queued`: 256 long calls to one process, then a short call to a second process that waits
  *   for a slot past its deadline and a second, and must not get its process ended;
  * - `stall`: a process that really stalls, ended for `stall` at `execution.stall`.
  * Probes are timed from the request to the end of the body read, and only the process under
- * test's. The run fails at once if a healthy process's call is ended `process_killed`, and at the
+ * test's; one counts as answered only with a 200, and any other end fails its phase. The run fails at once if a healthy process's call is ended `process_killed`, and at the
  * end if anything it expects did not happen. Nothing outside this machine is reached.
  *
  *   bun --conditions=development scripts/dev/src/crowdedProbes.ts [phase...]
@@ -35,6 +36,8 @@ import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
+import type * as HttpClientError from "effect/http/HttpClientError";
+import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 type Service = Supervisor.Supervisor["Service"];
@@ -98,7 +101,6 @@ const burstCalls = 352;
 const burstBytes = 1.375 * 1024 ** 2;
 const burstMs = 1_200;
 const burstDeadline = 3_000;
-const slots = 256;
 const stall = registry["execution.stall"].default;
 const queryDeadline = registry["tier2.query.deadline"].default;
 /** Every probe of the process under test is answered within this, through its body. */
@@ -200,10 +202,41 @@ const host = Effect.acquireRelease(
  * its body, and counts invokes in flight. A process is known by the address its bind went to.
  */
 const watching = () => {
-  const probes: Array<number | "timed out"> = [];
+  const probes: Array<number | "timed out" | "failed"> = [];
   const addresses = new Map<string, string>();
   let watched: string | undefined;
-  let invokesInFlight = 0;
+  let invokes = 0;
+  let forwarded = 0;
+  let peak = 0;
+  /** Counts a request in flight from its hand-off until its answer's body has been read. */
+  const inFlight = (
+    response: Effect.Effect<HttpClientResponse.HttpClientResponse, HttpClientError.HttpClientError>,
+    request: HttpClientRequest.HttpClientRequest,
+    kind: "invoke" | "callback"
+  ) =>
+    Effect.suspend(() => {
+      if (kind === "invoke") invokes++;
+      else forwarded++;
+      peak = Math.max(peak, invokes + forwarded);
+      return response.pipe(
+        Effect.flatMap((answer) =>
+          answer.arrayBuffer.pipe(
+            Effect.map((body) =>
+              HttpClientResponse.fromWeb(
+                request,
+                new Response(body, { status: answer.status, headers: answer.headers })
+              )
+            )
+          )
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (kind === "invoke") invokes--;
+            else forwarded--;
+          })
+        )
+      );
+    });
   const watch = (client: HttpClient.HttpClient) =>
     client.pipe(
       HttpClient.transform((response, request) => {
@@ -212,18 +245,17 @@ const watching = () => {
           const { versionId } = JSON.parse(new TextDecoder().decode(request.body.body));
           addresses.set(String(versionId), url.origin);
         }
-        if (url.pathname === "/invoke") {
-          invokesInFlight++;
-          return response.pipe(Effect.ensuring(Effect.sync(() => invokesInFlight--)));
-        }
+        if (url.pathname === "/invoke") return inFlight(response, request, "invoke");
+        if (url.pathname === "/callback") return inFlight(response, request, "callback");
         if (url.pathname !== "/healthz" || url.origin !== addresses.get(watched ?? ""))
           return response;
+        // Answered only with a 200 and its whole body; anything else is a failed probe.
         const started = performance.now();
         return response.pipe(
           Effect.flatMap((answer) =>
             answer.arrayBuffer.pipe(
               Effect.map((body) => {
-                probes.push(performance.now() - started);
+                probes.push(answer.status === 200 ? performance.now() - started : "failed");
                 return HttpClientResponse.fromWeb(
                   request,
                   new Response(body, { status: answer.status, headers: answer.headers })
@@ -231,29 +263,38 @@ const watching = () => {
               })
             )
           ),
+          Effect.tapError(() => Effect.sync(() => probes.push("failed"))),
           Effect.onInterrupt(() => Effect.sync(() => probes.push("timed out")))
         );
       })
     );
   return {
     watch,
-    invokesInFlight: () => invokesInFlight,
+    invokesInFlight: () => invokes,
+    /** The most invokes and forwarded callbacks in flight at once since the last reset. */
+    peakInFlight: () => peak,
+    resetPeak: () => {
+      peak = invokes + forwarded;
+    },
     /** Times this version's probes from now on, forgetting any before. */
     probesOf: (versionId: string) => {
       watched = versionId;
       probes.length = 0;
     },
-    /** The probes so far, and whether every one answered within the bound. */
+    /** The probes so far, and whether every one was answered 200 within the bound. */
     probes: () => {
-      const answered = probes.filter((probe) => probe !== "timed out").sort((a, b) => a - b);
-      const timedOut = probes.length - answered.length;
+      const answered = probes
+        .filter((probe): probe is number => typeof probe === "number")
+        .sort((a, b) => a - b);
+      const timedOut = probes.filter((probe) => probe === "timed out").length;
+      const failed = probes.filter((probe) => probe === "failed").length;
       const slowest = answered.at(-1) ?? Number.POSITIVE_INFINITY;
       return {
-        within: timedOut === 0 && answered.length > 0 && slowest <= probeBound,
+        within: timedOut === 0 && failed === 0 && answered.length > 0 && slowest <= probeBound,
         text:
           answered.length === 0
-            ? `Probes: none answered; ${timedOut} timed out.`
-            : `Probes: ${answered.length} answered, median ${answered[Math.floor(answered.length / 2)]!.toFixed(1)} ms, slowest ${slowest.toFixed(1)} ms; ${timedOut} timed out.`
+            ? `Probes: none answered; ${timedOut} timed out, ${failed} failed.`
+            : `Probes: ${answered.length} answered 200, median ${answered[Math.floor(answered.length / 2)]!.toFixed(1)} ms, slowest ${slowest.toFixed(1)} ms; ${timedOut} timed out, ${failed} failed.`
       };
     }
   };
@@ -355,6 +396,11 @@ const program = Effect.gen(function* () {
   const callbacks = yield* host;
   const watched = watching();
   const setting = yield* Config.option(Config.String("BUN_CONFIG_MAX_HTTP_REQUESTS"));
+  // The supervisor's count: what this runtime's fetch runs at once.
+  const slots = Supervisor.runtimeFetches({
+    bun: process.versions.bun,
+    setting: setting._tag === "Some" ? setting.value : undefined
+  });
   yield* Console.log(
     `Bun ${process.versions.bun ?? "(not Bun)"}, BUN_CONFIG_MAX_HTTP_REQUESTS ${setting._tag === "Some" ? setting.value : "unset"}.`
   );
@@ -582,6 +628,7 @@ const program = Effect.gen(function* () {
     const { result, peak } = yield* peakOf(
       mixing,
       Effect.gen(function* () {
+        watched.resetPeak();
         // Twenty calls keep 5 MiB each and hold 8 callbacks each: 180 of the slots.
         const holding = yield* Effect.forEach(holders, (invocationId) =>
           call(
@@ -597,7 +644,7 @@ const program = Effect.gen(function* () {
         const holdingBy = Date.now() + 10_000;
         while (callbacks.held() < 160 && Date.now() < holdingBy) yield* Effect.sleep(20);
         expect(callbacks.held() === 160, "the twenty calls to hold 160 callbacks");
-        // 200 calls of 2 MiB for 1.2 s at once; only the 76 slots left run at a time.
+        // 200 calls of 2 MiB for 1.2 s at once; only the slots left, 76 of 256, run at a time.
         const started = Date.now();
         const bursts = yield* Effect.forEach(
           Array.from({ length: 200 }, (_, index) => `inv_mixed_${index}`),
@@ -617,12 +664,16 @@ const program = Effect.gen(function* () {
       })
     );
     yield* Console.log(
-      `Mixed: 20 calls keeping 100 MiB between them and holding 160 callbacks, then 200 calls each holding 2 MiB for ${burstMs} ms: ${tally([...result.held, ...result.bursts].map((end) => end.ended))}; the 200 took ${result.burstMsTaken} ms; the process peaked at ${mib(peak)}.`
+      `Mixed: 20 calls keeping 100 MiB between them and holding 160 callbacks, then 200 calls each holding 2 MiB for ${burstMs} ms: ${tally([...result.held, ...result.bursts].map((end) => end.ended))}; the 200 took ${result.burstMsTaken} ms; at most ${watched.peakInFlight()} invokes and callbacks were in flight at once; the process peaked at ${mib(peak)}.`
     );
     expect(
       result.bursts.every((end) => end.ended === "returned" && end.ok === 1) &&
         result.held.every((end) => end.ended === "returned" && end.ok === 8 && end.other === 0),
       "all 220 mixed calls to return"
+    );
+    expect(
+      watched.peakInFlight() <= slots,
+      `no more than ${slots} invokes and callbacks in flight at once`
     );
     yield* Console.log(`  ${accounted(holders.map((invocationId) => [invocationId, 8] as const))}`);
   });

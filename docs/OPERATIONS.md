@@ -949,22 +949,24 @@ host go through the runtime's fetch, which under Bun runs 256 requests at once i
 a process and queues the rest (`BUN_CONFIG_MAX_HTTP_REQUESTS`, which production
 leaves unset).
 
-Invokes and forwarded callbacks share 256 slots across the task, first come first
-served, standing where fetch's 256 stood when every request the supervisor made
-went through it: an invoke waits for its slot inside its dispatch, after its
-attempt is registered with the watchdog; a callback waits around its forward to
-the host, after its body is read. With at most 256 of them in fetch, fetch itself
-never queues them. So the task runs as much of that work at once, in the same
-order, as it did, with two differences. Binds, health probes and startup checks
-are outside the slots, so they never wait behind it; each process no longer
-takes about two slots for them, so the task can run that much more. And the
-watchdog's deadline kill counts only an attempt that has been sent: one still
-waiting for a slot past its deadline ends nothing, and is sent when its turn
-comes, which the loader answers `deadline` without running the handler; one sent
-after its deadline has a second from its sending. The 256 is fixed: it applies
-under Node too, and ignores `BUN_CONFIG_MAX_HTTP_REQUESTS`. As before, calls
-holding every slot while their callbacks wait for one end at their deadlines; the
-process is no longer ended for it.
+Invokes and forwarded callbacks share the count the runtime's fetch ran at once
+when it carried every request the supervisor made: under Bun 256, or
+`BUN_CONFIG_MAX_HTTP_REQUESTS` read as Bun reads it; under Node, whose fetch
+queues nothing, no count. An invoke takes its place when its request is sent to
+its process, after its attempt is registered with the watchdog, and a callback
+when it is forwarded to the host, after its body is read; each keeps it until its
+answer has been read. Past the count each waits its turn, first come first served.
+While an attempt waits it still counts as active, keeping its process from idle
+reaping and eviction, as it did while it sat in fetch's queue. Binds, health
+probes and startup checks are outside the count and never wait for it. The
+watchdog's deadline kill exempts only attempts not yet sent: one still waiting
+past its deadline ends nothing, and when its turn comes it is sent and the loader
+answers it `deadline` without running the handler. A sent attempt past its
+deadline still ends its process a second later, or a second after its sending if
+it was sent late. Calls holding every place while their callbacks wait for one
+end at their deadlines, as before; the process is no longer ended for it. Several
+supervisors in one Bun process, as in the dev host, each have their own count,
+and the host's other fetches share the runtime's queue with their callbacks.
 
 So held callbacks can no longer get a healthy process ended as stalled, or ended
 for a call it was never sent, through the runtime's shared fetch queue. CPU
