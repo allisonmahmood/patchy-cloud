@@ -943,17 +943,29 @@ before removing the temporary configuration directory. Clean stops, watchdog
 kills, child crashes and supervisor shutdown all close that scope.
 
 The supervisor sends everything for its own workerd processes (binds, invokes,
-health probes and the startup check) over `node:http` on loopback, a connection
-for each request, never pooled. Only the callbacks it forwards to the host go
-through the runtime's fetch. Under Bun the two don't share a queue: fetch runs
-256 requests at once in a process (`BUN_CONFIG_MAX_HTTP_REQUESTS`, which
-production leaves unset) and queues the rest, so callbacks past that wait in
-the runtime within their deadlines, as they always have, while a probe or an
-invoke never waits behind them. Callbacks the host holds open can't get a
-healthy process ended as stalled, or a call ended at its deadline before its
-process received it. `bun --conditions=development
-scripts/dev/src/crowdedProbes.ts` holds more callbacks open than Bun runs at
-once, past the stall window, and fails if a healthy process is ended.
+health probes and the startup check) over `node:http` on loopback, a fresh
+connection for each request, never pooled. Only the callbacks it forwards to the
+host go through the runtime's fetch. Under Bun the two don't share a queue: fetch
+runs 256 requests at once in a process (`BUN_CONFIG_MAX_HTTP_REQUESTS`, which
+production leaves unset) and queues the rest, so callbacks past that wait in the
+runtime within their deadlines, as they always have, while a probe or an invoke
+never waits behind them. Held callbacks can therefore no longer get a healthy
+process ended as stalled, or a call ended at its deadline before its process
+received it, through the runtime's shared fetch queue. CPU contention, socket
+admission and memory can still affect a worker.
+
+Invokes keep the ceiling fetch gave them: at most 256 in flight to workers at once
+across the task. Past it each waits its turn in order, inside the dispatch and
+after its attempt is registered with the watchdog, as it waited in fetch's queue,
+so a burst of invokes alone behaves exactly as it did before; only held callbacks
+no longer count against it. Binds, probes and startup checks don't share that
+ceiling. The startup check now reads the whole 2xx body within its five-second
+budget, where fetch accepted the headers and cancelled the body. Fetch overrides,
+fetch-specific logging and proxy settings no longer apply to worker traffic.
+`bun --conditions=development scripts/dev/src/crowdedProbes.ts` holds more
+callbacks open than Bun runs at once past the stall window, fans one call out to
+400 callbacks, sends a burst of 352 invokes, and fails if a healthy process is
+ended or anything it expects doesn't happen.
 
 The local adapter runs its supervisor in the host process, reaching its
 processes the same way; its callbacks share the host's fetch. Its aggregate RSS

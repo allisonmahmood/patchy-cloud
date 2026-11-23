@@ -43,6 +43,19 @@ const decodeInvoke = Schema.decodeUnknownEffect(Management.InvokeRequest, strict
 const decodeStop = Schema.decodeUnknownEffect(Management.StopRequest, strict);
 const decodeStats = Schema.decodeUnknownEffect(Management.StatsRequest, strict);
 const decodeTouch = Schema.decodeUnknownEffect(Management.TouchRequest, strict);
+/** How many requests Bun's fetch runs at once, the ceiling invokes had while they went through it. */
+const bunFetchesAtOnce = 256;
+/**
+ * Invokes in flight to workers at once, across the task. They keep the ceiling they had when they
+ * shared fetch with callbacks and probes: past it each waits its turn in order, inside the
+ * dispatch, after its attempt is registered with the watchdog, as it waited in fetch's queue. A
+ * burst of invokes alone behaves exactly as it did then; only held callbacks no longer count
+ * against it. Binds, probes and startup checks never share it. Tests inject a small one.
+ */
+export const InvokesAtOnce = Context.Reference<number>(
+  "@patchy/execution/supervisor/InvokesAtOnce",
+  { defaultValue: () => bunFetchesAtOnce }
+);
 const killGrace = 1_000;
 const idleWatch = 1_000;
 const standbyQuiet = 1_000;
@@ -223,6 +236,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
   const callbackUrls = new Set(options.callbackUrls);
   const reports = new Map<string, Management.ProcessReport>();
   const admission = yield* Semaphore.make(1);
+  const invokes = yield* Semaphore.make(yield* InvokesAtOnce);
   let companyId: string | null = null;
   let bindingEpoch = 0;
   let generation = 0;
@@ -987,8 +1001,13 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
           resident.callsServed++;
           resident.speculative = false;
           let uncertain = false;
+          // Its turn under the invoke ceiling, in order. Waiting, it takes nothing; sent, it holds
+          // its turn until the loader answers or the request is abandoned.
+          const send = invokes.withPermit(
+            engine.invoke({ ...request, callback: { ...request.callback, url: target } })
+          );
           // The supervisor owns dispatch. Losing the HTTP caller must not erase a running deadline.
-          yield* engine.invoke({ ...request, callback: { ...request.callback, url: target } }).pipe(
+          yield* send.pipe(
             Effect.catchTags({
               ExecutionError: (cause) => {
                 uncertain = cause.reason === "transport";
