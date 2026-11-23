@@ -24,6 +24,7 @@ import * as ImapPage from "./imap/Page.js";
 import * as GithubFlows from "./github/Flows.js";
 import * as GithubPage from "./github/Page.js";
 import * as GithubSource from "./github/Source.js";
+import * as NotionPage from "./notion/Page.js";
 
 /** A page to read. */
 export type Target =
@@ -118,7 +119,8 @@ const pages: { readonly [K in PageIntegration]: IntegrationPage } = {
   pidgeon: PidgeonPage,
   attio: AttioPage,
   imap: ImapPage,
-  github: GithubPage
+  github: GithubPage,
+  notion: NotionPage
 };
 /**
  * The integrations this instance offers, in order: GitHub only while its App is configured, so
@@ -225,6 +227,13 @@ const about = (
         access: GithubPage.allowed(connection),
         attention: GithubPage.attention(connection, people, now)
       };
+    case "notion":
+      return {
+        source: NotionPage.source(connection),
+        facts: NotionPage.facts(connection),
+        credential: NotionPage.credential(connection),
+        access: NotionPage.allowed(connection)
+      };
   }
 };
 /** What a snapshot lets patches read, in its integration's words. */
@@ -241,7 +250,9 @@ const readsOf = (
           ? ImapPage.reads(metadata.snapshot)
           : metadata.integration === "github"
             ? GithubPage.reads(metadata.snapshot)
-            : PidgeonPage.reads(metadata.snapshot);
+            : metadata.integration === "notion"
+              ? NotionPage.reads(metadata.snapshot)
+              : PidgeonPage.reads(metadata.snapshot);
 
 /** The field each refusal is about, when it is about one. */
 const refusedField = (page: IntegrationPage, code: string | undefined): View.Field | undefined =>
@@ -1115,7 +1126,21 @@ const connect = Effect.fn("ConnectionPage.connect")(function* (
       redirect: `${View.connectionPath(connection.id)}?result=connect`
     } satisfies Page;
   }).pipe(
-    Effect.catch((error) => refused(error._tag === "SchemaError" ? incomplete : refusal(error)))
+    Effect.catch((error) =>
+      refused(
+        error._tag === "SchemaError"
+          ? incomplete
+          : error._tag === "NotionRefusal"
+            ? // Notion's refusals are worded for any call: a connect adds that nothing was saved,
+              // and a token Notion refused belongs at its field.
+              {
+                ...refusal(error),
+                message: `${error.message} Nothing was saved.`,
+                ...(error.upstreamStatus === 401 ? { field: "key" } : {})
+              }
+            : refusal(error)
+      )
+    )
   );
 });
 
@@ -1254,7 +1279,15 @@ const act = Effect.fn("ConnectionPage.act")(function* (
               }
             : error._tag === "SqlError"
               ? { message: "Company service unavailable.", code: "source_unavailable", status: 503 }
-              : refusal(error)
+              : error._tag === "NotionRefusal" && error.upstreamStatus === 401
+                ? // A token Notion stopped accepting: at the field where one was typed, else replace it.
+                  kind === "rotate"
+                  ? { ...refusal(error), field: "key" }
+                  : {
+                      ...refusal(error),
+                      next: { href: View.connectionPath(id, "rotate"), label: "Replace token…" }
+                    }
+                : refusal(error)
       )
     )
   );

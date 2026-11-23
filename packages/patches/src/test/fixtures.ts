@@ -37,6 +37,7 @@ import {
   PostgresSource,
   PostHogSource,
   AttioSource,
+  NotionSource,
   ImapNetwork,
   ImapSource,
   PidgeonSource
@@ -260,6 +261,7 @@ export const integrations = SqlConnectionStore.layer.pipe(
       PostHogSource.layer,
       PidgeonSource.layer,
       AttioSource.layer,
+      NotionSource.layer,
       ImapSource.layer.pipe(Layer.provide(ImapNetwork.layer)),
       RuntimeLog.layer,
       Teams.layer

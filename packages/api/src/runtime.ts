@@ -17,6 +17,7 @@ import { pidgeonOperations } from "./pidgeon.js";
 import { attioOperations } from "./attio.js";
 import { imapOperations } from "./imap.js";
 import { githubOperations } from "./github.js";
+import { notionOperations } from "./notion.js";
 import { limitRefusalFields } from "./limits.js";
 import { HandlerKind, HandlerName } from "./handlers.js";
 
@@ -31,6 +32,7 @@ export const runtimeByteLimits = {
   attioBytes: registry["runtime.attio.bytes"].default,
   imapBytes: registry["runtime.imap.bytes"].default,
   githubBytes: registry["runtime.github.bytes"].default,
+  notionBytes: registry["runtime.notion.bytes"].default,
   serverArgsBytes: registry["tier2.args.bytes"].default,
   resultBytes: registry["runtime.result.bytes"].default,
   fileBytes: registry["runtime.file.bytes"].default
@@ -46,6 +48,7 @@ export type RuntimeBodyLimitId =
   | "runtime.attio.bytes"
   | "runtime.imap.bytes"
   | "runtime.github.bytes"
+  | "runtime.notion.bytes"
   | "tier2.args.bytes";
 
 export function runtimeBodyLimitId(op: string): RuntimeBodyLimitId {
@@ -65,9 +68,11 @@ export function runtimeBodyLimitId(op: string): RuntimeBodyLimitId {
                 ? "runtime.imap.bytes"
                 : op.startsWith("github.")
                   ? "runtime.github.bytes"
-                  : op === "server.call"
-                    ? "tier2.args.bytes"
-                    : "runtime.call.bytes";
+                  : op.startsWith("notion.")
+                    ? "runtime.notion.bytes"
+                    : op === "server.call"
+                      ? "tier2.args.bytes"
+                      : "runtime.call.bytes";
 }
 
 export function runtimeBodyLimit(
@@ -82,6 +87,7 @@ export function runtimeBodyLimit(
     readonly attioBytes: number;
     readonly imapBytes: number;
     readonly githubBytes: number;
+    readonly notionBytes: number;
     readonly serverArgsBytes: number;
   } = runtimeByteLimits
 ): number {
@@ -102,6 +108,8 @@ export function runtimeBodyLimit(
       return limits.imapBytes;
     case "runtime.github.bytes":
       return limits.githubBytes;
+    case "runtime.notion.bytes":
+      return limits.notionBytes;
     case "tier2.args.bytes":
       return limits.serverArgsBytes + limits.callBytes;
     case "runtime.call.bytes":
@@ -380,6 +388,7 @@ export const runtimeOperations = {
   ...attioOperations,
   ...imapOperations,
   ...githubOperations,
+  ...notionOperations,
   "server.call": {
     request: Schema.Struct({ op: Schema.Literal("server.call"), args: ServerCall }),
     response: Schema.suspend(() => ServerCallReply),

@@ -6,6 +6,7 @@ import { HandlerError, decodeHandlerError } from "./handlerError.js";
 import { WIRE_VERSION } from "./release.js";
 import type { QueryDriver, QueryFrame } from "./queryRegistry.js";
 import { serverReplyTimeoutMs as serverReplyTimeout } from "@patchy/api/query-config";
+import type { NotionOperation } from "./notion.js";
 import type { HandlerKindName } from "./server.js";
 
 export type Operation =
@@ -30,6 +31,7 @@ export type Operation =
   | `postgres.${"get" | "getMany" | "list" | "query"}`
   | "posthog.query"
   | `pidgeon.${"read" | "write"}`
+  | NotionOperation
   | `attio.${"listRecords" | "getRecord" | "getManyRecords" | "listEntries" | "getEntry" | "listMembers"}`
   | `imap.${"listFolders" | "folderStatus" | "scanMessages" | "listMessages" | "searchMessages" | "getMessages" | "stageAttachment"}`
   | `github.${"listRepos" | "getRepo" | "listWorkflows" | "listRuns" | "getRun" | "listJobs" | "getJobLog" | "listChecks" | "listPulls" | "getPull" | "listPullFiles" | "listPullReviews"}`;

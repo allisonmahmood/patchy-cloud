@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 import { attioReads } from "./attio.js";
 import { githubReads } from "./github.js";
+import { notionReads } from "./notion.js";
 import { imapReads, imapStageAttachment } from "./imap.js";
 import { FileContentType } from "./schemas.js";
 import { PidgeonDevRead } from "./pidgeon.js";
@@ -61,6 +62,13 @@ const github = <const Name extends keyof typeof githubReads>(name: Name) =>
     args: githubReads[name].input
   });
 
+const notion = <const Name extends keyof typeof notionReads>(name: Name) =>
+  Schema.Struct({
+    op: Schema.Literal(notionReads[name].op),
+    connection: DevReadConnection,
+    args: notionReads[name].input
+  });
+
 /** Every operation an integration lets dev read live, with its exact arguments. Never a write. */
 export const DevRead = Schema.Union([
   Schema.Struct({
@@ -73,6 +81,11 @@ export const DevRead = Schema.Union([
     connection: DevReadConnection,
     args: PidgeonDevRead
   }),
+  notion("listRows"),
+  notion("getRow"),
+  notion("markdown"),
+  notion("search"),
+  notion("listPeople"),
   attio("listRecords"),
   attio("getRecord"),
   attio("getManyRecords"),

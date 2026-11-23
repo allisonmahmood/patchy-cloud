@@ -85,6 +85,8 @@ import {
   ImapSessions,
   ImapSource,
   type ImapNetwork,
+  NotionSource,
+  NotionOperations,
   PatchVisibility,
   PidgeonOperations
 } from "@patchy/integrations";
@@ -380,6 +382,7 @@ const services = Layer.mergeAll(
         Effect.provideService(FileStaging.FileStaging, staging)
       );
       const github = yield* GithubOperations.makeHandlers;
+      const notion = yield* NotionOperations.makeHandlers;
       const handlers = {
         me,
         ...tables,
@@ -390,7 +393,8 @@ const services = Layer.mergeAll(
         ...pidgeon,
         ...attio,
         ...imap,
-        ...github
+        ...github,
+        ...notion
       };
       // Runtime tells the streams of each admitted call, which keeps its viewer's documents active.
       const runtime = RuntimeProduction.layer(handlers).pipe(
@@ -439,17 +443,18 @@ const services = Layer.mergeAll(
       Looks.layer,
       identity
     ).pipe(
-      // One PostHog, Pidgeon, Attio, IMAP and GitHub source each, so connection administration and
-      // patches share each project's, address's, workspace's, mailbox's and installation's slots,
-      // and one pool of IMAP sessions that published patches and the dev door share. GitHub's
-      // App comes from the host's settings: empty, GitHub isn't offered; partly filled, the
-      // server refuses to start.
+      // One PostHog, Pidgeon, Attio, Notion, IMAP and GitHub source each, so connection
+      // administration and patches share each project's, address's, workspace's, bot's,
+      // mailbox's and installation's slots, and one pool of IMAP sessions that published patches
+      // and the dev door share. GitHub's App comes from the host's settings: empty, GitHub isn't
+      // offered; partly filled, the server refuses to start.
       Layer.provideMerge(
         SqlConnectionStore.layer.pipe(
           Layer.provide([CredentialKeys.layer, PostgresSource.layer, Teams.layer]),
           Layer.provideMerge(PostHogSource.layer),
           Layer.provideMerge(PidgeonSource.layer),
           Layer.provideMerge(AttioSource.layer),
+          Layer.provideMerge(NotionSource.layer),
           Layer.provideMerge(ImapSessions.layer.pipe(Layer.provideMerge(ImapSource.layer))),
           Layer.provideMerge(Github.layer.pipe(Layer.provide(CredentialKeys.layer)))
         )

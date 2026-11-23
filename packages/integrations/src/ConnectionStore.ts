@@ -8,6 +8,7 @@ import {
   type Integration,
   ModelRoleKind,
   ModelsSnapshot,
+  NotionSnapshot,
   PidgeonSnapshot,
   PostHogSnapshot
 } from "@patchy/api";
@@ -24,6 +25,7 @@ import type * as PidgeonKeys from "./pidgeon/Keys.js";
 import type * as PidgeonLedger from "./pidgeon/Ledger.js";
 import * as PidgeonSource from "./pidgeon/Source.js";
 import * as AttioSource from "./attio/Source.js";
+import * as NotionSource from "./notion/Source.js";
 import * as ImapSource from "./imap/Source.js";
 import type * as GithubAccess from "./github/Access.js";
 import * as GithubConnection from "./github/Connection.js";
@@ -79,6 +81,11 @@ export const AttioConnection = Schema.Struct({
   integration: Schema.Literal("attio"),
   display: AttioSource.Display
 });
+export const NotionConnection = Schema.Struct({
+  ...fields,
+  integration: Schema.Literal("notion"),
+  display: NotionSource.Display
+});
 export const ImapConnection = Schema.Struct({
   ...fields,
   integration: Schema.Literal("imap"),
@@ -120,6 +127,7 @@ export const Connection = Schema.Union([
   PostHogConnection,
   PidgeonConnection,
   AttioConnection,
+  NotionConnection,
   ImapConnection,
   GithubConnectionRow,
   ModelsConnection
@@ -161,6 +169,7 @@ export const Metadata = Schema.Union([
   Schema.Struct({ integration: Schema.Literal("posthog"), snapshot: PostHogSnapshot }),
   Schema.Struct({ integration: Schema.Literal("pidgeon"), snapshot: PidgeonSnapshot }),
   Schema.Struct({ integration: Schema.Literal("attio"), snapshot: AttioSnapshot }),
+  Schema.Struct({ integration: Schema.Literal("notion"), snapshot: NotionSnapshot }),
   Schema.Struct({ integration: Schema.Literal("imap"), snapshot: ImapSnapshot }),
   Schema.Struct({ integration: Schema.Literal("github"), snapshot: GithubSnapshot }),
   Schema.Struct({ integration: Schema.Literal("models"), snapshot: ModelsSnapshot })
@@ -434,6 +443,7 @@ export type ConnectionError =
   | PidgeonKeys.KeysError
   | AttioSource.InspectError
   | AttioSource.OtherWorkspace
+  | NotionSource.Refusal
   | ImapSource.InspectError
   | ImapSource.ConnectionPaused
   | GithubConnection.ConnectError

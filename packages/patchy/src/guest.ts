@@ -8,6 +8,7 @@ import { extractHandlerDescriptors, foldAgentArea } from "./handlerDescriptors.j
 import { InvalidManifestError } from "./invalidManifestError.js";
 import { createPidgeonClient } from "./pidgeon.js";
 import { createAttioClient } from "./attio.js";
+import { createNotionClient } from "./notion.js";
 import { createImapClient } from "./imap.js";
 import { createGithubClient } from "./github.js";
 import { decodeHandlerError, isHandlerError } from "./handlerError.js";
@@ -359,7 +360,8 @@ export function createGuest(
   pidgeon: readonly string[] = [],
   attio: readonly string[] = [],
   imap: readonly string[] = [],
-  github: readonly string[] = []
+  github: readonly string[] = [],
+  notion: readonly string[] = []
 ) {
   let handlers: ReturnType<typeof dispatch>;
   try {
@@ -504,7 +506,9 @@ export function createGuest(
                       ? createImapClient(connection, call)
                       : github.includes(connection)
                         ? createGithubClient(connection, call)
-                        : connectionClient(call, connection, invalidRequest)
+                        : notion.includes(connection)
+                          ? createNotionClient(connection, call)
+                          : connectionClient(call, connection, invalidRequest)
               ),
               run: names((module) =>
                 names(

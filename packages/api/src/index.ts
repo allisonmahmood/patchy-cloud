@@ -12,6 +12,8 @@ export * from "./pidgeonSnapshot.js";
 export * from "./attio.js";
 export * from "./attioSnapshot.js";
 export * from "./attioTypes.js";
+export * from "./notion.js";
+export * from "./notionSnapshot.js";
 export * from "./imap.js";
 export * from "./imapSnapshot.js";
 export * from "./github.js";

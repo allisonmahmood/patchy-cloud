@@ -37,6 +37,7 @@ import * as Tables from "../../primitives/src/Tables.js";
 import * as TestMemberDirectory from "../../primitives/src/test/memberDirectory.js";
 import * as TestWakes from "../../primitives/src/test/wakes.js";
 import * as AttioSource from "../src/attio/Source.js";
+import * as NotionSource from "../src/notion/Source.js";
 import * as ConnectionStore from "../src/ConnectionStore.js";
 import * as CredentialKeys from "../src/CredentialKeys.js";
 import * as ImapNetwork from "../src/imap/Network.js";
@@ -106,6 +107,7 @@ const services = Layer.mergeAll(
   PostHogSource.layer,
   PidgeonSource.layer,
   AttioSource.layer,
+  NotionSource.layer,
   Sessions.layer.pipe(Layer.provideMerge(Source.layer.pipe(Layer.provide(network)))),
   // The patch reads only its own tables and store: no other version to find.
   Layer.succeed(LoadedVersions.LoadedVersions, {

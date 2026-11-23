@@ -15,6 +15,8 @@ import * as CredentialKeys from "./CredentialKeys.js";
 import { Snapshot } from "@patchy/api/postgres-snapshot";
 import * as Source from "./postgres/Source.js";
 import * as SourceClient from "./postgres/SourceClient.js";
+import * as NotionSource from "./notion/Source.js";
+import * as NotionDouble from "./test/notion.js";
 import * as PostHogDouble from "./test/posthog.js";
 import * as PidgeonSource from "./pidgeon/Source.js";
 import * as AttioSource from "./attio/Source.js";
@@ -88,6 +90,7 @@ const fixture = SqlConnectionStore.layer.pipe(
       posthog.layer,
       PidgeonSource.layer,
       AttioSource.layer,
+      NotionDouble.layer,
       ImapTest.offline,
       GithubTest.unconfigured
     )
@@ -98,6 +101,75 @@ const fixture = SqlConnectionStore.layer.pipe(
 );
 
 it.layer(fixture)("ConnectionStore", (it) => {
+  it.effect("keeps Notion discovery atomic and revisions immutable through its lifecycle", () =>
+    Effect.gen(function* () {
+      const store = yield* ConnectionStore.ConnectionStore;
+      const request = {
+        ...who,
+        integration: "notion" as const,
+        handle: "notion-probe",
+        description: "Probe workspace"
+      };
+      const connect = (key: string) =>
+        store.connect({
+          ...request,
+          credentials: NotionSource.connectSecret({ key, access: "read" })
+        });
+      const refused = yield* connect(NotionDouble.personalToken).pipe(Effect.flip);
+      assert.equal(refused.code, "notion_not_workspace_key");
+      assert.isFalse(
+        (yield* store.list(who.companyId)).some((row) => row.handle === request.handle)
+      );
+
+      const connection = yield* connect(NotionDouble.internalToken);
+      const target = identity(connection);
+      const first = yield* store.snapshot(who.companyId, connection.id, 1);
+      if (first.integration !== "notion") return assert.fail("Expected a Notion snapshot");
+      assert.equal(first.snapshot.dataSources.length, 2);
+
+      // Replace token and Change access submit what changes, as their dialogs do.
+      const change = (value: Parameters<typeof NotionSource.changeSecret>[0]) =>
+        store.rotate({ ...target, credentials: NotionSource.changeSecret(value) });
+      const failedReplacement = yield* change({ key: NotionDouble.personalToken }).pipe(
+        Effect.flip
+      );
+      assert.equal(failedReplacement.code, "notion_not_workspace_key");
+      assert.equal((yield* store.refresh(target)).metadataRevision, 2);
+      const replaced = yield* change({ key: NotionDouble.internalToken });
+      assert.equal(replaced.metadataRevision, 3);
+      assert.equal(replaced.credentialRevision, connection.credentialRevision + 1);
+      const writable = yield* change({ access: "write" });
+      assert.equal(writable.metadataRevision, 4);
+      const latest = yield* store.snapshot(who.companyId, connection.id, 4);
+      assert.equal(latest.integration === "notion" && latest.snapshot.access, "write");
+      assert.equal((yield* change({ access: "read" })).metadataRevision, 5);
+      assert.deepStrictEqual(yield* store.snapshot(who.companyId, connection.id, 1), first);
+      assert.equal((yield* store.disconnect(target)).status, "disconnected");
+      assert.equal((yield* store.refresh(target).pipe(Effect.flip))._tag, "ConnectionNotConnected");
+      const resumed = yield* store.reconnect(target);
+      assert.equal(resumed.id, connection.id);
+      assert.equal(resumed.status, "connected");
+
+      const before = yield* SqlConnectionStore.knowing([
+        "postgres",
+        "posthog",
+        "pidgeon",
+        "attio",
+        "imap",
+        "github"
+      ]);
+      assert.notInclude(
+        (yield* before.list(who.companyId)).map((row) => row.id),
+        connection.id
+      );
+      assert.equal(
+        (yield* before.get(who.companyId, connection.id).pipe(Effect.flip))._tag,
+        "ConnectionNotFound"
+      );
+      yield* store.delete(target);
+      assert.isFalse((yield* store.list(who.companyId)).some((row) => row.id === connection.id));
+    })
+  );
   it.effect(
     "a connection's teams decide who builds with it, by recorded membership even once deactivated",
     () =>

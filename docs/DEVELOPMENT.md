@@ -437,7 +437,8 @@ actions answer it; `patchy dev` in its workspace reads that inbox's mail through
 this instance and simulates its sends; `attio` is Northwind Sales with
 `attio/crm` connected to Patchy's probe workspace on Attio; `github` is Northwind
 Platform with `github/platform` seeded from the developer's development GitHub App;
-`imap` is Fernhill
+`notion` is Brightline Studio with `notion/wiki` written offline, a canned Tasks
+and Projects schema and no token; `imap` is Fernhill
 Supplies with `imap/invoices` connected to a dev mailbox in Docker on this machine,
 holding the scenario's supplier mail; `guests` is Harbor Works
 with a tier 1 and a tier 2 patch, both shared with Jo at a second company, Pine
@@ -732,12 +733,13 @@ worktree, so they open `/join` here afterwards.
 
 The cloud (`pnpm dev`) supplies release bytes, identity and metadata; a patch's
 local runtime (`patchy dev`) runs its handlers over PGlite and invented fixtures.
-PostHog, Pidgeon, Attio, IMAP and GitHub declarations have no fixture: `patchy dev` reads the real
+PostHog, Pidgeon, Attio, IMAP, GitHub and Notion declarations have no fixture: `patchy dev` reads the real
 connection through the cloud's dev read door, as the CLI's machine key
 ([ADR-0013](adr/ADR-0013-dev-bindings-per-integration.md)), so the connection must
-exist on this instance. Pidgeon's sends, replies and triage are simulated in the
-dev process, never sent: `patchy dev logs` names each one with its recipients
-and subject.
+exist on this instance. Pidgeon's sends, replies and triage and Notion's writes
+are simulated in the dev process, never sent: `patchy dev logs` names each one,
+a send with its recipients and subject, a Notion write with its data source, row
+and property names.
 With the cloud healthy, initialize beneath this checkout so discovery finds it:
 
 ```sh
@@ -950,6 +952,13 @@ down` and `reset` delete those inboxes with the test key, needing no instance,
   its own workflow, `Attio live`, on main and on this repository's pull requests
   that touch Attio, one run at a time and never cancelled; `attio-live` is
   informational and never a required check.
+  Notion's offline suites run over a scripted Notion
+  (`packages/integrations/src/test/notion.ts`): the token check's refusals,
+  discovery, admission and every error class. `pnpm dev up notion` writes
+  `notion/wiki` offline, with a canned schema and no token. The live tier,
+  `pnpm test:notion` with `NOTION_TEST_INTERNAL_TOKEN` set from the probe
+  workspace's internal connection, discovers that workspace and its Tasks
+  schema; it only reads.
   IMAP needs no account or secret: its mail servers run in Docker here. The
   offline suites carry correctness over a scripted IMAP server on loopback
   (`packages/integrations/src/test/imap.ts`), through the network seam

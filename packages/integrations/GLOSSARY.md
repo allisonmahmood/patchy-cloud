@@ -1,11 +1,11 @@
 # Integrations
 
-The company capability for connecting outside systems without handing credentials to patches. Postgres, PostHog, Pidgeon, Attio, Email (IMAP) and GitHub connections and their discovered metadata are managed here, and, behind the **Models switch**, model providers and the model roles mapped to them; the `connections` API group exposes their safe metadata to active members. [Companies](../companies/GLOSSARY.md) owns membership and teams, and [Runtime](../runtime/GLOSSARY.md) uses the initiating viewer as the effective principal for connection calls, which also check that the patch's owner may build with the connection.
+The company capability for connecting outside systems without handing credentials to patches. Postgres, PostHog, Pidgeon, Attio, Email (IMAP), GitHub and Notion connections and their discovered metadata are managed here, and, behind the **Models switch**, model providers and the model roles mapped to them; the `connections` API group exposes their safe metadata to active members. [Companies](../companies/GLOSSARY.md) owns membership and teams, and [Runtime](../runtime/GLOSSARY.md) uses the initiating viewer as the effective principal for connection calls, which also check that the patch's owner may build with the connection.
 
 ## Language
 
 **Integration**:
-A capability Patchy ships for reaching an outside system, the same capability for every company. Postgres, PostHog, Pidgeon, Attio, Email (IMAP) and GitHub are built; OAuth integrations such as Salesforce and Gmail remain future work.
+A capability Patchy ships for reaching an outside system, the same capability for every company. Postgres, PostHog, Pidgeon, Attio, Email (IMAP), GitHub and Notion connections are built; OAuth integrations such as Salesforce and Gmail remain future work.
 _Avoid_: connector, app (Zapier's word), resource (Retool and Windmill's word), toolkit
 
 **Connection**:
@@ -77,7 +77,7 @@ An admin's setting on one connection that keeps a patch's [guests](../companies/
 _Avoid_: guest access, allow list, sensitive flag
 
 **Metadata**:
-The source's shape as discovered for one connection, never its business rows. Postgres metadata is a schema snapshot; PostHog metadata is an events snapshot; Pidgeon metadata is an address snapshot of its inbox; Attio metadata is a workspace snapshot; IMAP metadata is a mailbox snapshot; GitHub metadata is a repository snapshot; a model role's metadata is its kind alone. A stored snapshot names its own integration, so it reads correctly after its connection is deleted.
+The source's shape as discovered for one connection, never its business rows. Postgres metadata is a schema snapshot; PostHog metadata is an events snapshot; Pidgeon metadata is an address snapshot of its inbox; Attio metadata is a workspace snapshot; IMAP metadata is a mailbox snapshot; GitHub metadata is a repository snapshot; Notion metadata is a data source snapshot; a model role's metadata is its kind alone. A stored snapshot names its own integration, so it reads correctly after its connection is deleted.
 _Avoid_: instance, fixture
 
 **Schema snapshot**:
@@ -103,6 +103,9 @@ _Avoid_: key test, token validation
 **Workspace gate**:
 The calls and discoveries one server process lets run at once against one Attio workspace, shared by every connection to it and by `patchy dev` and published patches, inside one gate for all of Attio. One that can't get a slot before its deadline is refused busy, having sent nothing.
 _Avoid_: pool, rate limit (Attio's own)
+
+**Data source snapshot**:
+An immutable description of the data sources a Notion workspace-owned internal connection can discover, with property ids and types, status groups, relation targets, access and named exclusions. Tier 2 actions resolve property names and types through the version’s snapshot and use Notion property ids for reads and writes, and option ids for the options a write sets, which must be ones the snapshot knows. A write checks the connection's current access, not the snapshot's.
 
 **Mailbox snapshot**:
 An immutable description of one IMAP mailbox login: its host, port, security mode and username, the capabilities its server advertised once logged in, and its folders by path with their delimiter, the special-use flags the server sent and whether each is selectable, at most 5,000 and marked truncated past that. Never mail. The folders are hints for generation and context, not limits on calls. Refresh folders takes a new one.
