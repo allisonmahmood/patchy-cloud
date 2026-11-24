@@ -1747,6 +1747,12 @@ whatever release it runs, with no deploy. It is off: every claim is full, the sm
 spare target is zero, a wait recorded small counts as full demand, ready small
 spares are trimmed as surplus, and small tasks still starting are drained.
 
+The migration that adds box sizes takes `execution_rollout`, `execution_tasks` and
+`execution_pool_waits`' locks up front, never waiting on one while it holds another,
+so it cannot deadlock with the previous release's hosts; if they stay busy for ten
+seconds it fails with `The execution fleet tables stayed busy`, applying nothing,
+and the deploy is run again.
+
 A claim counts the company's active members under its claim lock, then reads the
 switch and the current revision in the one statement that picks and binds its
 spare, taking no lock on the rollout row, so a flip or a promotion never waits for

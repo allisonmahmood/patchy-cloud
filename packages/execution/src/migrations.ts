@@ -125,7 +125,32 @@ export const migrations: Migrations = {
   // reservation, existing rows, an older host's inserts and any row whose task was seen running.
   // Every size default is today's full box, so existing rows and an older host's inserts stay
   // correct.
+  //
+  // It locks first. Hosts of the previous release keep running fleet transactions while it runs,
+  // taking these tables in other orders: a replacement locks the rollout row and then touches the
+  // tasks, a claim touches the tasks and reads the rollout. Altering one table at a time would hold
+  // one exclusive lock while waiting for the next, and could deadlock with either. So the first
+  // statement takes all three without ever waiting while it holds one: NOWAIT, and a try that
+  // fails leaves its exception block, which releases whatever that try took, before it sleeps
+  // and tries again. Locks taken in a block that completes last to the end of the transaction.
+  // If the tables stay busy for about ten seconds it fails, the batch applies nothing, and the
+  // deploy is run again.
   "0047_execution_box_sizes": ddl(
+    `DO $$
+    BEGIN
+      FOR attempt IN 1..100 LOOP
+        BEGIN
+          LOCK TABLE execution_rollout, execution_tasks, execution_pool_waits
+            IN ACCESS EXCLUSIVE MODE NOWAIT;
+          RETURN;
+        EXCEPTION WHEN lock_not_available THEN
+          PERFORM pg_sleep(0.1);
+        END;
+      END LOOP;
+      RAISE EXCEPTION 'The execution fleet tables stayed busy for 10 seconds, so migration 0047 applied nothing. Run the deploy again.'
+        USING ERRCODE = 'lock_not_available';
+    END
+    $$`,
     `ALTER TABLE execution_tasks ADD COLUMN cpu INTEGER NOT NULL DEFAULT 1024`,
     `ALTER TABLE execution_tasks ADD COLUMN memory INTEGER NOT NULL DEFAULT 2048`,
     `ALTER TABLE execution_tasks ADD COLUMN unrefused_launches INTEGER
