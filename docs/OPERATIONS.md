@@ -1070,6 +1070,10 @@ queues nothing, no count. An invoke takes its place when its request is sent to
 its process, after its attempt is registered with the watchdog, and a callback
 when it is forwarded to the host, after its body is read; each keeps it until its
 answer has been read. Past the count each waits its turn, first come first served.
+When a callback's turn comes it is checked again, as on its arrival: one whose
+attempt has ended or passed its deadline, or whose task was bound at a newer
+epoch while it waited, is refused there, never forwarded, and its place goes to
+the next in line.
 While an attempt waits it still counts as active, keeping its process from idle
 reaping and eviction, as it did while it sat in fetch's queue. Binds, health
 probes and startup checks are outside the count and never wait for it. The

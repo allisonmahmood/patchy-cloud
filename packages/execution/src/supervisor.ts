@@ -679,7 +679,12 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
         if (modelCall !== undefined) headers[modelCallHeader] = modelCall;
         // Its slot, in order, from its forward until the host's answer has been read. A call still
         // waiting for one has not been handed to the host, so a model call refused there says so.
+        // While it waited its attempt may have ended or reached its deadline, or its task been bound
+        // at a newer epoch, so it is checked again; refused here, it gives its slot back as its
+        // scope closes.
         yield* slots.takeScoped(1);
+        if (!live()) return refusedCallback();
+        if (Date.now() >= invocation.attempt.deadline) return deadlineCallback();
         forwarded = true;
         const response = yield* http
           .execute(
