@@ -72,6 +72,10 @@ _Avoid_: cold start (the task launch the spare pool measures), bind wait (`spare
 `companyBind` and `bindWaitMs` on a tier 2 call's event or a tier 2 `stream` event: how admission found its company's server, already `bound`, a ready `spare` bound to it, or a `launch` it waited for because the pool was empty, and how long it waited. A wait refused `busy` at `execution.pool.wait` lasted the whole wait, usually for a `launch`; on a stream's `start_failed` it also records `outcome`, `code` and `limitId`. If a stream disconnects, idles out or times out before its startup bind resolves, `bindWaitMs` is still recorded, `companyBind` is set only once the path is known, and an abandoned startup bind without `start_failed` records `outcome: "interrupted"`. On a `stream` event these describe the generation's initial startup bind only: background re-holds when an idle document reactivates do not overwrite them, and an idle reconnect that opens directly into `ready` without binding leaves both unset. It sits outside the handler's deadline; the process start after it does not.
 _Avoid_: spare wait (`spareWaitMs`, the binding's own), cold start
 
+**Box cpu**:
+`cpu` on a binding, process, request or re-run event: the CPU units of the company task it ran on, 1024 for a full box and 512 for a [small box](../runtime/GLOSSARY.md). The host adds it to a process event its supervisor reported, and to a call's event once admission protects its binding, so process starts, query deadlines and pauses compare by box size. Events from before box sizes, and calls refused before admission, leave it unset.
+_Avoid_: `cpuSeconds` (a process's CPU time), vCPU count
+
 **Agent-only binding**:
 `agentOnly` on a binding event: no document held the company's task and no page's work ran on it while it was bound, so only worker agents' calls kept it, each for its [agent idle](../runtime/GLOSSARY.md) minute. Bindings released before agents existed leave it unset.
 _Avoid_: headless binding, MCP binding

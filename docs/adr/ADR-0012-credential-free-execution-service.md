@@ -296,9 +296,10 @@ holds a lock of its own: it defers release but runs neither idle clock, so a
 task some document used keeps the documents' window it had, and one claimed for
 the prewarm that nobody used is released at the first pass after it lets go, as
 `unused`. A document or agent that comes meanwhile runs its clock as before. A
-prewarm claims a spare only when it can lock one beyond the last ready spare and
-the fleet's live tasks are under budget, so replenishment can replace it; otherwise
-it takes nothing. It never waits for a launch. Its versions join the same
+prewarm claims a spare only of exactly its company's box size, only when it can
+lock one beyond the last ready spare of that size, and only while the fleet budget
+has a full box of room, so replenishment can replace it; otherwise it takes
+nothing. It never waits for a launch. Its versions join the same
 keepalives as documents, as prewarm holders that count as no document; a warmup
 for one is admitted only on the company's live binding, runs no clock and is
 speculative, so it never displaces a document's process and an open displaces it.
@@ -332,7 +333,10 @@ after its spares are ready. For later rollouts, an operator stages a revision,
 housekeeping warms its spares, and promotion selects it for new bindings only after
 the capacity check passes. Existing companies move incrementally to already-ready
 replacement spares; their old admissions are fenced atomically with replacement
-claim, and previously admitted work drains on the predecessor. Staging and promoting
+claim, and previously admitted work drains on the predecessor. A replacement
+locks the rollout row and then the company, rechecks that the binding still needs
+replacing, sizes it as a claim would and fences it only with a locked spare that
+size allows in hand; a binding with no such spare is passed over for the next. Staging and promoting
 an earlier revision performs rollback. A restarting old host cannot reverse promotion.
 
 Active document, prewarm and admitted invocation lifetimes hold shared database
@@ -350,16 +354,26 @@ bound. If the host dies and its session locks disappear, draining still waits
 through that bound. Normal final settlement clears this protection.
 
 One replica's housekeeping lease replenishes the pool, releases idle companies,
-reconciles lost tasks and retires superseded deployments. The target is
-`ceil(max(2, wakes / 900000 ms * measured cold-start ms)) + waiting`, where
-`waiting` counts distinct companies currently waiting on an empty pool (for the
-current revision only, never staged revisions before promotion, recorded inside
-the per-company claim transaction on a miss and cleared on claim), with every
-live or draining task counted against the fleet budget. Surplus ready spares of
-the current revision above target (such as spares launched for callers who
-abandoned before readiness) are fenced newest-first after `execution.pool.wait`
-unused and drained, while never trimming below the target. The initial budget is 100 tasks,
-the pass interval five seconds and the lease fifteen seconds. These values come
+reconciles lost tasks and retires superseded deployments. Each box size has its own
+target. Full spares' is
+`ceil(max(2, full wakes / 900000 ms * measured full cold-start ms)) + waiting`, where
+`waiting` counts distinct companies currently waiting on an empty pool for a full
+box (for the current revision only, never staged revisions before promotion,
+recorded with the size the company needs inside the per-company claim transaction
+on a miss and cleared on claim). A wake counts toward the size of the spare it
+consumed. Small spares' target is the same over small wakes, cold starts and
+waiters with `execution.pool.smallSpares` as the floor, for the current revision
+only and only while small boxes are on; otherwise it is zero, and a wait recorded
+small counts as full demand. Every live or draining task counts its own vCPU
+against the fleet budget, and one whose size was never verified at readiness counts
+as a full box; a spare is reserved only while a full box's charge still fits.
+Full deficits are reserved first, the staged revision's and then the current one's,
+and small spares only when no full deficit was refused for budget in that pass; no
+spare is stopped to make room for another. Surplus ready spares of
+the current revision above their size's target (such as spares launched for callers
+who abandoned before readiness) are fenced newest-first after `execution.pool.wait`
+unused and drained, while never trimming below the target. The initial budget is
+100 vCPU, the pass interval five seconds and the lease fifteen seconds. These values come
 from the limits registry, not another timer or counter convention.
 Measured cold start spans the durable task request through readiness, including
 Fargate provisioning and image pull, rather than only time since ECS `RUNNING`.
@@ -371,15 +385,19 @@ successful stats or stop call for every bound task. An empty-pool open keeps wai
 through housekeeping failures until its configured pool deadline.
 An omitted ECS listing or transient `MISSING` description is not proof of exit.
 Known tasks remain budgeted until the provider confirms they stopped. A running
-task that reappears after a recorded stop is fenced and stopped again. If ECS
-has already forgotten a task and no stop observation exists, its unresolved
-reservation requires operator reconciliation rather than an inferred exit.
+task that reappears after a recorded stop is fenced and stopped again. A drain
+completes only on evidence: the provider confirms the task stopped, or the task's
+last launch was refused outright, ECS answering and creating nothing, which the
+row records and a later launch attempt clears first. If ECS has already forgotten a
+task and no stop observation exists, its unresolved reservation requires operator
+reconciliation rather than an inferred exit.
 
 Process reports commit before their acknowledgement. Newly recorded process events
-are forwarded unchanged through the best-effort analytics sink. Binding history
+are forwarded through the best-effort analytics sink with only the box's `cpu`
+added. Binding history
 meters through the provider's stop time, including a stop discovered after its
-owner died. Binding wide events retain the original bind time, spare wait, peak
-processes and release cause (`unused` for a prewarm's task nobody used), attributed
+owner died. Binding wide events retain the original bind time, the box's `cpu`, spare wait,
+peak processes and release cause (`unused` for a prewarm's task nobody used), attributed
 to the emitting controller build; logging is not the source of metering.
 
 Three watchdog kills of a patch across versions and hosts within ten minutes pause
@@ -387,7 +405,8 @@ its admission for ten minutes. The database is authoritative on each admission.
 A newer published version clears the window and pause on every host. Changing
 sharing or rolling back does not. The no-pool development executor has no breaker.
 Fleet operators call controller operations to release a company, drain a task,
-stage or promote a deployment, retire a deployment or set a limit override.
+stage or promote a deployment, retire a deployment, turn small boxes on or off or
+set a limit override.
 None is a public HTTP endpoint.
 
 Tier 2 bootstrap and resume ensure a binding before admission. The stream sends
@@ -550,12 +569,14 @@ The **app stack** is one release, pinned to an image digest:
   100/200 percent with circuit-breaker rollback, as user 1000 with a 120-second
   stop timeout. Settings come from the host secret by key. The host task role is
   the fleet policy in [Operations](../OPERATIONS.md#ecs-provider-configuration).
-- **Exec.** A task definition at 1 vCPU and 2 GiB with no service and no task
-  role, as user 0 with the spike's capability drops, and an execution role that
-  only pulls the image and ships logs. Replaced revisions stay registered so
-  hosts still on the previous release can launch from theirs. The hosts set a
-  fleet budget of 24 tasks, sized to the account's Fargate vCPU quota, and a
-  floor of three spares.
+- **Exec.** A task definition at 1 vCPU and 2 GiB, a full box, with no service
+  and no task role, as user 0 with the spike's capability drops, and an execution
+  role that only pulls the image and ships logs. A small box is the same
+  definition launched with a task-level size override; the container sets no
+  size of its own. Replaced revisions stay registered so hosts still on the
+  previous release can launch from theirs. The hosts set a fleet budget of 24
+  vCPU, sized to the account's Fargate vCPU quota, and a floor of three full
+  spares; small boxes are off.
 - **Uptime.** A Route 53 HTTPS check on `/healthz/deep` through the public name
   raises a CloudWatch alarm that emails through SNS.
 
@@ -579,22 +600,26 @@ both slots readable.
 
 1. **One company per task, then stop.** An ECS Fargate task in `us-east-1` serves
    one company and is stopped on release, never wiped and returned to the pool.
-   No other company's code has run in that task's kernel. A task is 1 vCPU and
-   2 GiB, up from the starting 0.5 vCPU because a responsive patch matters more
-   than its task-hour cost. A distinct unprivileged uid per workerd process is the
+   No other company's code has run in that task's kernel. A full task is 1 vCPU
+   and 2 GiB, up from the starting 0.5 vCPU because a responsive patch matters more
+   than its task-hour cost. A company with exactly one active member, counted
+   under its claim lock each time it claims, may run on a small task of 0.5 vCPU
+   and the same 2 GiB, so the memory and process limits hold, while the fleet's
+   small-boxes switch is on; it is off by default. A team never gets a small task,
+   and a one-member company takes a ready full spare rather than wait. A distinct unprivileged uid per workerd process is the
    inexpensive hardening; the task remains the security boundary.
 2. **A global spare pool.** The target is the larger of a spare floor, two by
    default and three in production, and the wake rate over 15 minutes multiplied
    by measured cold-start time, rounded up, plus distinct companies currently
-   waiting on an empty pool, under a fleet budget. An empty pool waits at most
+   waiting on an empty pool, per box size, under a fleet budget in vCPU. An empty pool waits at most
    40 seconds behind the shell's starting state, then returns `busy`. Residency
    is separate: at most 12 loaded-version processes and 1.5 GiB aggregate,
    including supervisor, bundles and overlapping versions. Evict idle processes
    first; refuse `busy` if none is idle. Reap at ten minutes idle, where an
    active document's touch counts as use, and kill a process at 512 MiB RSS.
    Dormant patches spawn nothing.
-3. **Idle release counts all work.** Release follows 30 minutes with no active
-   tier 2 documents and no work in flight. Retries, nested calls after document
+3. **Idle release counts all work.** Release follows 30 minutes, 10 on a small
+   task, with no active tier 2 documents and no work in flight. Retries, nested calls after document
    departure and transaction cleanup count. A worker agent's call keeps the task
    a minute after it settles, on a clock of its own that never touches the
    documents' 30 minutes; release waits for both. Fence new admissions before stopping;
@@ -608,7 +633,9 @@ both slots readable.
    deployments. Binding epoch, process generation, housekeeping lease and
    deployment revision are four distinct values. One image has host and exec
    entrypoints; adjacent releases interoperate during a rollout, not arbitrary
-   releases.
+   releases. A release from before box sizes counts tasks, not vCPU, and hands out
+   spares of any size, so rolling back past sizes first turns small boxes off and
+   waits for every small task to stop.
 5. **Separate management and invocation authority.** The private exec management
    listener accepts host-security-group traffic and a deployment secret, current
    or previous during rollout. The private host callback listener accepts only

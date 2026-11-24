@@ -529,9 +529,21 @@ patch code has no supported background execution.
 The ECS fleet binds one Fargate task to one company from a pool of spares.
 A released task stops and is never reused. One workerd process runs each loaded
 version. The company task is the security boundary; separate version processes
-isolate failures, not companies. Each task shares its one vCPU across
+isolate failures, not companies. Each task shares its CPU across
 the supervisor and all loaded processes. Process separation does not promise
-unchanged sibling latency under CPU contention. The local task provider exercises
+unchanged sibling latency under CPU contention.
+
+A company task is a box of one of two sizes, decided each time the company claims
+one. A full box has one vCPU and 2 GiB. A small box has half a vCPU and the same
+2 GiB, so every memory and process limit holds unchanged; it is for a company with
+exactly one active member, so a person using Patchy alone is cheap to run, and
+inviting a second person makes the company's next box full. Guests never count.
+Nobody chooses a size or converts anything. A team is never put on a small box,
+and a one-member company never waits while a full spare is ready: it takes the
+full one. Small boxes sit behind one fleet-wide switch that an operator turns on
+and off; it is off, so today every company's box is full. Starting a version takes
+about twice as long at half a vCPU, and the fleet's budget counts vCPU, so two
+small boxes take the room of one full box. The local task provider exercises
 the controller with separate supervisor processes; it does not prove Fargate
 containment. [ADR-0012](./adr/ADR-0012-credential-free-execution-service.md)
 records the engine and hosting contract.
@@ -599,12 +611,12 @@ its company's task only while its viewer is using it: after ten minutes with no
 calls and no change to what it subscribes to, the tab lets go, though its screen
 stays usable and live updates still arrive. The company task is released after
 thirty minutes with no active tier 2 documents and no admitted work, including
-retries, nested calls and cleanup, so the next action after that may wait for
-the company to start again. An agent's call is admitted as its person and keeps
-the company task for a minute after it settles, on a clock of its own that never
-touches the thirty-minute one; the task is released once both have run out
-([Bounds](#bounds)). Bringing a whole app would be a second runtime with
-different limits; it is not supported.
+retries, nested calls and cleanup (ten minutes on a small box), so the next
+action after that may wait for the company to start again. An agent's call is
+admitted as its person and keeps the company task for a minute after it settles,
+on a clock of its own that never touches the thirty-minute one; the task is
+released once both have run out ([Bounds](#bounds)). Bringing a whole app would
+be a second runtime with different limits; it is not supported.
 
 Server-side calls use two identities. The **initiating viewer** is the person
 whose live session, or whose agent connection, admitted the invocation. The
@@ -2260,7 +2272,7 @@ Calls already admitted finish, and each company callback inside them rechecks th
 
 Limits are starting values in the limits registry. Every per-person and per-company operating row takes a company override and is tuned from PostHog.
 
-**The cost promise.** An agent's call starts its company's server if needed and keeps it for a minute after the call settles, nested work and cleanup included (`execution.company.agentIdle`, 60 s). A person's tab keeps it while they use it and for thirty minutes after, and agent work never touches that clock. The task is released when no document holds it, no admitted work is in flight and both clocks have run out. An agent calling less than once a minute pays about a second to start each time; one calling more often keeps the server running, like a tab someone is using. No polling interval is imposed. With nobody's tab open, a company whose agents call every five minutes costs about $10 a month in task time, every fifteen minutes about $3.40 and hourly about $0.85; calling every minute or more often keeps it running, about $36. Agents take spares like anyone. A person landing on Home or All patches readies their company's server and the three tier 2 tools they open most, in the background, so the first open is quick: it holds the server for three minutes (`execution.prewarm.window`) without starting either clock, and takes a spare only while another stays ready. A server it started that nobody used in that time is released at once.
+**The cost promise.** An agent's call starts its company's server if needed and keeps it for a minute after the call settles, nested work and cleanup included (`execution.company.agentIdle`, 60 s). A person's tab keeps it while they use it and for thirty minutes after (ten on a small box, once small boxes are on), and agent work never touches that clock. The task is released when no document holds it, no admitted work is in flight and both clocks have run out. An agent calling less than once a minute pays about a second to start each time; one calling more often keeps the server running, like a tab someone is using. No polling interval is imposed. With nobody's tab open, a company whose agents call every five minutes costs about $10 a month in task time, every fifteen minutes about $3.40 and hourly about $0.85; calling every minute or more often keeps it running, about $36. These figures are for a full box; a small box has half its CPU. Agents take spares like anyone. A person landing on Home or All patches readies their company's server and the three tier 2 tools they open most, in the background, so the first open is quick: it holds the server for three minutes (`execution.prewarm.window`) without starting either clock, and takes a spare only while another stays ready. A server it started that nobody used in that time is released at once.
 
 Tier 2's admission rule is: **Patchy admits new work while a viewer has the patch open or their agent is calling it.** Already-admitted work finishes after departure.
 
