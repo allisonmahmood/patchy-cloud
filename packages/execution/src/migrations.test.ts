@@ -97,6 +97,24 @@ for (const host of hosts) {
   );
 }
 
+it.effect("box sizes check each new launch count, never validating the rows already there", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    assert.deepStrictEqual(yield* migrate(migrations), appliedBoxSizes);
+    assert.deepStrictEqual(
+      yield* sql`SELECT contype, convalidated FROM pg_constraint
+        WHERE conname = 'execution_tasks_unrefused_launches_check'`,
+      [{ contype: "c", convalidated: false }]
+    );
+    yield* sql`INSERT INTO execution_deployments(revision) VALUES ('box-sizes')`;
+    const failure = yield* Effect.flip(sql`INSERT INTO execution_tasks
+      (task_id, deployment_revision, state, requested_at, unrefused_launches)
+      VALUES ('negative', 'box-sizes', 'starting', 0, -1)`);
+    assert.strictEqual(failure.reason._tag, "ConstraintError");
+    assert.match(String(failure.reason.cause), /execution_tasks_unrefused_launches_check/);
+  }).pipe(Effect.provide(beforeBoxSizes()))
+);
+
 it.effect(
   "box sizes give up when the fleet tables stay busy, applying nothing, and apply when run again",
   () =>

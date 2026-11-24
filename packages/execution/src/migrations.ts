@@ -124,7 +124,9 @@ export const migrations: Migrations = {
   // without a task to stop. A small reservation sets 0; null means unknown, as for a full
   // reservation, existing rows, an older host's inserts and any row whose task was seen running.
   // Every size default is today's full box, so existing rows and an older host's inserts stay
-  // correct.
+  // correct. No step rewrites or scans a table: each default is a constant, kept in the catalog,
+  // and the count's check is added NOT VALID, binding new writes without reading every task row
+  // ever made, whose counts are all null.
   //
   // It locks first. Hosts of the previous release keep running fleet transactions while it runs,
   // taking these tables in other orders: a replacement locks the rollout row and then touches the
@@ -153,8 +155,9 @@ export const migrations: Migrations = {
     $$`,
     `ALTER TABLE execution_tasks ADD COLUMN cpu INTEGER NOT NULL DEFAULT 1024`,
     `ALTER TABLE execution_tasks ADD COLUMN memory INTEGER NOT NULL DEFAULT 2048`,
-    `ALTER TABLE execution_tasks ADD COLUMN unrefused_launches INTEGER
-      CHECK (unrefused_launches >= 0)`,
+    `ALTER TABLE execution_tasks ADD COLUMN unrefused_launches INTEGER`,
+    `ALTER TABLE execution_tasks ADD CONSTRAINT execution_tasks_unrefused_launches_check
+      CHECK (unrefused_launches >= 0) NOT VALID`,
     `ALTER TABLE execution_pool_waits ADD COLUMN cpu INTEGER NOT NULL DEFAULT 1024`,
     `ALTER TABLE execution_rollout ADD COLUMN small_boxes BOOLEAN NOT NULL DEFAULT false`
   )
