@@ -44,14 +44,7 @@ export class TaskProviderError extends Schema.TaggedError<TaskProviderError>()(
       "touch"
     ]),
     taskId: Schema.optionalKey(Schema.String),
-    /**
-     * A refusal's code, `provider` for any other provider failure, or `launch_refused` when the
-     * provider answered a start and certainly created nothing.
-     */
-    reason: Schema.Union([
-      Management.Refusal.fields.code,
-      Schema.Literals(["provider", "launch_refused"])
-    ]),
+    reason: Schema.Union([Management.Refusal.fields.code, Schema.Literal("provider")]),
     limit: Schema.optionalKey(
       Schema.Struct({
         scope: Management.Refusal.fields.scope,
@@ -68,6 +61,21 @@ export class TaskProviderError extends Schema.TaggedError<TaskProviderError>()(
     return `Execution task ${this.operation} failed: ${this.reason}.`;
   }
 }
+
+/**
+ * A start the provider answered by certainly creating nothing: ECS refused it outright on the
+ * SDK's only attempt. Any failure less certain than that is a `TaskProviderError`. The ECS error,
+ * when ECS answered with one rather than with failures, is its cause.
+ */
+export class LaunchRefused extends Schema.TaggedError<LaunchRefused>()("TaskLaunchRefused", {
+  taskId: Schema.String,
+  cause: Schema.optionalKey(Schema.Defect())
+}) {
+  override get message() {
+    return `Execution task ${this.taskId} was refused at launch; nothing was created.`;
+  }
+}
+export const isLaunchRefused = Schema.is(LaunchRefused);
 
 /**
  * Refusals of a bind by hash that prove it had no effect: a supervisor without the version, and
@@ -115,7 +123,7 @@ export type TouchResult = Management.TouchReply | { readonly outcome: "unsupport
  * and stops; closing a host does not stop its tasks. A stopped observation certifies actual exit.
  * Omitted tasks and management timeouts are uncertainty, never evidence that a task stopped.
  * A start asks for a size and a retry asks for the same one; the task it answers reports the
- * size it really runs at.
+ * size it really runs at. A start fails `LaunchRefused` only when it certainly created nothing.
  */
 export class TaskProvider extends Context.Service<
   TaskProvider,
@@ -124,7 +132,7 @@ export class TaskProvider extends Context.Service<
       readonly taskId: string;
       readonly deploymentRevision: string;
       readonly size: Size;
-    }) => Effect.Effect<Task, TaskProviderError>;
+    }) => Effect.Effect<Task, TaskProviderError | LaunchRefused>;
     readonly list: Effect.Effect<readonly Task[], TaskProviderError>;
     /** Stop guest processes but retain the supervisor until reports are persisted and acknowledged. */
     readonly quiesce: (

@@ -31,18 +31,24 @@ const validIdentity = Schema.is(Schema.NonEmptyString.check(Schema.isMaxLength(2
 const validPort = Schema.is(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 })));
 const validCallbackUrls = Schema.is(Management.CallbackUrls);
 const validUnits = Schema.is(Schema.Int.check(Schema.isGreaterThan(0)));
+// The SDK's retry middleware records how many attempts a call took; an earlier attempt that
+// failed ambiguously, such as a lost reply, may have created the task a later refusal hides.
+const OneAttempt = Schema.Struct({ attempts: Schema.Literal(1) });
+const isOneAttempt = Schema.is(OneAttempt);
 const ErrorAnswer = Schema.Struct({
   name: Schema.optionalKey(Schema.String),
   $fault: Schema.Literal("client"),
   $metadata: Schema.Struct({
+    ...OneAttempt.fields,
     httpStatusCode: Schema.Int.check(Schema.isBetween({ minimum: 400, maximum: 499 }))
   })
 });
 const isErrorAnswer = Schema.is(ErrorAnswer);
 /**
  * Whether a failed RunTask is ECS answering that it started nothing: a client error it sent with
- * a 4xx status. The SDK also marks an unmodeled 5xx as a client fault, and a network failure or
- * an abort carries no status, so neither counts. A conflict may answer a token whose task exists.
+ * a 4xx status on the SDK's only attempt. The SDK also marks an unmodeled 5xx as a client fault,
+ * and a network failure or an abort carries no status, so neither counts. A conflict may answer
+ * a token whose task exists.
  */
 const refusedOutright = (cause: unknown) =>
   isErrorAnswer(cause) && cause.name !== "ConflictException";
@@ -207,6 +213,7 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
     if (endpoints.size >= endpointCapacity) endpoints.delete(endpoints.keys().next().value!);
     endpoints.set(task.taskId, { task, expiresAt: now + endpointLifetime });
   };
+  // Bounds a call in time; a provider error or a launch refused outright passes through as it is.
   const bounded = <A, E>(
     operation: Operation,
     taskId: string | undefined,
@@ -216,7 +223,7 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
     effect.pipe(
       Effect.timeout(timeout),
       Effect.mapError((cause) =>
-        isProviderError(cause)
+        isProviderError(cause) || TaskProvider.isLaunchRefused(cause)
           ? cause
           : new TaskProvider.TaskProviderError({
               operation,
@@ -632,11 +639,6 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
               input.size.memory === TaskProvider.full.memory
                 ? {}
                 : { cpu: String(input.size.cpu), memory: String(input.size.memory) };
-            const refused = new TaskProvider.TaskProviderError({
-              operation: "start",
-              taskId: input.taskId,
-              reason: "launch_refused"
-            });
             const response = yield* bounded(
               "start",
               input.taskId,
@@ -702,7 +704,7 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
                 .pipe(
                   Effect.mapError((cause) =>
                     refusedOutright(cause.cause)
-                      ? refused
+                      ? new TaskProvider.LaunchRefused({ taskId: input.taskId, cause })
                       : new TaskProvider.TaskProviderError({
                           operation: "start",
                           taskId: input.taskId,
@@ -712,8 +714,14 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
                   )
                 )
             );
-            // Failures and no task is ECS answering that it started nothing.
-            if (response.failures?.length && !response.tasks?.length) return yield* refused;
+            // Failures and no task, on the SDK's only attempt, is ECS answering that it started
+            // nothing.
+            if (
+              response.failures?.length &&
+              !response.tasks?.length &&
+              isOneAttempt(response.$metadata)
+            )
+              return yield* new TaskProvider.LaunchRefused({ taskId: input.taskId });
             if (
               response.failures?.length ||
               response.tasks?.length !== 1 ||

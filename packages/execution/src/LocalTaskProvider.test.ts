@@ -427,6 +427,7 @@ it.live(
         size: TaskProvider.full
       };
       const error = yield* provider.start(task).pipe(Effect.flip);
+      assert.instanceOf(error, TaskProvider.TaskProviderError);
       assert.strictEqual(error.operation, "start");
       assert.strictEqual(error.reason, "provider");
       assert.instanceOf(error.cause, Error);

@@ -1,5 +1,6 @@
-// @effect-diagnostics globalDate:off globalDateInEffect:off -- SDK fixtures carry Date timestamps derived from TestClock.
+// @effect-diagnostics globalDate:off globalDateInEffect:off nodeBuiltinImport:off -- SDK fixtures carry Date timestamps derived from TestClock; a launch's token is checked against node:crypto independently.
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import { createHash } from "node:crypto";
 import type { RunTaskCommandInput, Task, TaskDefinition } from "@aws-sdk/client-ecs";
 import { assert, it } from "@effect/vitest";
 import * as WideEvents from "@patchy/analytics/wide-events";
@@ -98,7 +99,8 @@ const cloud = Effect.gen(function* () {
   let ignoreSize = false;
   let loseRunReply = false;
   let loseInvokeReply = false;
-  let refusal: "failures" | "client" | "server" | undefined;
+  let refusal:
+    { readonly how: "failures" | "client" | "server"; readonly attempts: number } | undefined;
   let malformReply = false;
   let reusedAddress: string | undefined;
   let describes = 0;
@@ -138,19 +140,19 @@ const cloud = Effect.gen(function* () {
       }),
     runTask: Effect.fn("TestEcs.runTask")(function* (input) {
       if (refusal !== undefined) {
-        const refused = refusal;
+        const { how, attempts } = refusal;
         refusal = undefined;
         launches.push(input);
-        if (refused === "failures")
-          return { $metadata: {}, tasks: [], failures: [{ reason: "RESOURCE:CPU" }] };
+        if (how === "failures")
+          return { $metadata: { attempts }, tasks: [], failures: [{ reason: "RESOURCE:CPU" }] };
         // The SDK's own errors: a modeled client error with its 4xx, and an unmodeled 500 it
-        // also marks a client fault.
+        // also marks a client fault, each with the attempts its retries made.
         return yield* new Ecs.EcsError({
           operation: "runTask",
           cause: Object.assign(new Error("Invalid CPU or memory value specified"), {
-            name: refused === "client" ? "InvalidParameterException" : "UnknownError",
+            name: how === "client" ? "InvalidParameterException" : "UnknownError",
             $fault: "client",
-            $metadata: { httpStatusCode: refused === "client" ? 400 : 500 }
+            $metadata: { httpStatusCode: how === "client" ? 400 : 500, attempts }
           })
         });
       }
@@ -345,10 +347,10 @@ const cloud = Effect.gen(function* () {
     },
     /**
      * The next RunTask creates nothing: ECS answers with `failures`, a 4xx `client` error, or a
-     * `server` error the SDK cannot tell from one but by its 500.
+     * `server` error the SDK cannot tell from one but by its 500, after the SDK's `attempts`.
      */
-    refuseNextRun: (how: "failures" | "client" | "server") => {
-      refusal = how;
+    refuseNextRun: (how: "failures" | "client" | "server", attempts = 1) => {
+      refusal = { how, attempts };
     },
     /** Fargate runs every later task at its definition's size, whatever the launch asked for. */
     ignoreSizes: () => {
@@ -953,8 +955,52 @@ it.effect(
         size: TaskProvider.full
       });
       assert.deepStrictEqual(full.size, TaskProvider.full);
-      // A full launch sends no size at all: the definition's own is today's box.
-      assert.deepStrictEqual(Object.keys(aws.launches[0]!.overrides!), ["containerOverrides"]);
+      // A full launch sends today's request exactly, with no size at all: the definition's own is
+      // today's box.
+      const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
+      const startedBy = sha256("test-fleet").slice(0, 36);
+      assert.deepStrictEqual(aws.launches[0], {
+        cluster: "test-cluster",
+        taskDefinition: options.current.taskDefinition,
+        launchType: "FARGATE",
+        platformVersion: "1.4.0",
+        propagateTags: "TASK_DEFINITION",
+        count: 1,
+        clientToken: sha256("test-fleet\0full-box"),
+        startedBy,
+        group: `patchy-exec:${startedBy}`,
+        enableExecuteCommand: false,
+        networkConfiguration: {
+          awsvpcConfiguration: {
+            subnets: ["subnet-private"],
+            securityGroups: ["sg-private"],
+            assignPublicIp: "DISABLED"
+          }
+        },
+        tags: [
+          { key: "patchy:execution-fleet", value: "test-fleet" },
+          { key: "patchy:role", value: "exec" },
+          { key: "patchy:execution-task", value: "full-box" },
+          { key: "patchy:deployment-revision", value: "current" }
+        ],
+        overrides: {
+          containerOverrides: [
+            {
+              name: "exec",
+              environment: [
+                { name: "EXECUTION_TASK_ID", value: "full-box" },
+                { name: "EXECUTION_DEPLOYMENT_REVISION", value: "current" },
+                { name: "EXECUTION_MANAGEMENT_SECRET", value: "current-test-secret" },
+                { name: "EXECUTION_MANAGEMENT_PREVIOUS_SECRET", value: "previous-test-secret" },
+                { name: "EXECUTION_MANAGEMENT_HOST", value: "auto" },
+                { name: "EXECUTION_MANAGEMENT_PORT", value: "8788" },
+                { name: "EXECUTION_MANAGEMENT_PRIVATE_INTERFACE", value: "true" },
+                { name: "EXECUTION_CALLBACK_URLS", value: "[]" }
+              ]
+            }
+          ]
+        }
+      });
       aws.loseRunReply();
       const lost = yield* provider
         .start({ taskId: "small-box", deploymentRevision: "current", size: TaskProvider.small })
@@ -990,27 +1036,39 @@ it.effect(
     })
 );
 
-it.effect("refuses a launch outright only when ECS answered and started nothing", () =>
-  Effect.gen(function* () {
-    yield* TestClock.setTime(1_000_000);
-    const aws = yield* cloud;
-    const provider = yield* EcsTaskProvider.make(options).pipe(
-      Effect.provide([aws.layer, NodeCryptography.layer])
-    );
-    const start = (taskId: string) =>
-      provider
-        .start({ taskId, deploymentRevision: "current", size: TaskProvider.small })
-        .pipe(Effect.flip);
-    for (const [how, reason] of [
-      ["failures", "launch_refused"],
-      ["client", "launch_refused"],
-      ["server", "provider"]
-    ] as const) {
-      aws.refuseNextRun(how);
-      assert.include(yield* start(`refused-${how}`), { reason }, how);
-    }
-    assert.strictEqual(aws.tasks.size, 0);
-  })
+it.effect(
+  "refuses a launch outright only when ECS answered on the SDK's only attempt and started nothing",
+  () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(1_000_000);
+      const aws = yield* cloud;
+      const provider = yield* EcsTaskProvider.make(options).pipe(
+        Effect.provide([aws.layer, NodeCryptography.layer])
+      );
+      const start = (taskId: string) =>
+        provider
+          .start({ taskId, deploymentRevision: "current", size: TaskProvider.small })
+          .pipe(Effect.flip);
+      // A retried call's earlier attempt may have created the task its last answer refuses.
+      for (const [how, attempts, outcome] of [
+        ["failures", 1, "refused"],
+        ["client", 1, "refused"],
+        ["server", 1, "provider"],
+        ["failures", 2, "provider"],
+        ["client", 3, "provider"]
+      ] as const) {
+        const taskId = `refused-${how}-${attempts}`;
+        aws.refuseNextRun(how, attempts);
+        const failure = yield* start(taskId);
+        if (outcome === "refused") {
+          assert.instanceOf(failure, TaskProvider.LaunchRefused, taskId);
+          assert.strictEqual(failure.taskId, taskId);
+          // ECS's error is kept as the cause; failures in an answer have none.
+          assert.strictEqual(failure.cause === undefined, how === "failures", taskId);
+        } else assert.include(failure, { _tag: "TaskProviderError", reason: "provider" }, taskId);
+      }
+      assert.strictEqual(aws.tasks.size, 0);
+    })
 );
 
 const services = Layer.merge(OperatingLimits.layer, ActiveMembersTest.layer)

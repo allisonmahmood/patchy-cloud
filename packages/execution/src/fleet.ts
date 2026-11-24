@@ -114,9 +114,9 @@ export const setSmallBoxes = Effect.fn("Fleet.setSmallBoxes")(function* (on: boo
 });
 
 /**
- * The switch, ready small tasks not stopped by state, and every row that asked for a small box,
- * was never verified and is not stopped, from one database snapshot: what a rollback past small
- * boxes waits to see empty.
+ * The switch, ready small tasks not stopped by state, and every row never admitted at readiness
+ * and not stopped that asked for a small box or was seen running at one, from one database
+ * snapshot: what a rollback past small boxes waits to see empty.
  */
 export const smallBoxesStatus = Effect.flatMap(FleetStore.make, (store) => store.smallBoxesStatus);
 
@@ -394,13 +394,16 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
         if (fenced.length === 0) return false;
       }
       yield* checkHousekeeping;
-      // A drain completes only on evidence: a launch the provider refused outright left nothing
-      // to stop; anything else waits for the provider to confirm the task stopped.
-      if (
-        task.launchRefusedAt !== null &&
-        (yield* store.stopRefused(taskId, yield* Clock.currentTimeMillis))
-      )
-        return true;
+      // A drain completes only on evidence. A row that asked for a small box and certainly
+      // launched nothing has nothing to stop, unless the provider lists its task after all: then
+      // it is uncertain from now on and stopped like any other. Every other row, a full one
+      // included, waits for the provider to confirm its task stopped.
+      if (TaskProvider.isSmall(task) && task.readyAt === null && task.launchedNothing) {
+        const seen = (yield* provider.list).some((remote) => remote.taskId === taskId);
+        yield* checkHousekeeping;
+        if (seen) yield* store.launchSeen(taskId);
+        else if (yield* store.stopUnlaunched(taskId, yield* Clock.currentTimeMillis)) return true;
+      }
       const stopped = yield* provider.stop(taskId);
       yield* checkHousekeeping;
       yield* store.stopped(taskId, stopped.stoppedAt ?? (yield* Clock.currentTimeMillis), cause);
@@ -423,31 +426,23 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
   const smallFloor = config.get("execution.pool.smallSpares");
   const lastBudgetWarningAt = new Map<string, number>();
   /**
-   * Launches a reserved or retried `starting` row at the size it asked for, recording a launch the
-   * provider refused outright and clearing that mark before the next attempt. A ready task is
+   * Launches a reserved or retried `starting` row at the size it asked for. Each attempt is
+   * counted on the row before it is sent and taken back only when the provider refused it
+   * outright, so the row records whether anything was ever launched for it. A ready task is
    * admitted at the size the provider observed, or drained when it may not be a spare.
    */
   const launch = Effect.fn("Fleet.launch")(function* (
-    task: Pick<FleetStore.Task, "taskId" | "deploymentRevision" | "cpu" | "memory"> & {
-      readonly launchRefusedAt?: number | null;
-    }
+    task: Pick<FleetStore.Task, "taskId" | "deploymentRevision" | "cpu" | "memory">
   ) {
     const size = { cpu: task.cpu, memory: task.memory };
-    if (task.launchRefusedAt !== null && task.launchRefusedAt !== undefined) {
-      yield* checkHousekeeping;
-      yield* store.clearLaunchRefused(task.taskId);
-    }
+    if (!(yield* store.launching(task.taskId))) return;
     const started = yield* provider
       .start({ taskId: task.taskId, deploymentRevision: task.deploymentRevision, size })
       .pipe(
-        Effect.tapError((cause) =>
-          cause.reason === "launch_refused"
-            ? checkHousekeeping.pipe(
-                Effect.andThen(Clock.currentTimeMillis),
-                Effect.flatMap((now) => store.launchRefused(task.taskId, now))
-              )
-            : Effect.void
-        )
+        Effect.catchTags({
+          TaskLaunchRefused: (refused) =>
+            store.launchRefused(task.taskId).pipe(Effect.andThen(Effect.fail(refused)))
+        })
       );
     if (started.size?.cpu !== size.cpu || started.size.memory !== size.memory)
       yield* Effect.logError("Execution task started at a size other than it asked for", {
@@ -456,7 +451,7 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
         observed: started.size ?? null
       });
     yield* checkHousekeeping;
-    const admitted = yield* store.ready(started);
+    const admitted = yield* store.ready(started, size);
     if (admitted === "drain") return yield* drainTask(task.taskId, "deployment");
     if (admitted === "spare") yield* notify;
   });
@@ -525,7 +520,8 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
       ] as const;
       // Reclaim surplus ready spares of the current revision, each size to its own target, once
       // their retry grace passes. Runs beside `replenish` so slow provider stops never block
-      // reservations using free budget.
+      // reservations using free budget. Ready small spares are always offered to the trim, even
+      // at their target, since only its recheck under the rollout row's lock may keep them.
       const trimSurplus = Effect.gen(function* () {
         yield* Deferred.await(inventoryRecorded);
         const rollout = yield* store.rollout;
@@ -539,7 +535,8 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
         );
         for (const { name, size } of sizes) {
           const keep = targetOf(measured[name], size, true);
-          if (measured[name].readySpares <= keep) continue;
+          const ready = measured[name].readySpares;
+          if (TaskProvider.isSmall(size) ? ready === 0 : ready <= keep) continue;
           yield* guard;
           const trimmed = yield* store.trimSpares(
             rollout.currentRevision,
@@ -612,13 +609,14 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
         return budgetSpares !== undefined;
       });
       // Full deficits come first, the staged revision's and then the current one's. Small spares,
-      // the current revision's only, are reserved only when no full deficit was refused for
-      // budget in this run; a small spare is never stopped to make room for a full one.
+      // the current revision's only, are reserved only while no full deficit has been refused for
+      // budget in this pass, a replenish that reruns inside it included; a small spare is never
+      // stopped to make room for a full one.
+      let fullRefused = false;
       const replenish = Effect.gen(function* () {
         yield* Deferred.await(inventoryRecorded);
         const rollout = yield* store.rollout;
         const revisions = [...new Set([rollout.stagedRevision, rollout.currentRevision])];
-        let fullRefused = false;
         let current:
           { readonly full: FleetStore.Demand; readonly small: FleetStore.Demand } | undefined;
         for (const revision of revisions) {
@@ -692,10 +690,12 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
                   yield* store.stopped(task.taskId, remote.stoppedAt ?? now, "task_lost");
                 } else if (task.state === "starting") {
                   // A retry asks for the size on the row, so its launch token always carries the
-                  // same size. A small row still starting while small boxes are off is drained.
+                  // same size. A small row still starting while small boxes are off, or no
+                  // longer of the current revision, is drained.
                   if (
                     retained.has(task.deploymentRevision) &&
-                    (smallBoxes || !TaskProvider.isSmall(task))
+                    (!TaskProvider.isSmall(task) ||
+                      (smallBoxes && task.deploymentRevision === rollout.currentRevision))
                   )
                     yield* launch(task);
                   else yield* drainTask(task.taskId, "deployment");

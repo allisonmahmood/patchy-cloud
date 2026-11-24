@@ -13,8 +13,9 @@
  * the whole fleet, or only reads them (docs/OPERATIONS.md › Small boxes). On, a
  * company with exactly one active member claims a half-vCPU box; off, every
  * claim is full. Both print the status afterwards: the switch, ready small
- * tasks by state, and every row that asked for a small box, was never verified
- * and is not stopped, all from one database snapshot.
+ * tasks by state, and every row never admitted at readiness and not stopped
+ * that asked for a small box or was seen running at one, all from one database
+ * snapshot.
  *
  * `bun dist/fleet.js share-by-default` shares every existing table and file
  * store unless the newest retained version that defines it says `shared: false`,
@@ -99,7 +100,7 @@ const smallBoxes = Command.make(
       yield* Console.log(`Unverified small tasks not stopped: ${status.unverified.length}`);
       for (const task of status.unverified)
         yield* Console.log(
-          `  ${task.taskId} ${task.state}${task.launchRefused ? " (launch refused)" : ""}`
+          `  ${task.taskId} ${task.state}${task.launchedNothing ? " (nothing launched)" : ""}`
         );
     }
   }, Effect.provide(Sql.layer))

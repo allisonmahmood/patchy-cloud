@@ -48,12 +48,16 @@ export class Task extends Schema.Class<Task>("Fleet.Task")({
   stoppedAt: Schema.NullOr(Schema.Number),
   /**
    * The size asked for while the task starts, which a retried launch asks for again; once it is
-   * ready, the size the provider observed. A bound task's size never changes.
+   * ready, or fenced at readiness, the size the provider observed. A bound task's size never
+   * changes.
    */
   cpu: Schema.Number,
   memory: Schema.Number,
-  /** When the provider last refused its launch outright, so nothing was created; else null. */
-  launchRefusedAt: Schema.NullOr(Schema.Number)
+  /**
+   * Certainly nothing was ever launched for it: this host's code reserved it, and every launch
+   * attempt since, if any, was refused outright. Unknown reads as false.
+   */
+  launchedNothing: Schema.Boolean
 }) {}
 export class History extends Schema.Class<History>("Fleet.History")({
   bindingId: Schema.Number,
@@ -96,9 +100,6 @@ class Rollout extends Schema.Class<Rollout>("Fleet.Rollout")({
 }) {}
 class Pause extends Schema.Class<Pause>("Fleet.Pause")({ pausedUntil: Schema.Number }) {}
 class Flag extends Schema.Class<Flag>("Fleet.Flag")({ acquired: Schema.Boolean }) {}
-class SmallBoxes extends Schema.Class<SmallBoxes>("Fleet.SmallBoxes")({
-  smallBoxes: Schema.Boolean
-}) {}
 class Cpu extends Schema.Class<Cpu>("Fleet.Cpu")({ cpu: Schema.Number }) {}
 class ReserveRow extends Schema.Class<ReserveRow>("Fleet.ReserveRow")({
   reserved: Schema.Boolean,
@@ -110,7 +111,8 @@ class AdmissibleTask extends Schema.Class<AdmissibleTask>("Fleet.AdmissibleTask"
 }) {}
 /**
  * What `small-boxes status` reads in one snapshot: the switch, ready small tasks not stopped by
- * state, and every unverified row that asked for a small box and is not stopped.
+ * state, and every row never admitted at readiness that is not stopped and asked for a small box
+ * or was observed running at one.
  */
 export class SmallBoxesStatus extends Schema.Class<SmallBoxesStatus>("Fleet.SmallBoxesStatus")({
   smallBoxes: Schema.Boolean,
@@ -120,7 +122,7 @@ export class SmallBoxesStatus extends Schema.Class<SmallBoxesStatus>("Fleet.Smal
       taskId: Schema.String,
       state: Schema.String,
       cpu: Schema.Number,
-      launchRefused: Schema.Boolean
+      launchedNothing: Schema.Boolean
     })
   )
 }) {}
@@ -132,7 +134,6 @@ const decodeTargets = Schema.decodeUnknownEffect(Schema.Array(Target));
 const decodeRollouts = Schema.decodeUnknownEffect(Schema.Array(Rollout));
 const decodePauses = Schema.decodeUnknownEffect(Schema.Array(Pause));
 const decodeFlags = Schema.decodeUnknownEffect(Schema.Array(Flag));
-const decodeSmallBoxes = Schema.decodeUnknownEffect(Schema.Array(SmallBoxes));
 const decodeCpus = Schema.decodeUnknownEffect(Schema.Array(Cpu));
 const decodeReserveRows = Schema.decodeUnknownEffect(Schema.Array(ReserveRow));
 const decodeAdmissibleTasks = Schema.decodeUnknownEffect(Schema.Array(AdmissibleTask));
@@ -198,7 +199,7 @@ export const make = Effect.gen(function* () {
   const taskColumns =
     sql.literal(`task_id AS "taskId", deployment_revision AS "deploymentRevision", state,
     requested_at AS "requestedAt", started_at AS "startedAt", ready_at AS "readyAt", stopped_at AS "stoppedAt",
-    cpu, memory, launch_refused_at AS "launchRefusedAt"`);
+    cpu, memory, COALESCE(unrefused_launches = 0, false) AS "launchedNothing"`);
   // A binding's task's CPU units, by its primary key, beside a row of execution_bindings.
   const boundCpu = sql.literal(`(SELECT t.cpu FROM execution_tasks t
     WHERE t.task_id = execution_bindings.task_id) AS cpu`);
@@ -264,10 +265,15 @@ export const make = Effect.gen(function* () {
       FROM execution_binding_history h JOIN execution_tasks t ON t.task_id = h.task_id
       WHERE h.company_id = ${company} ORDER BY h.binding_epoch`
   });
+  const claimLock = (company: string) => `execution/claim/${company}`;
   const lockClaim = (company: string) =>
-    sql`SELECT pg_advisory_xact_lock(hashtextextended(${`execution/claim/${company}`}, 0))`;
-  const currentRollout = sql`SELECT current_revision AS "currentRevision", staged_revision AS "stagedRevision",
-    small_boxes AS "smallBoxes" FROM execution_rollout WHERE singleton`;
+    sql`SELECT pg_advisory_xact_lock(hashtextextended(${claimLock(company)}, 0))`;
+  const rolloutColumns = sql.literal(`current_revision AS "currentRevision",
+    staged_revision AS "stagedRevision", small_boxes AS "smallBoxes"`);
+  const currentRollout = sql`SELECT ${rolloutColumns} FROM execution_rollout WHERE singleton`;
+  // The rollout row held until the transaction ends, so a promotion, a staging or a flip of the
+  // switch waits for it. It is taken before any company's claim lock, here and in replacement.
+  const sharedRollout = sql`SELECT ${rolloutColumns} FROM execution_rollout WHERE singleton FOR SHARE`;
   /**
    * The size a claim for `company` needs: small while small boxes are on and the company has
    * exactly one active member, full otherwise. Read under the company's claim lock.
@@ -304,12 +310,13 @@ export const make = Effect.gen(function* () {
   /**
    * Binds a spare to `company` with its two clocks as given, or answers its live binding, clearing
    * any recorded pool wait for `company`. It reads the switch and the current revision together,
-   * then sizes the claim. A full claim takes only a full spare; a small one takes a small spare
-   * when one is ready and a full one otherwise. With `capacity`, it takes a spare of exactly the
-   * company's size and only as that allows. On an empty-pool miss with `waitUntil`, it records or
-   * extends the company's wait, with the size it needs, inside the same per-company claim
-   * transaction so concurrent claims and misses never race. The spares it counts stay locked
-   * until it commits, so concurrent claims never count the same one.
+   * holding the rollout row until it commits so no promotion or flip lands between that read and
+   * its spare, then sizes the claim. A full claim takes only a full spare; a small one takes a
+   * small spare when one is ready and a full one otherwise. With `capacity`, it takes a spare of
+   * exactly the company's size and only as that allows. On an empty-pool miss with `waitUntil`, it
+   * records or extends the company's wait, with the size it needs, inside the same per-company
+   * claim transaction so concurrent claims and misses never race. The spares it counts stay
+   * locked until it commits, so concurrent claims never count the same one.
    */
   const claim = Effect.fn("FleetStore.claim")(function* (
     company: string,
@@ -320,13 +327,13 @@ export const make = Effect.gen(function* () {
     capacity?: Capacity,
     waitUntil?: number
   ) {
+    const rollout = (yield* sharedRollout.pipe(Effect.flatMap(decodeRollouts)))[0]!;
     yield* lockClaim(company);
     const existing = yield* findCompany(company);
     if (existing[0]) {
       yield* sql`DELETE FROM execution_pool_waits WHERE company_id = ${company}`;
       return existing[0];
     }
-    const rollout = (yield* currentRollout.pipe(Effect.flatMap(decodeRollouts)))[0]!;
     const needed = yield* neededSize(company, rollout.smallBoxes);
     const reserve = capacity?.reserve ?? 0;
     const sized = capacity === undefined ? sql`cpu >= ${needed.cpu}` : sql`cpu = ${needed.cpu}`;
@@ -363,17 +370,17 @@ export const make = Effect.gen(function* () {
   ) SELECT ${bindingColumns} FROM fenced`.pipe(Effect.flatMap(decodeBindings));
   /**
    * Moves the oldest binding on an earlier revision that a current spare can take onto that
-   * spare. Locks the rollout row, then the company; rechecks that its binding still needs
-   * replacing, sizes it once, and fences it only with a locked spare of the right kind in hand,
-   * by the claim's rule. A candidate with no such spare is passed over for the next.
+   * spare. Locks the rollout row, then the company, trying its claim lock only: a company a claim
+   * holds is passed over, so no busy company holds up a promotion or a flip waiting on this. It
+   * rechecks that the binding still needs replacing, sizes it once, and fences it only with a
+   * locked spare of the right kind in hand, by the claim's rule. A candidate with no such spare is
+   * passed over for the next.
    */
   const replaceDeploymentBinding = Effect.fn("FleetStore.replaceDeploymentBinding")(function* (
     owner: string,
     now: number
   ) {
-    const rollout = (yield* sql`SELECT current_revision AS "currentRevision",
-      staged_revision AS "stagedRevision", small_boxes AS "smallBoxes"
-      FROM execution_rollout WHERE singleton FOR SHARE`.pipe(Effect.flatMap(decodeRollouts)))[0];
+    const rollout = (yield* sharedRollout.pipe(Effect.flatMap(decodeRollouts)))[0];
     const revision = rollout?.currentRevision;
     if (!rollout || revision === null || revision === undefined) return undefined;
     // One unfinished replacement at a time keeps draining calls within the fleet budget.
@@ -385,7 +392,7 @@ export const make = Effect.gen(function* () {
       WHERE b.state IN ('active', 'claiming') AND t.deployment_revision <> ${revision}
       ORDER BY b.binding_id`;
     for (const { companyId: company } of candidates) {
-      yield* lockClaim(company);
+      if (!(yield* exclusive(claimLock(company)))) continue;
       const previous = (yield* findCompany(company))[0];
       if (!previous) continue;
       const stale = yield* sql`SELECT 1 FROM execution_tasks
@@ -539,6 +546,7 @@ export const make = Effect.gen(function* () {
    * Records a running task no live row knows, to be stopped, at the size the provider observed
    * or as a full box when it observed none. A row that was never bound takes that size again
    * when its task is seen running after it was recorded stopped; a bound row keeps its own.
+   * Either way its launch history is unknown from then on: it was seen running.
    */
   const recordOrphan = Effect.fn("FleetStore.recordOrphan")(function* (
     task: TaskProvider.Task,
@@ -553,6 +561,7 @@ export const make = Effect.gen(function* () {
       VALUES (${task.taskId}, ${task.deploymentRevision}, 'stopping', ${now}, ${task.startedAt},
         ${size.cpu}, ${size.memory})
       ON CONFLICT (task_id) DO UPDATE SET state = 'stopping', stopped_at = NULL,
+        unrefused_launches = NULL,
         cpu = CASE WHEN EXISTS (SELECT 1 FROM execution_bindings b
           WHERE b.task_id = execution_tasks.task_id) THEN execution_tasks.cpu ELSE EXCLUDED.cpu END,
         memory = CASE WHEN EXISTS (SELECT 1 FROM execution_bindings b
@@ -561,24 +570,35 @@ export const make = Effect.gen(function* () {
       RETURNING task_id`;
     return rows.length === 1;
   }, sql.withTransaction);
-  // Marks a starting or draining row whose launch the provider refused outright.
-  const launchRefused = (taskId: string, now: number) =>
-    sql`UPDATE execution_tasks SET launch_refused_at = ${now}
-    WHERE task_id = ${taskId} AND state IN ('starting', 'stopping') AND ready_at IS NULL`;
-  // Cleared before the row's next launch attempt.
-  const clearLaunchRefused = (taskId: string) =>
-    sql`UPDATE execution_tasks SET launch_refused_at = NULL WHERE task_id = ${taskId}`;
   /**
-   * Completes a drain on its evidence that nothing was created: a draining row whose last launch
-   * was refused outright and that never became ready. Answers whether it did.
+   * Counts a launch attempt before it is sent, so a row never reads as having launched nothing
+   * while one may be in flight, and an attempt whose outcome is never learned keeps it uncertain
+   * for good. Answers false for a row already stopped, which is not launched again.
    */
-  const stopRefused = Effect.fn("FleetStore.stopRefused")(function* (
+  const launching = (taskId: string) =>
+    sql`UPDATE execution_tasks SET unrefused_launches = unrefused_launches + 1
+    WHERE task_id = ${taskId} AND state <> 'stopped' RETURNING task_id`.pipe(
+      Effect.map((rows) => rows.length === 1)
+    );
+  // Takes back the count of an attempt the provider refused outright: it created nothing.
+  const launchRefused = (taskId: string) =>
+    sql`UPDATE execution_tasks SET unrefused_launches = unrefused_launches - 1
+    WHERE task_id = ${taskId} AND unrefused_launches > 0`;
+  // The provider showed the row's task after all: whatever was counted, something was launched.
+  const launchSeen = (taskId: string) =>
+    sql`UPDATE execution_tasks SET unrefused_launches = NULL WHERE task_id = ${taskId}`;
+  /**
+   * Completes the drain of a row that asked for a small box and certainly launched nothing,
+   * having nothing to stop. Answers whether it did. A row with no attempt left uncounted never
+   * started, so its `cpu` is still the size it asked for.
+   */
+  const stopUnlaunched = Effect.fn("FleetStore.stopUnlaunched")(function* (
     taskId: string,
     stoppedAt: number
   ) {
     const rows = yield* sql`UPDATE execution_tasks SET state = 'stopped', stopped_at = ${stoppedAt}
       WHERE task_id = ${taskId} AND state = 'stopping' AND ready_at IS NULL
-        AND launch_refused_at IS NOT NULL
+        AND cpu < ${full.cpu} AND unrefused_launches = 0
       RETURNING task_id`;
     return rows.length === 1;
   });
@@ -626,24 +646,28 @@ export const make = Effect.gen(function* () {
     Effect.flatMap(decodeRollouts),
     Effect.map((rows) => rows[0]!)
   );
-  // Reads the switch under the rollout row's lock, which a flip waits on, for a write that
-  // would create or keep a small spare.
-  const smallBoxesLocked = sql`SELECT small_boxes AS "smallBoxes"
-    FROM execution_rollout WHERE singleton FOR SHARE`.pipe(
-    Effect.flatMap(decodeSmallBoxes),
-    Effect.map((rows) => rows[0]?.smallBoxes === true)
-  );
+  // Whether a small spare of `revision` may be created or kept: small boxes are on and it is the
+  // current revision. A row that matches stays locked until the transaction ends, so a flip or a
+  // promotion waits for the write that relied on it.
+  const smallAllowed = (revision: string) =>
+    sql`SELECT singleton FROM execution_rollout
+    WHERE singleton AND small_boxes AND current_revision = ${revision} FOR SHARE`.pipe(
+      Effect.map((rows) => rows.length === 1)
+    );
   /** Turns small boxes on or off, controller code for the operator command, never a row edit. */
   const setSmallBoxes = (on: boolean) =>
     sql`UPDATE execution_rollout SET small_boxes = ${on} WHERE singleton`.pipe(Effect.asVoid);
-  /** The switch, small tasks and possibly small unverified rows, from one snapshot. */
+  /**
+   * The switch, small tasks and possibly small rows never admitted, from one snapshot. A row never
+   * admitted keeps the size it asked for, or the size it was observed at when fenced at readiness.
+   */
   const smallBoxesStatus = sql`SELECT r.small_boxes AS "smallBoxes",
       COALESCE((SELECT json_object_agg(s.state, s.tasks) FROM (
         SELECT state, count(*)::integer AS tasks FROM execution_tasks
         WHERE cpu < ${full.cpu} AND ready_at IS NOT NULL AND state <> 'stopped' GROUP BY state
       ) s), '{}'::json) AS small,
       COALESCE((SELECT json_agg(json_build_object('taskId', task_id, 'state', state, 'cpu', cpu,
-          'launchRefused', launch_refused_at IS NOT NULL) ORDER BY requested_at)
+          'launchedNothing', COALESCE(unrefused_launches = 0, false)) ORDER BY requested_at)
         FROM execution_tasks
         WHERE cpu < ${full.cpu} AND ready_at IS NULL AND state <> 'stopped'), '[]'::json) AS unverified
     FROM execution_rollout r WHERE r.singleton`.pipe(
@@ -696,11 +720,8 @@ export const make = Effect.gen(function* () {
     now: number,
     budget: number
   ) {
-    if (TaskProvider.isSmall(size)) {
-      const allowed = yield* sql`SELECT singleton FROM execution_rollout
-        WHERE singleton AND small_boxes AND current_revision = ${revision} FOR SHARE`;
-      if (allowed.length === 0) return { outcome: "small_off" } as const;
-    }
+    if (TaskProvider.isSmall(size) && !(yield* smallAllowed(revision)))
+      return { outcome: "small_off" } as const;
     const held = yield* sql`SELECT lease_epoch AS "leaseEpoch" FROM execution_housekeeping
       WHERE owner_id = ${owner} AND lease_epoch = ${epoch} AND expires_at > ${now} FOR UPDATE`.pipe(
       Effect.flatMap(decodeLeases)
@@ -716,8 +737,9 @@ export const make = Effect.gen(function* () {
             WHERE state IN ('starting', 'spare') AND deployment_revision = ${revision}
               AND ${ofKind(size)}) AS spares
       ), inserted AS (
-        INSERT INTO execution_tasks(task_id, deployment_revision, state, requested_at, cpu, memory)
-        SELECT ${taskId}, ${revision}, 'starting', ${now}, ${size.cpu}, ${size.memory}
+        INSERT INTO execution_tasks
+          (task_id, deployment_revision, state, requested_at, cpu, memory, unrefused_launches)
+        SELECT ${taskId}, ${revision}, 'starting', ${now}, ${size.cpu}, ${size.memory}, 0
         FROM state WHERE room AND listed
         RETURNING task_id
       )
@@ -733,14 +755,25 @@ export const make = Effect.gen(function* () {
   }, sql.withTransaction);
   /**
    * Admits a launched task as a spare of the size the provider observed, written with its
-   * readiness in one statement; a bound row's size is never rewritten. A task the provider
-   * observed no valid size for, or a small one while small boxes are off (rechecked under the
-   * rollout row's lock), is fenced to drain instead.
+   * readiness in one statement; a bound row's size is never rewritten. A full launch sends no
+   * size, so one the provider observed no valid size for runs at the definition's and is
+   * admitted full. A small launch with no valid size observed is fenced to drain, and so is a
+   * small task unless small boxes are on and its revision is current, rechecked under the
+   * rollout row's lock. A fenced row records the size it was observed at but stays unverified,
+   * so it is charged a full box until it stops.
    */
-  const ready = Effect.fn("FleetStore.ready")(function* (task: TaskProvider.Task) {
-    const size = task.size;
-    if (size === undefined || (TaskProvider.isSmall(size) && !(yield* smallBoxesLocked))) {
-      const fenced = yield* sql`UPDATE execution_tasks SET state = 'stopping'
+  const ready = Effect.fn("FleetStore.ready")(function* (
+    task: TaskProvider.Task,
+    requested: TaskProvider.Size
+  ) {
+    const size = task.size ?? (TaskProvider.isSmall(requested) ? undefined : full);
+    if (
+      size === undefined ||
+      (TaskProvider.isSmall(size) && !(yield* smallAllowed(task.deploymentRevision)))
+    ) {
+      const observed = task.size ?? requested;
+      const fenced = yield* sql`UPDATE execution_tasks SET state = 'stopping',
+          cpu = ${observed.cpu}, memory = ${observed.memory}
         WHERE task_id = ${task.taskId} AND state = 'starting' RETURNING task_id`;
       return fenced.length === 1 ? ("drain" as const) : ("gone" as const);
     }
@@ -754,7 +787,8 @@ export const make = Effect.gen(function* () {
    * Fences ready spares of `revision` and `size`'s kind beyond the oldest `keep` unclaimed ready
    * spares, newest first, whose readiness predates `readyBefore`. Locking inside the same
    * statement ensures a concurrent claim can never make trimming dip below `keep`. Keeping small
-   * spares rechecks the switch under the rollout row's lock: with small boxes off it keeps none.
+   * spares rechecks the switch and the revision under the rollout row's lock: unless small boxes
+   * are on and `revision` is current, it keeps none.
    */
   const trimSpares = Effect.fn("FleetStore.trimSpares")(function* (
     revision: string,
@@ -762,7 +796,7 @@ export const make = Effect.gen(function* () {
     keep: number,
     readyBefore: number
   ) {
-    const kept = TaskProvider.isSmall(size) && !(yield* smallBoxesLocked) ? 0 : keep;
+    const kept = TaskProvider.isSmall(size) && !(yield* smallAllowed(revision)) ? 0 : keep;
     return yield* sql<{ readonly taskId: string }>`WITH locked AS (
         SELECT task_id, requested_at, ready_at
         FROM execution_tasks
@@ -935,9 +969,10 @@ export const make = Effect.gen(function* () {
     drained,
     stopped,
     recordOrphan,
+    launching,
     launchRefused,
-    clearLaunchRefused,
-    stopRefused,
+    launchSeen,
+    stopUnlaunched,
     lease,
     renewLease,
     registerDeployment,
