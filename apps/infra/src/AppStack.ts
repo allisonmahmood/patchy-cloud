@@ -192,8 +192,10 @@ export class AppStack extends Stack {
     execLogs.grantWrite(execExecutionRole);
 
     // CfnTaskDefinition, because the L2 always adds a task role. The host
-    // launches each task with its identity and secrets as overrides, never a
-    // size: every company box is this definition's full vCPU and 2 GiB.
+    // launches each task with its identity and secrets as overrides. A full
+    // company box is this definition's own vCPU and 2 GiB; a small one, for a
+    // one-member company while small boxes are on, overrides only the task's
+    // CPU. The container sets no size of its own, so a smaller task fits it.
     const execDefinition = new ecs.CfnTaskDefinition(this, "ExecDefinition", {
       family: name.execFamily,
       cpu: "1024",
@@ -321,10 +323,10 @@ export class AppStack extends Stack {
         PATCHY_PUBLIC_BASE_URL: origin,
         CLERK_AUTHORIZED_PARTIES: origin,
         PATCHY_TRUST_PROXY: vpc.vpcCidrBlock,
-        // At most 24 company boxes, three of them warm spares: with four hosts
-        // during a rolling deploy and the promote task, 29 vCPUs inside the
-        // account's 30-vCPU Fargate quota. The budget goes to 30 once the
-        // quota is raised (docs/OPERATIONS.md, Production).
+        // At most 24 vCPU of company boxes, three full ones warm spares: with
+        // four hosts during a rolling deploy and the promote task, 29 vCPUs
+        // inside the account's 30-vCPU Fargate quota. The budget goes to 30
+        // once the quota is raised (docs/OPERATIONS.md, Production).
         PATCHY_LIMITS_JSON: this.toJsonString({
           "execution.fleet.budget": 24,
           "execution.pool.spares": 3

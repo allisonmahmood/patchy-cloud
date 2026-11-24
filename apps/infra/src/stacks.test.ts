@@ -131,7 +131,7 @@ it("rolls hosts out beside the promoted release, back if they cannot start, and 
   });
 });
 
-it("gives hosts and company boxes a full vCPU, and the fleet 24 boxes with three spares", () => {
+it("gives hosts and full company boxes a vCPU, and the fleet 24 vCPU with three full spares", () => {
   // The account's Fargate vCPU quota must cover these (docs/OPERATIONS.md, Production).
   for (const family of ["patchy-production-host", "patchy-production-exec"])
     template.hasResourceProperties("AWS::ECS::TaskDefinition", {
@@ -139,6 +139,11 @@ it("gives hosts and company boxes a full vCPU, and the fleet 24 boxes with three
       Cpu: "1024",
       Memory: "2048"
     });
+  // A small box overrides the task's size at launch, which a container-level size would refuse.
+  template.hasResourceProperties("AWS::ECS::TaskDefinition", {
+    Family: "patchy-production-exec",
+    ContainerDefinitions: [Match.objectLike({ Cpu: Match.absent(), Memory: Match.absent() })]
+  });
   template.hasResourceProperties("AWS::ECS::TaskDefinition", {
     Family: "patchy-production-host",
     ContainerDefinitions: [
