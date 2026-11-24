@@ -16,8 +16,8 @@ import { registry } from "@patchy/limits/registry";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
-import * as HttpClient from "effect/http/HttpClient";
 import * as Supervisor from "./supervisor.js";
+import { watchedSlots } from "./test/slots.js";
 import * as WorkerHttp from "./workerHttp.js";
 import { NodeCryptography } from "@patchy/core";
 
@@ -388,48 +388,14 @@ it.live(
   20_000
 );
 
-/**
- * The worker client, noting each health probe as it is sent and answered. `settled` waits until a
- * probe sent from now has been answered: by then a callback that was free to go has gone, so one
- * still unforwarded is waiting for a slot.
- */
-const probing = Effect.gen(function* () {
-  const probes: Array<{ readonly started: number; answered: boolean }> = [];
-  const workers = (yield* WorkerHttp.WorkerHttp).pipe(
-    HttpClient.transform((response, request) => {
-      if (new URL(request.url).pathname !== "/healthz") return response;
-      const probe = { started: Date.now(), answered: false };
-      probes.push(probe);
-      return Effect.tap(response, (answer) =>
-        Effect.sync(() => {
-          probe.answered = answer.status === 200;
-        })
-      );
-    })
-  );
-  const settled = Effect.suspend(() => {
-    const since = Date.now();
-    return until(() => probes.some((probe) => probe.started >= since && probe.answered));
-  });
-  return { workers, settled };
-});
-
 it.live(
   "refuses a model call whose task was bound at a newer epoch while it waited for a slot, sending nothing, and gives its permit back",
   () =>
     Effect.gen(function* () {
       const target = yield* host;
-      const { workers, settled } = yield* probing;
-      const supervisor = yield* Supervisor.make({
-        callbackUrls: [target.url],
-        operatingLimits: {
-          "execution.residency.bytes": 8 * 1024 ** 3,
-          "execution.probe.interval": 25,
-          "models.execution.inFlight": 2
-        }
-      }).pipe(
-        Effect.provideService(WorkerHttp.WorkerHttp, workers),
-        Effect.provideService(Supervisor.FetchSlots, 3)
+      const watched = yield* watchedSlots(3);
+      const supervisor = yield* make(target, 2).pipe(
+        Effect.provideService(Supervisor.FetchSlots, watched.slots)
       );
       const loaded = yield* bindVersion(supervisor, "ver_rebound");
       // A call and its model call, held by the host, and a second call take all three slots: the
@@ -441,32 +407,31 @@ it.live(
       const waiting = yield* invoke(supervisor, loaded, target, "inv_wait", [
         generate("waiting")
       ]).pipe(Effect.forkChild);
-      yield* settled;
+      yield* watched.asked(2);
       // Bound at a newer epoch while it waits, it is refused when the held call's answer frees a
-      // slot, saying nothing was sent.
+      // slot: it never reaches the host, and its answer says nothing was sent.
       yield* supervisor.bind({ companyId: "com_models", bindingEpoch: 2 });
       target.release();
-      expect(replies(yield* Fiber.join(waiting))).toEqual([
-        {
-          ok: false,
-          source: "patchy",
-          code: "access_denied",
-          error: "The invocation callback has ended.",
-          details: { sent: false }
-        }
-      ]);
+      const [refused] = replies(yield* Fiber.join(waiting));
       yield* Fiber.join(holding);
       expect(target.seen).toEqual([{ op: "models.generate", marked: "models.generate" }]);
-      // Both permits are back: two model calls at the new epoch are both sent.
+      expect(refused).toEqual({
+        ok: false,
+        source: "patchy",
+        code: "access_denied",
+        error: "The invocation callback has ended.",
+        details: { sent: false }
+      });
+      // Both permits are back: two model calls at the new epoch are held by the host at once.
+      target.hold();
+      const after = yield* invoke(supervisor, { ...loaded, bindingEpoch: 2 }, target, "inv_after", [
+        generate(),
+        generate()
+      ]).pipe(Effect.forkChild);
+      yield* until(() => target.held.length === 2);
+      target.release();
       const answered = { ok: true, value: "answered" };
-      expect(
-        replies(
-          yield* invoke(supervisor, { ...loaded, bindingEpoch: 2 }, target, "inv_after", [
-            generate(),
-            generate()
-          ])
-        )
-      ).toEqual([answered, answered]);
+      expect(replies(yield* Fiber.join(after))).toEqual([answered, answered]);
     }).pipe(
       Effect.scoped,
       Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
