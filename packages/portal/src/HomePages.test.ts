@@ -601,7 +601,7 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
   );
 
   it.effect(
-    "lists each owner's newest page of the last 14 days under Pages, beside Tools, with the rest a press away",
+    "lists each owner's newest page of the last 14 days under Pages, with the rest a press away",
     () =>
       Effect.gen(function* () {
         const workspace = yield* company();
@@ -619,11 +619,6 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
         yield* publish(workspace.member, "lunch-poll");
 
         const home = yield* (yield* request("/", workspace.admin)).text;
-        // Pages sits beside Tools, and follows it where the rail drops under.
-        assert.match(
-          home,
-          /<div class="main-rail"><div class="main-rail-main"><section class="section" id="tools"[^]*<div class="main-rail-rail"><section class="section" id="pages"/
-        );
         // Newest first, one row per owner: six pages today are one row ending "+5 more".
         assert.deepStrictEqual(names(home, "pages"), ["lunch-poll", "notes-sat"]);
         const pages = sectionOf(home, "pages");

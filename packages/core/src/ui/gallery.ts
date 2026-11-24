@@ -640,7 +640,7 @@ const toolsAndPages = mainWithRail({
       columns: [
         { label: "Patch", grow: true },
         { label: "Owner", hideOnPhone: true, nowrap: true },
-        { label: "Failures (24 h)", hideBelowWide: true, nowrap: true },
+        { label: "Failures (24 h)", hideWhenNarrow: true, nowrap: true },
         { label: "Share", hidden: true, hideOnPhone: true, align: "end", nowrap: true },
         { label: "Actions", hidden: true, align: "end", nowrap: true }
       ],
@@ -649,11 +649,11 @@ const toolsAndPages = mainWithRail({
           `<div class="cell-name">${patch("calendar")}<div class="row-main"><span class="row-name"><a class="row-link" href="#rows">Studio calendar</a></span><span class="row-desc">Who's in, who's out, and what's due</span></div></div>`,
           `<div class="cell-name">${avatar("ada@example.com", "Ada Lovelace")}<span>You</span></div>`,
           '<span class="muted">None</span>',
-          `<span class="hide-below-wide">${linkButton("Share", "#rows", { kind: "quiet", size: "sm", icon: "share", ariaLabel: "Share Studio calendar" })}</span><span class="show-below-wide">${iconButton("Share Studio calendar", "share", { href: "#rows" })}</span>`,
+          `<span class="hide-narrow">${linkButton("Share", "#rows", { kind: "quiet", size: "sm", icon: "share", ariaLabel: "Share Studio calendar" })}</span><span class="show-narrow">${iconButton("Share Studio calendar", "share", { href: "#rows" })}</span>`,
           railMenu("g-tools-calendar", "Studio calendar")
         ],
         [
-          `<div class="cell-name">${patch("spend")}<div class="row-main"><span class="row-name"><a class="row-link" href="#rows">Spend requests</a></span><span class="row-desc">Ask for money and keep the receipt</span><span class="show-below-wide"><a href="#rows">${badge("2 failed", "danger")}</a></span></div></div>`,
+          `<div class="cell-name">${patch("spend")}<div class="row-main"><span class="row-name"><a class="row-link" href="#rows">Spend requests</a></span><span class="row-desc">Ask for money and keep the receipt</span><span class="show-narrow"><a href="#rows">${badge("2 failed", "danger")}</a></span></div></div>`,
           `<div class="cell-name">${avatar("grace@example.com", "Grace Hopper")}<span>Grace</span></div>`,
           `<a href="#rows">${badge("2 failed", "danger")}</a>`,
           "",
@@ -739,10 +739,10 @@ const homeParts = demo(
     ["Narrow", "two a row; on a phone the name alone"]
   ])}${stateTable("Main with rail", [
     ["Rest", "the main column, and a narrow rail beside it, such as Home's Tools and Pages"],
-    ["Narrow", "below 1024px the rail follows the main column"],
+    ["Below 1024px", "the rail follows the main column; from 640px its table keeps every column"],
     [
-      "Beside a rail",
-      "below 1280px a table's columns marked for it are left out, and what matters of them shows under the name"
+      "Beside a rail, 1024px to 1279px",
+      "a table's columns that hide when narrow are left out, as on a phone, and what matters of them shows under the name"
     ]
   ])}${stateTable("Copy button", [
     ["Without script", "not there, so nothing offers a copy that can't happen"],

@@ -305,19 +305,20 @@ export const renderHome = (input: HomeInput): Template => {
         })
       : "";
 
-  // Tools: every live tier 2 patch, A–Z and never re-sorted. Below 1280px, where Pages beside it
-  // leaves the table narrow, its Failures column gives way and a failing tool's count shows under
-  // its title instead; Share on the viewer's own turns to its icon, and on a phone to the menu's.
+  // Tools: every live tier 2 patch, A–Z and never re-sorted. Where it runs narrow, on a phone and
+  // from 1024px to 1279px with Pages beside it, its Failures column gives way and a failing tool's
+  // count shows under its title instead. Share on the viewer's own turns to its icon beside Pages,
+  // and on a phone to the menu's.
   const tools = live.filter((entry) => !isPage(entry)).sort(byTitle);
   const failures = tools.some(manages);
   const share = (entry: Row) => {
     const href = shareHref("/", entry.patch.name);
     const label = `Share ${title(entry)}`;
-    return `<span class="hide-below-wide">${linkButton("Share", href, { kind: "quiet", size: "sm", icon: "share", ariaLabel: label })}</span><span class="show-below-wide">${iconButton(label, "share", { href })}</span>`;
+    return `<span class="hide-narrow">${linkButton("Share", href, { kind: "quiet", size: "sm", icon: "share", ariaLabel: label })}</span><span class="show-narrow">${iconButton(label, "share", { href })}</span>`;
   };
   const toolCell = (entry: Row) => {
     const count = manages(entry) ? failedBadge(entry.patch, calls?.get(entry.patch.id)) : "";
-    return `<div class="cell-name">${patchMark(entry.patch.name, entry.tier)}<div class="row-main"><span class="row-name"><a class="row-link" href="${escapeAttribute(patchAddress(entry.patch))}">${dotted(entry) ? unopenedName(title(entry)) : escapeHtml(title(entry))}</a></span><span class="row-desc">${escapeHtml(firstClause(entry.patch.description) || "No description")}</span>${count === "" ? "" : `<span class="show-below-wide">${count}</span>`}</div></div>`;
+    return `<div class="cell-name">${patchMark(entry.patch.name, entry.tier)}<div class="row-main"><span class="row-name"><a class="row-link" href="${escapeAttribute(patchAddress(entry.patch))}">${dotted(entry) ? unopenedName(title(entry)) : escapeHtml(title(entry))}</a></span><span class="row-desc">${escapeHtml(firstClause(entry.patch.description) || "No description")}</span>${count === "" ? "" : `<span class="show-narrow">${count}</span>`}</div></div>`;
   };
   const toolsSection = region({
     id: "tools",
@@ -327,7 +328,7 @@ export const renderHome = (input: HomeInput): Template => {
       columns: [
         { label: "Patch", grow: true },
         { label: "Owner", hideOnPhone: true, nowrap: true },
-        ...(failures ? [{ ...failuresColumn, hideBelowWide: true }] : []),
+        ...(failures ? [{ ...failuresColumn, hideWhenNarrow: true }] : []),
         { label: "Share", hidden: true, hideOnPhone: true, align: "end" as const, nowrap: true },
         { label: "Actions", hidden: true, align: "end" as const, nowrap: true }
       ],

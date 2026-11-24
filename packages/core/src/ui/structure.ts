@@ -135,10 +135,11 @@ export interface Column {
   /** Left out on a phone, where the row keeps what matters. */
   readonly hideOnPhone?: boolean;
   /**
-   * Left out below 1280px, where a rail beside the table leaves it narrow, and so on a phone too;
-   * a cell can say what matters of it under the name with `show-below-wide`.
+   * Left out where the table runs narrow: on a phone, and from 1024px to 1279px while a rail sits
+   * beside it in `mainWithRail`. A cell can say what matters of it under the name with
+   * `show-narrow`.
    */
-  readonly hideBelowWide?: boolean;
+  readonly hideWhenNarrow?: boolean;
   /** For a column of one control, such as a row's menu, with no visible header. */
   readonly hidden?: boolean;
   /** Keeps its cells on one line, such as a time, a count or a button, so another column wraps. */
@@ -169,7 +170,7 @@ export const table = (spec: {
     [
       column?.align === "end" ? "r" : "",
       column?.hideOnPhone === true ? "hide-sm" : "",
-      column?.hideBelowWide === true ? "hide-below-wide" : "",
+      column?.hideWhenNarrow === true ? "hide-narrow" : "",
       column?.nowrap === true ? "nowrap" : "",
       column?.grow === true ? "cell-grow" : "",
       column?.readable === true ? "cell-readable" : ""
