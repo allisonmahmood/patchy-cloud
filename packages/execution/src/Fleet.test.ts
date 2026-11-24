@@ -2365,7 +2365,8 @@ it.layer(services)("host fleet controller", (it) => {
           "trim-concurrency",
           TaskProvider.full,
           2,
-          (yield* Clock.currentTimeMillis) - 40_000
+          (yield* Clock.currentTimeMillis) - 40_000,
+          false
         );
         assert.deepStrictEqual(trimmedAfterRace, []);
         const remainingSpares = yield* sql<{ total: number }>`
@@ -3720,7 +3721,7 @@ it.layer(services)("small boxes for one-member companies", (it) => {
   );
 
   it.effect(
-    "rechecks the switch at each write a pass planned while it was on: reserve, readiness and trim",
+    "rechecks the switch at each write a pass planned while it was on: reserve, readiness and trim; a trim planned while it was off leaves small spares to the next pass",
     () =>
       Effect.gen(function* () {
         const memory = MemoryTasks.make();
@@ -3740,7 +3741,7 @@ it.layer(services)("small boxes for one-member companies", (it) => {
               )
         });
         const { sql, left } = yield* setup("small-flip", flipping, flipping, true);
-        const flipBefore = (pattern: RegExp) => {
+        const flipBefore = (pattern: RegExp, on = false) => {
           let flipped = false;
           const transform: Statement.Transformer = (statement) =>
             flipped || !pattern.test(statement.compile()[0])
@@ -3748,7 +3749,7 @@ it.layer(services)("small boxes for one-member companies", (it) => {
               : Effect.sync(() => {
                   flipped = true;
                 }).pipe(
-                  Effect.andThen(store.setSmallBoxes(false).pipe(Effect.orDie)),
+                  Effect.andThen(store.setSmallBoxes(on).pipe(Effect.orDie)),
                   Effect.as(statement)
                 );
           return { transform, flipped: () => flipped };
@@ -3802,6 +3803,26 @@ it.layer(services)("small boxes for one-member companies", (it) => {
           .pipe(Effect.provideService(Statement.CurrentTransformer, atTarget.transform));
         assert.isTrue(atTarget.flipped());
         assert.deepStrictEqual(yield* tasksOf("spare", TaskProvider.small.cpu), []);
+        // Three aged small spares, one over the target. A pass plans with the switch off to keep
+        // none, and it goes on before the trim decides: the trim leaves all three.
+        yield* Fleet.setSmallBoxes(true);
+        yield* left.housekeeping();
+        yield* left.housekeeping();
+        const later = yield* Clock.currentTimeMillis;
+        yield* sql`INSERT INTO execution_tasks
+          (task_id, deployment_revision, state, requested_at, started_at, ready_at, cpu)
+          VALUES ('small-flip-surplus', 'small-flip', 'spare', ${later + 1}, ${later}, ${later}, 512)`;
+        yield* Fleet.setSmallBoxes(false);
+        yield* TestClock.adjust(40_000);
+        const atOn = flipBefore(recheck, true);
+        yield* left
+          .housekeeping()
+          .pipe(Effect.provideService(Statement.CurrentTransformer, atOn.transform));
+        assert.isTrue(atOn.flipped());
+        assert.strictEqual((yield* tasksOf("spare", TaskProvider.small.cpu)).length, 3);
+        // The next pass plans with it on and keeps its target of two.
+        yield* left.housekeeping();
+        assert.strictEqual((yield* tasksOf("spare", TaskProvider.small.cpu)).length, 2);
       }).pipe(Effect.scoped)
   );
 
@@ -4529,7 +4550,7 @@ it.layer(services)("small boxes for one-member companies", (it) => {
                 Effect.as(statement)
               );
         const trim = yield* store
-          .trimSpares("trim-lock-a", TaskProvider.small, 1, now)
+          .trimSpares("trim-lock-a", TaskProvider.small, 1, now, true)
           .pipe(Effect.provideService(Statement.CurrentTransformer, transform), Effect.forkChild);
         yield* Deferred.await(reached);
         return { trim, resume: Deferred.succeed(resume, undefined) };

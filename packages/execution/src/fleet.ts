@@ -542,7 +542,8 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
             rollout.currentRevision,
             size,
             keep,
-            currentNow - grace
+            currentNow - grace,
+            smallBoxes
           );
           yield* Effect.forEach(
             trimmed,
