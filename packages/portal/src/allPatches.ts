@@ -413,8 +413,10 @@ export const renderAllPatches = (input: {
     });
     const when = (iso: string) =>
       `<time class="muted" datetime="${escapeAttribute(iso)}">${escapeHtml(ago(iso, now))}</time>`;
+    // A phone leaves out every column but Patch, so it shows no headings to sort by.
     return table({
       label: "Patches",
+      hideHeaderOnPhone: true,
       columns: [
         { ...patchColumn, sort: sorting("patch") },
         ownerColumn,

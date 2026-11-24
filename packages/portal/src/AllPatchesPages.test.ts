@@ -23,6 +23,7 @@ import {
   listed,
   menuItems,
   shareDialog,
+  dialogAfter,
   invoke,
   seedOf,
   publishTier2,
@@ -292,15 +293,16 @@ it.layer(socket)("all patches on a socket", (it) => {
           (link) => link.href === "/patches?q=board&amp;sort=visits" && link.text === "Visits"
         )
       );
-      // Sharing from a row comes back to the same sorted page.
-      const sharing = `/patches?q=board&sort=opened&page=2&share=board-49`;
+      // Sharing from a row comes back to the same sorted page, refused or saved, and so does Close.
+      const sorted = "/patches?q=board&sort=opened&page=2";
+      const sharing = `${sorted}&share=board-49`;
       assert.include(later, `href="${sharing.replaceAll("&", "&amp;")}"`);
       const addPath = `${cardPath("board-49")}/add-guest`;
       const fields = formFields(yield* (yield* request(sharing, workspace.owner)).text, addPath);
-      assert.strictEqual(fields.back, "/patches?q=board&amp;sort=opened&amp;page=2");
+      assert.strictEqual(fields.back, sorted.replaceAll("&", "&amp;"));
       const refused = yield* post(addPath, workspace.owner, {
         ...fields,
-        back: "/patches?q=board&sort=opened&page=2",
+        back: sorted,
         email: "nobody@nowhere.example"
       });
       assert.strictEqual(refused.status, 422);
@@ -308,10 +310,23 @@ it.layer(socket)("all patches on a socket", (it) => {
       assert.deepStrictEqual(listed(behind), ["board-49", "board-50"]);
       assert.isTrue(
         links(shareDialog(behind)).some(
-          (link) =>
-            link.href === "/patches?q=board&amp;sort=opened&amp;page=2" && link.text === "Close"
+          (link) => link.href === sorted.replaceAll("&", "&amp;") && link.text === "Close"
         )
       );
+      const guest = (yield* company()).member;
+      const saved = yield* post(addPath, workspace.owner, {
+        ...fields,
+        back: sorted,
+        email: guest.email
+      });
+      assert.strictEqual(saved.status, 303);
+      assert.strictEqual(saved.headers.location, sharing);
+      const shared = yield* dialogAfter(saved, workspace.owner);
+      assert.include(shared.receipt, `with ${guest.name}`);
+      const close = links(shared.html).find((link) => link.text === "Close")?.href;
+      assert.strictEqual(close, sorted.replaceAll("&", "&amp;"));
+      const closed = yield* (yield* request(sorted, workspace.owner)).text;
+      assert.deepStrictEqual(listed(closed), ["board-49", "board-50"]);
     })
   );
 

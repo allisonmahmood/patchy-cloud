@@ -182,6 +182,12 @@ export const table = (spec: {
   readonly label: string;
   readonly columns: ReadonlyArray<Column>;
   readonly rows: ReadonlyArray<ReadonlyArray<string>>;
+  /**
+   * Hides the header row from sight on a phone, such as All patches' headers that sort by columns
+   * a phone leaves out, so a phone has no sort control. Screen readers still read it, the cells
+   * stay, and it shows while focus is in it.
+   */
+  readonly hideHeaderOnPhone?: boolean;
 }) => {
   const cellClass = (column: Column | undefined) =>
     [
@@ -198,7 +204,7 @@ export const table = (spec: {
     const name = cellClass(column);
     return name === "" ? "" : ` class="${name}"`;
   };
-  return `<div class="table-wrap"><table class="table" aria-label="${escapeAttribute(spec.label)}"><thead><tr>${spec.columns
+  return `<div class="table-wrap"><table class="table${spec.hideHeaderOnPhone === true ? " table-headless-sm" : ""}" aria-label="${escapeAttribute(spec.label)}"><thead><tr>${spec.columns
     .map(
       (column) =>
         `<th scope="col"${classAttribute(column)}${column.sort?.current === undefined ? "" : ` aria-sort="${column.sort.current}"`}>${header(column)}</th>`
