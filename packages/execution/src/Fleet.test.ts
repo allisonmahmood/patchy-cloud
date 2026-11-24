@@ -4441,6 +4441,65 @@ it.layer(services)("small boxes for one-member companies", (it) => {
   );
 
   it.effect(
+    "drains a small spare of a revision neither current nor staged only while it is still not current",
+    () =>
+      Effect.gen(function* () {
+        const { sql, provider, left } = yield* setupMemory("unretain-a");
+        const store = yield* FleetStore.make;
+        yield* Fleet.setSmallBoxes(true);
+        yield* left.housekeeping();
+        const spare = (yield* tasksOf("spare", TaskProvider.small.cpu))[0]!;
+        const next = yield* Fleet.make({
+          replicaId: "unretain-b-host",
+          deploymentRevision: "unretain-b",
+          automaticHousekeeping: false
+        }).pipe(Effect.provideService(TaskProvider.TaskProvider, provider));
+        const now = yield* Clock.currentTimeMillis;
+        yield* sql`INSERT INTO execution_tasks
+        (task_id, deployment_revision, state, requested_at, started_at, ready_at)
+        VALUES ('unretain-b-spare', 'unretain-b', 'spare', ${now}, ${now}, ${now})`;
+        assert.isTrue(yield* store.stageDeployment("unretain-b"));
+        assert.isTrue(yield* store.promoteDeployment("unretain-b", 1));
+        yield* sql`DELETE FROM execution_housekeeping`;
+        // B's pass reads the rollout with A neither current nor staged. Just before the statement
+        // that would fence A's small spare, A is staged and promoted again, and B staged once
+        // more, in one transaction, which keeps B's pass and its lease running.
+        let promoted = false;
+        const transform: Statement.Transformer = (statement) => {
+          const [text, params] = statement.compile();
+          return promoted || !/SET state = 'stopping'/.test(text) || !params.includes(spare)
+            ? Effect.succeed(statement)
+            : Effect.gen(function* () {
+                yield* store.stageDeployment("unretain-a");
+                promoted = yield* store.promoteDeployment("unretain-a", 0);
+                yield* store.stageDeployment("unretain-b");
+                return statement;
+              }).pipe(sql.withTransaction, Effect.orDie);
+        };
+        assert.isTrue(
+          yield* next
+            .housekeeping()
+            .pipe(Effect.provideService(Statement.CurrentTransformer, transform))
+        );
+        assert.isTrue(promoted);
+        assert.deepStrictEqual(
+          yield* sql`SELECT state FROM execution_tasks WHERE task_id = ${spare}`,
+          [{ state: "spare" }]
+        );
+        // B promoted again and A left neither current nor staged: its small spare is drained.
+        assert.isTrue(yield* store.promoteDeployment("unretain-b", 1));
+        assert.isTrue(yield* next.housekeeping());
+        assert.deepStrictEqual(
+          yield* sql`SELECT state FROM execution_tasks WHERE task_id = ${spare}`,
+          [{ state: "stopped" }]
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(sizing({ "execution.pool.spares": 1, "execution.pool.smallSpares": 1 }))
+      )
+  );
+
+  it.effect(
     "drains a task that asked for a small box and came up full after the switch went off",
     () =>
       Effect.gen(function* () {

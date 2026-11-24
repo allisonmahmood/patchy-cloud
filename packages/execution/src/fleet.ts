@@ -706,21 +706,20 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
                     yield* launch(task);
                   else yield* drainTask(task.taskId, "deployment");
                 } else if (
-                  task.state === "stopping" ||
-                  (task.state === "spare" && !retained.has(task.deploymentRevision))
-                )
-                  yield* drainTask(task.taskId, "deployment");
-                else if (
                   task.state === "spare" &&
                   TaskProvider.isSmall(task) &&
                   task.deploymentRevision !== rollout.currentRevision
                 ) {
-                  // Small spares belong to the current revision only, never a staged one. The
-                  // fence rechecks that before any provider call: a spare whose revision was
-                  // promoted since, or that a company claimed since, is left alone.
+                  // Small spares belong to the current revision only, never a staged or retired
+                  // one. The fence rechecks that before any provider call: a spare whose revision
+                  // was staged and promoted since, or that a company claimed since, is left alone.
                   if (yield* store.fenceSmallSpare(task.taskId))
                     yield* drainTask(task.taskId, "deployment");
-                }
+                } else if (
+                  task.state === "stopping" ||
+                  (task.state === "spare" && !retained.has(task.deploymentRevision))
+                )
+                  yield* drainTask(task.taskId, "deployment");
               })
             ),
           { concurrency: 8, discard: true }
