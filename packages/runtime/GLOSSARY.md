@@ -69,7 +69,7 @@ A company-exclusive execution task that hosts its loaded patch versions. Release
 _Avoid_: patch instance, reusable worker
 
 **Box size**:
-How much of Fargate a company task has, decided each time its company claims one: a full box, the exec task definition's one vCPU and 2 GiB, or a small box. A task records the size it asked for while it starts and the size it was observed running at once ready; the fleet budget counts that size in vCPU, and a task never verified counts as full.
+How much of Fargate a company task has, decided each time its company claims one: a full box, the exec task definition's one vCPU and 2 GiB, or a small box. A task records the size it asked for while it starts and the size it was observed running at once ready, or once turned away at readiness; the fleet budget counts that size in vCPU, and a task never admitted at readiness counts as full.
 _Avoid_: tier (the runtime tiers), plan, account kind
 
 **Small box**:

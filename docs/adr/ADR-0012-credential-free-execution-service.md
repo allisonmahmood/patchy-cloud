@@ -334,9 +334,12 @@ housekeeping warms its spares, and promotion selects it for new bindings only af
 the capacity check passes. Existing companies move incrementally to already-ready
 replacement spares; their old admissions are fenced atomically with replacement
 claim, and previously admitted work drains on the predecessor. A replacement
-locks the rollout row and then the company, rechecks that the binding still needs
-replacing, sizes it as a claim would and fences it only with a locked spare that
-size allows in hand; a binding with no such spare is passed over for the next. Staging and promoting
+locks the rollout row and then the company, passing over a company whose claim
+lock is held, rechecks that the binding still needs replacing, sizes it as a claim
+would and fences it only with a locked spare that size allows in hand; a binding
+with no such spare is passed over for the next. A claim holds the rollout row from
+its read of the switch and current revision until it commits, so a promotion or a
+flip of the switch waits for it rather than landing between that read and its spare. Staging and promoting
 an earlier revision performs rollback. A restarting old host cannot reverse promotion.
 
 Active document, prewarm and admitted invocation lifetimes hold shared database
@@ -386,11 +389,16 @@ through housekeeping failures until its configured pool deadline.
 An omitted ECS listing or transient `MISSING` description is not proof of exit.
 Known tasks remain budgeted until the provider confirms they stopped. A running
 task that reappears after a recorded stop is fenced and stopped again. A drain
-completes only on evidence: the provider confirms the task stopped, or the task's
-last launch was refused outright, ECS answering and creating nothing, which the
-row records and a later launch attempt clears first. If ECS has already forgotten a
-task and no stop observation exists, its unresolved reservation requires operator
-reconciliation rather than an inferred exit.
+completes only on evidence: the provider confirms the task stopped, or the row
+asked for a small box and certainly launched nothing. A row is certain only when
+this controller reserved it and every launch attempt since, each counted on the row
+before it is sent, was refused outright: ECS answered and created nothing on the
+SDK's only attempt. Any other outcome, a row an older release inserted, or its task
+seen running leaves it uncertain for good, and a task the provider lists is stopped
+through it whatever the row says. A full box's drain completes only on a confirmed
+stop. If ECS has already forgotten a task and no stop observation exists, its
+unresolved reservation stays budgeted rather than taking an inferred exit; an
+operator stops a task found in ECS there and never edits the row.
 
 Process reports commit before their acknowledgement. Newly recorded process events
 are forwarded through the best-effort analytics sink with only the box's `cpu`

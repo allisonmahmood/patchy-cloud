@@ -591,12 +591,13 @@ leave less than a full box of room in `execution.fleet.budget` vCPU, it logs a s
 `Execution fleet budget exhausted revision=<rev> size=<full|small> budget=<vCPU> target=<n> spares=<n>`
 at most once per housekeeping interval per revision and size per host replica (it does not log
 when reservation stops because the lease was lost, the revision was retired or small boxes went
-off). `spares` counts that size's starting and ready spares:
+off). `spares` counts that size's starting and ready spares. Lines from hosts of a
+release before box sizes carry no `size`, so it parses as optional:
 
 ```
 fields @timestamp, @message
 | filter @message like /Execution fleet budget exhausted/
-| parse @message /revision=(?<revision>\S+) size=(?<size>\S+) budget=(?<budget>[\d.]+) target=(?<target>\d+) spares=(?<spares>\d+)/
+| parse @message /revision=(?<revision>\S+) (?:size=(?<size>\S+) )?budget=(?<budget>[\d.]+) target=(?<target>\d+) spares=(?<spares>\d+)/
 | display @timestamp, revision, size, budget, target, spares
 | sort @timestamp desc
 | limit 50
@@ -1484,7 +1485,8 @@ Rolling back to any release that has [small boxes](#small-boxes) is safe with th
 on or off. To roll back further, run `small-boxes off` first and wait until
 `small-boxes status` shows no small task and no unverified small task that is not
 stopped, starting and stopping included: an earlier release hands out spares
-without looking at their size and counts tasks rather than vCPU.
+without looking at their size and counts tasks rather than vCPU. A row that never
+resolves blocks that rollback; fix forward instead, never edit the row.
 
 With Models on, roll back no further than the release that brought hosted model
 calls and the refusals above (#1493): it is the oldest release Models may be on
@@ -1566,15 +1568,15 @@ with the staged release's budget and floor for `<budget>` and `<floor>`:
 
 ```sql
 SELECT r.current_revision, r.staged_revision,
-  sum(CASE WHEN t.ready_at IS NULL THEN 1024 ELSE t.cpu END)
-    FILTER (WHERE t.state IN ('starting', 'spare', 'bound')) / 1024.0 AS live_vcpu,
+  COALESCE(sum(CASE WHEN t.ready_at IS NULL THEN 1024 ELSE t.cpu END)
+    FILTER (WHERE t.state <> 'stopped'), 0) / 1024.0 AS charged_vcpu,
   count(*) FILTER (WHERE t.state = 'stopping') AS stopping,
   count(*) FILTER (WHERE t.state = 'spare'
     AND t.deployment_revision = r.current_revision) AS current_spares,
   count(*) FILTER (WHERE t.state IN ('starting', 'spare') AND t.cpu >= 1024
     AND t.deployment_revision = r.staged_revision) AS staged_spares,
   greatest(0, COALESCE(sum(CASE WHEN t.ready_at IS NULL THEN 1024 ELSE t.cpu END)
-      FILTER (WHERE t.state IN ('starting', 'spare', 'bound')), 0) / 1024.0
+      FILTER (WHERE t.state <> 'stopped'), 0) / 1024.0
     + greatest(0, <floor> - count(*) FILTER (WHERE t.state IN ('starting', 'spare')
       AND t.cpu >= 1024 AND t.deployment_revision = r.staged_revision))
     - <budget>) AS stops_vcpu
@@ -1583,19 +1585,24 @@ GROUP BY r.current_revision, r.staged_revision;
 ```
 
 `stops_vcpu` is how much vCPU must go before the staged revision can reach its
-floor. It counts every `starting`, `spare` and `bound` task of either revision,
-so it covers a fleet already over the staged budget, and it credits the staged
-revision's full spares, starting ones included, each of which needs a full vCPU.
-`stopping` tasks are already on their way out and don't count. When `stops_vcpu`
-is zero, the next housekeeping passes warm the staged spares on their own.
+floor. It counts every task not yet `stopped`, of either revision and `stopping`
+ones included, as the budget does, so it covers a fleet already over the staged
+budget, and it credits the staged revision's full spares, starting ones included,
+each of which needs a full vCPU. A `stopping` task stays charged until ECS confirms
+its stop; when `stopping` is above zero, let a pass or two confirm those stops and
+count again before fencing more. When `stops_vcpu` is zero, the next housekeeping
+passes warm the staged spares on their own.
 
 Otherwise fence the current revision's spares, newest first, since a company's
 first open claims the oldest, until their CPU covers `stops_vcpu`. A small spare
-frees half a vCPU, a full one a whole vCPU:
+frees half a vCPU, a full one a whole vCPU. The running sum orders by request time
+and then task id, one row at a time, so spares requested at the same moment are
+still taken one by one:
 
 ```sql
 WITH ranked AS (
-  SELECT task_id, cpu, sum(cpu) OVER (ORDER BY requested_at DESC) AS freed
+  SELECT task_id, cpu, sum(cpu) OVER (ORDER BY requested_at DESC, task_id
+    ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS freed
   FROM execution_tasks
   WHERE state = 'spare'
     AND deployment_revision = (SELECT current_revision FROM execution_rollout)
@@ -1753,8 +1760,8 @@ other than it asked for is recorded at the size it runs at, and the error log sa
 `bun dist/fleet.js small-boxes on|off|status` changes the switch, as controller code,
 never a row edit, and prints the status; `status` only prints it. The status comes
 from one database snapshot: the switch, ready small tasks not stopped by state, and
-every task that asked for a small box, was never verified at readiness and is not
-stopped, marked when its launch was refused outright. Turning it on or off changes
+every task never admitted at readiness and not stopped that asked for a small box
+or was seen running at one, marked when nothing was ever launched for it. Turning it on or off changes
 the next claim of each company, never a live binding: after `off`, small bindings
 keep their box until their tail ends. Run it only with Allison's go, as a one-off
 task from the live host task definition, as the deploy runs promote:
@@ -1778,15 +1785,19 @@ instance, run it from the checkout with the instance's env loaded:
 
 After `off`, housekeeping trims small spares after `execution.pool.wait` and drains
 small tasks still starting. A drain completes only on evidence: ECS reports the task
-stopped, or its last launch was refused outright, ECS answering and creating
-nothing, which the row records. A drain ECS cannot resolve stays `stopping` and
-keeps a full vCPU of the budget, pass after pass, and status lists it. Settle one by
-hand: find its ECS task by the `patchy:execution-task` tag, stop it if it runs, and
-once ECS reports it stopped the next pass marks it `stopped`. If ECS has no task
-with that tag, nothing of it runs; record that as the controller records a launch
-refused outright, `UPDATE execution_tasks SET launch_refused_at = <epoch ms> WHERE
-task_id = '<id>' AND state = 'stopping' AND ready_at IS NULL`, and the next pass
-completes it. That one row change is this runbook's.
+stopped, or the row asked for a small box and certainly launched nothing. The row
+records that: the controller reserved it, and ECS refused every launch attempt since
+outright, answering and creating nothing on the SDK's only try. Any other outcome
+of an attempt, such as a lost reply, leaves the row uncertain for good, and so does
+ECS showing its task: a task ECS lists is stopped through ECS whatever the row says.
+A full box's drain completes only when ECS reports its task stopped.
+
+A drain ECS cannot resolve stays `stopping` and keeps a full vCPU of the budget,
+pass after pass, and status lists it. It completes when ECS reports the task
+stopped. An operator who finds its ECS task by the `patchy:execution-task` tag
+stops it there, and the next pass marks the row `stopped`. A row that never
+resolves blocks rolling back past small boxes: fix forward instead, and never edit
+the row.
 
 ### Sharing existing tables
 
