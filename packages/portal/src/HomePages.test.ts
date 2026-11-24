@@ -39,7 +39,7 @@ const steps = (html: string) =>
       /<li class="step(?: step-(done|current))?"[^>]*>[\s\S]*?<p class="step-title">([\s\S]*?)<\/p>/g
     )
   ].map((match) => [match[1] ?? "later", text(match[2]!)]);
-/** One of Home's sections by its id: attention, usual, new, yours, colleagues, shared, patches. */
+/** One of Home's sections by its id: attention, usual, tools, pages, shared, patches. */
 const sectionOf = (html: string, id: string) =>
   html.match(new RegExp(`<section class="section" id="${id}"[^>]*>[\\s\\S]*?</section>`))?.[0] ??
   "";
@@ -454,12 +454,8 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
           (match) => text(match[1]!)
         );
       const home = yield* (yield* request("/", workspace.owner)).text;
-      assert.deepStrictEqual(shown(sectionOf(home, "yours")), ["Pipeline"]);
+      assert.deepStrictEqual(shown(sectionOf(home, "pages")), ["Docks · Harbor Works", "Pipeline"]);
       assert.include(text(home), "Pipeline is live");
-      assert.deepStrictEqual(
-        shown(sectionOf(yield* (yield* request("/", workspace.member)).text, "colleagues")),
-        ["Docks · Harbor Works", "Pipeline"]
-      );
       assert.deepStrictEqual(shown(yield* (yield* request("/patches", workspace.owner)).text), [
         "Docks · Harbor Works",
         "Pipeline"
@@ -477,7 +473,8 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
         assert.strictEqual(heading(html), "Home");
         assert.include(text(sectionOf(html, "patches")), "Nothing is live");
         assert.isTrue(links(html).some((link) => link.href === "/patches?show=off"));
-        assert.deepStrictEqual(names(html, "yours"), []);
+        assert.strictEqual(sectionOf(html, "tools"), "");
+        assert.strictEqual(sectionOf(html, "pages"), "");
       }
       // A company with nothing at all says so, and offers its admins the people to build for.
       const empty = yield* company();
@@ -529,157 +526,172 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
       yield* patches.retire(echo!.patchId, actor(workspace.admin));
       const after = yield* (yield* request("/", workspace.member)).text;
       assert.deepStrictEqual(names(after, "usual"), ["bravo-two"]);
-      assert.notInclude(names(after, "colleagues"), "echo");
+      assert.notInclude(names(after, "pages"), "echo");
 
-      // Below eight live patches Home reads whole, without Your usual or New.
+      // Below eight live patches Home reads whole, without Your usual.
       yield* patches.retire(delta!.patchId, actor(workspace.admin));
       const short = yield* (yield* request("/", workspace.member)).text;
       assert.strictEqual(sectionOf(short, "usual"), "");
-      assert.strictEqual(sectionOf(short, "new"), "");
-      assert.lengthOf(names(short, "colleagues"), 7);
+      assert.lengthOf(names(short, "pages"), 7);
     })
   );
 
   it.effect(
-    "lists the viewer's own patches A–Z with who can open them, their calls and Share",
+    "lists every live tool A–Z under Tools, with its owner, its calls to who manages it and Share",
     () =>
       Effect.gen(function* () {
         const workspace = yield* company();
-        const guests = yield* company();
-        const quiet = yield* publishTier2(workspace.owner, "quiet-tool");
+        yield* publishTier2(workspace.owner, "quiet-tool");
         const busy = yield* publishTier2(workspace.owner, "busy-tool");
-        yield* publish(workspace.owner, "about-us", { audience: { kind: "public" } });
-        const shared = yield* publish(workspace.owner, "site-notes");
+        yield* publish(workspace.owner, "site-notes");
         yield* publishTier2(workspace.member, "their-tool");
-        yield* (yield* GuestGrants.GuestGrants).share({
-          patchId: shared.patchId,
-          actor: actor(workspace.owner),
-          email: guests.member.email
-        });
         yield* invoke(seedOf(workspace.id, busy), workspace.member, {
           handler: "visits.load",
           kind: "query"
         });
 
         const html = yield* (yield* request("/", workspace.owner)).text;
-        const yours = sectionOf(html, "yours");
-        assert.deepStrictEqual(names(html, "yours"), [
-          "about-us",
-          "busy-tool",
-          "quiet-tool",
-          "site-notes"
-        ]);
-        assert.include(
-          text(yours),
-          "Patch Access Failures (24 h) Actions about-us Find the right person Public —"
+        const tools = sectionOf(html, "tools");
+        assert.deepStrictEqual(names(html, "tools"), ["busy-tool", "quiet-tool", "their-tool"]);
+        // The calls show on the rows the viewer manages; a colleague's row leaves them out.
+        assert.include(text(tools), "Patch Owner Failures (24 h) Share Actions BT busy-tool");
+        assert.include(text(tools), "busy-tool Find the right person P You None");
+        assert.include(text(tools), "quiet-tool Find the right person P You No calls yet");
+        assert.include(text(tools), "their-tool Find the right person A Alex");
+        assert.notInclude(text(tools), "Alex No calls yet");
+        // Share opens the dialog over Home from the viewer's own rows, and only theirs.
+        const shares = links(tools).filter((link) => link.href.startsWith("/?share="));
+        assert.sameMembers(
+          [...new Set(shares.map((link) => link.href))],
+          ["/?share=busy-tool", "/?share=quiet-tool"]
         );
-        assert.include(text(yours), "busy-tool Find the right person Company None");
-        assert.include(text(yours), "quiet-tool Find the right person Company No calls yet");
-        assert.include(text(yours), "site-notes Find the right person Company + 1 guest —");
-        // Each owned patch keeps Share in its menu over Home.
-        for (const name of ["about-us", "busy-tool", "quiet-tool", "site-notes"])
-          assert.isTrue(
-            links(yours).some((link) => link.href === `/?share=${name}` && link.text === "Share…"),
-            name
-          );
-        assert.include(menuItems(html, `yours-${quiet.patchId}`), "Share…");
-        // A colleague's patch is theirs, with its owner, never under Yours.
-        assert.deepStrictEqual(names(html, "colleagues"), ["their-tool"]);
-        assert.include(text(sectionOf(html, "colleagues")), "Owner Updated");
-        // Someone who owns nothing has no Yours.
-        assert.strictEqual(
-          sectionOf(yield* (yield* request("/", workspace.admin)).text, "yours"),
-          ""
+        assert.include(menuItems(html, `tools-${busy.patchId}`), "Share…");
+        // No New, Yours or From colleagues.
+        for (const gone of ["new", "yours", "colleagues"])
+          assert.strictEqual(sectionOf(html, gone), "", gone);
+        // A member sees the calls of their own alone; an admin manages every tool.
+        const member = text(
+          sectionOf(yield* (yield* request("/", workspace.member)).text, "tools")
         );
+        assert.include(member, "their-tool Find the right person A You No calls yet");
+        assert.notInclude(member, "Priya None");
+        const admin = text(sectionOf(yield* (yield* request("/", workspace.admin)).text, "tools"));
+        assert.include(admin, "busy-tool Find the right person P Priya None");
+        assert.include(admin, "their-tool Find the right person A Alex No calls yet");
       })
   );
 
-  it.effect("never says guests can open a patch that turns them away", () =>
+  it.effect("dots a colleague's tool under Tools until the viewer opens it", () =>
     Effect.gen(function* () {
-      const guest = yield* company();
-      const workspace = yield* company("cmp_portal_guests");
-      const payroll = yield* publish(workspace.owner, "payroll-review", {
-        filename: null,
-        manifest: {
-          ...manifest,
-          name: "payroll-review",
-          tier: 2,
-          handlers: {},
-          uses: {
-            payroll: { kind: "postgres", handle: "payroll", id: "con_payroll", revision: 1 }
-          }
-        },
-        server: {
-          objectKey: "patches/payroll-review/server.js",
-          sha256: sha256("payroll"),
-          bytes: 0
-        }
-      });
-      yield* (yield* GuestGrants.GuestGrants).grant({
-        patchId: payroll.patchId,
-        userId: guest.member.id,
-        grantedBy: workspace.owner.id
-      });
-      const yours = text(sectionOf(yield* (yield* request("/", workspace.owner)).text, "yours"));
-      assert.include(yours, "Company · 1 guest can’t open it");
-      assert.notInclude(yours, "Company + 1 guest");
+      const workspace = yield* company();
+      const desk = yield* publishTier2(workspace.owner, "desk-booker");
+      yield* publishTier2(workspace.member, "my-tool");
+      const before = yield* (yield* request("/", workspace.member)).text;
+      assert.deepStrictEqual(dotted(before, "tools"), ["desk-booker"]);
+      assert.include(
+        sectionOf(before, "tools"),
+        `/desk-booker">${unopenedName("desk-booker")}</a>`
+      );
+      yield* (yield* Patches.Patches).recordOpen(workspace.member.id, desk.patchId, desk.versionId);
+      assert.deepStrictEqual(
+        dotted(yield* (yield* request("/", workspace.member)).text, "tools"),
+        []
+      );
     })
   );
 
-  it.effect("lists colleagues' patches A–Z, twelve of them, with the rest on All patches", () =>
+  it.effect(
+    "lists each owner's newest page of the last 14 days under Pages, with the rest a press away",
+    () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const teams = yield* Teams.Teams;
+        const listed = (html: string) =>
+          [...html.matchAll(/<a class="row-link" href="\/[^/"]+\/([a-z0-9-]+)"/g)].map(
+            (match) => match[1]!
+          );
+        yield* publishTier2(workspace.admin, "desk-booker");
+        const old = yield* publish(workspace.owner, "old-notes");
+        yield* TestClock.adjust(15 * DAY);
+        for (const day of ["mon", "tue", "wed", "thu", "fri", "sat"]) {
+          yield* publish(workspace.owner, `notes-${day}`);
+          yield* TestClock.adjust(60_000);
+        }
+        yield* publish(workspace.member, "lunch-poll");
+        // The member's too, on a team the admin isn't on: they manage it but can't open it.
+        const by = { companyId: workspace.id, actorId: workspace.admin.id };
+        const kitchen = yield* teams.create({ ...by, name: "Kitchen" });
+        yield* teams.setMemberships({ ...by, teamId: kitchen.id, add: [workspace.member.id] });
+        yield* publish(workspace.member, "kitchen-rota", {
+          audience: { kind: "teams", teamIds: [kitchen.id] }
+        });
+
+        const home = yield* (yield* request("/", workspace.admin)).text;
+        // Home lists only what the admin can open, so neither Tools nor Pages has it.
+        assert.notInclude(home, "kitchen-rota");
+        // Newest first, one row per owner: six pages today are one row ending "+5 more".
+        assert.deepStrictEqual(names(home, "pages"), ["lunch-poll", "notes-sat"]);
+        const pages = sectionOf(home, "pages");
+        assert.include(text(pages), "notes-sat Priya · 1 minute ago · +5 more");
+        const more = links(pages).find((link) => link.text === "+5 more")!;
+        assert.strictEqual(more.href, `/patches?show=pages&amp;owner=${workspace.owner.id}`);
+        // It opens that owner's pages, the one from 15 days ago too.
+        const theirs = listed(
+          yield* (yield* request(more.href.replaceAll("&amp;", "&"), workspace.admin)).text
+        );
+        assert.lengthOf(theirs, 7);
+        assert.include(theirs, "old-notes");
+
+        // All N pages names what its link lists: the page out of the window, and the one the
+        // admin manages but can't open, included.
+        const all = links(pages).find((link) => link.text.startsWith("All "))!;
+        assert.deepStrictEqual(all, { href: "/patches?show=pages", text: "All 9 pages" });
+        const listing = listed(yield* (yield* request(all.href, workspace.admin)).text);
+        assert.lengthOf(listing, 9);
+        assert.includeMembers(listing, ["old-notes", "kitchen-rota"]);
+
+        // Republishing an old page brings it back as its owner's newest.
+        yield* TestClock.adjust(60_000);
+        yield* publish(workspace.owner, "old-notes", { intent: "update", patchId: old.patchId });
+        const back = yield* (yield* request("/", workspace.admin)).text;
+        assert.deepStrictEqual(names(back, "pages"), ["old-notes", "lunch-poll"]);
+        assert.include(text(sectionOf(back, "pages")), "old-notes Priya · just now · +6 more");
+
+        // Two weeks on, nothing is in the window and Pages is only its link.
+        yield* TestClock.adjust(15 * DAY);
+        const later = sectionOf(yield* (yield* request("/", workspace.admin)).text, "pages");
+        assert.deepStrictEqual(names(later, "pages"), []);
+        assert.strictEqual(text(later), "Pages All 9 pages");
+      })
+  );
+
+  it.effect("puts every page in the main column, however old, when nothing live is a tool", () =>
     Effect.gen(function* () {
       const workspace = yield* company();
-      const letters = "nmlkjihgfedcba".split("");
-      for (const letter of letters) yield* publish(workspace.admin, `${letter}-patch`);
-      const html = yield* (yield* request("/", workspace.member)).text;
+      yield* publish(workspace.owner, "ancient");
+      yield* TestClock.adjust(60 * DAY);
+      const first = yield* publish(workspace.member, "page-01");
+      for (let index = 2; index <= 12; index++) {
+        yield* TestClock.adjust(60_000);
+        yield* publish(workspace.member, `page-${String(index).padStart(2, "0")}`);
+      }
+      const home = yield* (yield* request("/", workspace.admin)).text;
+      assert.strictEqual(sectionOf(home, "tools"), "");
+      assert.notInclude(home, `class="main-rail"`);
+      // The first twelve, newest first and one row each, then All N pages.
       assert.deepStrictEqual(
-        names(html, "colleagues"),
-        [...letters]
-          .reverse()
-          .slice(0, 12)
-          .map((letter) => `${letter}-patch`)
+        names(home, "pages"),
+        Array.from({ length: 12 }, (_, index) => `page-${String(12 - index).padStart(2, "0")}`)
       );
       assert.isTrue(
-        links(sectionOf(html, "colleagues")).some(
-          (link) => link.href === "/patches" && link.text === "See all 14"
+        links(sectionOf(home, "pages")).some(
+          (link) => link.href === "/patches?show=pages" && link.text === "All 13 pages"
         )
       );
-    })
-  );
-
-  it.effect("lists colleagues' newest patches the viewer hasn't opened under New, dotted", () =>
-    Effect.gen(function* () {
-      const workspace = yield* company();
-      const patches = yield* Patches.Patches;
-      const old = ["old-1", "old-2", "old-3", "old-4", "old-5", "old-6"];
-      for (const name of old) yield* publish(workspace.admin, name);
-      yield* TestClock.adjust(8 * DAY);
-      const recap = yield* publish(workspace.admin, "weekly-recap");
-      yield* TestClock.adjust(60_000);
-      yield* publish(workspace.admin, "forms");
-      yield* TestClock.adjust(60_000);
-      // New leaves out a public page, whose signed-out reads record no open, and the viewer's own.
-      yield* publish(workspace.admin, "press-kit", { audience: { kind: "public" } });
-      yield* publish(workspace.member, "my-notes");
-      const html = yield* (yield* request("/", workspace.member)).text;
-      assert.deepStrictEqual(names(html, "new"), ["forms", "weekly-recap"]);
-      assert.include(text(sectionOf(html, "new")), "forms Page · Sam · 1 minute ago");
-      assert.deepStrictEqual(dotted(html, "new"), ["forms", "weekly-recap"]);
-      // Core's dot, inside the link so the link says so too.
-      assert.include(sectionOf(html, "new"), `/forms">${unopenedName("forms")}</a>`);
-      // The dot is older than New: every colleague's patch not opened yet, a public one too.
-      assert.deepStrictEqual(dotted(html, "colleagues"), [
-        "forms",
-        ...old,
-        "press-kit",
-        "weekly-recap"
-      ]);
-
-      // Opening it takes it out of New and clears its dot.
-      yield* patches.recordOpen(workspace.member.id, recap.patchId, recap.versionId);
-      const opened = yield* (yield* request("/", workspace.member)).text;
-      assert.deepStrictEqual(names(opened, "new"), ["forms"]);
-      assert.deepStrictEqual(dotted(opened, "colleagues"), ["forms", ...old, "press-kit"]);
+      // With one fewer, the oldest is there too, dated.
+      yield* (yield* Patches.Patches).retire(first.patchId, actor(workspace.admin));
+      const short = text(sectionOf(yield* (yield* request("/", workspace.admin)).text, "pages"));
+      assert.include(short, "ancient Priya · 1 Jan");
     })
   );
 
@@ -713,16 +725,16 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
         assert.include(off, "/patches/old-crm");
         assert.deepStrictEqual(dotted(off), []);
         assert.deepStrictEqual(dotted(yield* page("/patches?q=notes")), ["team-notes"]);
-        // Home marks the same ones, and never Yours.
+        // Home marks the same ones where it lists them, never the viewer's own. Pages holds each
+        // owner's newest, so team-notes waits behind press-kit's "+1 more".
         const home = yield* page("/");
-        assert.deepStrictEqual(dotted(home, "colleagues"), dotted(all));
-        assert.deepStrictEqual(dotted(home, "yours"), []);
+        assert.deepStrictEqual(dotted(home, "tools"), ["desk-booker"]);
+        assert.deepStrictEqual(names(home, "pages"), ["lunch-poll", "my-notes", "press-kit"]);
+        assert.deepStrictEqual(dotted(home, "pages"), ["press-kit"]);
 
-        // Opening it clears it on both.
+        // Opening it clears it.
         yield* patches.recordOpen(workspace.member.id, notes.patchId, notes.versionId);
-        const after = dotted(yield* page("/patches"));
-        assert.deepStrictEqual(after, ["desk-booker", "press-kit"]);
-        assert.deepStrictEqual(dotted(yield* page("/"), "colleagues"), after);
+        assert.deepStrictEqual(dotted(yield* page("/patches")), ["desk-booker", "press-kit"]);
         // Its owner never sees it on their own.
         const owner = yield* (yield* request("/patches", workspace.owner)).text;
         assert.deepStrictEqual(dotted(owner), ["desk-booker", "lunch-poll", "my-notes"]);
@@ -769,18 +781,21 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
     })
   );
 
-  it.effect("offers About on every Home list's menu, and Settings only to owners and admins", () =>
+  it.effect("offers Pin and About on Tools' and Pages' menus, and Settings to managers", () =>
     Effect.gen(function* () {
       const workspace = yield* company();
       const page = yield* publish(workspace.owner, "office-map");
       const tool = yield* publishTier2(workspace.owner, "desk-booker");
-      for (const [person, list, shown] of [
-        [workspace.member, "colleagues", false],
-        [workspace.owner, "yours", true],
-        [workspace.admin, "colleagues", true]
+      for (const [person, shown] of [
+        [workspace.member, false],
+        [workspace.owner, true],
+        [workspace.admin, true]
       ] as const) {
         const html = yield* (yield* request("/", person)).text;
-        for (const patch of [page, tool]) {
+        for (const [patch, list] of [
+          [page, "pages"],
+          [tool, "tools"]
+        ] as const) {
           const menu = menuItems(html, `${list}-${patch.patchId}`);
           assert.include(
             menu,
@@ -799,7 +814,10 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
       const workspace = yield* company();
       const titled = yield* publish(workspace.owner, "office-map", {
         title: "Office <map>",
-        description: "Find a desk. Keep the second sentence on the card."
+        description: "Find a desk. Keep the second sentence on the card.",
+        filename: null,
+        manifest: { ...manifest, name: "office-map", tier: 2, handlers: {} },
+        server: { objectKey: "patches/office-map/server.js", sha256: sha256("map"), bytes: 0 }
       });
       const unopened = yield* (yield* request("/", workspace.member)).text;
       assert.include(unopened, `/office-map">${unopenedName("Office <map>")}</a>`);
@@ -811,7 +829,7 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
       );
       const home = yield* (yield* request("/", workspace.member)).text;
       assert.include(home, `/office-map">Office &lt;map&gt;</a>`);
-      assert.include(menuItems(home, `colleagues-${titled.patchId}`), "Office &lt;map&gt;");
+      assert.include(menuItems(home, `tools-${titled.patchId}`), "Office &lt;map&gt;");
       assert.include(text(home), "Office &lt;map&gt; Find a desk");
       assert.notInclude(text(home), "Keep the second sentence");
     })
@@ -842,7 +860,7 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
 
       // The owner's Home leads with it, counting only the last day, with its failed log.
       const home = yield* (yield* request("/", workspace.owner)).text;
-      assert.isTrue(home.indexOf('id="attention"') < home.indexOf('id="yours"'));
+      assert.isTrue(home.indexOf('id="attention"') < home.indexOf('id="tools"'));
       assert.deepStrictEqual(names(home, "attention"), ["client-health"]);
       assert.include(
         text(sectionOf(home, "attention")),
@@ -854,12 +872,12 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
         )
       );
       assert.include(
-        text(sectionOf(home, "yours")),
-        "client-health Find the right person 3 failed"
+        text(sectionOf(home, "tools")),
+        "client-health Find the right person 3 failed P You 3 failed"
       );
       // As on All patches, the count opens the failed log, in its column and under the name.
       assert.lengthOf(
-        links(sectionOf(home, "yours")).filter(
+        links(sectionOf(home, "tools")).filter(
           (link) => link.href === "/patches/client-health/log?outcome=failed"
         ),
         2
@@ -942,10 +960,10 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
       const page = yield* publish(workspace.owner, "grows-up", {
         manifest: { ...manifest, name: "grows-up", tier: 1 }
       });
-      // A page has no calls to count, so the viewer who owns only pages has no such column.
+      // A page lists under Pages; with no live tool there is no Tools.
       const before = yield* (yield* request("/", workspace.owner)).text;
-      assert.include(text(sectionOf(before, "yours")), "grows-up Find the right person Company");
-      assert.notInclude(text(sectionOf(before, "yours")), "Failures");
+      assert.deepStrictEqual(names(before, "pages"), ["grows-up"]);
+      assert.strictEqual(sectionOf(before, "tools"), "");
       yield* publish(workspace.owner, page.name, {
         intent: "update",
         patchId: page.patchId,
@@ -957,11 +975,13 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
           bytes: 0
         }
       });
+      // A tool lists under Tools, and with no live page there is no Pages.
       const after = yield* (yield* request("/", workspace.owner)).text;
       assert.include(
-        text(sectionOf(after, "yours")),
-        "grows-up Find the right person Company No calls yet"
+        text(sectionOf(after, "tools")),
+        "grows-up Find the right person P You No calls yet"
       );
+      assert.strictEqual(sectionOf(after, "pages"), "");
     })
   );
 });

@@ -12,10 +12,12 @@ import {
   emptyState,
   escapeAttribute,
   escapeHtml,
+  iconButton,
   indexPage,
   isPage,
   isWelcomePage,
   linkButton,
+  mainWithRail,
   menuLink,
   menuNewTab,
   notice,
@@ -42,10 +44,10 @@ import {
   failuresCell,
   failuresColumn,
   firstClause,
-  accessLabel,
   manages,
   openItems,
   patchAddress,
+  shareHref,
   unopened
 } from "./shared/presentation.js";
 
@@ -53,12 +55,14 @@ const DAY = 86_400_000;
 /** How far back an open still makes a patch someone's usual. */
 const USUAL_WINDOW = 30 * DAY;
 const USUAL = 4;
-const NEW = 3;
-/** How long a colleague's patch the viewer hasn't opened stays in New. */
-const NEW_WINDOW = 7 * DAY;
-const COLLEAGUES = 12;
-/** Below this many live patches Home reads whole, so it leaves out Your usual and New. */
+/** Below this many live patches Home reads whole, so it leaves out Your usual. */
 const SHELVES_AT = 8;
+/** How long after its served version was published a page stays under Pages beside Tools. */
+const PAGES_WINDOW = 14 * DAY;
+/** Pages beside Tools: one row per owner, at most this many. */
+const PAGE_OWNERS = 5;
+/** Pages in the main column, when the company has no live tool. */
+const PAGES_ALONE = 12;
 
 type Viewer = RequireSession.Viewer["Service"];
 type Row = Patches.ReadPatch;
@@ -70,8 +74,15 @@ const firstName = (name: string) => name.trim().split(/\s+/)[0] ?? name;
 const when = (iso: string, now: number) => {
   const year = ` ${DateTime.toPartsUtc(DateTime.makeUnsafe(now)).year}`;
   const date = dateLabel(iso);
-  return `<time datetime="${escapeAttribute(iso)}">${escapeHtml(now - epoch(iso) < 7 * DAY ? ago(iso, now) : date.endsWith(year) ? date.slice(0, -year.length) : date)}</time>`;
+  return now - epoch(iso) < 7 * DAY
+    ? ago(iso, now)
+    : date.endsWith(year)
+      ? date.slice(0, -year.length)
+      : date;
 };
+/** Newest served version first, then A–Z. */
+const newest = (byTitle: (a: Row, b: Row) => number) => (a: Row, b: Row) =>
+  epoch(b.publishedAt) - epoch(a.publishedAt) || byTitle(a, b);
 
 /**
  * Home's one-line notice after someone's first publication: "<title> is live", or "Your welcome
@@ -114,10 +125,11 @@ export interface HomeInput {
   readonly connections: ReadonlyArray<ConnectionAttention.Attention>;
   /** The viewer's own apps and computers whose access ended on its own lately. */
   readonly ended: ReadonlyArray<EndedAccess>;
-  /** How many guests each of the viewer's own patches has, by name. */
-  readonly guests: ReadonlyMap<string, number>;
-  /** The viewer's patches whose guests can't open them now, by id, so Yours never claims they can. */
-  readonly turnedAway: ReadonlySet<string>;
+  /**
+   * How many live pages All patches' Pages lists for the viewer, the ones they manage but can't
+   * open included, so All N pages never disagrees with it.
+   */
+  readonly pageCount: number;
   /** Other companies' patches shared with the viewer. */
   readonly shared: readonly GuestGrants.Shared[];
 }
@@ -153,10 +165,11 @@ const sharedSection = (
 };
 
 /**
- * Home at `/`, in the order people come for: what needs them, Your usual, New, Yours, From
- * colleagues, then what other companies shared with them. Needs attention shows only when
- * something is wrong; below eight live patches Home reads whole, without Your usual and New.
- * Until the viewer connects an agent its notices offer Connect, unless the Final step is up.
+ * Home at `/`, in the order people come for: what needs them, Your usual, then the company's
+ * tools with its recent pages beside them, then what other companies shared with them. Needs
+ * attention shows only when something is wrong; below eight live patches Home reads whole,
+ * without Your usual. Until the viewer connects an agent its notices offer Connect, unless the
+ * Final step is up.
  */
 export const renderHome = (input: HomeInput): Template => {
   const { viewer, opens, now, calls } = input;
@@ -167,12 +180,6 @@ export const renderHome = (input: HomeInput): Template => {
   const mine = (entry: Row) => entry.owner.id === viewer.user.id;
   const owner = (entry: Row) => (mine(entry) ? "You" : firstName(entry.owner.name));
   const dotted = (entry: Row) => unopened(entry, viewer, opens);
-  // New: made in the last week and not opened yet. A public page read signed out records no open,
-  // so New leaves public pages out.
-  const fresh = (entry: Row) =>
-    dotted(entry) &&
-    entry.patch.audience.kind !== "public" &&
-    now - epoch(entry.patch.createdAt) < NEW_WINDOW;
   const menu = (entry: Row, list: string) =>
     rowMenu(`${list}-${entry.patch.id}`, title(entry), [
       ...openItems(entry, viewer, input.publicBaseUrl, "/"),
@@ -181,13 +188,6 @@ export const renderHome = (input: HomeInput): Template => {
         : [])
     ]);
   const failed = (entry: Row) => calls?.get(entry.patch.id)?.failures ?? 0;
-  // A table row's patch: its mark, its title opening it, the dot until the viewer opens a
-  // colleague's, the description's first clause, and, on a phone, what the hidden columns would
-  // warn about.
-  const patchCell = (entry: Row) => {
-    const failures = mine(entry) ? failedBadge(entry.patch, calls?.get(entry.patch.id)) : "";
-    return `<div class="cell-name">${patchMark(entry.patch.name, entry.tier)}<div class="row-main"><span class="row-name"><a class="row-link" href="${escapeAttribute(patchAddress(entry.patch))}">${dotted(entry) ? unopenedName(title(entry)) : escapeHtml(title(entry))}</a></span><span class="row-desc">${escapeHtml(firstClause(entry.patch.description) || "No description")}</span>${failures === "" ? "" : `<span class="show-sm">${failures}</span>`}</div></div>`;
-  };
 
   // Needs attention: the viewer's own tools that failed in the last 24 hours, for admins the
   // company's connections that need one, then the viewer's own apps and computers whose access
@@ -277,7 +277,6 @@ export const renderHome = (input: HomeInput): Template => {
       })
     );
 
-  const shelves = live.length >= SHELVES_AT;
   // Your usual: what the viewer opened in the last 30 days, by how much. Until they open
   // anything, it is what the company visits most.
   const score = (entry: Row) => opens.get(entry.patch.id)?.score ?? 0;
@@ -290,115 +289,112 @@ export const renderHome = (input: HomeInput): Template => {
   const usual = (
     opened.length > 0 ? opened : [...live].sort((a, b) => b.visits - a.visits || byTitle(a, b))
   ).slice(0, USUAL);
-  const usualSection = shelves
-    ? region({
-        id: "usual",
-        title: opened.length > 0 ? "Your usual" : `Popular at ${company}`,
-        body: usualTiles(
-          usual.map((entry) => ({
-            mark: patchMark(entry.patch.name, entry.tier),
-            name: title(entry),
-            meta: `${kind(entry)} · ${owner(entry)}`,
-            href: patchAddress(entry.patch)
-          }))
-        )
-      })
-    : "";
-
-  // New: colleagues' patches from the last week the viewer hasn't opened, newest first.
-  const newest = live
-    .filter(fresh)
-    .sort((a, b) => epoch(b.patch.createdAt) - epoch(a.patch.createdAt) || byTitle(a, b))
-    .slice(0, NEW);
-  const newSection =
-    shelves && newest.length > 0
+  const usualSection =
+    live.length >= SHELVES_AT
       ? region({
-          id: "new",
-          title: "New",
-          body: rows(
-            newest.map((entry) =>
-              row({
-                lead: patchMark(entry.patch.name, entry.tier),
-                name: title(entry),
-                href: patchAddress(entry.patch),
-                unopened: true,
-                description: `${kind(entry)} · ${entry.owner.name} · ${ago(entry.patch.createdAt, now)}`,
-                end: linkButton("Open", patchAddress(entry.patch), {
-                  size: "sm",
-                  icon: "external",
-                  newTab: true,
-                  ariaLabel: `Open ${title(entry)} in a new tab`
-                })
-              })
-            ),
-            true
+          id: "usual",
+          title: opened.length > 0 ? "Your usual" : `Popular at ${company}`,
+          body: usualTiles(
+            usual.map((entry) => ({
+              mark: patchMark(entry.patch.name, entry.tier),
+              name: title(entry),
+              meta: `${kind(entry)} · ${owner(entry)}`,
+              href: patchAddress(entry.patch)
+            }))
           )
         })
       : "";
 
-  // Yours: A–Z, never re-sorted, with who can open each, its failures and the action menu.
-  const yours = live.filter(mine).sort(byTitle);
-  const tools = yours.some((entry) => !isPage(entry));
-  const access = (entry: Row) => {
-    const audience = accessLabel(entry.audience);
-    if (entry.audience.kind === "public") return audience;
-    const guests = input.guests.get(entry.patch.name) ?? 0;
-    return guests === 0
-      ? audience
-      : input.turnedAway.has(entry.patch.id)
-        ? `${audience} · ${plural(guests, "guest can’t", "guests can’t")} open it`
-        : `${audience} + ${plural(guests, "guest", "guests")}`;
+  // Tools: every live tier 2 patch, A–Z and never re-sorted. Where it runs narrow, on a phone and
+  // from 1024px to 1279px with Pages beside it, its Failures column gives way and a failing tool's
+  // count shows under its title instead. Share on the viewer's own turns to its icon beside Pages,
+  // and on a phone to the menu's.
+  const tools = live.filter((entry) => !isPage(entry)).sort(byTitle);
+  const failures = tools.some(manages);
+  const share = (entry: Row) => {
+    const href = shareHref("/", entry.patch.name);
+    const label = `Share ${title(entry)}`;
+    return `<span class="hide-narrow">${linkButton("Share", href, { kind: "quiet", size: "sm", icon: "share", ariaLabel: label })}</span><span class="show-narrow">${iconButton(label, "share", { href })}</span>`;
   };
-  const yoursSection = yours.length
-    ? region({
-        id: "yours",
-        title: "Yours",
-        body: table({
-          label: "Your patches",
-          columns: [
-            { label: "Patch" },
-            { label: "Access", hideOnPhone: true },
-            ...(tools ? [failuresColumn] : []),
-            { label: "Actions", hidden: true, align: "end" as const }
-          ],
-          rows: yours.map((entry) => [
-            patchCell(entry),
-            escapeHtml(access(entry)),
-            ...(tools ? [failuresCell(entry.patch, calls?.get(entry.patch.id))] : []),
-            menu(entry, "yours")
-          ])
-        })
-      })
-    : "";
+  const toolCell = (entry: Row) => {
+    const count = manages(entry) ? failedBadge(entry.patch, calls?.get(entry.patch.id)) : "";
+    return `<div class="cell-name">${patchMark(entry.patch.name, entry.tier)}<div class="row-main"><span class="row-name"><a class="row-link" href="${escapeAttribute(patchAddress(entry.patch))}">${dotted(entry) ? unopenedName(title(entry)) : escapeHtml(title(entry))}</a></span><span class="row-desc">${escapeHtml(firstClause(entry.patch.description) || "No description")}</span>${count === "" ? "" : `<span class="show-narrow">${count}</span>`}</div></div>`;
+  };
+  const toolsSection = region({
+    id: "tools",
+    title: "Tools",
+    body: table({
+      label: "Tools",
+      columns: [
+        { label: "Patch", grow: true },
+        { label: "Owner", hideOnPhone: true, nowrap: true },
+        ...(failures ? [{ ...failuresColumn, hideWhenNarrow: true }] : []),
+        { label: "Share", hidden: true, hideOnPhone: true, align: "end" as const, nowrap: true },
+        { label: "Actions", hidden: true, align: "end" as const, nowrap: true }
+      ],
+      rows: tools.map((entry) => [
+        toolCell(entry),
+        `<div class="cell-name">${avatar(entry.owner.id, entry.owner.name, entry.owner.deactivated ? "off" : undefined)}<span>${escapeHtml(owner(entry))}</span></div>`,
+        ...(failures
+          ? [manages(entry) ? failuresCell(entry.patch, calls?.get(entry.patch.id)) : ""]
+          : []),
+        mine(entry) ? share(entry) : "",
+        menu(entry, "tools")
+      ])
+    })
+  });
 
-  // From colleagues: everyone else's, A–Z, the first twelve, and the rest on All patches.
-  const theirs = live.filter((entry) => !mine(entry)).sort(byTitle);
-  const colleaguesSection = theirs.length
-    ? region({
-        id: "colleagues",
-        title: "From colleagues",
-        ...(theirs.length > COLLEAGUES
-          ? { action: `<a href="/patches">See all ${theirs.length}</a>` }
-          : {}),
-        body: table({
-          label: "Colleagues’ patches",
-          columns: [
-            { label: "Patch" },
-            { label: "Owner", hideOnPhone: true },
-            { label: "Updated", hideOnPhone: true },
-            { label: "Actions", hidden: true, align: "end" }
-          ],
-          rows: theirs
-            .slice(0, COLLEAGUES)
-            .map((entry) => [
-              patchCell(entry),
-              `<div class="cluster">${avatar(entry.owner.id, entry.owner.name, entry.owner.deactivated ? "off" : undefined)}<span>${escapeHtml(firstName(entry.owner.name))}</span></div>`,
-              when(entry.publishedAt, now),
-              menu(entry, "colleagues")
-            ])
-        })
-      })
-    : "";
+  // Pages: beside Tools, the ones published in the last two weeks, each owner's newest once,
+  // with "+N more" for that owner's others; with no live tool, every page in the main column.
+  // Either way it ends at All patches' Pages, counted as that lists them.
+  const pages = live.filter(isPage).sort(newest(byTitle));
+  const pageRow = (entry: Row, others = 0) =>
+    row({
+      lead: patchMark(entry.patch.name, entry.tier),
+      name: title(entry),
+      href: patchAddress(entry.patch),
+      unopened: dotted(entry),
+      description: `${owner(entry)} · ${when(entry.publishedAt, now)}`,
+      ...(others > 0
+        ? {
+            descriptionLink: {
+              label: `+${others} more`,
+              href: `/patches?${new URLSearchParams({ show: "pages", owner: entry.owner.id })}`,
+              ariaLabel: mine(entry)
+                ? `${others} more of your pages`
+                : `${plural(others, "more page", "more pages")} by ${entry.owner.name}`
+            }
+          }
+        : {}),
+      end: menu(entry, "pages")
+    });
+  const allPages = `<div class="meta"><a href="/patches?show=pages">All ${plural(input.pageCount, "page", "pages")}</a></div>`;
+  const pagesSection = (items: readonly string[]) =>
+    region({
+      id: "pages",
+      title: "Pages",
+      body: items.length ? `<div class="stack">${rows(items, true)}${allPages}</div>` : allPages
+    });
+  const recent = new Map<string, { entry: Row; others: number }>();
+  for (const entry of pages.filter((entry) => now - epoch(entry.publishedAt) < PAGES_WINDOW)) {
+    const seen = recent.get(entry.owner.id);
+    if (seen === undefined) recent.set(entry.owner.id, { entry, others: 0 });
+    else seen.others++;
+  }
 
-  return page(`${usualSection}${newSection}${yoursSection}${colleaguesSection}`);
+  const shelves =
+    tools.length === 0
+      ? pagesSection(pages.slice(0, PAGES_ALONE).map((entry) => pageRow(entry)))
+      : pages.length === 0
+        ? toolsSection
+        : mainWithRail({
+            main: toolsSection,
+            rail: pagesSection(
+              [...recent.values()]
+                .slice(0, PAGE_OWNERS)
+                .map(({ entry, others }) => pageRow(entry, others))
+            )
+          });
+
+  return page(`${usualSection}${shelves}`);
 };

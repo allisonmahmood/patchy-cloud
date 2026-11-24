@@ -1,7 +1,7 @@
 /**
  * Things that hold: sections, boxes, cards with setting rows, entity rows, lists and fact lists.
  * Hairline edges and no shadow; a row with a stretched link opens on a press anywhere while its
- * own buttons and menus stay operable above the link.
+ * own buttons, menus and its description's link stay operable above the link.
  */
 export const containers = `
     .section { margin-top: var(--space-6); }
@@ -47,7 +47,8 @@ export const containers = `
     .row-link { color: var(--ink); font-weight: var(--weight-strong); text-decoration: none; }
     @media (hover: hover) { .row-link:hover { text-decoration: underline; } }
     .row-link::after { content: ""; position: absolute; inset: 0; }
-    .row :is(.btn, form) { position: relative; z-index: 1; }
+    .row :is(.btn, form, .row-desc a) { position: relative; z-index: 1; }
+    .row-desc a { color: inherit; }
     @media (hover: hover) { .row:has(.row-link):hover { background: var(--hover); } }
     .setting { grid-template-columns: minmax(0, 1fr) auto; min-height: 64px; padding: 14px 20px; }
     .setting .row-main { gap: 3px; }

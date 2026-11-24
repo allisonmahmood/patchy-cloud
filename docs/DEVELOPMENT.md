@@ -822,8 +822,8 @@ can quote it.
   names the admins. Your own `~/Patchy`, `~/.codex/config.toml` and
   `~/.claude/settings.json` gain nothing.
 - **Portal and lifecycle.** Sign in as an owner, an admin and a member: Home at
-  `/` (open a few patches first, so Your usual and New to you have something to
-  show; `pnpm dev shot <person> /<company>/<patch>` records an open), a search on
+  `/` (open a few patches first, so Your usual and the not-opened-yet dot have
+  something to show; `pnpm dev shot <person> /<company>/<patch>` records an open), a search on
   it, `/patches` and its tabs, `/guide` and `/patches/<name>`, then `retire`,
   `delete --yes` and `restore` through the CLI
   and the notices at the patch's address. A source with a published consumer

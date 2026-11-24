@@ -74,5 +74,6 @@ export type { ChoiceLink } from "./choice-links.js";
 export { computerMark } from "./computer-mark.js";
 export { flowOutcome } from "./flow-outcome.js";
 export { listDetail } from "./list-detail.js";
+export { mainWithRail } from "./main-rail.js";
 export type { ListEntry } from "./list-detail.js";
 export { changeBar } from "./change-bar.js";

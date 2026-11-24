@@ -117,6 +117,7 @@ const shownAt = {
   attentionRow: "Attention row",
   usualTiles: "Usual tile",
   listDetail: "List beside its entry",
+  mainWithRail: "Main with rail",
   changeBar: "Change bar",
   choiceLinks: "Choice link",
   canList: "Can list",

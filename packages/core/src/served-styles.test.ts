@@ -9,7 +9,7 @@ describe("a running patch's shell styles", () => {
   // shell, so it is made on purpose: update the digest in the same change, and say so.
   it("stay byte for byte as running patches have them", () => {
     expect(createHash("sha256").update(servedStyles).digest("hex")).toBe(
-      "51bd05696bab814569e0590ed1c829c0c587896e025c863b3ec195b42e3bed2a"
+      "2c934c8a0eb25f91dc866cc99cf0f4b9ed4b6b88790bd40679b025e20d48ff2d"
     );
   });
 
