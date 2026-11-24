@@ -96,9 +96,9 @@ export const failedLog = (patch: Patches.Patch) =>
   `/patches/${encodeURIComponent(patch.name)}/log?outcome=failed`;
 
 /**
- * The column of a tool's calls in the last 24 hours, which its header says, on Home's Yours and
- * All patches alike: `failuresCell` fills it, and on a phone, where it is gone, `failedBadge`
- * says the same under the patch's name.
+ * The column of a tool's calls in the last 24 hours, which its header says, on Home's Tools and
+ * All patches alike: `failuresCell` fills it on the rows the viewer manages, and where it is gone,
+ * on a phone and on Tools beside Pages, `failedBadge` says the same under the patch's name.
  */
 export const failuresColumn: Column = { label: "Failures (24 h)", hideOnPhone: true, nowrap: true };
 

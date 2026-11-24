@@ -276,7 +276,7 @@ export const servedStyles = `
     .tag { display: inline-flex; align-items: center; min-height: 20px; margin-left: 6px; padding: 1px 7px; border: 1.5px solid var(--line-strong); border-radius: var(--radius-pill); color: var(--ink-soft); font-size: .7rem; font-weight: 800; letter-spacing: .04em; line-height: 1; text-transform: uppercase; vertical-align: 2px; }
     /* tag-new: something new to the viewer, in the brand's highlighter yellow. */
     .tag-new { border-color: var(--ink); background: var(--yellow); color: var(--ink); }
-    /* shelf-label: a small capitalised label over a group inside a shelf or panel, such as New to you. */
+    /* shelf-label: a small capitalised label over a group inside a shelf or panel, such as This patch. */
     .shelf-label { margin: 14px 0 4px; color: var(--muted); font-size: .74rem; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
     /* whats-new-dot: What's new has changes the viewer hasn't seen. */
     .whats-new-dot { position: absolute; top: 8px; right: 8px; width: 10px; height: 10px; border: 2px solid var(--ink); border-radius: 50%; background: var(--blue); }

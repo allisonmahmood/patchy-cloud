@@ -605,6 +605,7 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
     () =>
       Effect.gen(function* () {
         const workspace = yield* company();
+        const teams = yield* Teams.Teams;
         const listed = (html: string) =>
           [...html.matchAll(/<a class="row-link" href="\/[^/"]+\/([a-z0-9-]+)"/g)].map(
             (match) => match[1]!
@@ -617,8 +618,17 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
           yield* TestClock.adjust(60_000);
         }
         yield* publish(workspace.member, "lunch-poll");
+        // The member's too, on a team the admin isn't on: they manage it but can't open it.
+        const by = { companyId: workspace.id, actorId: workspace.admin.id };
+        const kitchen = yield* teams.create({ ...by, name: "Kitchen" });
+        yield* teams.setMemberships({ ...by, teamId: kitchen.id, add: [workspace.member.id] });
+        yield* publish(workspace.member, "kitchen-rota", {
+          audience: { kind: "teams", teamIds: [kitchen.id] }
+        });
 
         const home = yield* (yield* request("/", workspace.admin)).text;
+        // Home lists only what the admin can open, so neither Tools nor Pages has it.
+        assert.notInclude(home, "kitchen-rota");
         // Newest first, one row per owner: six pages today are one row ending "+5 more".
         assert.deepStrictEqual(names(home, "pages"), ["lunch-poll", "notes-sat"]);
         const pages = sectionOf(home, "pages");
@@ -632,12 +642,13 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
         assert.lengthOf(theirs, 7);
         assert.include(theirs, "old-notes");
 
-        // All N pages names what its link lists, the page out of the window included.
+        // All N pages names what its link lists: the page out of the window, and the one the
+        // admin manages but can't open, included.
         const all = links(pages).find((link) => link.text.startsWith("All "))!;
-        assert.deepStrictEqual(all, { href: "/patches?show=pages", text: "All 8 pages" });
+        assert.deepStrictEqual(all, { href: "/patches?show=pages", text: "All 9 pages" });
         const listing = listed(yield* (yield* request(all.href, workspace.admin)).text);
-        assert.lengthOf(listing, 8);
-        assert.include(listing, "old-notes");
+        assert.lengthOf(listing, 9);
+        assert.includeMembers(listing, ["old-notes", "kitchen-rota"]);
 
         // Republishing an old page brings it back as its owner's newest.
         yield* TestClock.adjust(60_000);
@@ -650,7 +661,7 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
         yield* TestClock.adjust(15 * DAY);
         const later = sectionOf(yield* (yield* request("/", workspace.admin)).text, "pages");
         assert.deepStrictEqual(names(later, "pages"), []);
-        assert.strictEqual(text(later), "Pages All 8 pages");
+        assert.strictEqual(text(later), "Pages All 9 pages");
       })
   );
 
