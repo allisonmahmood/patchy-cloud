@@ -59,6 +59,14 @@ const showLabels: Record<Show, string> = {
   off: "Retired and deleted"
 };
 
+/**
+ * The orders the table's headings sort it in, each one way: Patch A–Z, the default; Opened by the
+ * viewer's last open, newest first, then the patches they never opened; Updated newest first;
+ * Visits most first. Ties go A–Z.
+ */
+export const sorts = ["patch", "opened", "updated", "visits"] as const;
+export type Sort = (typeof sorts)[number];
+
 /** How many patches a page of the table holds. */
 export const PAGE_SIZE = 50;
 
@@ -174,33 +182,53 @@ const actions = (
   return rowMenu(patch.id, title, [...items, menuRule, ...manage]);
 };
 
-/** What All patches lists: a filter, the sidebar's search, and one person's patches. */
+/** What All patches lists: a filter, the sidebar's search, one person's patches and the order. */
 export interface Listing {
   readonly show: Show;
   readonly query: string;
   /** Only the patches this person owns, by user id; `""` for everyone's. */
   readonly owner: string;
+  readonly sort: Sort;
 }
 
 /**
- * All patches at a listing and page; All, no search, everyone's and the first page leave their
- * parameter out.
+ * All patches at a listing and page; All, no search, everyone's, Patch and the first page leave
+ * their parameter out.
  */
-export const listPath = ({ show, query, owner }: Listing, page = 1) => {
+export const listPath = ({ show, query, owner, sort }: Listing, page = 1) => {
   const params = new URLSearchParams();
   if (show !== "all") params.set("show", show);
   if (owner) params.set("owner", owner);
   if (query) params.set("q", query);
+  if (sort !== "patch") params.set("sort", sort);
   if (page > 1) params.set("page", String(page));
   const search = params.toString();
   return search ? `/patches?${search}` : "/patches";
 };
 
+/** Rows in `sort`'s order, from `opens`, the viewer's own, for Opened; ties go A–Z. */
+const ordered = (sort: Sort, company: string, opens: ReadonlyMap<string, Patches.Open>) => {
+  const key: Record<Sort, (row: Patches.ReadPatch) => number> = {
+    patch: () => 0,
+    // A patch never opened has no time, so it follows every one that was.
+    opened: (row) => {
+      const open = opens.get(row.patch.id);
+      return open === undefined ? 0 : epoch(open.lastOpenedAt);
+    },
+    updated: (row) => epoch(row.publishedAt),
+    visits: (row) => row.visits
+  };
+  const atoz = byTitle(company);
+  return (a: Patches.ReadPatch, b: Patches.ReadPatch) => key[sort](b) - key[sort](a) || atoz(a, b);
+};
+
 /**
- * All patches at `/patches`: every patch the viewer can open, A–Z, filtered by `?show=`, searched
- * by the sidebar's `?q=` and narrowed to one person's by `?owner=` (People's See their patches),
- * each of those two shown as a chip that clears it, and paged by `?page=`. Its title opens a live
- * patch; each row keeps its available actions in its menu.
+ * All patches at `/patches`: every patch the viewer can open, filtered by `?show=`, searched by
+ * the sidebar's `?q=` and narrowed to one person's by `?owner=` (People's See their patches), each
+ * of those two shown as a chip that clears it, sorted from its headings by `?sort=`, A–Z without
+ * it, and paged by `?page=`. Needs attention and Retired and deleted stay A–Z, their links keeping
+ * the sort for the way back. Its title opens a live patch; each row keeps its available actions
+ * in its menu.
  */
 export const renderAllPatches = (input: {
   /** With the patches the viewer manages or owns but can't open, their content left out. */
@@ -208,13 +236,16 @@ export const renderAllPatches = (input: {
   readonly viewer: Viewer;
   readonly show: Show;
   readonly query: string;
+  readonly sort: Sort;
   /** Only this member's patches, from `?owner=`; absent for everyone's. */
   readonly owner?: { readonly id: string; readonly name: string };
   /** The page asked for, from 1; past the last it is the last. */
   readonly page: number;
   readonly now: number;
   readonly publicBaseUrl: string;
-  /** What the viewer has opened, for the dot after a colleague's patch they never have. */
+  /**
+   * What the viewer has opened, for Opened and the dot after a colleague's patch they never have.
+   */
   readonly opens: ReadonlyMap<string, Patches.Open>;
   /** Company members' names by id, for who retired or deleted a patch. */
   readonly names: ReadonlyMap<string, string>;
@@ -227,8 +258,8 @@ export const renderAllPatches = (input: {
   /** Why guests can't open each patch with guests that turns them away; absent for a member. */
   readonly turnedAway?: ReadonlyMap<string, GuestReason>;
 }) => {
-  const { viewer, now, show, query, names, owner } = input;
-  const listing: Listing = { show, query, owner: owner?.id ?? "" };
+  const { viewer, now, show, query, names, owner, sort } = input;
+  const listing: Listing = { show, query, owner: owner?.id ?? "", sort };
   const live = input.rows.filter((row) => row.patch.state === "live");
   const attention = new Map(
     input.rows.flatMap((row) => {
@@ -245,14 +276,15 @@ export const renderAllPatches = (input: {
     off: input.rows.filter((row) => row.patch.state !== "live")
   };
   const found = (tab: Show) =>
-    lists[tab]
-      .filter(
-        (row) =>
-          (query === "" || matches(row, query)) &&
-          (owner === undefined || row.owner.id === owner.id)
-      )
-      .sort(byTitle(viewer.company.name));
-  const entries = found(show);
+    lists[tab].filter(
+      (row) =>
+        (query === "" || matches(row, query)) && (owner === undefined || row.owner.id === owner.id)
+    );
+  const entries = found(show).sort(
+    show === "attention" || show === "off"
+      ? byTitle(viewer.company.name)
+      : ordered(sort, viewer.company.name, input.opens)
+  );
 
   const pages = Math.max(1, Math.ceil(entries.length / PAGE_SIZE));
   const current = Math.min(Math.max(1, input.page), pages);
@@ -374,26 +406,38 @@ export const renderAllPatches = (input: {
         count === 0 ? audience : `${audience} + ${plural(count, "guest", "guests")}`
       );
     };
+    // Patch runs A–Z and the others newest or most first; each heading links to the first page.
+    const sorting = (key: Sort): NonNullable<Column["sort"]> => ({
+      href: listPath({ ...listing, sort: key }),
+      ...(key === sort ? { current: key === "patch" ? "ascending" : "descending" } : {})
+    });
+    const when = (iso: string) =>
+      `<time class="muted" datetime="${escapeAttribute(iso)}">${escapeHtml(ago(iso, now))}</time>`;
     return table({
       label: "Patches",
       columns: [
-        patchColumn,
+        { ...patchColumn, sort: sorting("patch") },
         ownerColumn,
-        { label: "Updated", hideOnPhone: true, nowrap: true },
-        { label: "Visits", align: "end", hideOnPhone: true, nowrap: true },
+        { label: "Opened", hideOnPhone: true, nowrap: true, sort: sorting("opened") },
+        { label: "Updated", hideOnPhone: true, nowrap: true, sort: sorting("updated") },
+        { label: "Visits", align: "end", hideOnPhone: true, nowrap: true, sort: sorting("visits") },
         { label: "Access", hideOnPhone: true, nowrap: true },
         ...(failures ? [failuresColumn] : []),
         actionsColumn
       ],
-      rows: shown.map((row) => [
-        patchCell(row, failures ? failed(row.patch) : ""),
-        ownerCell(row),
-        `<time class="muted" datetime="${escapeAttribute(row.publishedAt)}">${escapeHtml(ago(row.publishedAt, now))}</time>`,
-        escapeHtml(row.visits),
-        access(row),
-        ...(failures ? [failuresCell(row.patch, input.calls?.get(row.patch.id))] : []),
-        menuCell(row)
-      ])
+      rows: shown.map((row) => {
+        const opened = input.opens.get(row.patch.id);
+        return [
+          patchCell(row, failures ? failed(row.patch) : ""),
+          ownerCell(row),
+          opened === undefined ? '<span class="muted">—</span>' : when(opened.lastOpenedAt),
+          when(row.publishedAt),
+          escapeHtml(row.visits),
+          access(row),
+          ...(failures ? [failuresCell(row.patch, input.calls?.get(row.patch.id))] : []),
+          menuCell(row)
+        ];
+      })
     });
   })();
 

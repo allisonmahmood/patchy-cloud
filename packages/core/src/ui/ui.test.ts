@@ -357,6 +357,24 @@ describe("structure", () => {
     expect(html).toContain('<span class="sr-only">Actions</span>');
   });
 
+  it("makes a sorting header a link, marking the one the table is sorted by", () => {
+    const html = table({
+      label: "Patches",
+      columns: [
+        { label: "Patch", sort: { href: "/patches" } },
+        { label: "Opened", sort: { href: "/patches?sort=opened", current: "descending" } },
+        { label: "Access" }
+      ],
+      rows: []
+    });
+    expect(html).toContain('<th scope="col"><a href="/patches">Patch</a></th>');
+    expect(html).toMatch(
+      /<th scope="col" aria-sort="descending"><a href="\/patches\?sort=opened">Opened<svg [^>]*>.*?<\/svg><\/a><\/th>/
+    );
+    expect(html.match(/aria-sort/g)).toHaveLength(1);
+    expect(html).toContain('<th scope="col">Access</th>');
+  });
+
   it("marks a growing column and a column of sentences, which keep their floors", () => {
     const html = table({
       label: "Patches that need attention",

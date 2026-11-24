@@ -1,5 +1,6 @@
 /**
- * Tables, for comparing columns: muted 13px headers, 56px rows on hairlines. A wide table scrolls
+ * Tables, for comparing columns: muted 13px headers, 56px rows on hairlines. A header that sorts
+ * reads as a header until it is the order, ink and strong with its arrow. A wide table scrolls
  * inside its own wrapper on a phone instead of squeezing its columns.
  */
 export const tables = `
@@ -11,6 +12,10 @@ export const tables = `
       color: var(--muted); font: var(--text-meta); font-weight: var(--weight-medium);
       text-align: left; vertical-align: bottom; white-space: nowrap;
     }
+    .table th > a { display: inline-flex; align-items: center; gap: var(--space-1); color: inherit; font-weight: inherit; text-decoration: none; }
+    .table th > a svg { width: 12px; height: 12px; }
+    .table th[aria-sort] { color: var(--ink); font-weight: var(--weight-strong); }
+    @media (hover: hover) { .table th > a:hover { color: var(--ink); } }
     .table td { height: var(--h-row-2); padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border-subtle); text-align: left; vertical-align: middle; }
     .table th:first-child, .table td:first-child { padding-left: 0; }
     .table th:last-child, .table td:last-child { padding-right: 0; }

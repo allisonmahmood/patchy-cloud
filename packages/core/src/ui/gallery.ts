@@ -403,9 +403,9 @@ const lists = demo(
     {
       label: "People",
       columns: [
-        { label: "Person" },
+        { label: "Person", sort: { href: "#rows", current: "ascending" } },
         { label: "Role", hideOnPhone: true },
-        { label: "Patches", align: "end" },
+        { label: "Patches", align: "end", sort: { href: "#rows" } },
         { label: "Actions", hidden: true }
       ],
       rows: [
@@ -449,7 +449,12 @@ const lists = demo(
       "Narrow",
       "the growing column and a column of sentences keep a floor, so no word breaks; the table scrolls"
     ],
-    ["Linked row", "the first cell's link covers the row"]
+    ["Linked row", "the first cell's link covers the row"],
+    [
+      "Header that sorts",
+      "a link to the table in its order that reads as a header; ink on hover (fine pointer)"
+    ],
+    ["Sorted by", "ink and strong, with an arrow the way it runs, and aria-sort"]
   ])}${stateTable("Menu", [
     ["Closed", "a quiet ⋯ button named for its row"],
     [

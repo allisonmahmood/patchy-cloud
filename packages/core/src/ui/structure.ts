@@ -154,11 +154,28 @@ export interface Column {
    * the growing column never squeezes below a readable line; on a phone the table scrolls.
    */
   readonly readable?: boolean;
+  /**
+   * Makes the header a link that sorts the table, such as All patches' Opened: `href` is the table
+   * in this column's order, and `current` which way it runs while it is the order now, which the
+   * header marks with an arrow and `aria-sort`.
+   */
+  readonly sort?: { readonly href: string; readonly current?: "ascending" | "descending" };
 }
+
+const header = (column: Column) => {
+  const label = escapeHtml(column.label);
+  if (column.hidden === true) return `<span class="sr-only">${label}</span>`;
+  if (column.sort === undefined) return label;
+  const { href, current } = column.sort;
+  const arrow =
+    current === undefined ? "" : icon(current === "ascending" ? "arrowUp" : "arrowDown");
+  return `<a href="${escapeAttribute(href)}">${label}${arrow}</a>`;
+};
 
 /**
  * A table for comparing columns, in a wrapper that scrolls on a phone. Cells are trusted HTML;
- * a row whose first cell holds a `row-link` opens on a press anywhere in it.
+ * a row whose first cell holds a `row-link` opens on a press anywhere in it. A column's `sort`
+ * makes its header the link to the table in that order.
  */
 export const table = (spec: {
   /** What the table lists, for assistive tech. */
@@ -184,7 +201,7 @@ export const table = (spec: {
   return `<div class="table-wrap"><table class="table" aria-label="${escapeAttribute(spec.label)}"><thead><tr>${spec.columns
     .map(
       (column) =>
-        `<th scope="col"${classAttribute(column)}>${column.hidden === true ? `<span class="sr-only">${escapeHtml(column.label)}</span>` : escapeHtml(column.label)}</th>`
+        `<th scope="col"${classAttribute(column)}${column.sort?.current === undefined ? "" : ` aria-sort="${column.sort.current}"`}>${header(column)}</th>`
     )
     .join("")}</tr></thead><tbody>${spec.rows
     .map(
