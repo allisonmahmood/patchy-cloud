@@ -214,8 +214,8 @@ export const pagePath = (url: URL) => {
 
 /**
  * Where a Share dialog's form returns: the page it opened over, when that is Home, All patches or
- * the patch's own card, with only the query those pages read: the search, All patches' filter and
- * its page. Anything else is the card.
+ * the patch's own card, with only the query those pages read: the search, All patches' filter,
+ * owner, sort and page. Anything else is the card.
  */
 export const behind = (back: string | undefined, name: string, base: string): URL => {
   const card = `/patches/${encodeURIComponent(name)}`;
@@ -228,7 +228,7 @@ export const behind = (back: string | undefined, name: string, base: string): UR
   )
     return fallback;
   const kept = new URL(url.pathname, base);
-  for (const key of ["q", "show", "owner", "page"]) {
+  for (const key of ["q", "show", "owner", "sort", "page"]) {
     const value = url.searchParams.get(key);
     if (value) kept.searchParams.set(key, value);
   }

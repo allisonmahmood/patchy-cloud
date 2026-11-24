@@ -23,10 +23,21 @@ import {
   listed,
   menuItems,
   shareDialog,
+  dialogAfter,
   invoke,
   seedOf,
-  publishTier2
+  publishTier2,
+  post,
+  formFields
 } from "./test/fixtures.js";
+
+/** One cell of the table row whose patch is `name`, by its column, as HTML. */
+const cell = (html: string, name: string, column: number) => {
+  const row = [...html.matchAll(/<tr>([\s\S]*?)<\/tr>/g)].find((match) =>
+    match[1]!.includes(`/${name}">`)
+  )?.[1];
+  return [...(row ?? "").matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)][column]?.[1];
+};
 
 it.layer(socket)("all patches on a socket", (it) => {
   it.effect("lists every patch A–Z in filters with URLs, searched by the sidebar's query", () =>
@@ -109,6 +120,89 @@ it.layer(socket)("all patches on a socket", (it) => {
     })
   );
 
+  it.effect("sorts from its headings, by when the viewer last opened each among them", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const patches = yield* Patches.Patches;
+      const viewer = workspace.owner;
+      // Published an hour apart, so Updated runs from delta back to alpha.
+      const published = new Map<string, { readonly patchId: string; readonly versionId: string }>();
+      for (const name of ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"]) {
+        published.set(name, yield* publish(viewer, name));
+        yield* TestClock.adjust(DAY / 24);
+      }
+      const open = (name: string) => {
+        const { patchId, versionId } = published.get(name)!;
+        return patches.recordOpen(viewer.id, patchId, versionId);
+      };
+      for (const name of ["bravo", "bravo", "delta", "delta"])
+        yield* patches.recordVisit(published.get(name)!.patchId);
+      // Opened, then retired: Retired and deleted keeps its own order.
+      yield* open("foxtrot");
+      yield* TestClock.adjust(DAY / 24);
+      yield* open("charlie");
+      yield* TestClock.adjust(DAY / 24);
+      yield* open("alpha");
+      for (const name of ["echo", "foxtrot"])
+        yield* patches.retire(published.get(name)!.patchId, actor(viewer));
+      const page = (path: string) => Effect.flatMap(request(path, viewer), (r) => r.text);
+
+      // A–Z by default, Patch marked and adding nothing to the address.
+      const atoz = yield* page("/patches");
+      assert.deepStrictEqual(listed(atoz), ["alpha", "bravo", "charlie", "delta"]);
+      assert.include(
+        atoz,
+        '<th scope="col" class="cell-grow" aria-sort="ascending"><a href="/patches">Patch<svg'
+      );
+      assert.isTrue(
+        links(atoz).some((link) => link.href === "/patches?sort=opened" && link.text === "Opened")
+      );
+
+      // Opened: the last opened first, with when, and the never opened after, A–Z, with a dash.
+      const opened = yield* page("/patches?sort=opened");
+      assert.deepStrictEqual(listed(opened), ["alpha", "charlie", "bravo", "delta"]);
+      assert.strictEqual(opened.match(/aria-sort="descending"/g)?.length, 1);
+      assert.include(opened, 'aria-sort="descending"><a href="/patches?sort=opened">Opened<svg');
+      assert.strictEqual(text(cell(opened, "alpha", 2) ?? ""), "just now");
+      assert.strictEqual(text(cell(opened, "charlie", 2) ?? ""), "1 hour ago");
+      assert.strictEqual(cell(opened, "bravo", 2), '<span class="muted">—</span>');
+      // Updated newest first; Visits most first, a tie A–Z.
+      assert.deepStrictEqual(listed(yield* page("/patches?sort=updated")), [
+        "delta",
+        "charlie",
+        "bravo",
+        "alpha"
+      ]);
+      assert.deepStrictEqual(listed(yield* page("/patches?sort=visits")), [
+        "bravo",
+        "delta",
+        "alpha",
+        "charlie"
+      ]);
+
+      // The filters and the search chip keep it; pressing Patch returns to A–Z.
+      const kept = (html: string, href: string) => links(html).some((link) => link.href === href);
+      assert.isTrue(kept(opened, "/patches?show=tools&amp;sort=opened"));
+      assert.isTrue(kept(opened, "/patches?show=off&amp;sort=opened"));
+      assert.isTrue(
+        links(opened).some((link) => link.href === "/patches" && link.text === "Patch")
+      );
+      const searched = yield* page("/patches?q=alpha&sort=opened");
+      assert.isTrue(
+        links(searched).some(
+          (link) => link.href === "/patches?sort=opened" && link.text === "Matching alpha"
+        )
+      );
+      // A new search from the sidebar starts from Patch.
+      assert.notInclude(searched, 'name="sort"');
+      // Retired and deleted keeps its own table and order, and its way back keeps the sort.
+      const off = yield* page("/patches?show=off&sort=opened");
+      assert.deepStrictEqual(listed(off), ["echo", "foxtrot"]);
+      assert.notInclude(off, "aria-sort=");
+      assert.isTrue(kept(off, "/patches?sort=opened"));
+    })
+  );
+
   it.effect("offers a search that finds nothing the line that has an agent build it", () =>
     Effect.gen(function* () {
       const workspace = yield* company();
@@ -145,11 +239,12 @@ it.layer(socket)("all patches on a socket", (it) => {
     })
   );
 
-  it.effect("pages the table 50 rows at a time, keeping the filter and search", () =>
+  it.effect("pages the table 50 rows at a time, keeping the filter, search and sort", () =>
     Effect.gen(function* () {
       const workspace = yield* company();
-      for (let index = 0; index < 52; index++)
+      for (let index = 0; index < 51; index++)
         yield* publish(workspace.owner, `board-${String(index).padStart(2, "0")}`);
+      const last = yield* publish(workspace.owner, "board-51");
 
       const first = yield* (yield* request("/patches?q=board", workspace.owner)).text;
       assert.strictEqual(listed(first).length, 50);
@@ -178,6 +273,60 @@ it.layer(socket)("all patches on a socket", (it) => {
         yield* (yield* request("/patches?q=board-0", workspace.owner)).text,
         'aria-label="Pages"'
       );
+
+      // Sorted by Opened, the one they opened leads, and Next keeps the sort.
+      yield* (yield* Patches.Patches).recordOpen(workspace.owner.id, last.patchId, last.versionId);
+      const opened = yield* (yield* request("/patches?q=board&sort=opened", workspace.owner)).text;
+      assert.deepStrictEqual(listed(opened).slice(0, 2), ["board-51", "board-00"]);
+      assert.isTrue(
+        links(opened).some(
+          (link) =>
+            link.href === "/patches?q=board&amp;sort=opened&amp;page=2" && link.text === "Next"
+        )
+      );
+      const later = yield* (yield* request("/patches?q=board&sort=opened&page=2", workspace.owner))
+        .text;
+      assert.deepStrictEqual(listed(later), ["board-49", "board-50"]);
+      // Its headings start again from the first page.
+      assert.isTrue(
+        links(later).some(
+          (link) => link.href === "/patches?q=board&amp;sort=visits" && link.text === "Visits"
+        )
+      );
+      // Sharing from a row comes back to the same sorted page, refused or saved, and so does Close.
+      const sorted = "/patches?q=board&sort=opened&page=2";
+      const sharing = `${sorted}&share=board-49`;
+      assert.include(later, `href="${sharing.replaceAll("&", "&amp;")}"`);
+      const addPath = `${cardPath("board-49")}/add-guest`;
+      const fields = formFields(yield* (yield* request(sharing, workspace.owner)).text, addPath);
+      assert.strictEqual(fields.back, sorted.replaceAll("&", "&amp;"));
+      const refused = yield* post(addPath, workspace.owner, {
+        ...fields,
+        back: sorted,
+        email: "nobody@nowhere.example"
+      });
+      assert.strictEqual(refused.status, 422);
+      const behind = yield* refused.text;
+      assert.deepStrictEqual(listed(behind), ["board-49", "board-50"]);
+      assert.isTrue(
+        links(shareDialog(behind)).some(
+          (link) => link.href === sorted.replaceAll("&", "&amp;") && link.text === "Close"
+        )
+      );
+      const guest = (yield* company()).member;
+      const saved = yield* post(addPath, workspace.owner, {
+        ...fields,
+        back: sorted,
+        email: guest.email
+      });
+      assert.strictEqual(saved.status, 303);
+      assert.strictEqual(saved.headers.location, sharing);
+      const shared = yield* dialogAfter(saved, workspace.owner);
+      assert.include(shared.receipt, `with ${guest.name}`);
+      const close = links(shared.html).find((link) => link.text === "Close")?.href;
+      assert.strictEqual(close, sorted.replaceAll("&", "&amp;"));
+      const closed = yield* (yield* request(sorted, workspace.owner)).text;
+      assert.deepStrictEqual(listed(closed), ["board-49", "board-50"]);
     })
   );
 
@@ -395,12 +544,7 @@ it.layer(socket)("patch health on a socket", (it) => {
 
         // Failures (24 h): a count linked to the log, None, or No calls yet; never "Healthy". A
         // row with no calls to count has a dash.
-        const failures = (html: string, name: string) => {
-          const row = [...html.matchAll(/<tr>([\s\S]*?)<\/tr>/g)].find((match) =>
-            match[1]!.includes(`/${name}">`)
-          )?.[1];
-          return [...(row ?? "").matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)][5]?.[1];
-        };
+        const failures = (html: string, name: string) => cell(html, name, 6);
         for (const person of [workspace.owner, workspace.admin]) {
           const all = yield* (yield* request("/patches", person)).text;
           assert.include(all, '<th scope="col" class="hide-sm nowrap">Failures (24 h)</th>');

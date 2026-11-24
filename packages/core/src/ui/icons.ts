@@ -5,6 +5,8 @@
 const paths = {
   plus: '<path d="M12 5v14M5 12h14"/>',
   back: '<path d="M19 12H5M12 19l-7-7 7-7"/>',
+  arrowUp: '<path d="M12 19V5M5 12l7-7 7 7"/>',
+  arrowDown: '<path d="M12 5v14M19 12l-7 7-7-7"/>',
   external:
     '<path d="M15 3h6v6M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
   copy: '<rect width="13" height="13" x="9" y="9" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',

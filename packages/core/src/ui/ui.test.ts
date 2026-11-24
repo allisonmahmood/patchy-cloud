@@ -353,8 +353,28 @@ describe("structure", () => {
       columns: [{ label: "Person" }, { label: "Actions", hidden: true }],
       rows: [["Ada", ""]]
     });
-    expect(html).toContain('aria-label="People"');
+    expect(html).toContain('<table class="table" aria-label="People">');
     expect(html).toContain('<span class="sr-only">Actions</span>');
+  });
+
+  it("makes a sorting header a link, marking the one the table is sorted by", () => {
+    const html = table({
+      label: "Patches",
+      hideHeaderOnPhone: true,
+      columns: [
+        { label: "Patch", sort: { href: "/patches" } },
+        { label: "Opened", sort: { href: "/patches?sort=opened", current: "descending" } },
+        { label: "Access" }
+      ],
+      rows: []
+    });
+    expect(html).toContain('<th scope="col"><a href="/patches">Patch</a></th>');
+    expect(html).toMatch(
+      /<th scope="col" aria-sort="descending"><a href="\/patches\?sort=opened">Opened<svg [^>]*>.*?<\/svg><\/a><\/th>/
+    );
+    expect(html.match(/aria-sort/g)).toHaveLength(1);
+    expect(html).toContain('<th scope="col">Access</th>');
+    expect(html).toContain('<table class="table table-headless-sm" aria-label="Patches">');
   });
 
   it("marks a growing column and a column of sentences, which keep their floors", () => {

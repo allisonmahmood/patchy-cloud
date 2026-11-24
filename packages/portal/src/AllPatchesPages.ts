@@ -1,13 +1,13 @@
-// Owns All patches at `/patches`, its `?show=` filters, the sidebar's search and paging, and
-// `/patches/*` paths no patch has. Renders with `allPatches.ts`; anything another surface needs
-// comes from `shared/`.
+// Owns All patches at `/patches`, its `?show=` filters, the sidebar's search, its `?sort=` and
+// paging, and `/patches/*` paths no patch has. Renders with `allPatches.ts`; anything another
+// surface needs comes from `shared/`.
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as HttpRouter from "effect/http/HttpRouter";
 import { MachineTokens, pageResponse, RequireSession } from "@patchy/auth";
 import { Users } from "@patchy/companies";
 import { GuestGrants, Patches } from "@patchy/patches";
-import { renderAllPatches, shows } from "./allPatches.js";
+import { renderAllPatches, shows, sorts } from "./allPatches.js";
 import {
   asked,
   callSummary,
@@ -29,9 +29,9 @@ import { searchQuery } from "./shared/presentation.js";
 
 /**
  * All patches at `/patches`: every patch the viewer can open, in `?show=` filters, searched by the
- * sidebar's `?q=`, narrowed to one member's by `?owner=<user id>` and paged by `?page=`. An owner
- * who isn't a member here narrows nothing. A refused Share form draws it again with the dialog
- * open.
+ * sidebar's `?q=`, narrowed to one member's by `?owner=<user id>`, sorted by `?sort=` and paged by
+ * `?page=`. An owner who isn't a member here narrows nothing, and a sort it doesn't know is A–Z.
+ * A refused Share form draws it again with the dialog open.
  */
 export const page: (refused?: Sharing) => Page = Effect.fn("AllPatchesPages.page")(function* (
   refused?: Sharing
@@ -40,6 +40,7 @@ export const page: (refused?: Sharing) => Page = Effect.fn("AllPatchesPages.page
   const at = refused?.at ?? url;
   const params = at.searchParams;
   const show = shows.find((candidate) => candidate === params.get("show")) ?? "all";
+  const sort = sorts.find((candidate) => candidate === params.get("sort")) ?? "patch";
   const query = searchQuery(params.get("q"));
   const patches = yield* Patches.Patches;
   // With the ones the viewer manages or owns but can't open, their content left out.
@@ -71,6 +72,7 @@ export const page: (refused?: Sharing) => Page = Effect.fn("AllPatchesPages.page
         viewer,
         show,
         query,
+        sort,
         ...(owner === undefined
           ? {}
           : { owner: { id: owner.id, name: owner.name.trim() || owner.email } }),

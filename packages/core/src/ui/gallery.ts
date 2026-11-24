@@ -402,10 +402,11 @@ const lists = demo(
   `<div class="stack">${rows([row({ lead: patch("kudos"), name: "Kudos", href: "#rows", description: "Give a colleague a shout-out", end: listMenu }), row({ lead: agentMark, name: "Claude", description: "Connected 3 Nov · last call 2 h ago", end: button("Disconnect", { type: "button", size: "sm" }) }), row({ lead: patch("brief", 1), name: "Kickoff brief", description: "A page" })], true)}${table(
     {
       label: "People",
+      hideHeaderOnPhone: true,
       columns: [
-        { label: "Person" },
+        { label: "Person", sort: { href: "#rows", current: "ascending" } },
         { label: "Role", hideOnPhone: true },
-        { label: "Patches", align: "end" },
+        { label: "Patches", align: "end", hideOnPhone: true, sort: { href: "#rows" } },
         { label: "Actions", hidden: true }
       ],
       rows: [
@@ -449,7 +450,16 @@ const lists = demo(
       "Narrow",
       "the growing column and a column of sentences keep a floor, so no word breaks; the table scrolls"
     ],
-    ["Linked row", "the first cell's link covers the row"]
+    ["Linked row", "the first cell's link covers the row"],
+    [
+      "Header that sorts",
+      "a link to the table in its order that reads as a header; ink on hover (fine pointer)"
+    ],
+    ["Sorted by", "ink and strong, with an arrow the way it runs, and aria-sort"],
+    [
+      "Header hidden on a phone",
+      "where it sorts by columns a phone leaves out: out of sight but read by screen readers, and shown while focus is in it"
+    ]
   ])}${stateTable("Menu", [
     ["Closed", "a quiet ⋯ button named for its row"],
     [
