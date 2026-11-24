@@ -1620,9 +1620,9 @@ it.live(
       const releaseStale = holdBody("inv_stale");
       const stale = yield* call(loaded, "inv_stale", { callbacks: 1 });
       yield* watched.asked(1);
-      // Behind the waiting callback, a call waits too, unsent.
+      // Behind the waiting callback, a third call asks for its place and waits too, unsent.
       const next = yield* call(loaded, "inv_next_waiter", {});
-      yield* registered(supervisor, loaded, 3);
+      yield* watched.invoked(3);
       yield* settled(loaded);
       expect(sent).toEqual(["invoke inv_held", "invoke inv_stale"]);
       // The task is bound at a newer epoch, then the held answer frees a slot: the callback is
