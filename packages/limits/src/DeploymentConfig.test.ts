@@ -142,7 +142,11 @@ it.effect("rejects malformed JSON and invalid operating values", () =>
         "ConfigError"
       );
     }
-    for (const limitId of ["company.connections.waiters", "company.admission.burst"]) {
+    for (const limitId of [
+      "company.connections.waiters",
+      "company.admission.burst",
+      "execution.pool.smallSpares"
+    ]) {
       for (const value of [0.5, Number.MAX_SAFE_INTEGER + 1]) {
         assert.strictEqual(
           (yield* load({ [limitId]: value }).pipe(Effect.flip))._tag,

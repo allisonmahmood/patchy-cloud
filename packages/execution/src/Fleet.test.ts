@@ -30,6 +30,7 @@ import * as FleetStore from "./fleetStore.js";
 import * as LocalTaskProvider from "./localTaskProvider.js";
 import * as LocalTaskStore from "./localTaskStore.js";
 import * as TaskProvider from "./TaskProvider.js";
+import * as ActiveMembersTest from "./test/activeMembers.js";
 import * as MemoryTasks from "./test/memoryTasks.js";
 import { NodeCryptography } from "@patchy/core";
 
@@ -41,7 +42,7 @@ const source = `let count = 0; export default { async fetch(request) {
   return Response.json({ ok: true, value: ++count });
 } };`;
 const sha256 = createHash("sha256").update(source).digest("hex");
-const services = OperatingLimits.layer.pipe(
+const services = Layer.merge(OperatingLimits.layer, ActiveMembersTest.layer).pipe(
   Layer.provideMerge(Testing.layer()),
   Layer.merge(WideEvents.layerNoop),
   Layer.merge(FetchHttpClient.layer),
@@ -1193,7 +1194,7 @@ it.layer(services)("host fleet controller", (it) => {
         assert.strictEqual(warnings.length, 1);
         assert.strictEqual(
           warnings[0],
-          "Execution fleet budget exhausted revision=budget-warn budget=2 target=2 spares=1"
+          "Execution fleet budget exhausted revision=budget-warn size=full budget=2 target=2 spares=1"
         );
         assert.notInclude(warnings[0]!, "\n");
         // Immediate follow-up pass within the housekeeping interval is rate-limited.
@@ -1208,7 +1209,15 @@ it.layer(services)("host fleet controller", (it) => {
         yield* TestClock.adjust(15_000);
         const now = yield* Clock.currentTimeMillis;
         assert.deepStrictEqual(
-          yield* store.reserve("res-lease-lost", "budget-warn", "other-owner", 999, now, 2),
+          yield* store.reserve(
+            "res-lease-lost",
+            "budget-warn",
+            TaskProvider.full,
+            "other-owner",
+            999,
+            now,
+            2
+          ),
           { outcome: "lease_lost" }
         );
         const lease = (yield* store.lease("budget-warn-direct", "budget-warn", now, 15_000))!;
@@ -1216,6 +1225,7 @@ it.layer(services)("host fleet controller", (it) => {
           yield* store.reserve(
             "res-budget",
             "budget-warn",
+            TaskProvider.full,
             "budget-warn-direct",
             lease.leaseEpoch,
             now,
@@ -1227,6 +1237,7 @@ it.layer(services)("host fleet controller", (it) => {
           yield* store.reserve(
             "res-retired",
             "missing-revision",
+            TaskProvider.full,
             "budget-warn-direct",
             lease.leaseEpoch,
             now,
@@ -1303,7 +1314,11 @@ it.layer(services)("host fleet controller", (it) => {
           (yield* provider.list).filter((task) => task.state === "running").length,
           2
         );
-        yield* provider.start({ taskId: "unrecorded-task", deploymentRevision: "budget" });
+        yield* provider.start({
+          taskId: "unrecorded-task",
+          deploymentRevision: "budget",
+          size: TaskProvider.full
+        });
         yield* left.housekeeping();
         assert.strictEqual(
           (yield* provider.list).find((task) => task.taskId === "unrecorded-task")?.state,
@@ -1518,7 +1533,11 @@ it.layer(services)("host fleet controller", (it) => {
         const wedged = yield* left.ensureBinding(companyId);
         const failing = yield* left.ensureBinding(secondCompany);
         yield* sql`UPDATE execution_bindings SET state = 'claiming' WHERE task_id = ${failing.taskId}`;
-        yield* provider.start({ taskId: "isolated-stubborn", deploymentRevision: "isolated" });
+        yield* provider.start({
+          taskId: "isolated-stubborn",
+          deploymentRevision: "isolated",
+          size: TaskProvider.full
+        });
         const observed = yield* Deferred.make<void>();
         const bindAttempted = yield* Deferred.make<void>();
         const stopAttempted = yield* Deferred.make<void>();
@@ -2049,8 +2068,8 @@ it.layer(services)("host fleet controller", (it) => {
             }
           })
         );
-        const before = yield* store.target(now, 900_000, "waiting-burst");
-        assert.strictEqual(before.waiting, waiters.length);
+        const before = yield* store.target(now, 900_000, "waiting-burst", false);
+        assert.strictEqual(before.full.waiting, waiters.length);
         // Target is minimumSpares (2) + waiting (4) = 6, capped by the remaining 5 budget slots.
         assert.isTrue(yield* left.housekeeping());
         const settle = <A, E>(fiber: Fiber.Fiber<A, E>) =>
@@ -2151,7 +2170,8 @@ it.layer(services)("host fleet controller", (it) => {
         // its binding is fenced and stopped before replica A's next poll.
         const spareTask = yield* provider.start({
           taskId: "peer-spare-task",
-          deploymentRevision: "waiting-interleave"
+          deploymentRevision: "waiting-interleave",
+          size: TaskProvider.full
         });
         yield* sql`INSERT INTO execution_tasks (task_id, deployment_revision, state, requested_at, started_at, ready_at)
           VALUES (${spareTask.taskId}, 'waiting-interleave', 'spare', ${now}, ${spareTask.startedAt}, ${spareTask.readyAt})`;
@@ -2178,8 +2198,12 @@ it.layer(services)("host fleet controller", (it) => {
             }
             yield* Deferred.await(repolled);
             while (
-              (yield* store.target(yield* Clock.currentTimeMillis, 900_000, "waiting-interleave"))
-                .waiting !== 1
+              (yield* store.target(
+                yield* Clock.currentTimeMillis,
+                900_000,
+                "waiting-interleave",
+                false
+              )).full.waiting !== 1
             ) {
               yield* TestClock.withLive(Effect.sleep(5));
             }
@@ -2312,7 +2336,8 @@ it.layer(services)("host fleet controller", (it) => {
         // Start with 3 aged ready spares against floor=2.
         const extra = yield* provider.start({
           taskId: "trim-extra-1",
-          deploymentRevision: "trim-concurrency"
+          deploymentRevision: "trim-concurrency",
+          size: TaskProvider.full
         });
         yield* sql`INSERT INTO execution_tasks (task_id, deployment_revision, state, requested_at, started_at, ready_at)
           VALUES (${extra.taskId}, 'trim-concurrency', 'spare', ${now + 10}, ${extra.startedAt}, ${extra.readyAt})`;
@@ -2322,9 +2347,10 @@ it.layer(services)("host fleet controller", (it) => {
         const measured = yield* store.target(
           yield* Clock.currentTimeMillis,
           900_000,
-          "trim-concurrency"
+          "trim-concurrency",
+          false
         );
-        assert.strictEqual(measured.readySpares, 3);
+        assert.strictEqual(measured.full.readySpares, 3);
         const claimed = yield* store.claim(
           racer,
           "trim-racer-host",
@@ -2335,6 +2361,7 @@ it.layer(services)("host fleet controller", (it) => {
         assert.isDefined(claimed);
         const trimmedAfterRace = yield* store.trimSpares(
           "trim-concurrency",
+          TaskProvider.full,
           2,
           (yield* Clock.currentTimeMillis) - 40_000
         );
@@ -2347,7 +2374,8 @@ it.layer(services)("host fleet controller", (it) => {
         // warming a staged revision using free budget slots.
         const extra2 = yield* provider.start({
           taskId: "trim-extra-2",
-          deploymentRevision: "trim-concurrency"
+          deploymentRevision: "trim-concurrency",
+          size: TaskProvider.full
         });
         const t = yield* Clock.currentTimeMillis;
         yield* sql`INSERT INTO execution_tasks (task_id, deployment_revision, state, requested_at, started_at, ready_at)
@@ -2433,11 +2461,11 @@ it.layer(services)("host fleet controller", (it) => {
           { company_id: cold, until: now + 2_000 }
         ]);
         assert.strictEqual(
-          (yield* store.target(now + 1_999, 900_000, "waiting-expiry")).waiting,
+          (yield* store.target(now + 1_999, 900_000, "waiting-expiry", false)).full.waiting,
           1
         );
         assert.strictEqual(
-          (yield* store.target(now + 2_000, 900_000, "waiting-expiry")).waiting,
+          (yield* store.target(now + 2_000, 900_000, "waiting-expiry", false)).full.waiting,
           0
         );
         yield* TestClock.adjust(2_000);
@@ -2712,7 +2740,11 @@ it.layer(services)("host fleet controller over local tasks", (it) => {
     () =>
       Effect.gen(function* () {
         const { provider, resource, left } = yield* setupLocal("physical-budget");
-        yield* provider.start({ taskId: "unrecorded-task", deploymentRevision: "physical-budget" });
+        yield* provider.start({
+          taskId: "unrecorded-task",
+          deploymentRevision: "physical-budget",
+          size: TaskProvider.full
+        });
         assert.strictEqual(yield* liveChildren(resource.directory), 3);
         assert.isTrue(yield* left.housekeeping());
         assert.strictEqual(
@@ -3075,7 +3107,8 @@ it.layer(services)("host fleet controller over local tasks", (it) => {
         let delivered = yield* captured.take;
         while (delivered.type !== "process" || delivered.taskId !== admitted.binding.taskId)
           delivered = yield* captured.take;
-        assert.deepStrictEqual(delivered, original);
+        // The host adds the box its process ran on to the supervisor's report.
+        assert.deepStrictEqual(delivered, { ...original, cpu: TaskProvider.full.cpu });
         assert.strictEqual(
           captured.records.filter(
             (event) => event.type === "process" && event.eventId === original.eventId
@@ -3244,5 +3277,770 @@ it.layer(services)("host fleet controller over local tasks", (it) => {
         assert.strictEqual(metering[0]!.kills, 6);
       }).pipe(Effect.scoped),
     30_000
+  );
+});
+
+// Box sizes: a case's floors and budget, every other limit at its default.
+const sizing = (limits: Readonly<Record<string, number>>) =>
+  ConfigProvider.layer(ConfigProvider.fromUnknown({ PATCHY_LIMITS_JSON: JSON.stringify(limits) }));
+const addCompany = Effect.fn("FleetTest.addCompany")(function* (companyId: string) {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`INSERT INTO companies(id, handle, name) VALUES (${companyId}, ${companyId}, 'Fleet test')`;
+});
+const addMember = Effect.fn("FleetTest.addMember")(function* (companyId: string, userId: string) {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
+    VALUES (${userId}, ${userId}, ${companyId}, ${`${userId}@fleet.test`}, 'Member', 'member')`;
+});
+const cpuOf = Effect.fn("FleetTest.cpuOf")(function* (taskId: string) {
+  const sql = yield* SqlClient.SqlClient;
+  return (yield* sql<{
+    cpu: number;
+  }>`SELECT cpu FROM execution_tasks WHERE task_id = ${taskId}`)[0]!.cpu;
+});
+// Live tasks by state and CPU units: the pool and the budget as a case sees them.
+const livePool = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  return yield* sql<{ state: string; cpu: number; tasks: number }>`SELECT state, cpu,
+    count(*)::integer AS tasks FROM execution_tasks WHERE state <> 'stopped'
+    GROUP BY state, cpu ORDER BY state, cpu DESC`;
+});
+// The operator command's status, as plain values.
+const smallBoxes = Effect.map(Fleet.smallBoxesStatus, ({ smallBoxes, small, unverified }) => ({
+  smallBoxes,
+  small,
+  unverified
+}));
+const tasksOf = Effect.fn("FleetTest.tasksOf")(function* (state: string, cpu: number) {
+  const sql = yield* SqlClient.SqlClient;
+  return (yield* sql<{ task_id: string }>`SELECT task_id FROM execution_tasks
+    WHERE state = ${state} AND cpu = ${cpu} ORDER BY requested_at`).map((row) => row.task_id);
+});
+// Captures the fleet's warnings and errors as plain lines.
+const capturedLogs = () => {
+  const lines: Array<{ readonly level: string; readonly message: string }> = [];
+  const layer = Logger.layer([
+    Logger.make((entry) => {
+      const message = Array.isArray(entry.message) ? entry.message[0] : entry.message;
+      if (typeof message === "string") lines.push({ level: entry.logLevel, message });
+    })
+  ]);
+  const budget = () =>
+    lines
+      .filter((line) => line.message.startsWith("Execution fleet budget exhausted"))
+      .map((line) => line.message);
+  return { lines, layer, budget };
+};
+
+it.layer(services)("small boxes for one-member companies", (it) => {
+  it.effect("runs as today with small boxes off, a starting row from before sizes included", () =>
+    Effect.gen(function* () {
+      const memory = MemoryTasks.make();
+      const starts: Array<{ readonly taskId: string; readonly size: TaskProvider.Size }> = [];
+      const recording = TaskProvider.TaskProvider.of({
+        ...memory,
+        start: (input) =>
+          Effect.suspend(() => {
+            starts.push(input);
+            return memory.start(input);
+          })
+      });
+      const { sql, companyId, left } = yield* setup("small-off", recording, recording, true);
+      yield* addMember(companyId, "usr_small_off");
+      const now = yield* Clock.currentTimeMillis;
+      // A row an older release reserved and a wait it recorded small: both take today's defaults
+      // or count as today's demand.
+      yield* sql`INSERT INTO execution_tasks (task_id, deployment_revision, state, requested_at)
+        VALUES ('legacy-starting', 'small-off', 'starting', ${now})`;
+      yield* sql`INSERT INTO execution_pool_waits (company_id, until, cpu)
+        VALUES ('cmp_small_off_waiting', ${now + 30_000}, ${TaskProvider.small.cpu})`;
+      const store = yield* FleetStore.make;
+      const measured = yield* store.target(now, 900_000, "small-off", false);
+      assert.deepStrictEqual([measured.full.waiting, measured.small.waiting], [1, 0]);
+      yield* left.housekeeping();
+      assert.deepStrictEqual(
+        starts.find((input) => input.taskId === "legacy-starting")?.size,
+        TaskProvider.full
+      );
+      for (const input of starts) assert.deepStrictEqual(input.size, TaskProvider.full);
+      // A one-member company claims a full box, and nothing small exists.
+      const binding = yield* left.ensureBinding(companyId);
+      assert.strictEqual(yield* cpuOf(binding.taskId), TaskProvider.full.cpu);
+      assert.deepStrictEqual(
+        yield* sql`SELECT task_id FROM execution_tasks WHERE cpu <> ${TaskProvider.full.cpu}`,
+        []
+      );
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect(
+    "sizes each claim by the company's active members when it is made, and nothing else",
+    () =>
+      Effect.gen(function* () {
+        const { sql, companyId, left } = yield* setupMemory("small-members");
+        yield* addMember(companyId, "usr_small_members_a");
+        yield* Fleet.setSmallBoxes(true);
+        yield* left.housekeeping();
+        const claimed = Effect.gen(function* () {
+          const binding = yield* left.ensureBinding(companyId);
+          yield* left.releaseCompany(companyId);
+          return yield* cpuOf(binding.taskId);
+        });
+        assert.strictEqual(yield* claimed, TaskProvider.small.cpu);
+        yield* addMember(companyId, "usr_small_members_b");
+        assert.strictEqual(yield* claimed, TaskProvider.full.cpu);
+        yield* sql`UPDATE users SET deactivated_at = now() WHERE id = 'usr_small_members_b'`;
+        assert.strictEqual(yield* claimed, TaskProvider.small.cpu);
+        yield* sql`UPDATE users SET deactivated_at = NULL WHERE id = 'usr_small_members_b'`;
+        assert.strictEqual(yield* claimed, TaskProvider.full.cpu);
+      }).pipe(Effect.scoped)
+  );
+
+  it.effect(
+    "makes a team wait rather than take a small spare, and counts what each waiter needs",
+    () =>
+      Effect.gen(function* () {
+        const { sql, companyId, left } = yield* setupMemory("small-team");
+        yield* addMember(companyId, "usr_small_team_a");
+        yield* addMember(companyId, "usr_small_team_b");
+        yield* Fleet.setSmallBoxes(true);
+        yield* left.housekeeping();
+        for (const taskId of yield* tasksOf("spare", TaskProvider.full.cpu))
+          yield* left.drainTask(taskId);
+        const store = yield* FleetStore.make;
+        const now = yield* Clock.currentTimeMillis;
+        const miss = store.claim(
+          companyId,
+          "small-team-left",
+          now,
+          0,
+          FleetStore.clocksOf("page", now),
+          undefined,
+          now + 30_000
+        );
+        assert.isUndefined(yield* miss);
+        assert.strictEqual((yield* tasksOf("spare", TaskProvider.small.cpu)).length, 2);
+        const waits = sql`SELECT cpu, until FROM execution_pool_waits WHERE company_id = ${companyId}`;
+        assert.deepStrictEqual(yield* waits, [{ cpu: TaskProvider.full.cpu, until: now + 30_000 }]);
+        let measured = yield* store.target(now, 900_000, "small-team", true);
+        assert.deepStrictEqual([measured.full.waiting, measured.small.waiting], [1, 0]);
+        // The same wait, with no small spare left, now needs a small box.
+        for (const taskId of yield* tasksOf("spare", TaskProvider.small.cpu))
+          yield* left.drainTask(taskId);
+        yield* sql`UPDATE users SET deactivated_at = now() WHERE id = 'usr_small_team_b'`;
+        assert.isUndefined(yield* miss);
+        assert.deepStrictEqual(yield* waits, [
+          { cpu: TaskProvider.small.cpu, until: now + 30_000 }
+        ]);
+        measured = yield* store.target(now, 900_000, "small-team", true);
+        assert.deepStrictEqual([measured.full.waiting, measured.small.waiting], [0, 1]);
+        // With small boxes off, a wait recorded small is full demand.
+        measured = yield* store.target(now, 900_000, "small-team", false);
+        assert.deepStrictEqual([measured.full.waiting, measured.small.waiting], [1, 0]);
+      }).pipe(Effect.scoped)
+  );
+
+  it.effect(
+    "falls back to a ready full spare, keeps its tail, and counts the wake toward full spares",
+    () =>
+      Effect.gen(function* () {
+        const captured = yield* recording;
+        yield* Effect.gen(function* () {
+          const { companyId, bundle, provider, left } = yield* setupMemory("small-fallback");
+          const other = `${companyId}_other`;
+          yield* addCompany(other);
+          yield* addMember(companyId, "usr_small_fallback_a");
+          yield* addMember(other, "usr_small_fallback_b");
+          const store = yield* FleetStore.make;
+          const wakes = Effect.gen(function* () {
+            const measured = yield* store.target(
+              yield* Clock.currentTimeMillis,
+              900_000,
+              "small-fallback",
+              true
+            );
+            return [measured.full.wakes, measured.small.wakes];
+          });
+          // Switched on with no small spare warm yet: the open takes a full one at once.
+          yield* Fleet.setSmallBoxes(true);
+          const fallback = yield* left.lifecycle.acquire(companyId, bundle.patchId, "page");
+          yield* fallback.release;
+          assert.strictEqual(yield* cpuOf(fallback.binding.taskId), TaskProvider.full.cpu);
+          assert.deepStrictEqual(yield* wakes, [1, 0]);
+          yield* left.housekeeping();
+          const small = yield* left.lifecycle.acquire(other, bundle.patchId, "page");
+          yield* small.release;
+          assert.strictEqual(yield* cpuOf(small.binding.taskId), TaskProvider.small.cpu);
+          assert.deepStrictEqual(yield* wakes, [1, 1]);
+          const state = (taskId: string) =>
+            Effect.map(
+              provider.list,
+              (tasks) => tasks.find((task) => task.taskId === taskId)?.state
+            );
+          // The tail follows the box: ten minutes on the small one, thirty on the full one.
+          yield* left.housekeeping();
+          yield* TestClock.adjust(10 * 60_000);
+          yield* left.housekeeping();
+          assert.strictEqual(yield* state(small.binding.taskId), "stopped");
+          assert.strictEqual(yield* state(fallback.binding.taskId), "running");
+          yield* TestClock.adjust(20 * 60_000);
+          yield* left.housekeeping();
+          assert.strictEqual(yield* state(fallback.binding.taskId), "stopped");
+          const bindings = captured.records.flatMap((event) =>
+            event.type === "binding" ? [[event.companyId, event.cpu]] : []
+          );
+          assert.sameDeepMembers(bindings, [
+            [other, TaskProvider.small.cpu],
+            [companyId, TaskProvider.full.cpu]
+          ]);
+        }).pipe(Effect.provideService(WideEvents.WideEvents, captured.events));
+      }).pipe(Effect.scoped)
+  );
+
+  it.effect("counts the budget in vCPU and keeps and trims each size to its own target", () =>
+    Effect.gen(function* () {
+      const { companyId, left } = yield* setupMemory("small-budget");
+      const solo = `${companyId}_solo`;
+      yield* addCompany(solo);
+      yield* addMember(solo, "usr_small_budget_solo");
+      yield* addMember(companyId, "usr_small_budget_a");
+      yield* addMember(companyId, "usr_small_budget_b");
+      yield* Fleet.setSmallBoxes(true);
+      yield* left.housekeeping();
+      // Two small spares in the room of one full box: a full spare and two small ones are 2 vCPU.
+      assert.deepStrictEqual(yield* livePool, [
+        { state: "spare", cpu: 1024, tasks: 1 },
+        { state: "spare", cpu: 512, tasks: 2 }
+      ]);
+      yield* left.ensureBinding(companyId);
+      yield* left.ensureBinding(solo);
+      const logs = capturedLogs();
+      yield* left.housekeeping().pipe(Effect.provide(logs.layer));
+      // The full deficit fits in the last vCPU; the small one then has no full box of room.
+      assert.deepStrictEqual(yield* livePool, [
+        { state: "bound", cpu: 1024, tasks: 1 },
+        { state: "bound", cpu: 512, tasks: 1 },
+        { state: "spare", cpu: 1024, tasks: 1 },
+        { state: "spare", cpu: 512, tasks: 1 }
+      ]);
+      assert.deepStrictEqual(logs.budget(), [
+        "Execution fleet budget exhausted revision=small-budget size=small budget=3 target=2 spares=1"
+      ]);
+      // Off, small spares are surplus and go after their grace; the small binding stays.
+      yield* Fleet.setSmallBoxes(false);
+      yield* TestClock.adjust(40_000);
+      yield* left.housekeeping();
+      assert.deepStrictEqual(yield* livePool, [
+        { state: "bound", cpu: 1024, tasks: 1 },
+        { state: "bound", cpu: 512, tasks: 1 },
+        { state: "spare", cpu: 1024, tasks: 1 }
+      ]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        sizing({
+          "execution.fleet.budget": 3,
+          "execution.pool.spares": 1,
+          "execution.pool.smallSpares": 2
+        })
+      )
+    )
+  );
+
+  it.effect(
+    "reserves no small spare while a full deficit is refused, and stops none for it, pass after pass",
+    () =>
+      Effect.gen(function* () {
+        const { companyId, left } = yield* setupMemory("small-ceiling");
+        const solo = `${companyId}_solo`;
+        yield* addCompany(solo);
+        yield* addMember(solo, "usr_small_ceiling_solo");
+        yield* addMember(companyId, "usr_small_ceiling_a");
+        yield* addMember(companyId, "usr_small_ceiling_b");
+        yield* Fleet.setSmallBoxes(true);
+        yield* left.housekeeping();
+        assert.deepStrictEqual(yield* livePool, [
+          { state: "spare", cpu: 1024, tasks: 2 },
+          { state: "spare", cpu: 512, tasks: 1 }
+        ]);
+        yield* left.ensureBinding(companyId);
+        yield* left.ensureBinding(solo);
+        const logs = capturedLogs();
+        const sql = yield* SqlClient.SqlClient;
+        const live = sql`SELECT task_id, state FROM execution_tasks WHERE state <> 'stopped'
+          ORDER BY task_id`;
+        const before = yield* live;
+        for (let pass = 0; pass < 3; pass++) {
+          yield* left.housekeeping().pipe(Effect.provide(logs.layer));
+          assert.deepStrictEqual(yield* live, before);
+          yield* TestClock.adjust(5_000);
+        }
+        // Each pass refused the full deficit and never tried the small one.
+        assert.deepStrictEqual(logs.budget(), [
+          "Execution fleet budget exhausted revision=small-ceiling size=full budget=3 target=2 spares=1",
+          "Execution fleet budget exhausted revision=small-ceiling size=full budget=3 target=2 spares=1",
+          "Execution fleet budget exhausted revision=small-ceiling size=full budget=3 target=2 spares=1"
+        ]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          sizing({
+            "execution.fleet.budget": 3,
+            "execution.pool.spares": 2,
+            "execution.pool.smallSpares": 1
+          })
+        )
+      )
+  );
+
+  it.effect(
+    "warms only full spares for a staged revision and promotes it at the budget ceiling once room is freed",
+    () =>
+      Effect.gen(function* () {
+        const { sql, provider, left } = yield* setupMemory("small-promote-a");
+        yield* Fleet.setSmallBoxes(true);
+        yield* left.housekeeping();
+        assert.deepStrictEqual(yield* livePool, [
+          { state: "spare", cpu: 1024, tasks: 1 },
+          { state: "spare", cpu: 512, tasks: 1 }
+        ]);
+        yield* sql`DELETE FROM execution_housekeeping`;
+        const candidate = yield* Fleet.make({
+          replicaId: "small-promote-b-host",
+          deploymentRevision: "small-promote-b",
+          automaticHousekeeping: false
+        }).pipe(Effect.provideService(TaskProvider.TaskProvider, provider));
+        assert.isTrue(yield* candidate.stageDeployment("small-promote-b"));
+        const logs = capturedLogs();
+        yield* candidate.housekeeping().pipe(Effect.provide(logs.layer));
+        // The staged revision's full spare has no room; nothing small is tried meanwhile.
+        assert.deepStrictEqual(logs.budget(), [
+          "Execution fleet budget exhausted revision=small-promote-b size=full budget=2 target=1 spares=0"
+        ]);
+        assert.isFalse(yield* candidate.promoteDeployment("small-promote-b"));
+        // Freeing budget for the promotion: the operator drains the current revision's small spare.
+        for (const taskId of yield* tasksOf("spare", TaskProvider.small.cpu))
+          yield* candidate.drainTask(taskId);
+        yield* candidate.housekeeping();
+        assert.isTrue(yield* candidate.promoteDeployment("small-promote-b"));
+        assert.deepStrictEqual(
+          yield* sql`SELECT cpu FROM execution_tasks WHERE deployment_revision = 'small-promote-b'`,
+          [{ cpu: TaskProvider.full.cpu }]
+        );
+        // Promoted, it warms its own small spares once the earlier revision's spares drain.
+        yield* candidate.housekeeping();
+        yield* candidate.housekeeping();
+        assert.deepStrictEqual(
+          yield* sql`SELECT cpu FROM execution_tasks
+            WHERE deployment_revision = 'small-promote-b' AND state = 'spare' ORDER BY cpu DESC`,
+          [{ cpu: TaskProvider.full.cpu }, { cpu: TaskProvider.small.cpu }]
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          sizing({
+            "execution.fleet.budget": 2,
+            "execution.pool.spares": 1,
+            "execution.pool.smallSpares": 2
+          })
+        )
+      )
+  );
+
+  it.effect(
+    "turns off with small spares and a small binding live, and its status clears once they are gone",
+    () =>
+      Effect.gen(function* () {
+        const { companyId, bundle, left } = yield* setupMemory("small-switch");
+        yield* addMember(companyId, "usr_small_switch");
+        assert.deepStrictEqual(yield* smallBoxes, {
+          smallBoxes: false,
+          small: {},
+          unverified: []
+        });
+        yield* Fleet.setSmallBoxes(true);
+        yield* left.housekeeping();
+        const admission = yield* left.lifecycle.acquire(companyId, bundle.patchId, "page");
+        yield* admission.release;
+        yield* left.housekeeping();
+        assert.deepStrictEqual(yield* smallBoxes, {
+          smallBoxes: true,
+          small: { bound: 1, spare: 2 },
+          unverified: []
+        });
+        yield* Fleet.setSmallBoxes(false);
+        yield* TestClock.adjust(40_000);
+        yield* left.housekeeping();
+        // The live binding keeps its box and its tail; only the spares went.
+        assert.deepStrictEqual(yield* smallBoxes, {
+          smallBoxes: false,
+          small: { bound: 1 },
+          unverified: []
+        });
+        yield* TestClock.adjust(10 * 60_000);
+        yield* left.housekeeping();
+        assert.deepStrictEqual(yield* smallBoxes, {
+          smallBoxes: false,
+          small: {},
+          unverified: []
+        });
+        const next = yield* left.ensureBinding(companyId);
+        assert.strictEqual(yield* cpuOf(next.taskId), TaskProvider.full.cpu);
+      }).pipe(Effect.scoped)
+  );
+
+  it.effect(
+    "rechecks the switch at each write a pass planned while it was on: reserve, readiness and trim",
+    () =>
+      Effect.gen(function* () {
+        const memory = MemoryTasks.make();
+        const store = yield* FleetStore.make;
+        let flipDuringLaunch = false;
+        const flipping = TaskProvider.TaskProvider.of({
+          ...memory,
+          start: (input) =>
+            memory
+              .start(input)
+              .pipe(
+                Effect.tap(() =>
+                  flipDuringLaunch && TaskProvider.isSmall(input.size)
+                    ? store.setSmallBoxes(false).pipe(Effect.orDie)
+                    : Effect.void
+                )
+              )
+        });
+        const { sql, left } = yield* setup("small-flip", flipping, flipping, true);
+        const flipBefore = (pattern: RegExp) => {
+          let flipped = false;
+          const transform: Statement.Transformer = (statement) =>
+            flipped || !pattern.test(statement.compile()[0])
+              ? Effect.succeed(statement)
+              : Effect.sync(() => {
+                  flipped = true;
+                }).pipe(
+                  Effect.andThen(store.setSmallBoxes(false).pipe(Effect.orDie)),
+                  Effect.as(statement)
+                );
+          return { transform, flipped: () => flipped };
+        };
+        // Planned on, refused at the reservation's lock.
+        yield* Fleet.setSmallBoxes(true);
+        const atReserve = flipBefore(/AND small_boxes AND current_revision/);
+        yield* left
+          .housekeeping()
+          .pipe(Effect.provideService(Statement.CurrentTransformer, atReserve.transform));
+        assert.isTrue(atReserve.flipped());
+        assert.deepStrictEqual(yield* livePool, [{ state: "spare", cpu: 1024, tasks: 2 }]);
+        // Reserved on, launched, and the switch went off before it was ready: drained.
+        yield* Fleet.setSmallBoxes(true);
+        flipDuringLaunch = true;
+        yield* left.housekeeping();
+        flipDuringLaunch = false;
+        assert.deepStrictEqual(yield* livePool, [{ state: "spare", cpu: 1024, tasks: 2 }]);
+        assert.deepStrictEqual(
+          yield* sql`SELECT state, ready_at FROM execution_tasks WHERE cpu = ${TaskProvider.small.cpu}`,
+          [
+            { state: "stopped", ready_at: null },
+            { state: "stopped", ready_at: null }
+          ]
+        );
+        // Planned to keep one small spare of two, then kept none.
+        yield* Fleet.setSmallBoxes(true);
+        yield* left.housekeeping();
+        const now = yield* Clock.currentTimeMillis;
+        yield* sql`INSERT INTO execution_tasks
+          (task_id, deployment_revision, state, requested_at, started_at, ready_at, cpu)
+          VALUES ('small-flip-extra', 'small-flip', 'spare', ${now + 1}, ${now}, ${now}, 512)`;
+        yield* TestClock.adjust(40_000);
+        const atTrim = flipBefore(/SELECT small_boxes AS "smallBoxes"/);
+        yield* left
+          .housekeeping()
+          .pipe(Effect.provideService(Statement.CurrentTransformer, atTrim.transform));
+        assert.isTrue(atTrim.flipped());
+        assert.deepStrictEqual(yield* tasksOf("spare", TaskProvider.small.cpu), []);
+      }).pipe(Effect.scoped)
+  );
+
+  it.effect(
+    "replaces a binding only with a spare its size allows, passing over one it cannot replace",
+    () =>
+      Effect.gen(function* () {
+        const { sql, companyId: team, provider, left } = yield* setupMemory("small-replace-a");
+        const solo = `${team}_solo`;
+        const gone = `${team}_gone`;
+        yield* addCompany(solo);
+        yield* addCompany(gone);
+        yield* addMember(team, "usr_small_replace_a");
+        yield* addMember(team, "usr_small_replace_b");
+        yield* addMember(solo, "usr_small_replace_solo");
+        yield* addMember(gone, "usr_small_replace_gone");
+        yield* Fleet.setSmallBoxes(true);
+        yield* left.housekeeping();
+        // Bound oldest first: the team, then the one whose binding goes, then the one-member company.
+        yield* left.ensureBinding(team);
+        yield* left.ensureBinding(gone);
+        yield* left.ensureBinding(solo);
+        yield* sql`DELETE FROM execution_housekeeping`;
+        // The next revision's host registers it; it is promoted with only a small spare ready.
+        yield* Fleet.make({
+          replicaId: "small-replace-b-host",
+          deploymentRevision: "small-replace-b",
+          automaticHousekeeping: false
+        }).pipe(Effect.provideService(TaskProvider.TaskProvider, provider));
+        const now = yield* Clock.currentTimeMillis;
+        yield* provider.start({
+          taskId: "small-replace-b-small",
+          deploymentRevision: "small-replace-b",
+          size: TaskProvider.small
+        });
+        yield* sql`INSERT INTO execution_tasks
+          (task_id, deployment_revision, state, requested_at, started_at, ready_at, cpu)
+          VALUES ('small-replace-b-small', 'small-replace-b', 'spare', ${now}, ${now}, ${now}, 512)`;
+        yield* sql`UPDATE execution_rollout SET current_revision = 'small-replace-b',
+          staged_revision = NULL`;
+        // The binding between them is released after the scan and before its lock.
+        let released = false;
+        const store = yield* FleetStore.make;
+        const releaseBeforeLock: Statement.Transformer = (statement) =>
+          released || !statement.compile()[1].includes(`execution/claim/${gone}`)
+            ? Effect.succeed(statement)
+            : Effect.sync(() => {
+                released = true;
+              }).pipe(
+                Effect.andThen(
+                  sql`UPDATE execution_bindings SET state = 'stopping', release_cause = 'idle'
+                    WHERE company_id = ${gone} AND state = 'active'`.pipe(Effect.orDie)
+                ),
+                Effect.as(statement)
+              );
+        const replaced = yield* store
+          .replaceDeploymentBinding("small-replace-b-host", now)
+          .pipe(Effect.provideService(Statement.CurrentTransformer, releaseBeforeLock));
+        assert.isTrue(released);
+        assert.strictEqual(replaced?.previous.companyId, solo);
+        assert.strictEqual(replaced?.replacement.taskId, "small-replace-b-small");
+        // The team was passed over with its binding intact, and nothing else was fenced.
+        assert.deepStrictEqual(
+          yield* sql`SELECT company_id, state, release_cause FROM execution_bindings
+            WHERE company_id IN (${team}, ${gone}) ORDER BY binding_id`,
+          [
+            { company_id: team, state: "active", release_cause: null },
+            { company_id: gone, state: "stopping", release_cause: "idle" }
+          ]
+        );
+      }).pipe(Effect.scoped)
+  );
+
+  it.effect(
+    "admits a task at the size it runs at, within the budget, and retries a launch at the size it asked for",
+    () =>
+      Effect.gen(function* () {
+        const memory = MemoryTasks.make();
+        const starts: Array<{ readonly taskId: string; readonly size: TaskProvider.Size }> = [];
+        let ambiguous = true;
+        // Fargate ignoring the override: every task runs at the definition's full size.
+        const ignoring = TaskProvider.TaskProvider.of({
+          ...memory,
+          start: (input) =>
+            Effect.suspend(() => {
+              starts.push(input);
+              if (TaskProvider.isSmall(input.size) && ambiguous) {
+                ambiguous = false;
+                return Effect.fail(
+                  new TaskProvider.TaskProviderError({
+                    operation: "start",
+                    taskId: input.taskId,
+                    reason: "provider"
+                  })
+                );
+              }
+              return memory.start({ ...input, size: TaskProvider.full });
+            })
+        });
+        const { left } = yield* setup("small-verify", ignoring, ignoring, true);
+        yield* Fleet.setSmallBoxes(true);
+        const logs = capturedLogs();
+        const charged = Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          return (yield* sql<{ cpu: number }>`SELECT COALESCE(sum(CASE WHEN ready_at IS NULL
+            THEN 1024 ELSE cpu END), 0)::integer AS cpu FROM execution_tasks
+            WHERE state <> 'stopped'`)[0]!.cpu;
+        });
+        yield* left.housekeeping().pipe(Effect.provide(logs.layer));
+        // Its launch lost, the small row stays starting and is charged a full box.
+        assert.deepStrictEqual(yield* livePool, [
+          { state: "spare", cpu: 1024, tasks: 1 },
+          { state: "starting", cpu: 512, tasks: 1 }
+        ]);
+        assert.strictEqual(yield* charged, 2048);
+        yield* left.housekeeping().pipe(Effect.provide(logs.layer));
+        const small = starts.filter((input) => TaskProvider.isSmall(input.size));
+        assert.strictEqual(small.length, 2);
+        assert.strictEqual(small[0]!.taskId, small[1]!.taskId);
+        // Ready at full size, it is a full spare now, still within the budget.
+        assert.deepStrictEqual(yield* livePool, [{ state: "spare", cpu: 1024, tasks: 2 }]);
+        assert.strictEqual(yield* charged, 2048);
+        assert.isTrue(
+          logs.lines.some(
+            (line) =>
+              line.level === "Error" &&
+              line.message === "Execution task started at a size other than it asked for"
+          )
+        );
+        // Surplus at full size, it is trimmed like any other. The next small launch may come up
+        // full again in the same pass, and stays within the budget too.
+        yield* TestClock.adjust(40_000);
+        yield* left.housekeeping();
+        const sql = yield* SqlClient.SqlClient;
+        assert.deepStrictEqual(
+          yield* sql`SELECT state FROM execution_tasks WHERE task_id = ${small[0]!.taskId}`,
+          [{ state: "stopped" }]
+        );
+        assert.isAtMost(yield* charged, 2048);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          sizing({
+            "execution.fleet.budget": 2,
+            "execution.pool.spares": 1,
+            "execution.pool.smallSpares": 1
+          })
+        )
+      )
+  );
+
+  it.effect(
+    "prewarms only a spare of the company's size, with a full box of room to replace it",
+    () =>
+      Effect.gen(function* () {
+        const { companyId, left } = yield* setupMemory("small-prewarm");
+        yield* addMember(companyId, "usr_small_prewarm");
+        yield* Fleet.setSmallBoxes(true);
+        yield* left.housekeeping();
+        yield* left.housekeeping();
+        // Two small spares and a full one: 2 vCPU of 2.5, half a vCPU of room.
+        assert.deepStrictEqual(yield* livePool, [
+          { state: "spare", cpu: 1024, tasks: 1 },
+          { state: "spare", cpu: 512, tasks: 2 }
+        ]);
+        const held = yield* Scope.make();
+        assert.strictEqual(
+          (yield* left.lifecycle.prewarm(companyId).pipe(Scope.provide(held))).found,
+          "full"
+        );
+        yield* Scope.close(held, Exit.void);
+        for (const taskId of yield* tasksOf("spare", TaskProvider.full.cpu))
+          yield* left.drainTask(taskId);
+        const again = yield* Scope.make();
+        assert.strictEqual(
+          (yield* left.lifecycle.prewarm(companyId).pipe(Scope.provide(again))).found,
+          "spare"
+        );
+        const bound = yield* left.ensureBinding(companyId);
+        assert.strictEqual(yield* cpuOf(bound.taskId), TaskProvider.small.cpu);
+        yield* Scope.close(again, Exit.void);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          sizing({
+            "execution.fleet.budget": 2.5,
+            "execution.pool.spares": 1,
+            "execution.pool.smallSpares": 2
+          })
+        )
+      )
+  );
+
+  it.effect(
+    "drains small rows still starting once off, completing each only on evidence it stopped",
+    () =>
+      Effect.gen(function* () {
+        const memory = MemoryTasks.make();
+        const stops: string[] = [];
+        const order: string[] = [];
+        // The first small launch is refused outright, the next two go unanswered.
+        const failing = TaskProvider.TaskProvider.of({
+          ...memory,
+          start: (input) =>
+            Effect.suspend(() => {
+              if (!TaskProvider.isSmall(input.size)) return memory.start(input);
+              if (!order.includes(input.taskId)) order.push(input.taskId);
+              return Effect.fail(
+                new TaskProvider.TaskProviderError({
+                  operation: "start",
+                  taskId: input.taskId,
+                  reason: order.indexOf(input.taskId) === 0 ? "launch_refused" : "provider"
+                })
+              );
+            }),
+          stop: (taskId) =>
+            Effect.suspend(() => {
+              stops.push(taskId);
+              return memory.stop(taskId);
+            })
+        });
+        const { sql, left } = yield* setup("small-recover", failing, failing, true);
+        yield* Fleet.setSmallBoxes(true);
+        yield* left.housekeeping();
+        yield* left.housekeeping();
+        const [refused, late, lost] = order;
+        const rows = sql`SELECT task_id, state, launch_refused_at IS NOT NULL AS refused
+          FROM execution_tasks WHERE cpu = ${TaskProvider.small.cpu} ORDER BY task_id`;
+        // On, a refused launch is retried on the same row and stays charged.
+        assert.sameDeepMembers(
+          [...(yield* rows)],
+          [
+            { task_id: refused, state: "starting", refused: true },
+            { task_id: late, state: "starting", refused: false },
+            { task_id: lost, state: "starting", refused: false }
+          ]
+        );
+        yield* Fleet.setSmallBoxes(false);
+        yield* left.housekeeping();
+        assert.sameDeepMembers(
+          [...(yield* rows)],
+          [
+            { task_id: refused, state: "stopped", refused: true },
+            { task_id: late, state: "stopping", refused: false },
+            { task_id: lost, state: "stopping", refused: false }
+          ]
+        );
+        assert.notInclude(stops, refused);
+        // One launch turns up after all and is stopped; the other never does and stays charged.
+        yield* memory.start({
+          taskId: late!,
+          deploymentRevision: "small-recover",
+          size: TaskProvider.small
+        });
+        yield* left.housekeeping();
+        const status = yield* Fleet.smallBoxesStatus;
+        assert.deepStrictEqual(status.unverified, [
+          { taskId: lost!, state: "stopping", cpu: TaskProvider.small.cpu, launchRefused: false }
+        ]);
+        assert.strictEqual(
+          (yield* sql`SELECT state FROM execution_tasks WHERE task_id = ${late!}`)[0]!.state,
+          "stopped"
+        );
+        // Unverified, it is charged a full box: with it at half, 2.5 vCPU would have room.
+        yield* sql`DELETE FROM execution_housekeeping`;
+        const store = yield* FleetStore.make;
+        const now = yield* Clock.currentTimeMillis;
+        const lease = (yield* store.lease("small-recover-probe", "small-recover", now, 15_000))!;
+        assert.deepStrictEqual(
+          yield* store.reserve(
+            "small-recover-probe",
+            "small-recover",
+            TaskProvider.full,
+            "small-recover-probe",
+            lease.leaseEpoch,
+            now,
+            2.5
+          ),
+          { outcome: "budget", spares: 1 }
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(sizing({ "execution.pool.spares": 1, "execution.pool.smallSpares": 3 }))
+      )
   );
 });

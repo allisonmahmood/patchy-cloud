@@ -114,6 +114,11 @@ export class Users extends Context.Service<
     readonly findByEmail: (email: string) => Effect.Effect<User | null, SqlError>;
     readonly list: (companyId: string) => Effect.Effect<ReadonlyArray<User>, SqlError>;
     /**
+     * How many of the company's users are not deactivated. A guest's user row is in their own
+     * company, so guests never count. Runs on the caller's transaction when it has one.
+     */
+    readonly activeMembers: (companyId: string) => Effect.Effect<number, SqlError>;
+    /**
      * The names of these people, whichever company is theirs: a log reader names the actors in
      * its company's records with it, guests from other companies included. Unknown ids are absent.
      */
@@ -408,6 +413,19 @@ export const make = Effect.gen(function* () {
         to_timestamp(${now / 1_000}))
       ON CONFLICT DO NOTHING`;
   });
+  const activeMembersRow = SqlSchema.findOne({
+    Request: Schema.String,
+    Result: Schema.Struct({ count: Schema.Int }),
+    execute: (companyId) => sql`
+      SELECT count(*)::int AS count FROM users
+      WHERE company_id = ${companyId} AND deactivated_at IS NULL`
+  });
+  const activeMembers = Effect.fn("Users.activeMembers")(function* (companyId: string) {
+    const { count } = yield* activeMembersRow(companyId).pipe(
+      Effect.catchTags({ ...dieOnSchemaError, NoSuchElementError: Effect.die })
+    );
+    return count;
+  });
   const setSingleKeyShortcuts = Effect.fn("Users.setSingleKeyShortcuts")(function* (input: {
     readonly userId: string;
     readonly on: boolean;
@@ -419,6 +437,7 @@ export const make = Effect.gen(function* () {
     findByClerkId,
     findByEmail,
     list,
+    activeMembers,
     names,
     refreshClaims,
     setRole,

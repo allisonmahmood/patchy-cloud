@@ -410,6 +410,19 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(da
         })
     );
 
+    it.effect("counts a company's active members, never a deactivated one", () =>
+      Effect.gen(function* () {
+        const users = yield* Users.Users;
+        const { company, member } = yield* companyWithMember("active-members");
+        assert.strictEqual(yield* users.activeMembers(company.id), 2);
+        yield* users.deactivate({ companyId: company.id, userId: member.id });
+        assert.strictEqual(yield* users.activeMembers(company.id), 1);
+        yield* users.reactivate({ companyId: company.id, userId: member.id });
+        assert.strictEqual(yield* users.activeMembers(company.id), 2);
+        assert.strictEqual(yield* users.activeMembers("cmp_without_users"), 0);
+      })
+    );
+
     it.effect("leaves one active admin when two admins are concurrently demoted", () =>
       Effect.gen(function* () {
         const users = yield* Users.Users;

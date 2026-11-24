@@ -11,6 +11,11 @@
       "types": "./dist/fleet.d.ts",
       "import": "./dist/fleet.js"
     },
+    "./active-members": {
+      "development": "./src/ActiveMembers.ts",
+      "types": "./dist/ActiveMembers.d.ts",
+      "import": "./dist/ActiveMembers.js"
+    },
     "./task-provider": {
       "development": "./src/TaskProvider.ts",
       "types": "./dist/TaskProvider.d.ts",

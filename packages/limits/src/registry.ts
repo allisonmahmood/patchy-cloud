@@ -1490,7 +1490,7 @@ export const registry = {
     unit: "vCPU",
     scope: "company",
     measure:
-      "Company task CPU. Not read: the exec task definition sets every task's size; the id stays so existing configuration loads",
+      "Company task CPU. Not read: a full box is the exec task definition's size and a small box half its CPU; the id stays so existing configuration loads",
     refusal: null,
     overridable: true
   },
@@ -1500,7 +1500,7 @@ export const registry = {
     unit: "bytes",
     scope: "company",
     measure:
-      "Company task memory, 2048 MiB. Not read: the exec task definition sets every task's size; the id stays so existing configuration loads",
+      "Company task memory, 2048 MiB. Not read: every box has the exec task definition's memory; the id stays so existing configuration loads",
     refusal: null,
     overridable: true
   },
@@ -1545,9 +1545,10 @@ export const registry = {
   "execution.fleet.budget": {
     kind: "operating",
     default: 100,
-    unit: "tasks",
+    unit: "vCPU",
     scope: "host",
-    measure: "Maximum live tasks across bound companies, draining tasks and spares",
+    measure:
+      "Maximum vCPU of live tasks across bound companies, draining tasks and spares; a task whose size was never verified counts as a full box",
     refusal: "busy",
     overridable: false
   },
@@ -1575,7 +1576,17 @@ export const registry = {
     unit: "tasks",
     scope: "host",
     measure:
-      "Global spare floor; target is ceil(max(floor, wake rate times measured cold start)) plus waiting companies (current revision only), within fleet budget",
+      "Floor of full spares; target is ceil(max(floor, wake rate times measured cold start)) plus waiting companies (current revision only), within fleet budget",
+    refusal: null,
+    overridable: false
+  },
+  "execution.pool.smallSpares": {
+    kind: "operating",
+    default: 2,
+    unit: "tasks",
+    scope: "host",
+    measure:
+      "Floor of small spares for the current revision, read only while small boxes are on; reserved only when no full deficit was refused for budget",
     refusal: null,
     overridable: false
   },
@@ -1605,6 +1616,16 @@ export const registry = {
     scope: "company",
     measure:
       "Release after no active tier 2 documents and no in-flight work, from the last document letting go or page work settling; worker agents' calls never touch it",
+    refusal: null,
+    overridable: true
+  },
+  "execution.company.smallIdle": {
+    kind: "operating",
+    default: 600000,
+    unit: "milliseconds",
+    scope: "company",
+    measure:
+      "execution.company.idle on a small box, which only a one-member company runs on; worker agents' calls never touch it",
     refusal: null,
     overridable: true
   },

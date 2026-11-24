@@ -1,6 +1,6 @@
 // @effect-diagnostics globalDate:off globalDateInEffect:off -- SDK fixtures carry Date timestamps derived from TestClock.
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import type { Task, TaskDefinition } from "@aws-sdk/client-ecs";
+import type { RunTaskCommandInput, Task, TaskDefinition } from "@aws-sdk/client-ecs";
 import { assert, it } from "@effect/vitest";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { OperatingLimits } from "@patchy/limits";
@@ -24,6 +24,7 @@ import * as Ecs from "./ecs.js";
 import * as EcsTaskProvider from "./ecsTaskProvider.js";
 import * as Fleet from "./fleet.js";
 import * as TaskProvider from "./TaskProvider.js";
+import * as ActiveMembersTest from "./test/activeMembers.js";
 import { NodeCryptography } from "@patchy/core";
 
 // Synthetic account, never a real deployment identifier.
@@ -65,6 +66,8 @@ const cloud = Effect.gen(function* () {
       revision.taskDefinition,
       {
         taskDefinitionArn: revision.taskDefinition,
+        cpu: "1024",
+        memory: "2048",
         networkMode: "awsvpc",
         requiresCompatibilities: ["FARGATE"],
         containerDefinitions: [{ name: "exec", user: "0" }]
@@ -90,8 +93,12 @@ const cloud = Effect.gen(function* () {
     }
   >();
   let generations = 0;
+  // Every RunTask request as ECS received it, refused ones included.
+  const launches: RunTaskCommandInput[] = [];
+  let ignoreSize = false;
   let loseRunReply = false;
   let loseInvokeReply = false;
+  let refusal: "failures" | "client" | "server" | undefined;
   let malformReply = false;
   let reusedAddress: string | undefined;
   let describes = 0;
@@ -130,6 +137,24 @@ const cloud = Effect.gen(function* () {
         };
       }),
     runTask: Effect.fn("TestEcs.runTask")(function* (input) {
+      if (refusal !== undefined) {
+        const refused = refusal;
+        refusal = undefined;
+        launches.push(input);
+        if (refused === "failures")
+          return { $metadata: {}, tasks: [], failures: [{ reason: "RESOURCE:CPU" }] };
+        // The SDK's own errors: a modeled client error with its 4xx, and an unmodeled 500 it
+        // also marks a client fault.
+        return yield* new Ecs.EcsError({
+          operation: "runTask",
+          cause: Object.assign(new Error("Invalid CPU or memory value specified"), {
+            name: refused === "client" ? "InvalidParameterException" : "UnknownError",
+            $fault: "client",
+            $metadata: { httpStatusCode: refused === "client" ? 400 : 500 }
+          })
+        });
+      }
+      launches.push(input);
       const existing = tokens.get(input.clientToken!);
       if (existing) return { $metadata: {}, tasks: [tasks.get(existing)!] };
       const now = yield* Clock.currentTimeMillis;
@@ -137,9 +162,13 @@ const cloud = Effect.gen(function* () {
       const address = reusedAddress ?? `10.0.1.${tasks.size + 1}`;
       reusedAddress = undefined;
       const tag = (key: string) => input.tags!.find((entry) => entry.key === key)!.value!;
+      const definition = definitions.get(input.taskDefinition!)!;
       const task: Task = {
         taskArn: arn,
         taskDefinitionArn: input.taskDefinition,
+        // Fargate runs the task at the launch's size override, else at its definition's.
+        cpu: ignoreSize ? definition.cpu : (input.overrides?.cpu ?? definition.cpu),
+        memory: ignoreSize ? definition.memory : (input.overrides?.memory ?? definition.memory),
         startedBy: input.startedBy,
         group: input.group,
         tags: input.tags,
@@ -310,8 +339,20 @@ const cloud = Effect.gen(function* () {
     stopped,
     definitions,
     describes: () => describes,
+    launches,
     loseRunReply: () => {
       loseRunReply = true;
+    },
+    /**
+     * The next RunTask creates nothing: ECS answers with `failures`, a 4xx `client` error, or a
+     * `server` error the SDK cannot tell from one but by its 500.
+     */
+    refuseNextRun: (how: "failures" | "client" | "server") => {
+      refusal = how;
+    },
+    /** Fargate runs every later task at its definition's size, whatever the launch asked for. */
+    ignoreSizes: () => {
+      ignoreSize = true;
     },
     loseInvokeReply: () => {
       loseInvokeReply = true;
@@ -528,7 +569,11 @@ it.effect("retains known ARNs through omitted listings and treats MISSING as unc
     const provider = yield* EcsTaskProvider.make(options).pipe(
       Effect.provide([aws.layer, NodeCryptography.layer])
     );
-    const task = yield* provider.start({ taskId: "known", deploymentRevision: "current" });
+    const task = yield* provider.start({
+      taskId: "known",
+      deploymentRevision: "current",
+      size: TaskProvider.full
+    });
     const arn = [...aws.tasks.keys()][0]!;
     aws.omitted.add(arn);
     assert.deepEqual(yield* provider.list, [task]);
@@ -553,7 +598,7 @@ it.effect(
       aws.loseRunReply();
       assert.include(
         yield* firstHost
-          .start({ taskId: "ambiguous", deploymentRevision: "current" })
+          .start({ taskId: "ambiguous", deploymentRevision: "current", size: TaskProvider.full })
           .pipe(Effect.flip),
         { reason: "provider" }
       );
@@ -562,7 +607,8 @@ it.effect(
       );
       const started = yield* secondHost.start({
         taskId: "ambiguous",
-        deploymentRevision: "current"
+        deploymentRevision: "current",
+        size: TaskProvider.full
       });
       assert.include(started, { taskId: "ambiguous", state: "running" });
       assert.strictEqual(aws.tasks.size, 1);
@@ -580,7 +626,7 @@ it.effect(
       assert.deepEqual(yield* secondHost.list, [started]);
       assert.include(
         yield* secondHost
-          .start({ taskId: "ambiguous", deploymentRevision: "previous" })
+          .start({ taskId: "ambiguous", deploymentRevision: "previous", size: TaskProvider.full })
           .pipe(Effect.flip),
         { reason: "binding_conflict" }
       );
@@ -601,7 +647,7 @@ it.effect(
       );
       for (const revision of revisions) {
         const taskId = revision.deploymentRevision;
-        yield* provider.start({ taskId, deploymentRevision: taskId });
+        yield* provider.start({ taskId, deploymentRevision: taskId, size: TaskProvider.full });
         yield* provider.bind(taskId, { companyId: `company-${taskId}`, bindingEpoch: 1 });
         assert.include(yield* provider.stats(taskId, { bindingEpoch: 1 }), {
           companyId: `company-${taskId}`,
@@ -646,7 +692,11 @@ it.effect("reuses a task's address across calls until its lifetime ends", () =>
     const provider = yield* EcsTaskProvider.make(options).pipe(
       Effect.provide([aws.layer, NodeCryptography.layer])
     );
-    yield* provider.start({ taskId: "cached", deploymentRevision: "current" });
+    yield* provider.start({
+      taskId: "cached",
+      deploymentRevision: "current",
+      size: TaskProvider.full
+    });
     const before = aws.describes();
     yield* provider.bind("cached", { companyId: "company-cached", bindingEpoch: 1 });
     for (let call = 0; call < 3; call++) {
@@ -681,7 +731,11 @@ it.effect("binds a held version by hash and sends its bundle only when the super
     const provider = yield* EcsTaskProvider.make(options).pipe(
       Effect.provide([aws.layer, NodeCryptography.layer])
     );
-    yield* provider.start({ taskId: "hashed", deploymentRevision: "current" });
+    yield* provider.start({
+      taskId: "hashed",
+      deploymentRevision: "current",
+      size: TaskProvider.full
+    });
     yield* provider.bind("hashed", { companyId: "company-hashed", bindingEpoch: 1 });
     const supervisor = aws.supervisor("hashed");
     const before = aws.describes();
@@ -706,7 +760,11 @@ it.effect(
       const provider = yield* EcsTaskProvider.make(options).pipe(
         Effect.provide([aws.layer, NodeCryptography.layer])
       );
-      yield* provider.start({ taskId: "older", deploymentRevision: "previous" });
+      yield* provider.start({
+        taskId: "older",
+        deploymentRevision: "previous",
+        size: TaskProvider.full
+      });
       const before = aws.describes();
       // The older supervisor refuses `taskId` and `binding`; neither is ever sent to it.
       for (let call = 0; call < 3; call++)
@@ -725,7 +783,11 @@ it.effect("touches only its own release's supervisors and asks ECS once about an
     );
     const { companyId, patchId, versionId, sha256 } = versionBind("company-touched").bundle!;
     const held = { companyId, patchId, versionId, sha256 };
-    yield* provider.start({ taskId: "touched", deploymentRevision: "current" });
+    yield* provider.start({
+      taskId: "touched",
+      deploymentRevision: "current",
+      size: TaskProvider.full
+    });
     yield* provider.bind("touched", versionBind("company-touched"));
     const before = aws.describes();
     assert.deepStrictEqual(yield* provider.touch("touched", { bindingEpoch: 1, binding: held }), {
@@ -743,7 +805,11 @@ it.effect("touches only its own release's supervisors and asks ECS once about an
     assert.strictEqual(aws.describes(), before);
     assert.strictEqual(aws.supervisor("touched").touches, 2);
 
-    yield* provider.start({ taskId: "older", deploymentRevision: "previous" });
+    yield* provider.start({
+      taskId: "older",
+      deploymentRevision: "previous",
+      size: TaskProvider.full
+    });
     yield* provider.bind("older", versionBind("company-older"));
     const older = aws.describes();
     for (let touch = 0; touch < 3; touch++)
@@ -777,11 +843,19 @@ it.effect("refuses a stopped task's reused address before any effect and re-reso
       const otherHost = yield* EcsTaskProvider.make(shared).pipe(
         Effect.provide([aws.layer, NodeCryptography.layer])
       );
-      yield* provider.start({ taskId: "lost", deploymentRevision: "current" });
+      yield* provider.start({
+        taskId: "lost",
+        deploymentRevision: "current",
+        size: TaskProvider.full
+      });
       yield* provider.bind("lost", { companyId: "company-lost", bindingEpoch: 1 });
       const address = yield* aws.crash("lost");
       aws.reuse(address);
-      yield* otherHost.start({ taskId: "spare", deploymentRevision: revision });
+      yield* otherHost.start({
+        taskId: "spare",
+        deploymentRevision: revision,
+        size: TaskProvider.full
+      });
       const before = aws.describes();
       assert.include(
         yield* provider
@@ -806,7 +880,11 @@ it.effect("forgets a task's address once ECS reports it stopped", () =>
     const provider = yield* EcsTaskProvider.make(options).pipe(
       Effect.provide([aws.layer, NodeCryptography.layer])
     );
-    yield* provider.start({ taskId: "listed", deploymentRevision: "current" });
+    yield* provider.start({
+      taskId: "listed",
+      deploymentRevision: "current",
+      size: TaskProvider.full
+    });
     yield* provider.bind("listed", { companyId: "company-listed", bindingEpoch: 1 });
     yield* aws.crash("listed");
     assert.include((yield* provider.list)[0], { taskId: "listed", state: "stopped" });
@@ -825,7 +903,11 @@ it.effect("never keeps or re-sends a request whose reply was lost or malformed",
       Effect.provide([aws.layer, NodeCryptography.layer])
     );
     const bind = provider.bind("uncertain", { companyId: "company-uncertain", bindingEpoch: 1 });
-    yield* provider.start({ taskId: "uncertain", deploymentRevision: "current" });
+    yield* provider.start({
+      taskId: "uncertain",
+      deploymentRevision: "current",
+      size: TaskProvider.full
+    });
     const supervisor = [...aws.supervisors.values()].find((entry) => entry.taskId === "uncertain")!;
     // A malformed reply after a fresh lookup keeps no address.
     const first = aws.describes();
@@ -856,7 +938,82 @@ it.effect("never keeps or re-sends a request whose reply was lost or malformed",
   })
 );
 
-const services = OperatingLimits.layer
+it.effect(
+  "launches a full box with today's request, a small one with a size override, and retries at the asked size",
+  () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(1_000_000);
+      const aws = yield* cloud;
+      const provider = yield* EcsTaskProvider.make(options).pipe(
+        Effect.provide([aws.layer, NodeCryptography.layer])
+      );
+      const full = yield* provider.start({
+        taskId: "full-box",
+        deploymentRevision: "current",
+        size: TaskProvider.full
+      });
+      assert.deepStrictEqual(full.size, TaskProvider.full);
+      // A full launch sends no size at all: the definition's own is today's box.
+      assert.deepStrictEqual(Object.keys(aws.launches[0]!.overrides!), ["containerOverrides"]);
+      aws.loseRunReply();
+      const lost = yield* provider
+        .start({ taskId: "small-box", deploymentRevision: "current", size: TaskProvider.small })
+        .pipe(Effect.flip);
+      assert.include(lost, { reason: "provider" });
+      const small = yield* provider.start({
+        taskId: "small-box",
+        deploymentRevision: "current",
+        size: TaskProvider.small
+      });
+      assert.deepStrictEqual(small.size, TaskProvider.small);
+      // The retry carries the same token and the same size, so ECS answers with the one task.
+      assert.strictEqual(aws.launches.length, 3);
+      for (const launch of aws.launches.slice(1))
+        assert.include(launch.overrides, { cpu: "512", memory: "2048" });
+      assert.strictEqual(aws.launches[1]!.clientToken, aws.launches[2]!.clientToken);
+      assert.strictEqual(aws.tasks.size, 2);
+      assert.deepStrictEqual(
+        (yield* provider.list).map((task) => [task.taskId, task.size?.cpu]),
+        [
+          ["full-box", 1024],
+          ["small-box", 512]
+        ]
+      );
+      // A task Fargate ran at its definition's size, whatever the launch asked, says so.
+      aws.ignoreSizes();
+      const ignored = yield* provider.start({
+        taskId: "ignored-size",
+        deploymentRevision: "current",
+        size: TaskProvider.small
+      });
+      assert.deepStrictEqual(ignored.size, TaskProvider.full);
+    })
+);
+
+it.effect("refuses a launch outright only when ECS answered and started nothing", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(1_000_000);
+    const aws = yield* cloud;
+    const provider = yield* EcsTaskProvider.make(options).pipe(
+      Effect.provide([aws.layer, NodeCryptography.layer])
+    );
+    const start = (taskId: string) =>
+      provider
+        .start({ taskId, deploymentRevision: "current", size: TaskProvider.small })
+        .pipe(Effect.flip);
+    for (const [how, reason] of [
+      ["failures", "launch_refused"],
+      ["client", "launch_refused"],
+      ["server", "provider"]
+    ] as const) {
+      aws.refuseNextRun(how);
+      assert.include(yield* start(`refused-${how}`), { reason }, how);
+    }
+    assert.strictEqual(aws.tasks.size, 0);
+  })
+);
+
+const services = Layer.merge(OperatingLimits.layer, ActiveMembersTest.layer)
   .pipe(Layer.provideMerge(Testing.layer()), Layer.merge(WideEvents.layerNoop))
   .pipe(Layer.provideMerge(NodeCrypto.layer));
 const setupFleet = Effect.fn("EcsFleetTest.setup")(function* () {

@@ -246,6 +246,11 @@ const processMetrics = {
   /** The first process its company task started since being bound to the company. */
   firstOnTask: Schema.optionalKey(Schema.Boolean)
 };
+/**
+ * The company box a call, process or binding ran on: its CPU units, 1024 for a full vCPU and 512
+ * for a one-member company's small box.
+ */
+const boxFields = { cpu: Schema.optionalKey(Schema.Number) };
 const bindingMetrics = {
   spareWaitMs: Schema.optionalKey(Schema.Number),
   peakProcesses: Schema.optionalKey(Schema.Number),
@@ -346,6 +351,7 @@ export const EventFields = Schema.Struct({
   ...subscriptionRequestFields,
   ...streamMetrics,
   ...processMetrics,
+  ...boxFields,
   ...bindingMetrics,
   ...keepaliveMetrics,
   ...prewarmMetrics,
@@ -370,6 +376,7 @@ export const RequestEvent = Schema.Struct({
   ...common,
   type: Schema.Literal("request"),
   ...attribution,
+  ...boxFields,
   ...invocationMetrics,
   ...contentFields,
   ...routeFields,
@@ -385,6 +392,7 @@ export const RerunEvent = Schema.Struct({
   ...common,
   type: Schema.Literal("re-run"),
   ...attribution,
+  ...boxFields,
   ...invocationMetrics,
   ...documentFields,
   ...rerunFields,
@@ -414,6 +422,7 @@ export const ProcessEvent = Schema.Struct({
   tier: attribution.tier,
   taskId: attribution.taskId,
   processGeneration: attribution.processGeneration,
+  ...boxFields,
   ...processMetrics
 });
 export type ProcessEvent = typeof ProcessEvent.Type;
@@ -422,6 +431,7 @@ export const BindingEvent = Schema.Struct({
   type: Schema.Literal("binding"),
   companyId: attribution.companyId,
   taskId: attribution.taskId,
+  ...boxFields,
   ...bindingMetrics
 });
 export type BindingEvent = typeof BindingEvent.Type;

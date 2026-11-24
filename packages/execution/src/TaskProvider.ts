@@ -4,6 +4,21 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
+/** A company box's size as Fargate counts it: CPU units (1024 is one vCPU) and MiB of memory. */
+export interface Size {
+  readonly cpu: number;
+  readonly memory: number;
+}
+/** Today's box, the exec task definition's own size; a full launch asks for nothing else. */
+export const full: Size = { cpu: 1024, memory: 2048 };
+/**
+ * A one-member company's box: half a vCPU with the same memory, so the supervisor's memory lines
+ * and process cap hold unchanged.
+ */
+export const small: Size = { cpu: 512, memory: 2048 };
+/** Whether a box of this size serves only a one-member company: anything less than full. */
+export const isSmall = (size: Pick<Size, "cpu">) => size.cpu < full.cpu;
+
 export interface Task {
   readonly taskId: string;
   readonly deploymentRevision: string;
@@ -11,6 +26,8 @@ export interface Task {
   readonly startedAt: number;
   readonly readyAt: number;
   readonly stoppedAt: number | null;
+  /** The size the provider observed the task running at; absent when it reported none valid. */
+  readonly size?: Size;
 }
 
 export class TaskProviderError extends Schema.TaggedError<TaskProviderError>()(
@@ -27,7 +44,14 @@ export class TaskProviderError extends Schema.TaggedError<TaskProviderError>()(
       "touch"
     ]),
     taskId: Schema.optionalKey(Schema.String),
-    reason: Schema.Union([Management.Refusal.fields.code, Schema.Literal("provider")]),
+    /**
+     * A refusal's code, `provider` for any other provider failure, or `launch_refused` when the
+     * provider answered a start and certainly created nothing.
+     */
+    reason: Schema.Union([
+      Management.Refusal.fields.code,
+      Schema.Literals(["provider", "launch_refused"])
+    ]),
     limit: Schema.optionalKey(
       Schema.Struct({
         scope: Management.Refusal.fields.scope,
@@ -90,6 +114,8 @@ export type TouchResult = Management.TouchReply | { readonly outcome: "unsupport
  * All host clients address the same shared inventory. Identity survives ambiguous starts
  * and stops; closing a host does not stop its tasks. A stopped observation certifies actual exit.
  * Omitted tasks and management timeouts are uncertainty, never evidence that a task stopped.
+ * A start asks for a size and a retry asks for the same one; the task it answers reports the
+ * size it really runs at.
  */
 export class TaskProvider extends Context.Service<
   TaskProvider,
@@ -97,6 +123,7 @@ export class TaskProvider extends Context.Service<
     readonly start: (input: {
       readonly taskId: string;
       readonly deploymentRevision: string;
+      readonly size: Size;
     }) => Effect.Effect<Task, TaskProviderError>;
     readonly list: Effect.Effect<readonly Task[], TaskProviderError>;
     /** Stop guest processes but retain the supervisor until reports are persisted and acknowledged. */

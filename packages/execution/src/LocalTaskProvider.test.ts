@@ -14,7 +14,7 @@ import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as LocalTaskProvider from "./localTaskProvider.js";
 import * as Store from "./localTaskStore.js";
-import type * as TaskProvider from "./TaskProvider.js";
+import * as TaskProvider from "./TaskProvider.js";
 import { NodeCryptography } from "@patchy/core";
 
 const listener = (headers: IncomingMessage["headers"][]) =>
@@ -62,11 +62,17 @@ it.live(
         Effect.provideService(Scope.Scope, hostScope)
       );
       const other = yield* LocalTaskProvider.make(options);
-      const input = { taskId: "provider-task", deploymentRevision: "deployment-a" };
+      // A local task runs at the size it was asked for, and reports it from every host.
+      const input = {
+        taskId: "provider-task",
+        deploymentRevision: "deployment-a",
+        size: TaskProvider.small
+      };
       const [first, repeated] = yield* Effect.all([provider.start(input), other.start(input)], {
         concurrency: "unbounded"
       });
       assert.strictEqual(first.startedAt, repeated.startedAt);
+      assert.deepStrictEqual(repeated.size, TaskProvider.small);
       yield* Scope.close(hostScope, Exit.void);
       assert.deepStrictEqual(yield* other.list, [first]);
       const source = `export default { async fetch(request, env, ctx) { const input = await request.json(); return Response.json(input.type === "describe" ? {ok:true,handlers:{}} : await ctx.props.callbacks.call({op:"read",args:{}})); } };`;
@@ -181,7 +187,11 @@ it.live(
       const provider = yield* LocalTaskProvider.make(options).pipe(
         Effect.provideService(HttpClient.HttpClient, previousWire)
       );
-      yield* provider.start({ taskId: "previous-wire", deploymentRevision: "deployment" });
+      yield* provider.start({
+        taskId: "previous-wire",
+        deploymentRevision: "deployment",
+        size: TaskProvider.full
+      });
       const source = `export default { async fetch() { return Response.json({ ok: true, handlers: {} }); } };`;
       const bind = provider.bind("previous-wire", {
         companyId: "company",
@@ -233,7 +243,11 @@ it.live(
       const provider = yield* LocalTaskProvider.make(options).pipe(
         Effect.provideService(HttpClient.HttpClient, previousWire)
       );
-      yield* provider.start({ taskId: "previous-supervisor", deploymentRevision: "deployment" });
+      yield* provider.start({
+        taskId: "previous-supervisor",
+        deploymentRevision: "deployment",
+        size: TaskProvider.full
+      });
       const source = `export default { async fetch() { return Response.json({ ok: true, handlers: {} }); } };`;
       const refused = yield* provider
         .bind("previous-supervisor", {
@@ -263,7 +277,11 @@ it.live(
       const options = yield* LocalTaskProvider.resource({ callbackUrls: [] });
       const left = yield* LocalTaskProvider.make(options);
       const right = yield* LocalTaskProvider.make(options);
-      const input = { taskId: "ambiguous-task", deploymentRevision: "deployment" };
+      const input = {
+        taskId: "ambiguous-task",
+        deploymentRevision: "deployment",
+        size: TaskProvider.full
+      };
       const starting = yield* left.start(input).pipe(Effect.forkChild);
       const observed = yield* Effect.gen(function* () {
         while (true) {
@@ -298,7 +316,8 @@ it.live(
       const provider = yield* LocalTaskProvider.make(options);
       const task = yield* provider.start({
         taskId: "limit-task",
-        deploymentRevision: "deployment"
+        deploymentRevision: "deployment",
+        size: TaskProvider.full
       });
       const source = `export default { async fetch(request) { const input = await request.json(); return Response.json(input.type === "describe" ? {ok:true,handlers:{}} : {ok:true,value:null}); } };`;
       yield* provider.bind(task.taskId, {
@@ -353,7 +372,11 @@ it.live(
           )
         )
       );
-      const task = yield* provider.start({ taskId: "load-task", deploymentRevision: "deployment" });
+      const task = yield* provider.start({
+        taskId: "load-task",
+        deploymentRevision: "deployment",
+        size: TaskProvider.full
+      });
       // Its describe never finishes, though the process keeps answering health probes.
       const source = `export default { async fetch() { while (true) { const tick = Promise.withResolvers(); setTimeout(tick.resolve, 10); await tick.promise; } } };`;
       const started = Date.now();
@@ -398,7 +421,11 @@ it.live(
           )
         )
       );
-      const task = { taskId: "startup-timeout", deploymentRevision: "deployment" };
+      const task = {
+        taskId: "startup-timeout",
+        deploymentRevision: "deployment",
+        size: TaskProvider.full
+      };
       const error = yield* provider.start(task).pipe(Effect.flip);
       assert.strictEqual(error.operation, "start");
       assert.strictEqual(error.reason, "provider");
@@ -464,7 +491,8 @@ it.live(
       const provider = yield* LocalTaskProvider.make(options);
       const task = yield* provider.start({
         taskId: "reused-pid",
-        deploymentRevision: "deployment"
+        deploymentRevision: "deployment",
+        size: TaskProvider.full
       });
       const { directory, record, supervisor } = yield* ownerRecord(options, task.taskId);
       yield* killOnExit(supervisor, [record.owner]);
@@ -499,7 +527,8 @@ it.live(
       const provider = yield* LocalTaskProvider.make(options);
       const task = yield* provider.start({
         taskId: "orphaned-group",
-        deploymentRevision: "deployment"
+        deploymentRevision: "deployment",
+        size: TaskProvider.full
       });
       const source = `export default { async fetch(request) { const input = await request.json(); return Response.json(input.type === "describe" ? {ok:true,handlers:{}} : {ok:true,value:null}); } };`;
       yield* provider.bind(task.taskId, {
