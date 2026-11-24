@@ -13,6 +13,7 @@ import {
   viewName
 } from "./tasks/page.js";
 import { receipt } from "./tasks/spendApprovals.js";
+import { BLOCKERS, namePattern, shownAs, TODAY, YESTERDAY } from "./tasks/standup.js";
 
 const priya: RunPerson = {
   id: "usr_env_brightline-ab12cd_priya",
@@ -350,5 +351,65 @@ describe("a request's decision", () => {
     expect(decisionOf("Team lunch · Pending\nApprove Reject")).toBe("undecided");
     expect(decisionOf("Team lunch · not yet approved")).toBe("undecided");
     expect(decisionOf("Team lunch · $42")).toBeNull();
+  });
+});
+
+describe("a standup entry", () => {
+  /** The label each part takes, as `chooseField` takes fields: each pattern in turn, the first label not taken yet. */
+  const parts = (labels: ReadonlyArray<string>) => {
+    const taken = new Set<string>();
+    const take = (words: ReadonlyArray<RegExp>) => {
+      for (const each of words) {
+        const label = labels.find((label) => !taken.has(label) && each.test(label));
+        if (label === undefined) continue;
+        taken.add(label);
+        return label;
+      }
+      return undefined;
+    };
+    return { yesterday: take(YESTERDAY), today: take(TODAY), blockers: take(BLOCKERS) };
+  };
+
+  it("writes each part where its own label says, never a day where the other's goes", () => {
+    expect(parts(["Yesterday", "Today", "Blockers"])).toEqual({
+      yesterday: "Yesterday",
+      today: "Today",
+      blockers: "Blockers"
+    });
+    // Today's question says "done" too, and comes first.
+    expect(
+      parts([
+        "What will you get done today?",
+        "What did you get done yesterday?",
+        "Anything blocking you?"
+      ])
+    ).toEqual({
+      yesterday: "What did you get done yesterday?",
+      today: "What will you get done today?",
+      blockers: "Anything blocking you?"
+    });
+    expect(parts(["Done", "Doing", "Impediments"])).toEqual({
+      yesterday: "Done",
+      today: "Doing",
+      blockers: "Impediments"
+    });
+  });
+
+  it("knows a person by their first name or email, not inside a longer word", () => {
+    const ben = new RegExp(namePattern({ name: "Ben Ortiz", email: "ben+ab12cd@acme.example" }));
+    for (const words of ["Ben Ortiz", "BenYesterday", "— Ben", "ben+ab12cd@acme.example"])
+      expect(ben.test(words), words).toBe(true);
+    for (const words of ["Benefits enrolment", "ben is out", "bena12cd@acme.example"])
+      expect(ben.test(words), words).toBe(false);
+  });
+
+  it("counts words as someone's only where they're named alone around them", () => {
+    expect(shownAs("ada", [["ada"]], [])).toBe("first");
+    expect(shownAs("ada", [], [["ada"]])).toBe("fixed");
+    expect(shownAs("ada", [["ada"]], [["ada"]])).toBe("both");
+    // Ben's try saving his own entry with Ada's words leaves hers as it was.
+    expect(shownAs("ada", [["ada"]], [["ben"]])).toBe("first");
+    // Words nobody is named around, or a part naming the whole team, are no one's.
+    expect(shownAs("ada", [[]], [["ada", "ben", "cleo"]])).toBe("neither");
   });
 });

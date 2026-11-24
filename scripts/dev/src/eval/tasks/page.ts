@@ -416,6 +416,25 @@ export const chooseField = async (frame: FrameLocator, words: RegExp) => {
   return undefined;
 };
 
+/**
+ * The first visible field a person types into that already holds `value`,
+ * such as the words of an entry a form opened to edit, marked as chosen as
+ * `chooseField` marks one.
+ */
+export const chooseFieldHolding = async (frame: FrameLocator, value: string) => {
+  for (const field of await frame.locator("input, textarea").all())
+    if (
+      (await field.inputValue().catch(() => "")).trim() === value &&
+      (await field.isVisible()) &&
+      (await field.isEditable().catch(() => false)) &&
+      (await field.getAttribute(CHOSEN).catch(() => "")) === null
+    ) {
+      await field.evaluate((element, mark) => element.setAttribute(mark, ""), CHOSEN);
+      return field;
+    }
+  return undefined;
+};
+
 /** What a form's send button goes by, most specific first. */
 const SENDS = [/submit/i, /send/i, /save/i, /create/i, /request/i, /add/i, /done/i];
 
@@ -871,6 +890,85 @@ export const decide = async (
       return { held: count, took, objection: null };
     } finally {
       await unhold(release);
+    }
+  });
+};
+
+/**
+ * Makes a change that isn't a decision, such as saving an edit, the way
+ * `decide` presses one: with the barrier down, `act` changes it, and every
+ * call that sends Patchy, other than plain reads, is held back in turn and
+ * handed to `watch.probe` before it goes through, until a call's answer makes
+ * the change take effect. `act` answers why it couldn't, or null once it
+ * has; when it couldn't, nothing it sent reaches Patchy. Answers how many
+ * calls were held, whether the change took, and the first objection, which
+ * leaves its call held.
+ */
+export const holdWhile = (
+  view: Opened,
+  act: () => Promise<string | null>,
+  watch: DecisionWatch
+): Promise<
+  | { readonly refused: string }
+  | { readonly held: number; readonly took: boolean; readonly objection: string | null }
+> => {
+  const { page } = view;
+  return view.barrier.deliberately(async () => {
+    const held: Array<{ readonly route: Route; readonly at: number }> = [];
+    const hold = async (route: Route) => {
+      const call = decodeCall(route.request().postData() ?? "");
+      if (Option.isSome(call) && !READS.has(call.value.op))
+        held.push({ route, at: performance.now() });
+      else await route.continue();
+    };
+    await page.route("**/api/runtime/call", hold);
+    let release = false;
+    try {
+      const refused = await act();
+      if (refused !== null) return { refused };
+      let count = 0;
+      let took = false;
+      // Measured in waits, since the probes between them take time of their own.
+      for (let waited = 0; !took && count < MAX_CALLS && waited < DECISION_MS;) {
+        const next = held.shift();
+        if (next === undefined) {
+          await page.waitForTimeout(POLL_MS);
+          waited += POLL_MS;
+          continue;
+        }
+        count++;
+        const call = holding(view, next.route);
+        const objection =
+          call === undefined
+            ? null
+            : await watch.probe(call).catch(async (error: unknown) => {
+                await next.route.abort().catch(() => undefined);
+                throw error;
+              });
+        if (objection !== null) {
+          await next.route.abort().catch(() => undefined);
+          return { held: count, took: false, objection };
+        }
+        if (performance.now() - next.at > HELD_MS) {
+          await next.route.abort().catch(() => undefined);
+          throw new GraderTrouble({
+            what: "Trying a held call as others took longer than the page waits for it."
+          });
+        }
+        await next.route.continue();
+        await next.route
+          .request()
+          .response()
+          .catch(() => null);
+        took = await watch.took();
+      }
+      release = true;
+      return { held: count, took, objection: null };
+    } finally {
+      // Calls still held once the change took are the rest of the flow, and go through.
+      await page.unroute("**/api/runtime/call", hold);
+      for (const rest of held.splice(0))
+        await (release ? rest.route.continue() : rest.route.abort()).catch(() => undefined);
     }
   });
 };
