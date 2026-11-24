@@ -1747,15 +1747,20 @@ whatever release it runs, with no deploy. It is off: every claim is full, the sm
 spare target is zero, a wait recorded small counts as full demand, ready small
 spares are trimmed as surplus, and small tasks still starting are drained.
 
-With it on, a claim reads the switch and counts the company's active members under
-its claim lock: exactly one is small, anything else full. A team never takes a
-small spare, and a one-member company takes a ready full spare when no small one is
-ready, keeping the thirty-minute tail on that box. The current revision keeps
-`execution.pool.smallSpares` small spares (two) beside the full floor; they are
-reserved only when no full deficit was refused for budget in that pass, and none is
-ever stopped to make room for a full one. A task the provider reports at a size
-other than it asked for is recorded at the size it runs at, and the error log says
-`Execution task started at a size other than it asked for`.
+A claim counts the company's active members under its claim lock, then reads the
+switch and the current revision in the one statement that picks and binds its
+spare, taking no lock on the rollout row, so a flip or a promotion never waits for
+a claim. With it on, exactly one member is small, anything else full. A team never
+takes a small spare, and a one-member company takes a ready full spare when no
+small one is ready, keeping the thirty-minute tail on that box. The current
+revision keeps `execution.pool.smallSpares` small spares (two) beside the full
+floor; they are reserved only when no full deficit was refused for budget in that
+pass, and none is ever stopped to make room for a full one. Small spares of any
+other revision, a staged one included, are drained. A task the provider reports at
+a size other than it asked for is recorded at the size it runs at, and the error
+log says `Execution task started at a size other than it asked for`; one that asked
+for a small box is admitted only while the switch is on and its revision is
+current, whatever size it came up at.
 
 `bun dist/fleet.js small-boxes on|off|status` changes the switch, as controller code,
 never a row edit, and prints the status; `status` only prints it. The status comes
@@ -1786,7 +1791,7 @@ instance, run it from the checkout with the instance's env loaded:
 After `off`, housekeeping trims small spares after `execution.pool.wait` and drains
 small tasks still starting. A drain completes only on evidence: ECS reports the task
 stopped, or the row asked for a small box and certainly launched nothing. The row
-records that: the controller reserved it, and ECS refused every launch attempt since
+records that: the controller reserved it as a small box, and ECS refused every launch attempt since
 outright, answering and creating nothing on the SDK's only try. Any other outcome
 of an attempt, such as a lost reply, leaves the row uncertain for good, and so does
 ECS showing its task: a task ECS lists is stopped through ECS whatever the row says.

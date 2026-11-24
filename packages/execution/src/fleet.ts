@@ -401,7 +401,7 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
       if (TaskProvider.isSmall(task) && task.readyAt === null && task.launchedNothing) {
         const seen = (yield* provider.list).some((remote) => remote.taskId === taskId);
         yield* checkHousekeeping;
-        if (seen) yield* store.launchSeen(taskId);
+        if (seen) yield* store.launchSeen([taskId]);
         else if (yield* store.stopUnlaunched(taskId, yield* Clock.currentTimeMillis)) return true;
       }
       const stopped = yield* provider.stop(taskId);
@@ -655,6 +655,12 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
           Effect.timeout(config.get("execution.pool.wait"))
         );
         yield* guard;
+        // A row whose task runs certainly launched something, whatever its count says.
+        const running = new Set(
+          observed.flatMap((remote) => (remote.state === "running" ? [remote.taskId] : []))
+        );
+        const seen = tasks.flatMap((task) => (running.has(task.taskId) ? [task.taskId] : []));
+        if (seen.length > 0) yield* store.launchSeen(seen);
         // Account for reappearing stopped rows before replenishment can spend their budget.
         const known = new Set(tasks.map((task) => task.taskId));
         const orphans: TaskProvider.Task[] = [];
@@ -701,7 +707,11 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
                   else yield* drainTask(task.taskId, "deployment");
                 } else if (
                   task.state === "stopping" ||
-                  (task.state === "spare" && !retained.has(task.deploymentRevision))
+                  (task.state === "spare" &&
+                    (!retained.has(task.deploymentRevision) ||
+                      // Small spares belong to the current revision only, never a staged one.
+                      (TaskProvider.isSmall(task) &&
+                        task.deploymentRevision !== rollout.currentRevision)))
                 )
                   yield* drainTask(task.taskId, "deployment");
               })

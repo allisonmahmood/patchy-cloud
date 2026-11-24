@@ -337,10 +337,13 @@ claim, and previously admitted work drains on the predecessor. A replacement
 locks the rollout row and then the company, passing over a company whose claim
 lock is held, rechecks that the binding still needs replacing, sizes it as a claim
 would and fences it only with a locked spare that size allows in hand; a binding
-with no such spare is passed over for the next. A claim holds the rollout row from
-its read of the switch and current revision until it commits, so a promotion or a
-flip of the switch waits for it rather than landing between that read and its spare. Staging and promoting
-an earlier revision performs rollback. A restarting old host cannot reverse promotion.
+with no such spare is passed over for the next. A claim takes no lock on the rollout
+row: after counting the company's active members under its claim lock, one statement
+reads the switch and the current revision, sizes the claim and picks and binds its
+spare, so all three come from that statement's snapshot and the claim never holds
+up a promotion or a flip; one that commits after it changes the next claim.
+Staging and promoting an earlier revision performs rollback. A restarting old host
+cannot reverse promotion.
 
 Active document, prewarm and admitted invocation lifetimes hold shared database
 advisory locks. They are not presence rows, heartbeats or a document lease. The controller
@@ -367,9 +370,11 @@ on a miss and cleared on claim). A wake counts toward the size of the spare it
 consumed. Small spares' target is the same over small wakes, cold starts and
 waiters with `execution.pool.smallSpares` as the floor, for the current revision
 only and only while small boxes are on; otherwise it is zero, and a wait recorded
-small counts as full demand. Every live or draining task counts its own vCPU
-against the fleet budget, and one whose size was never verified at readiness counts
-as a full box; a spare is reserved only while a full box's charge still fits.
+small counts as full demand. A small spare of any other revision, a staged one
+included, is drained, and a task that asked for or runs at a small box is admitted
+at readiness only while small boxes are on and its revision is current. Every live
+or draining task counts its own vCPU against the fleet budget, and one whose size
+was never verified at readiness counts as a full box; a spare is reserved only while a full box's charge still fits.
 Full deficits are reserved first, the staged revision's and then the current one's,
 and small spares only when no full deficit was refused for budget in that pass; no
 spare is stopped to make room for another. Surplus ready spares of
@@ -391,9 +396,9 @@ Known tasks remain budgeted until the provider confirms they stopped. A running
 task that reappears after a recorded stop is fenced and stopped again. A drain
 completes only on evidence: the provider confirms the task stopped, or the row
 asked for a small box and certainly launched nothing. A row is certain only when
-this controller reserved it and every launch attempt since, each counted on the row
-before it is sent, was refused outright: ECS answered and created nothing on the
-SDK's only attempt. Any other outcome, a row an older release inserted, or its task
+this controller reserved it as a small box and every launch attempt since, each
+counted on the row before it is sent, was refused outright: ECS answered and
+created nothing on the SDK's only attempt. Any other outcome, a row an older release inserted, or its task
 seen running leaves it uncertain for good, and a task the provider lists is stopped
 through it whatever the row says. A full box's drain completes only on a confirmed
 stop. If ECS has already forgotten a task and no stop observation exists, its

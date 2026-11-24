@@ -4286,7 +4286,7 @@ it.layer(services)("small boxes for one-member companies", (it) => {
     )
   );
 
-  it.effect("binds a claim that waited on a promotion to the promoted revision's spare", () =>
+  it.effect("binds a claim to the spare of a revision promoted just before it chose one", () =>
     Effect.gen(function* () {
       const { sql, companyId } = yield* setupMemory("claim-promote-a");
       const store = yield* FleetStore.make;
@@ -4295,29 +4295,174 @@ it.layer(services)("small boxes for one-member companies", (it) => {
       yield* sql`INSERT INTO execution_tasks
         (task_id, deployment_revision, state, requested_at, started_at, ready_at)
         VALUES ('claim-promote-b-spare', 'claim-promote-b', 'spare', ${now}, ${now}, ${now})`;
-      const locked = yield* Deferred.make<void>();
-      const commit = yield* Deferred.make<void>();
-      // A promotion holds the rollout row until it commits.
-      const promotion = yield* sql
+      assert.isTrue(yield* store.stageDeployment("claim-promote-b"));
+      const choosing = yield* Deferred.make<void>();
+      const promoted = yield* Deferred.make<void>();
+      // The promotion commits once the claim holds its company and has counted its members, just
+      // before its one statement reads the revision and chooses a spare.
+      const promotion = yield* Deferred.await(choosing).pipe(
+        Effect.andThen(store.promoteDeployment("claim-promote-b", 1)),
+        Effect.tap(() => Deferred.succeed(promoted, undefined)),
+        Effect.forkChild
+      );
+      const transform: Statement.Transformer = (statement) =>
+        /SET state = 'bound'/.test(statement.compile()[0])
+          ? Deferred.succeed(choosing, undefined).pipe(
+              Effect.andThen(Deferred.await(promoted)),
+              Effect.as(statement)
+            )
+          : Effect.succeed(statement);
+      const claimed = yield* store
+        .claim(companyId, "claim-promote-a-left", now, 0, FleetStore.clocksOf("page", now))
+        .pipe(Effect.provideService(Statement.CurrentTransformer, transform));
+      assert.isTrue(yield* Fiber.join(promotion));
+      assert.strictEqual(claimed?.taskId, "claim-promote-b-spare");
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect("never holds up a flip or a promotion while a claim waits on its company", () =>
+    Effect.gen(function* () {
+      const { sql, companyId } = yield* setupMemory("claim-waits-a");
+      yield* addMember(companyId, "usr_claim_waits");
+      const store = yield* FleetStore.make;
+      const now = yield* Clock.currentTimeMillis;
+      yield* sql`INSERT INTO execution_deployments(revision) VALUES ('claim-waits-b')`;
+      yield* sql`INSERT INTO execution_tasks
+        (task_id, deployment_revision, state, requested_at, started_at, ready_at, cpu)
+        VALUES ('claim-waits-b-full', 'claim-waits-b', 'spare', ${now}, ${now}, ${now}, 1024),
+          ('claim-waits-b-small', 'claim-waits-b', 'spare', ${now}, ${now}, ${now}, 512)`;
+      assert.isTrue(yield* store.stageDeployment("claim-waits-b"));
+      const held = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const holding = yield* sql
         .withTransaction(
           Effect.gen(function* () {
-            yield* sql`SELECT singleton FROM execution_rollout WHERE singleton FOR UPDATE`;
-            yield* sql`UPDATE execution_rollout SET current_revision = 'claim-promote-b',
-              staged_revision = NULL WHERE singleton`;
-            yield* Deferred.succeed(locked, undefined);
-            yield* Deferred.await(commit);
+            yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`execution/claim/${companyId}`}, 0))`;
+            yield* Deferred.succeed(held, undefined);
+            yield* Deferred.await(release);
           })
         )
         .pipe(Effect.forkChild);
-      yield* Deferred.await(locked);
+      yield* Deferred.await(held);
       const claim = yield* store
-        .claim(companyId, "claim-promote-a-left", now, 0, FleetStore.clocksOf("page", now))
+        .claim(companyId, "claim-waits-a-left", now, 0, FleetStore.clocksOf("page", now))
         .pipe(Effect.forkChild);
-      yield* lockWait("the claim waits on the promotion");
-      yield* Deferred.succeed(commit, undefined);
-      yield* Fiber.join(promotion);
-      assert.strictEqual((yield* Fiber.join(claim))?.taskId, "claim-promote-b-spare");
+      yield* lockWait("the claim waits on its company");
+      yield* phase(
+        "the flip and the promotion",
+        Effect.gen(function* () {
+          yield* Fleet.setSmallBoxes(true);
+          assert.isTrue(yield* store.promoteDeployment("claim-waits-b", 1));
+        }).pipe(Effect.provideService(SqlClient.SqlClient, sql))
+      );
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(holding);
+      // Once it has its company, the claim reads both: a one-member company's small spare of B.
+      assert.strictEqual((yield* Fiber.join(claim))?.taskId, "claim-waits-b-small");
     }).pipe(Effect.scoped)
+  );
+
+  it.effect("drains a small spare of a revision staged again after another was promoted", () =>
+    Effect.gen(function* () {
+      const { sql, left } = yield* setupMemory("strand-a");
+      const store = yield* FleetStore.make;
+      yield* Fleet.setSmallBoxes(true);
+      yield* left.housekeeping();
+      const small = yield* tasksOf("spare", TaskProvider.small.cpu);
+      assert.lengthOf(small, 1);
+      const now = yield* Clock.currentTimeMillis;
+      yield* sql`INSERT INTO execution_deployments(revision) VALUES ('strand-b')`;
+      yield* sql`INSERT INTO execution_tasks
+        (task_id, deployment_revision, state, requested_at, started_at, ready_at)
+        VALUES ('strand-b-spare', 'strand-b', 'spare', ${now}, ${now}, ${now})`;
+      assert.isTrue(yield* store.stageDeployment("strand-b"));
+      assert.isTrue(yield* store.promoteDeployment("strand-b", 1));
+      // Rolled back before A's small spare drained: staged again, A is retained, but its small
+      // spare is not the current revision's and is drained all the same.
+      assert.isTrue(yield* store.stageDeployment("strand-a"));
+      yield* left.housekeeping();
+      assert.deepStrictEqual(
+        yield* sql`SELECT state FROM execution_tasks WHERE task_id = ${small[0]!}`,
+        [{ state: "stopped" }]
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(sizing({ "execution.pool.spares": 1, "execution.pool.smallSpares": 1 }))
+    )
+  );
+
+  it.effect(
+    "drains a task that asked for a small box and came up full after the switch went off",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const memory = MemoryTasks.make();
+        const requested: string[] = [];
+        // Small boxes go off while the small launch is under way, and its task comes up full.
+        const switching = TaskProvider.TaskProvider.of({
+          ...memory,
+          start: (input) => {
+            if (!TaskProvider.isSmall(input.size)) return memory.start(input);
+            requested.push(input.taskId);
+            return sql`UPDATE execution_rollout SET small_boxes = false`.pipe(
+              Effect.orDie,
+              Effect.andThen(memory.start({ ...input, size: TaskProvider.full }))
+            );
+          }
+        });
+        const { left } = yield* setup("small-came-full", switching, switching, true);
+        yield* Fleet.setSmallBoxes(true);
+        yield* left.housekeeping();
+        assert.lengthOf(requested, 1);
+        assert.deepStrictEqual(
+          yield* sql`SELECT state, cpu, ready_at FROM execution_tasks WHERE task_id = ${requested[0]!}`,
+          [{ state: "stopped", cpu: TaskProvider.full.cpu, ready_at: null }]
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(sizing({ "execution.pool.spares": 1, "execution.pool.smallSpares": 1 }))
+      )
+  );
+
+  it.effect(
+    "leaves a full reservation's launch count unknown, and forgets a small one's once its task runs",
+    () =>
+      Effect.gen(function* () {
+        const memory = MemoryTasks.make();
+        // Every small launch is refused outright.
+        const refusing = TaskProvider.TaskProvider.of({
+          ...memory,
+          start: (input) =>
+            TaskProvider.isSmall(input.size)
+              ? Effect.fail(new TaskProvider.LaunchRefused({ taskId: input.taskId }))
+              : memory.start(input)
+        });
+        const { sql, left } = yield* setup("small-seen", refusing, refusing, true);
+        const counts = sql`SELECT cpu, unrefused_launches FROM execution_tasks
+          WHERE state <> 'stopped' GROUP BY cpu, unrefused_launches ORDER BY cpu`;
+        yield* Fleet.setSmallBoxes(true);
+        yield* left.housekeeping();
+        assert.deepStrictEqual(yield* counts, [
+          { cpu: TaskProvider.small.cpu, unrefused_launches: 0 },
+          { cpu: TaskProvider.full.cpu, unrefused_launches: null }
+        ]);
+        // The refused row's task turns up running after all: whatever its count said, it is
+        // unknown from then on, though its launches are still refused.
+        const [small] = yield* tasksOf("starting", TaskProvider.small.cpu);
+        yield* memory.start({
+          taskId: small!,
+          deploymentRevision: "small-seen",
+          size: TaskProvider.small
+        });
+        yield* left.housekeeping();
+        assert.deepStrictEqual(yield* counts, [
+          { cpu: TaskProvider.small.cpu, unrefused_launches: null },
+          { cpu: TaskProvider.full.cpu, unrefused_launches: null }
+        ]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(sizing({ "execution.pool.spares": 1, "execution.pool.smallSpares": 1 }))
+      )
   );
 
   it.effect("passes over a company a claim holds when replacing, and replaces it once free", () =>

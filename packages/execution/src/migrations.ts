@@ -121,9 +121,10 @@ export const migrations: Migrations = {
   // ready; the size a waiting company needs; the switch that lets a one-member company run on a
   // small box. `unrefused_launches` counts a task's launch attempts not refused outright, each
   // counted before it is sent: 0 means nothing was ever launched for it, so a drain can complete
-  // without a task to stop. A reservation sets 0; null, which existing rows and an older host's
-  // inserts get, means unknown. Every size default is today's full box, so existing rows and an
-  // older host's inserts stay correct.
+  // without a task to stop. A small reservation sets 0; null means unknown, as for a full
+  // reservation, existing rows, an older host's inserts and any row whose task was seen running.
+  // Every size default is today's full box, so existing rows and an older host's inserts stay
+  // correct.
   "0047_execution_box_sizes": ddl(
     `ALTER TABLE execution_tasks ADD COLUMN cpu INTEGER NOT NULL DEFAULT 1024`,
     `ALTER TABLE execution_tasks ADD COLUMN memory INTEGER NOT NULL DEFAULT 2048`,
