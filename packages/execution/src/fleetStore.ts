@@ -814,9 +814,10 @@ export const make = Effect.gen(function* () {
   /**
    * Fences ready spares of `revision` and `size`'s kind beyond the oldest `keep` unclaimed ready
    * spares, newest first, whose readiness predates `readyBefore`. Locking inside the same
-   * statement ensures a concurrent claim can never make trimming dip below `keep`. Keeping small
-   * spares rechecks the switch and the revision under the rollout row's lock: unless small boxes
-   * are on and `revision` is current, it keeps none.
+   * statement ensures a concurrent claim can never make trimming dip below `keep`. A small trim
+   * first takes a shared lock on the rollout row, held until it commits, and decides under it:
+   * unless small boxes are on and `revision` is current, it keeps none. A flip or a promotion so
+   * lands either before that decision or after the fence. A full trim takes no such lock.
    */
   const trimSpares = Effect.fn("FleetStore.trimSpares")(function* (
     revision: string,
@@ -824,7 +825,12 @@ export const make = Effect.gen(function* () {
     keep: number,
     readyBefore: number
   ) {
-    const kept = TaskProvider.isSmall(size) && !(yield* smallAllowed(revision)) ? 0 : keep;
+    const allowed = TaskProvider.isSmall(size)
+      ? yield* sql`SELECT singleton FROM execution_rollout WHERE singleton FOR SHARE`.pipe(
+          Effect.andThen(smallAllowed(revision))
+        )
+      : true;
+    const kept = allowed ? keep : 0;
     return yield* sql<{ readonly taskId: string }>`WITH locked AS (
         SELECT task_id, requested_at, ready_at
         FROM execution_tasks

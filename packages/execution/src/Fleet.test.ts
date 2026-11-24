@@ -4499,6 +4499,65 @@ it.layer(services)("small boxes for one-member companies", (it) => {
       )
   );
 
+  it.effect("decides a small trim under the rollout row's lock, so no promotion lands after", () =>
+    Effect.gen(function* () {
+      const { sql, left } = yield* setupMemory("trim-lock-a");
+      const store = yield* FleetStore.make;
+      yield* Fleet.setSmallBoxes(true);
+      yield* left.housekeeping();
+      const spare = (yield* tasksOf("spare", TaskProvider.small.cpu))[0]!;
+      const now = yield* Clock.currentTimeMillis;
+      yield* sql`INSERT INTO execution_deployments(revision) VALUES ('trim-lock-b')`;
+      yield* sql`INSERT INTO execution_tasks
+        (task_id, deployment_revision, state, requested_at, started_at, ready_at)
+        VALUES ('trim-lock-b-spare', 'trim-lock-b', 'spare', ${now}, ${now}, ${now})`;
+      const promote = (revision: string) =>
+        store.stageDeployment(revision).pipe(Effect.andThen(store.promoteDeployment(revision, 1)));
+      // A trim of A's small spares planned to keep one, held just before its statement `pattern`.
+      const pausedTrim = Effect.fn("FleetTest.pausedTrim")(function* (pattern: RegExp) {
+        const reached = yield* Deferred.make<void>();
+        const resume = yield* Deferred.make<void>();
+        let paused = false;
+        const transform: Statement.Transformer = (statement) =>
+          paused || !pattern.test(statement.compile()[0])
+            ? Effect.succeed(statement)
+            : Effect.sync(() => {
+                paused = true;
+              }).pipe(
+                Effect.andThen(Deferred.succeed(reached, undefined)),
+                Effect.andThen(Deferred.await(resume)),
+                Effect.as(statement)
+              );
+        const trim = yield* store
+          .trimSpares("trim-lock-a", TaskProvider.small, 1, now)
+          .pipe(Effect.provideService(Statement.CurrentTransformer, transform), Effect.forkChild);
+        yield* Deferred.await(reached);
+        return { trim, resume: Deferred.succeed(resume, undefined) };
+      });
+      // Planned while B is current, and A is promoted before the trim decides: it keeps one.
+      assert.isTrue(yield* promote("trim-lock-b"));
+      const early = yield* pausedTrim(/FROM execution_rollout/);
+      assert.isTrue(yield* promote("trim-lock-a"));
+      yield* early.resume;
+      assert.deepStrictEqual(yield* Fiber.join(early.trim), []);
+      // Decided while B is current: A's promotion waits for the fence, so the trim never acts on
+      // a decision a promotion made stale.
+      assert.isTrue(yield* promote("trim-lock-b"));
+      assert.isTrue(yield* store.stageDeployment("trim-lock-a"));
+      const late = yield* pausedTrim(/UPDATE execution_tasks t SET state = 'stopping'/);
+      const promotion = yield* store
+        .promoteDeployment("trim-lock-a", 1)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* lockWait("A's promotion waits for the trim");
+      yield* late.resume;
+      assert.deepStrictEqual(yield* Fiber.join(late.trim), [spare]);
+      assert.isTrue(yield* Fiber.join(promotion));
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(sizing({ "execution.pool.spares": 1, "execution.pool.smallSpares": 1 }))
+    )
+  );
+
   it.effect(
     "drains a task that asked for a small box and came up full after the switch went off",
     () =>
