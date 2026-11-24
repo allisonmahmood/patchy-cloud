@@ -4392,6 +4392,55 @@ it.layer(services)("small boxes for one-member companies", (it) => {
   );
 
   it.effect(
+    "leaves a small spare alone when its revision is promoted before the drain fences it",
+    () =>
+      Effect.gen(function* () {
+        const { sql, companyId, left } = yield* setupMemory("unstrand-a");
+        yield* addMember(companyId, "usr_unstrand");
+        const store = yield* FleetStore.make;
+        yield* Fleet.setSmallBoxes(true);
+        yield* left.housekeeping();
+        const small = yield* tasksOf("spare", TaskProvider.small.cpu);
+        assert.lengthOf(small, 1);
+        const now = yield* Clock.currentTimeMillis;
+        yield* sql`INSERT INTO execution_deployments(revision) VALUES ('unstrand-b')`;
+        yield* sql`INSERT INTO execution_tasks
+        (task_id, deployment_revision, state, requested_at, started_at, ready_at)
+        VALUES ('unstrand-b-spare', 'unstrand-b', 'spare', ${now}, ${now}, ${now})`;
+        assert.isTrue(yield* store.stageDeployment("unstrand-b"));
+        assert.isTrue(yield* store.promoteDeployment("unstrand-b", 1));
+        assert.isTrue(yield* store.stageDeployment("unstrand-a"));
+        // The pass picks A's small spare to drain, A being staged, and A is promoted just before
+        // the drain fences it.
+        let promoted = false;
+        const transform: Statement.Transformer = (statement) =>
+          promoted ||
+          !/IS DISTINCT FROM execution_tasks\.deployment_revision/.test(statement.compile()[0])
+            ? Effect.succeed(statement)
+            : store.promoteDeployment("unstrand-a", 1).pipe(
+                Effect.orDie,
+                Effect.map((done) => {
+                  promoted = done;
+                  return statement;
+                })
+              );
+        yield* left
+          .housekeeping()
+          .pipe(Effect.provideService(Statement.CurrentTransformer, transform));
+        assert.isTrue(promoted);
+        assert.deepStrictEqual(
+          yield* sql`SELECT state FROM execution_tasks WHERE task_id = ${small[0]!}`,
+          [{ state: "spare" }]
+        );
+        // It is the current revision's small spare, and a one-member company takes it.
+        assert.strictEqual((yield* left.ensureBinding(companyId)).taskId, small[0]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(sizing({ "execution.pool.spares": 1, "execution.pool.smallSpares": 1 }))
+      )
+  );
+
+  it.effect(
     "drains a task that asked for a small box and came up full after the switch went off",
     () =>
       Effect.gen(function* () {

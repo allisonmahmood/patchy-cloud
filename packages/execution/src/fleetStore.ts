@@ -844,6 +844,18 @@ export const make = Effect.gen(function* () {
         AND ranked.ready_at <= ${readyBefore}
       RETURNING t.task_id AS "taskId"`.pipe(Effect.map((rows) => rows.map((row) => row.taskId)));
   }, sql.withTransaction);
+  /**
+   * Fences a small spare to drain only while it still is one and its revision is still not the
+   * current one, read under a shared lock on the rollout row, so a promotion commits either
+   * before this, which then moves nothing, or after it. A spare is unbound: the statement that
+   * binds a spare makes its row `bound`. Answers whether it moved the row.
+   */
+  const fenceSmallSpare = (taskId: string) =>
+    sql`UPDATE execution_tasks SET state = 'stopping'
+    WHERE task_id = ${taskId} AND state = 'spare' AND cpu < ${full.cpu}
+      AND EXISTS (SELECT 1 FROM execution_rollout r WHERE r.singleton
+        AND r.current_revision IS DISTINCT FROM execution_tasks.deployment_revision FOR SHARE)
+    RETURNING task_id`.pipe(Effect.map((rows) => rows.length === 1));
   const sweepWaits = (now: number) => sql`DELETE FROM execution_pool_waits WHERE until <= ${now}`;
   /**
    * Each size's demand on `revision`: wakes by the size of the spare each consumed, cold start by
@@ -1013,6 +1025,7 @@ export const make = Effect.gen(function* () {
     reserve,
     ready,
     trimSpares,
+    fenceSmallSpare,
     sweepWaits,
     target,
     pendingEvents,
