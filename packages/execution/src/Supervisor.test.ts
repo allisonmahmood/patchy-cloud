@@ -20,6 +20,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Supervisor from "./supervisor.js";
+import { watchedSlots } from "./test/slots.js";
 import * as WorkerHttp from "./workerHttp.js";
 import { NodeCryptography } from "@patchy/core";
 
@@ -1339,7 +1340,7 @@ it.live(
  */
 const sharing = Effect.fnUntraced(function* (
   host: Effect.Success<typeof holdingHost>,
-  slots: number | undefined
+  slots: number | Semaphore.Semaphore | undefined
 ) {
   const watched = yield* observed;
   const supervisor = yield* Supervisor.make({
@@ -1593,6 +1594,53 @@ it.live(
       releaseHeld();
       expect(yield* Fiber.join(held)).toMatchObject({ _tag: "Success" });
       yield* twoSlotsFree(loaded);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
+  30_000
+);
+
+it.live(
+  "refuses a callback whose task was bound at a newer epoch while it waited for a slot, and gives the slot to the next waiter",
+  () =>
+    Effect.gen(function* () {
+      const host = yield* holdingHost;
+      const watched = yield* watchedSlots(2);
+      const { supervisor, call, sent, seen, settled, holdAnswer, holdBody } = yield* sharing(
+        host,
+        watched.slots
+      );
+      const loaded = yield* bind(supervisor, "ver_rebound");
+      // A held answer and a call take both slots, so the call's callback waits for one. The
+      // stale call's answer body is held, so it keeps its own slot to the end.
+      const releaseHeld = holdAnswer("inv_held");
+      const held = yield* call(loaded, "inv_held", {});
+      yield* seen("invoke inv_held");
+      const releaseStale = holdBody("inv_stale");
+      const stale = yield* call(loaded, "inv_stale", { callbacks: 1 });
+      yield* watched.asked(1);
+      // Behind the waiting callback, a third call asks for its place and waits too, unsent.
+      const next = yield* call(loaded, "inv_next_waiter", {});
+      yield* watched.invoked(3);
+      yield* settled(loaded);
+      expect(sent).toEqual(["invoke inv_held", "invoke inv_stale"]);
+      // The task is bound at a newer epoch, then the held answer frees a slot: the callback is
+      // refused when its turn comes and never reaches the host.
+      yield* supervisor.bind({ companyId: "com_supervisor", bindingEpoch: 2 });
+      releaseHeld();
+      expect(yield* Fiber.join(held)).toMatchObject({ _tag: "Success" });
+      yield* seen("answered inv_stale").pipe(Effect.raceFirst(host.heldFor("inv_stale")));
+      expect(host.received.has("inv_stale")).toBe(false);
+      expect(sent).not.toContain("callback inv_stale");
+      // The slot it was given goes to the call behind it while the stale call still holds its own.
+      yield* seen("invoke inv_next_waiter");
+      expect(yield* Fiber.join(next)).toMatchObject({ _tag: "Success" });
+      releaseStale();
+      expect(yield* Fiber.join(stale)).toMatchObject({
+        _tag: "Success",
+        success: { outcome: "returned", reply: { ok: true, value: [{ code: "access_denied" }] } }
+      });
     }).pipe(
       Effect.scoped,
       Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])

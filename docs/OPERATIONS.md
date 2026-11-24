@@ -1067,13 +1067,17 @@ Invokes and forwarded callbacks share the count the runtime's fetch ran at once
 when it carried every request the supervisor made: under Bun 256, or
 `BUN_CONFIG_MAX_HTTP_REQUESTS` read as Bun reads it; under Node, whose fetch
 queues nothing, no count. An invoke takes its place when its request is sent to
-its process, after its attempt is registered with the watchdog, and a callback
-when it is forwarded to the host, after its body is read; each keeps it until its
-answer has been read. Past the count each waits its turn, first come first served.
-While an attempt waits it still counts as active, keeping its process from idle
-reaping and eviction, as it did while it sat in fetch's queue. Binds, health
-probes and startup checks are outside the count and never wait for it. The
-watchdog's deadline kill exempts only attempts not yet sent: one still waiting
+its process, after its attempt is registered with the watchdog, and keeps it
+until its answer has been read. A callback takes its place after its body is
+read and is then checked again, as on its arrival: one whose attempt has ended
+or passed its deadline, or whose task was bound at a newer epoch while it waited,
+is refused there, never forwarded, and gives the place straight back; one
+forwarded to the host keeps it until the host's answer has been read. Past the
+count each waits its turn, first come first served. While an attempt waits it
+still counts as active, keeping its process from idle reaping and eviction, as it
+did while it sat in fetch's queue. Binds, health probes and startup checks are
+outside the count and never wait for it. The watchdog's deadline kill exempts
+only attempts not yet sent: one still waiting
 past its deadline ends nothing, and when its turn comes it is sent and the loader
 answers it `deadline` without running the handler. A sent attempt past its
 deadline still ends its process a second later, or a second after its sending if

@@ -75,15 +75,18 @@ const fetchSetting = Config.option(Config.String("BUN_CONFIG_MAX_HTTP_REQUESTS")
 /**
  * How many invokes and forwarded callbacks this supervisor has in flight at once, together: the
  * count the runtime's fetch ran at once when every request it made went through it. An invoke
- * takes its place when its request is sent, and a callback when it is forwarded to the host, each
- * until its answer has been read; past the count each waits its turn, first come first served,
- * and while an invoke waits its attempt still counts as active, keeping its process from idle
- * reaping and eviction, as it did in fetch's queue. Binds, health probes and startup checks are
- * outside it. The watchdog's deadline kill exempts only attempts not yet sent; a sent attempt past
- * its deadline still ends its process. Undefined, the default, follows the runtime
- * (`runtimeFetches`); tests inject one.
+ * takes its place when its request is sent and keeps it until its answer has been read. A
+ * callback takes its place once its body is read and is then checked again: refused there, it
+ * gives the place straight back; forwarded to the host, it keeps it until the host's answer has
+ * been read. Past the count each waits its turn, first come first served, and while an invoke
+ * waits its attempt still counts as active, keeping its process from idle reaping and eviction,
+ * as it did in fetch's queue. Binds, health probes and startup checks are outside it. The
+ * watchdog's deadline kill exempts only attempts not yet sent; a sent attempt past its deadline
+ * still ends its process. Undefined, the default, follows the runtime (`runtimeFetches`); tests
+ * give a count, or a semaphore of their own, used as it is, to see when a callback asks for its
+ * place.
  */
-export const FetchSlots = Context.Reference<number | undefined>(
+export const FetchSlots = Context.Reference<number | Semaphore.Semaphore | undefined>(
   "@patchy/execution/supervisor/FetchSlots",
   { defaultValue: () => undefined }
 );
@@ -345,10 +348,13 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
   const callbackUrls = new Set(options.callbackUrls);
   const reports = new Map<string, Management.ProcessReport>();
   const admission = yield* Semaphore.make(1);
-  const slots = yield* Semaphore.make(
-    (yield* FetchSlots) ??
-      runtimeFetches({ bun: process.versions.bun, setting: yield* fetchSetting })
-  );
+  const fetchSlots = yield* FetchSlots;
+  const slots =
+    typeof fetchSlots === "object"
+      ? fetchSlots
+      : yield* Semaphore.make(
+          fetchSlots ?? runtimeFetches({ bun: process.versions.bun, setting: yield* fetchSetting })
+        );
   let companyId: string | null = null;
   let bindingEpoch = 0;
   let generation = 0;
@@ -677,9 +683,14 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
         if (request.headers["x-patchy-callback"] !== undefined)
           headers["x-patchy-callback"] = request.headers["x-patchy-callback"];
         if (modelCall !== undefined) headers[modelCallHeader] = modelCall;
-        // Its slot, in order, from its forward until the host's answer has been read. A call still
-        // waiting for one has not been handed to the host, so a model call refused there says so.
+        // It takes its slot in order, then is checked again: while it waited its attempt may have
+        // ended or reached its deadline, or its task been bound at a newer epoch. Refused here, it
+        // gives the slot straight back as its scope closes; forwarded, it keeps it until the host's
+        // answer has been read. Nothing reaches the host before it is forwarded, so a model call
+        // refused until then says nothing was sent.
         yield* slots.takeScoped(1);
+        if (!live()) return refusedCallback();
+        if (Date.now() >= invocation.attempt.deadline) return deadlineCallback();
         forwarded = true;
         const response = yield* http
           .execute(

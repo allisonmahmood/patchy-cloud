@@ -17,6 +17,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Supervisor from "./supervisor.js";
+import { watchedSlots } from "./test/slots.js";
 import * as WorkerHttp from "./workerHttp.js";
 import { NodeCryptography } from "@patchy/core";
 
@@ -385,6 +386,57 @@ it.live(
       Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
     ),
   20_000
+);
+
+it.live(
+  "refuses a model call whose task was bound at a newer epoch while it waited for a slot, sending nothing, and gives its permit back",
+  () =>
+    Effect.gen(function* () {
+      const target = yield* host;
+      const watched = yield* watchedSlots(3);
+      const supervisor = yield* make(target, 2).pipe(
+        Effect.provideService(Supervisor.FetchSlots, watched.slots)
+      );
+      const loaded = yield* bindVersion(supervisor, "ver_rebound");
+      // A call and its model call, held by the host, and a second call take all three slots: the
+      // second call's model call takes the other permit and waits for a slot.
+      const holding = yield* invoke(supervisor, loaded, target, "inv_hold", [
+        generate("held")
+      ]).pipe(Effect.forkChild);
+      yield* until(() => target.held.length === 1);
+      const waiting = yield* invoke(supervisor, loaded, target, "inv_wait", [
+        generate("waiting")
+      ]).pipe(Effect.forkChild);
+      yield* watched.asked(2);
+      // Bound at a newer epoch while it waits, it is refused when the held call's answer frees a
+      // slot: it never reaches the host, and its answer says nothing was sent.
+      yield* supervisor.bind({ companyId: "com_models", bindingEpoch: 2 });
+      target.release();
+      const [refused] = replies(yield* Fiber.join(waiting));
+      yield* Fiber.join(holding);
+      expect(target.seen).toEqual([{ op: "models.generate", marked: "models.generate" }]);
+      expect(refused).toEqual({
+        ok: false,
+        source: "patchy",
+        code: "access_denied",
+        error: "The invocation callback has ended.",
+        details: { sent: false }
+      });
+      // Both permits are back: two model calls at the new epoch are held by the host at once.
+      target.hold();
+      const after = yield* invoke(supervisor, { ...loaded, bindingEpoch: 2 }, target, "inv_after", [
+        generate(),
+        generate()
+      ]).pipe(Effect.forkChild);
+      yield* until(() => target.held.length === 2);
+      target.release();
+      const answered = { ok: true, value: "answered" };
+      expect(replies(yield* Fiber.join(after))).toEqual([answered, answered]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide([FetchHttpClient.layer, WorkerHttp.layer, NodeCryptography.layer])
+    ),
+  30_000
 );
 
 /** The address a process's loader calls back on, read from the config its workerd was started with. */
