@@ -1586,7 +1586,7 @@ export const registry = {
     unit: "tasks",
     scope: "host",
     measure:
-      "Floor of small spares for the current revision, read only while small boxes are on; reserved only when no full deficit was refused for budget",
+      "Floor of small spares for the current revision, loaded like any limit and used only while small boxes are on; reserved only when no full deficit was refused for budget",
     refusal: null,
     overridable: false
   },
