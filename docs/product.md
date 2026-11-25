@@ -1493,7 +1493,13 @@ and, once a call holds one of its bot's slots, checks the caller and that the co
 still connected before calling Notion. Recent calls name the data source, the property names
 and the ids a call named, never a filter value, search text, row value or page text.
 
-### Writing Notion rows
+### Writing Notion pages and rows
+
+A Tier 2 action with a Read and write connection can use `pages.appendMarkdown(id, markdown)`
+to add to the end of a shared page or a database row's page body. The insertion preserves
+existing blocks and row properties and returns the page id and any Notion parser warnings.
+Notion refuses access to a page whose sharing was revoked. Dev simulates the append and
+reports the page id.
 
 On a Read and write connection, each data source's client also has `create`, `update`,
 `trash` and `restore`, from tier 2 actions that aren't read-only; a Read connection's client
@@ -1508,7 +1514,7 @@ shared with the connection can be changed through a data source; a write that se
 relation first checks its target is still shared, since Notion answers an unshared one's
 relations as empty.
 
-Writes answer the row's id, never a re-read row. Notion has no idempotency keys, so Patchy
+Row writes answer the row's id, never a re-read row. Notion has no idempotency keys, so Patchy
 never retries one: a write whose answer is lost, or that gets a 5xx other than 529 or a 2xx
 Patchy can't read, fails `unknown_outcome`, naming the row when Notion's 503 does, and the
 skill says to read before writing again. A 409 changed nothing and fails `write_conflict`. A

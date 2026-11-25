@@ -189,6 +189,10 @@ export const recorded: {
   markdown: { resource: idOf, rowCount: oneOrNone },
   search: { resource: () => null, rowCount: count("results") },
   listPeople: { resource: () => null, rowCount: count("people") },
+  appendMarkdown: {
+    resource: (args) => (Predicate.isObject(args) && isWriteId(args.id) ? args.id : null),
+    rowCount: () => null
+  },
   create: write,
   update: write,
   trash: write,
@@ -311,6 +315,11 @@ export const makeHandlers = Effect.gen(function* () {
       "listPeople",
       notionReads.listPeople,
       ({ connection, ...input }) => invoke(connection, input, Reads.planPeople)
+    ),
+    [notionWrites.appendMarkdown.op]: handler(
+      "appendMarkdown",
+      notionWrites.appendMarkdown,
+      ({ connection, ...input }) => invoke(connection, input, Writes.planAppendMarkdown, true)
     ),
     [notionWrites.create.op]: handler("create", notionWrites.create, ({ connection, ...input }) =>
       invoke(connection, input, Writes.planCreate, true)

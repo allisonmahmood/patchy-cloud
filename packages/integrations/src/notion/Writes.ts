@@ -1,6 +1,9 @@
 import {
+  NotionAppendWarnings,
   NotionDate,
   NotionId,
+  type NotionAppendInput,
+  type NotionAppendOutput,
   type NotionCreateInput,
   type NotionCreateOutput,
   type NotionSnapshot,
@@ -185,6 +188,32 @@ const write = <A>(
   request: HttpClientRequest.HttpClientRequest,
   read: (body: unknown) => Effect.Effect<A, Refusal>
 ) => send(request).pipe(Effect.flatMap(read), Effect.mapError(afterWrite));
+
+const readAppended = decode(
+  Schema.Struct({
+    object: Schema.Literal("page_markdown"),
+    id: NotionId,
+    warnings: Schema.optionalKey(NotionAppendWarnings)
+  })
+);
+
+/** An insertion with no anchor goes at the end of the page, including a row's page body. */
+export const planAppendMarkdown = Effect.fnUntraced(function* (
+  _snapshot: NotionSnapshot,
+  input: NotionAppendInput
+) {
+  const id = yield* rowIdOf(input.id);
+  const request = HttpClientRequest.patch(`/pages/${id}/markdown`).pipe(
+    HttpClientRequest.bodyJsonUnsafe({
+      type: "insert_content",
+      insert_content: { content: input.markdown }
+    })
+  );
+  return Effect.fnUntraced(function* (send: Send): Effect.fn.Return<NotionAppendOutput, Refusal> {
+    const answer = yield* write(send, request, readAppended);
+    return { id: answer.id, warnings: answer.warnings ?? [] };
+  });
+});
 
 /** A row in the data source, answering its id and URL. */
 export const planCreate = Effect.fnUntraced(function* (

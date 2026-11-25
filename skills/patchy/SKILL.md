@@ -111,7 +111,8 @@ A repo's **tier** is where its code runs, set by `tier` in `patchy.config.ts`:
   member directory, all read-only, and company connections (Postgres, PostHog,
   Attio, an IMAP mailbox and GitHub repositories' CI runs, job logs and pull
   requests, each read-only; a Notion workspace's shared rows and pages, whose
-  database rows a connection that allows it also adds, changes and trashes; and
+  database rows a connection that allows it also adds, changes and trashes and whose
+  page bodies it can append to; and
   Pidgeon, which reads one inbox's email and, when its connection allows, sends it). Tools
   in `agent/` are what people's own agents call, as them, through Patchy MCP;
   tier 1 has no agent tools. It cannot be shared public.

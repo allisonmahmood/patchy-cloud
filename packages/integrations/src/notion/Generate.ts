@@ -100,7 +100,7 @@ Use the data source's \`key\` in a Tier 2 action via \`ctx.connections.<alias>\`
 
 ${
   access === "write"
-    ? "Read and write: each data source also has `create(properties)`, `update(id, properties)`, `trash(id)` and `restore(id)`, typed by its `writable` properties. A write sets each property it names whole. Select, multi-select and status take only the options below; a status set to null may go back to its default. Writes notify people and run automations as an edit in Notion does. `patchy dev` simulates them, so later reads don't show them."
+    ? "Read and write: `pages.appendMarkdown(id, markdown)` appends to the body of a page or row. Each data source also has `create(properties)`, `update(id, properties)`, `trash(id)` and `restore(id)`, typed by its `writable` properties. A write sets each property it names whole. Select, multi-select and status take only the options below; a status set to null may go back to its default. Writes notify people and run automations as an edit in Notion does. `patchy dev` simulates them, so later reads don't show them."
     : "Read only: the client has no write methods, and Patchy refuses one forced past its types."
 }
 

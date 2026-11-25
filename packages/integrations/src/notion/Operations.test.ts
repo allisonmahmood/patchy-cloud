@@ -11,6 +11,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as HttpClient from "effect/http/HttpClient";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -25,6 +26,7 @@ import * as PostHogSource from "../posthog/Source.js";
 import * as GithubTest from "../test/github.js";
 import * as ImapTest from "../test/imap.js";
 import * as NotionDouble from "../test/notion.js";
+import * as Dev from "./Dev.js";
 import * as Operations from "./Operations.js";
 import * as Source from "./Source.js";
 
@@ -124,13 +126,25 @@ const setup = Effect.fnUntraced(function* (access: NotionAccess = "read") {
     )
   );
   const sent: string[] = [];
+  const bodies: unknown[] = [];
   const held: { hold?: Deferred.Deferred<void> } = {};
   const source = Source.Source.of({
     ...slots,
     send: (_key, request) =>
       Effect.gen(function* () {
         sent.push(`${request.method} ${request.url}`);
+        if (request.body._tag === "Uint8Array") {
+          bodies.push(JSON.parse(new TextDecoder().decode(request.body.body)));
+        }
         if (held.hold !== undefined) yield* Deferred.await(held.hold);
+        if (request.url === `/pages/${pageId}/markdown`) {
+          return {
+            object: "page_markdown",
+            id: pageId,
+            markdown: "Original content\n\nHandoff note",
+            warnings: [{ code: "unsupported_content", message: "An element was ignored." }]
+          };
+        }
         return { results: [], has_more: false, next_cursor: null };
       })
   });
@@ -147,11 +161,77 @@ const setup = Effect.fnUntraced(function* (access: NotionAccess = "read") {
     id: connection.id,
     credentials: Source.changeSecret({ access: "read" })
   });
-  return { call, disconnect, readOnly, sent, held };
+  return { call, disconnect, readOnly, sent, held, bodies, connection };
 });
+const pageId = "20000000-0000-4000-8000-000000000001";
 const create = { source: "Tasks", properties: { Name: "Review signage" } };
 
 it.layer(fixture)("Notion operations", (it) => {
+  it.effect("appends a handoff through the shared connection using a body-only Notion write", () =>
+    Effect.gen(function* () {
+      const { call, sent, bodies } = yield* setup("write");
+      const result = yield* call("notion.appendMarkdown", { id: pageId, markdown: "Handoff note" });
+      assert.deepStrictEqual(sent, [`PATCH /pages/${pageId}/markdown`]);
+      assert.deepStrictEqual(bodies, [
+        {
+          type: "insert_content",
+          insert_content: { content: "Handoff note" }
+        }
+      ]);
+      assert.deepStrictEqual(result, {
+        id: pageId,
+        warnings: [{ code: "unsupported_content", message: "An element was ignored." }]
+      });
+    })
+  );
+
+  it.effect("simulates appending with no request to the instance or Notion", () =>
+    Effect.gen(function* () {
+      const { connection } = yield* setup("write");
+      const simulated: Dev.Simulated[] = [];
+      const handlers = yield* Dev.handlers(
+        { apiUrl: "http://unused.invalid", token: Option.none() },
+        {
+          tasks: {
+            declaration: {
+              kind: "notion",
+              handle: connection.handle,
+              id: connection.id,
+              revision: 1
+            },
+            snapshot: {
+              workspace: { id: "workspace", name: "Probe" },
+              botId: "bot",
+              access: "write",
+              dataSources: [],
+              exclusions: []
+            }
+          }
+        },
+        (entry) => Effect.sync(() => void simulated.push(entry))
+      ).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("A simulated write must not reach the network."))
+        )
+      );
+      assert.deepStrictEqual(
+        yield* handlers["notion.appendMarkdown"]
+          .run({
+            connection: "tasks",
+            id: pageId,
+            markdown: "Private handoff"
+          })
+          .pipe(Effect.provideService(Binding.Binding, binding(connection))),
+        { id: pageId, warnings: [] }
+      );
+      assert.deepStrictEqual(
+        simulated.map(({ summary }) => summary),
+        [`notion.appendMarkdown ${pageId}`]
+      );
+    })
+  );
+
   it.effect("refuses a call through a disconnected connection with nothing sent", () =>
     Effect.gen(function* () {
       const { call, disconnect, sent } = yield* setup();
@@ -185,6 +265,11 @@ it.layer(fixture)("Notion operations", (it) => {
       const { call, sent } = yield* setup("read");
       const refused = yield* call("notion.create", create).pipe(Effect.flip);
       assert.include(Runtime.toFailure(refused), { code: "access_denied" });
+      const append = yield* call("notion.appendMarkdown", {
+        id: pageId,
+        markdown: "Handoff note"
+      }).pipe(Effect.flip);
+      assert.include(Runtime.toFailure(append), { code: "access_denied" });
       assert.lengthOf(sent, 0);
     })
   );

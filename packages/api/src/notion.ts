@@ -154,7 +154,15 @@ export const NotionWriteId = Schema.Union([
 const writeProperties = Schema.Record(Name, Schema.Json);
 const writeRow = { source: Name, id: NotionWriteId };
 const trashed = Schema.Struct({ id: NotionWriteId, inTrash: Schema.Boolean });
+export const NotionAppendWarnings = Schema.Array(
+  Schema.Struct({ code: Schema.String, message: Schema.String })
+);
 export const notionWrites = {
+  appendMarkdown: operation(
+    "appendMarkdown",
+    Schema.Struct({ id: NotionWriteId, markdown: Schema.String.check(Schema.isPattern(/\S/u)) }),
+    Schema.Struct({ id: NotionWriteId, warnings: NotionAppendWarnings })
+  ),
   create: operation(
     "create",
     Schema.Struct({ source: Name, properties: writeProperties }),
@@ -169,6 +177,8 @@ export const notionWrites = {
   restore: operation("restore", Schema.Struct(writeRow), trashed)
 };
 export type NotionWrite = keyof typeof notionWrites;
+export type NotionAppendInput = typeof notionWrites.appendMarkdown.input.Type;
+export type NotionAppendOutput = typeof notionWrites.appendMarkdown.output.Type;
 export type NotionCreateInput = typeof notionWrites.create.input.Type;
 export type NotionCreateOutput = typeof notionWrites.create.output.Type;
 export type NotionUpdateInput = typeof notionWrites.update.input.Type;
@@ -184,6 +194,7 @@ export const notionOperations = {
   [notionReads.markdown.op]: notionReads.markdown.operation,
   [notionReads.search.op]: notionReads.search.operation,
   [notionReads.listPeople.op]: notionReads.listPeople.operation,
+  [notionWrites.appendMarkdown.op]: notionWrites.appendMarkdown.operation,
   [notionWrites.create.op]: notionWrites.create.operation,
   [notionWrites.update.op]: notionWrites.update.operation,
   [notionWrites.trash.op]: notionWrites.trash.operation,

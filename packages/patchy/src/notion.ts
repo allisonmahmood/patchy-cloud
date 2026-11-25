@@ -105,7 +105,17 @@ export type NotionClient<
   readonly [Name in keyof Sources]: NotionSourceClient<Sources[Name]> &
     (Access extends "write" ? NotionSourceWriter<Sources[Name]> : unknown);
 } & {
-  readonly pages: { markdown(id: string): Promise<NotionMarkdown | null> };
+  readonly pages: { markdown(id: string): Promise<NotionMarkdown | null> } & (Access extends "write"
+    ? {
+        appendMarkdown(
+          id: string,
+          markdown: string
+        ): Promise<{
+          readonly id: string;
+          readonly warnings: readonly { readonly code: string; readonly message: string }[];
+        }>;
+      }
+    : unknown);
   search(options?: NotionSearchOptions): Promise<{
     readonly results: readonly NotionSearchResult<keyof Sources & string>[];
     readonly cursor: string | null;
@@ -119,7 +129,7 @@ export type NotionClient<
 };
 
 export type NotionOperation =
-  `notion.${"listRows" | "getRow" | "markdown" | "search" | "listPeople" | "create" | "update" | "trash" | "restore"}`;
+  `notion.${"listRows" | "getRow" | "markdown" | "search" | "listPeople" | "appendMarkdown" | "create" | "update" | "trash" | "restore"}`;
 type Call = (op: NotionOperation, args: Readonly<Record<string, unknown>>) => Promise<unknown>;
 
 /** The host validates each request against the declaration and encodes its result. */
@@ -142,7 +152,11 @@ export function createNotionClient<
     return value;
   };
   const methods = {
-    pages: { markdown: (id: string) => invoke("notion.markdown", { id }) },
+    pages: {
+      markdown: (id: string) => invoke("notion.markdown", { id }),
+      appendMarkdown: (id: string, markdown: string) =>
+        invoke("notion.appendMarkdown", { id, markdown })
+    },
     search: (options: object = {}) => invoke("notion.search", options),
     people: { list: (options: object = {}) => invoke("notion.listPeople", options) }
   };
