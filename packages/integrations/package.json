@@ -31,7 +31,7 @@
   },
   "dependencies": {
     "@effect/ai-openai": "catalog:",
-    "@electric-sql/pglite": "0.5.16",
+    "@electric-sql/pglite": "0.5.17",
     "@patchy/analytics": "workspace:*",
     "@patchy/api": "workspace:*",
     "@patchy/auth": "workspace:*",
@@ -48,6 +48,6 @@
     "@effect/vitest": "catalog:",
     "@patchy/sql": "workspace:*",
     "@types/pg": "^8.23.1",
-    "vitest": "^5.1.0"
+    "vitest": "^5.1.1"
   }
 }
