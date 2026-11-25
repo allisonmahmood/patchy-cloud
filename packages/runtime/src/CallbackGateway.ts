@@ -91,6 +91,7 @@ const connections: Readonly<Record<string, true>> = {
   "notion.markdown": true,
   "notion.search": true,
   "notion.listPeople": true,
+  "notion.appendMarkdown": true,
   "notion.create": true,
   "notion.update": true,
   "notion.trash": true,

@@ -1,7 +1,7 @@
 /**
  * Notion's dev binding (ADR-0013). `patchy dev` reads the real workspace through the instance's
- * dev door, as the machine token's person, and simulates every write. A create, update, trash or
- * restore is checked as the host checks it, its arguments against the version's snapshot and the
+ * dev door, as the machine token's person, and simulates every write. An append or a row write
+ * is checked as the host checks it, its arguments against the version's snapshot and the
  * connection's access, then answered here, a create with an id starting `dev_`, and shown in
  * dev's output. Nothing reaches the instance or Notion, so the next read doesn't show it.
  */
@@ -161,6 +161,12 @@ export const handlers = Effect.fn("NotionDev.handlers")(function* (
     [notionReads.markdown.op]: read(notionReads.markdown),
     [notionReads.search.op]: read(notionReads.search),
     [notionReads.listPeople.op]: read(notionReads.listPeople),
+    [notionWrites.appendMarkdown.op]: simulate(
+      "appendMarkdown",
+      notionWrites.appendMarkdown,
+      (snapshot, args) => Writes.planAppendMarkdown(snapshot, { ...args, id: live(args.id) }),
+      ({ id }) => Effect.succeed({ id, warnings: [] })
+    ),
     [notionWrites.create.op]: simulate(
       "create",
       notionWrites.create,

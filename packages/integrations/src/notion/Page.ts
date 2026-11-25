@@ -51,7 +51,7 @@ const accessField: Fields.Spec = {
   name: "access",
   field: "access",
   label: "Access",
-  hint: "Read and write lets patches add, change and trash rows.",
+  hint: "Read and write lets patches add, change and trash rows, and append to page bodies.",
   initial: "read",
   width: "sm",
   choices: [
@@ -65,7 +65,7 @@ export const connect: ConnectFrame.ConnectSpec = {
   getIt: {
     title: "Make an internal connection",
     steps: [
-      "In Notion's Developer portal, a workspace owner creates an internal connection with these capabilities, then shares each database patches should use with it, through Add connections. Patches see only what is shared with it."
+      "In Notion's Developer portal, a workspace owner creates an internal connection with these capabilities, then shares each page or database patches should use with it, through Add connections. Patches see only what is shared with it."
     ],
     table: {
       head: ["Capability", "Set to"],
@@ -82,10 +82,12 @@ export const connect: ConnectFrame.ConnectSpec = {
   once: {
     reads: "everything shared with this connection",
     devReads: true,
-    also: ["With Read and write, those patches add, change and trash rows"],
+    also: [
+      "With Read and write, those patches add, change and trash rows and append to page bodies"
+    ],
     cannot: [
       "Nothing is written while a patch is being built",
-      "Page text, comments and files are never changed"
+      "Comments and files are never changed"
     ],
     caveat:
       "A write is an ordinary Notion edit: it notifies people and runs automations and webhooks, and trashing a row doesn't undo those. Notion's own page permissions don't carry over."

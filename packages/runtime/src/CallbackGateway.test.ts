@@ -1054,7 +1054,13 @@ it.layer(
   it.effect("a read-only action never dispatches a Notion write; another action does", () =>
     Effect.gen(function* () {
       const capabilities = yield* InvocationCapabilities.make;
-      const ops = ["notion.create", "notion.update", "notion.trash", "notion.restore"] as const;
+      const ops = [
+        "notion.create",
+        "notion.update",
+        "notion.trash",
+        "notion.restore",
+        "notion.appendMarkdown"
+      ] as const;
       const ran: Array<string> = [];
       const gateway = yield* CallbackGateway.make(
         Object.fromEntries(
