@@ -60,6 +60,67 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 46,
+    date: "2026-11-26",
+    through: "5f316063a0904ae31ac419721ada30a2d5f78355",
+    changes: [
+      {
+        kind: "Improved",
+        title: "Home leads with tools",
+        detail:
+          "Home now lists every tool A–Z under Tools, with your recent pages in a narrow list beside them, or under them on a phone. Every page is still on All patches, in search and in the switcher.",
+        prs: [1540]
+      },
+      {
+        kind: "Improved",
+        title: "Sort All patches by when you opened them",
+        detail:
+          "Click a heading on All patches to sort by name, by when you last opened each patch, by when it was updated or by visits. The new Opened column shows when you last opened each one, and your choice stays while you filter, search and page through the list.",
+        prs: [1542]
+      },
+      {
+        kind: "Improved",
+        title: "Tools can build on each other's data",
+        detail:
+          "A tool can now read the tables and files of your company's other patches without their owners changing anything. It only reads: no tool can change another's data, nothing leaves your company, and each person still sees only what they can open. A builder can keep a tool's data to itself.",
+        prs: [1282]
+      },
+      {
+        kind: "Improved",
+        title: "Patchy works in Safari",
+        detail:
+          "Safari on a Mac is now supported, beside Chrome, Firefox and the browsers built on Chrome.",
+        prs: [1505]
+      },
+      {
+        kind: "Fixed",
+        title: "A busy tool no longer fails all at once",
+        detail:
+          "A tool waiting on many things at once could be stopped as if it had hung, failing everything running in it. It keeps running now.",
+        prs: [1533, 1541]
+      },
+      {
+        kind: "Fixed",
+        title: "No more skill approval notice in tool repos",
+        detail:
+          "Installing a tool's repo printed “Agent skills awaiting approval: patchy” and asked you to run pnpm approve, though there was nothing to approve. Once your agent refreshes the repo, it stops asking.",
+        prs: [1452]
+      }
+    ],
+    behindTheScenes: [
+      "Patchy now stores AI model providers and roles, and can call a model for a tool, ahead of tools using AI models on the company's own key. It's switched off for now.",
+      "When several companies open their tools at once, Patchy now starts machines for all of them together instead of a few at a time.",
+      "Pages can reach only the operations meant for them, and every form refuses a submission far larger than it could need.",
+      "Tools' server code runs on a newer version of its engine, and Patchy's own libraries moved to their latest releases.",
+      "Patchy records how long each tool waits for its machine, and warns when there's no room left for spare machines."
+    ],
+    patchChanges: [
+      "Every table and file store is now shared, read-only, with the company's other tier 2 patches unless its definition says `shared: false`, and publish shares any the repo defines without it. Tables and stores provisioned before this release are shared too. If this patch's handlers filter a table's rows by viewer, such as per-person notes, add `{ shared: false }` to its definition (`table(\"…\", { … }, { shared: false })` or `files(description, { shared: false })`) and publish; while another live patch reads it, publish refuses with `has_dependants` unless forced.",
+      "In pages on `patchy/preact` or the generated client, Option+Tab and Option+Shift+Tab in Safari and Chromium on a desktop Mac now wrap inside a plain modal `<dialog>` as Tab does, instead of leaving it for Patchy's page. With Safari's “Press Tab to highlight each item” or macOS's Keyboard navigation turned on, Tab can still leave past a control the browser skips.",
+      "Tier 2 repos move to workerd 1.20261112.1 (V8 15.8) at refresh. The wire version, compatibility date and flags are unchanged; run the handlers once in `pnpm patchy dev` after refreshing."
+    ]
+  },
+  {
     id: 45,
     date: "2026-11-18",
     through: "e31eaab99867af1fe45d68b912bc394dda0399a5",
