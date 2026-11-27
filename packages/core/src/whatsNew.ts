@@ -61,7 +61,7 @@ export interface Release {
 export const releases: ReadonlyArray<Release> = [
   {
     id: 46,
-    date: "2026-11-26",
+    date: "2026-11-27",
     through: "5f316063a0904ae31ac419721ada30a2d5f78355",
     changes: [
       {
