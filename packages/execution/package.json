@@ -75,7 +75,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@aws-sdk/client-ecs": "^3.1167.0",
+    "@aws-sdk/client-ecs": "^3.1176.0",
     "@effect/platform-node": "catalog:",
     "@patchy/analytics": "workspace:*",
     "@patchy/api": "workspace:*",
