@@ -378,8 +378,8 @@ importers:
         version: 6.0.0
     devDependencies:
       '@tanstack/hotkeys':
-        specifier: 0.27.1
-        version: 0.27.1(patch_hash=8c7afdc2812d563cc2dc8586a53b7c8114c0294564f208dc1ab496085abdae5c)
+        specifier: 0.33.1
+        version: 0.33.1
       '@types/css-tree':
         specifier: ^3.2.0
         version: 3.2.0
@@ -712,8 +712,8 @@ importers:
         specifier: workspace:*
         version: link:../serving
       '@tanstack/hotkeys':
-        specifier: 0.27.1
-        version: 0.27.1(patch_hash=8c7afdc2812d563cc2dc8586a53b7c8114c0294564f208dc1ab496085abdae5c)
+        specifier: 0.33.1
+        version: 0.33.1
       '@tanstack/preact-hotkeys':
         specifier: 0.21.1
         version: 0.21.1(preact@11.2.0)
@@ -2137,6 +2137,10 @@ packages:
 
   '@tanstack/hotkeys@0.27.1':
     resolution: {integrity: sha512-ZgZWw1jcAYwukEwF9Fk7JQSLh4dunfI5ElP48/YoRFBnXqtMwP9MmTKazMKcyW6tOLYZ1gx9bWe9KfQdPuRZMA==}
+    engines: {node: '>=20'}
+
+  '@tanstack/hotkeys@0.33.1':
+    resolution: {integrity: sha512-8lTyzrwAKIQm/8Ml938RXMSDBy/6wsIlavczmjDec4hsXkSPys0SbQ59kYboC6cBOfR2T1jFBQ1P0J3A06szsA==}
     engines: {node: '>=20'}
 
   '@tanstack/preact-hotkeys@0.21.1':
@@ -4034,6 +4038,8 @@ snapshots:
   '@stablelib/base64@1.0.1': {}
 
   '@tanstack/hotkeys@0.27.1(patch_hash=8c7afdc2812d563cc2dc8586a53b7c8114c0294564f208dc1ab496085abdae5c)': {}
+
+  '@tanstack/hotkeys@0.33.1': {}
 
   '@tanstack/preact-hotkeys@0.21.1(preact@11.2.0)':
     dependencies:
