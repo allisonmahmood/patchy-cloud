@@ -207,8 +207,8 @@ importers:
         specifier: 4.1.4
         version: 4.1.4
       posthog-node:
-        specifier: ^5.69.0
-        version: 5.69.0
+        specifier: ^6.0.6
+        version: 6.0.6
     devDependencies:
       '@effect/vitest':
         specifier: 4.1.4
@@ -1704,11 +1704,11 @@ packages:
     engines: {node: '>=20'}
     hasBin: true
 
-  '@posthog/core@1.67.1':
-    resolution: {integrity: sha512-Fq8YySx3G2ggxKV/dLf5nfbQocB3/yU6TNSGIyRvVynizrIW8tZfB2HQ/13cY61PoU+cNzvKch+B7Ac+OUkORw==}
+  '@posthog/core@1.69.2':
+    resolution: {integrity: sha512-toMfPKklwLW+a4ZY3/EzM3GNMVXmk2ylGb8NPJXRH4igXMoI8wgNL2jqXOiglWAXqFBLZGYFN1oQx6LVmUTxTg==}
 
-  '@posthog/types@1.424.0':
-    resolution: {integrity: sha512-58RE0+Lt4vMLYmty2MlyAyfxFJvlM3Fp0tgRT25Klky7FSQvpznX+W9xKyVESB5oIAEJDxfHKX0cwEBHROZKqw==}
+  '@posthog/types@1.427.1':
+    resolution: {integrity: sha512-Kx9hWf6Au64CrBLafscANAeswkRFUMs4zlU9/gwB2Hf/9ggU9YNjbw/MQA5tt7cbzTCkh+4fNIPjQeJz7/j63w==}
 
   '@preact/signals-core@1.14.5':
     resolution: {integrity: sha512-vcRv7Ityz5JVmeiVqIluLFzT/PDS/AlhHUpw3/aUWqcVUs6bDGIPXE/6RSC4evBNWYvnniozg5Syfj33al3gkg==}
@@ -2935,8 +2935,8 @@ packages:
     resolution: {integrity: sha512-9ZhXKM/rw350N1ovuWHbGxnGh/SNJ4cnxHiM0rxE4VN41wsg8P8zWn9hv/buK00RP4WvlOyr/RBDiptyxVbkZQ==}
     engines: {node: '>=0.10.0'}
 
-  posthog-node@5.69.0:
-    resolution: {integrity: sha512-sNTR0Ld3WfgXvdOtKw2K6f44MADcDED+35wId+ZJlk3qUt8CoKKBT4uP4jWMPuC9knCc9HWURXexJVY+/gat4g==}
+  posthog-node@6.0.6:
+    resolution: {integrity: sha512-7FMMQ4fk4Uqg/w2zpKVS8/Yv0doIz0HRcWML4WhxDTqqkS7eyXCvfGUuh+wLJbWYvdSm/7QNu9eeL31++G/dOw==}
     engines: {node: ^20.20.0 || >=22.22.0}
     peerDependencies:
       '@opentelemetry/api': ^1.2.0
@@ -3775,11 +3775,11 @@ snapshots:
     dependencies:
       playwright: 1.65.0
 
-  '@posthog/core@1.67.1':
+  '@posthog/core@1.69.2':
     dependencies:
-      '@posthog/types': 1.424.0
+      '@posthog/types': 1.427.1
 
-  '@posthog/types@1.424.0': {}
+  '@posthog/types@1.427.1': {}
 
   '@preact/signals-core@1.14.5': {}
 
@@ -4538,9 +4538,9 @@ snapshots:
     dependencies:
       xtend: 4.0.2
 
-  posthog-node@5.69.0:
+  posthog-node@6.0.6:
     dependencies:
-      '@posthog/core': 1.67.1
+      '@posthog/core': 1.69.2
 
   preact@11.2.0: {}
 
