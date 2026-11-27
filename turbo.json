@@ -32,6 +32,10 @@
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/scripts/copy-sdk-artifact.mjs"],
       "outputs": ["dist/**", "artifacts/**"]
     },
+    "@patchy/docs#build": {
+      "dependsOn": ["^build"],
+      "outputs": [".next/**", "!.next/cache/**"]
+    },
     "dev": {
       "cache": false,
       "persistent": true
