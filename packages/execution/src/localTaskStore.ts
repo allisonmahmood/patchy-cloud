@@ -19,6 +19,12 @@ export const Request = Schema.Struct({
    * directory written before it still starts, at the registry default.
    */
   processLoad: Schema.optionalKey(Schema.Number),
+  /**
+   * The size the task was asked for, which a local task reports as the size it runs at. Optional
+   * so a task directory written before sizes reads as a full box.
+   */
+  cpu: Schema.optionalKey(Schema.Number),
+  memory: Schema.optionalKey(Schema.Number),
   startedAt: Schema.Number
 });
 export type Request = typeof Request.Type;

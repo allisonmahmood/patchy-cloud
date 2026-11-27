@@ -19,11 +19,12 @@ export const LimitSetting = Schema.Struct({ limitId: Schema.String, value: Limit
     ({ limitId, value }) =>
       (limitId !== "company.connections" &&
         limitId !== "company.connections.waiters" &&
-        limitId !== "company.admission.burst") ||
+        limitId !== "company.admission.burst" &&
+        limitId !== "execution.pool.smallSpares") ||
       Number.isSafeInteger(value),
     {
       message:
-        "Company connection, waiter and admission burst counts must be positive safe integers."
+        "Company connection, waiter and admission burst counts and the small spare floor must be positive safe integers."
     }
   )
 );

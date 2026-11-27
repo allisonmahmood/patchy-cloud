@@ -33,6 +33,14 @@ export interface Options {
   readonly callbackUrls: readonly string[];
 }
 const killGrace = 5_000;
+/** A local task runs at the size it was asked for; one asked before sizes is a full box. */
+const sized = (request: Store.Request, task: Store.Record["task"]): TaskProvider.Task => ({
+  ...task,
+  size: {
+    cpu: request.cpu ?? TaskProvider.full.cpu,
+    memory: request.memory ?? TaskProvider.full.memory
+  }
+});
 const filesystem = <A>(
   operation: TaskProvider.TaskProviderError["operation"],
   taskId: string | undefined,
@@ -149,7 +157,8 @@ export const make = Effect.fn("LocalTaskProvider.make")(function* (options: Opti
   const stop = Effect.fn("LocalTaskProvider.stop")(function* (taskId: string) {
     return yield* filesystem("stop", taskId, async (signal) => {
       const taskDirectory = Store.taskDirectory(directory, taskId);
-      if ((await Store.readRequest(taskDirectory)) === undefined)
+      const request = await Store.readRequest(taskDirectory);
+      if (request === undefined)
         throw new TaskProvider.TaskProviderError({ operation: "stop", taskId, reason: "provider" });
       // A stop survives cancelled callers and later start retries. Only the owner certifies exit.
       await writeFile(join(taskDirectory, "stop"), "", { mode: 0o600 });
@@ -160,7 +169,7 @@ export const make = Effect.fn("LocalTaskProvider.make")(function* (options: Opti
         Date.now() + managementTimeout,
         (value) => value.task.state === "stopped"
       );
-      return record.task;
+      return sized(request, record.task);
     });
   });
   const post = Effect.fn("LocalTaskProvider.post")(function* (
@@ -252,7 +261,10 @@ export const make = Effect.fn("LocalTaskProvider.make")(function* (options: Opti
           async (signal) => {
             const taskDirectory = Store.taskDirectory(directory, input.taskId);
             const request = await Store.createRequest(taskDirectory, {
-              ...input,
+              taskId: input.taskId,
+              deploymentRevision: input.deploymentRevision,
+              cpu: input.size.cpu,
+              memory: input.size.memory,
               callbackUrls: options.callbackUrls,
               secret,
               path,
@@ -268,7 +280,7 @@ export const make = Effect.fn("LocalTaskProvider.make")(function* (options: Opti
                 reason: "binding_conflict"
               });
             const existing = await Store.readRecord(taskDirectory);
-            if (existing?.task.state === "stopped") return existing.task;
+            if (existing?.task.state === "stopped") return sized(request, existing.task);
             await launch(taskDirectory, existing);
             const record = await waitFor(
               taskDirectory,
@@ -283,7 +295,7 @@ export const make = Effect.fn("LocalTaskProvider.make")(function* (options: Opti
                 reason: "provider",
                 cause: new Error("Local task exited before readiness")
               });
-            return record.task;
+            return sized(request, record.task);
           },
           startupTimeout + managementTimeout
         )
@@ -298,14 +310,17 @@ export const make = Effect.fn("LocalTaskProvider.make")(function* (options: Opti
         const record = await Store.readRecord(taskDirectory);
         await launch(taskDirectory, record);
         tasks.push(
-          record?.task ?? {
-            taskId: request.taskId,
-            deploymentRevision: request.deploymentRevision,
-            state: "running",
-            startedAt: request.startedAt,
-            readyAt: 0,
-            stoppedAt: null
-          }
+          sized(
+            request,
+            record?.task ?? {
+              taskId: request.taskId,
+              deploymentRevision: request.deploymentRevision,
+              state: "running",
+              startedAt: request.startedAt,
+              readyAt: 0,
+              stoppedAt: null
+            }
+          )
         );
       }
       return tasks;

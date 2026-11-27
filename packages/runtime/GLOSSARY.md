@@ -68,8 +68,16 @@ _Avoid_: sandbox (the browser's), worker (an engine term), lambda
 A company-exclusive execution task that hosts its loaded patch versions. Release stops it; another company never inherits it.
 _Avoid_: patch instance, reusable worker
 
+**Box size**:
+How much of Fargate a company task has, decided each time its company claims one: a full box, the exec task definition's one vCPU and 2 GiB, or a small box. A task records the size it asked for while it starts and the size it was observed running at once ready, or once turned away at readiness; the fleet budget counts that size in vCPU, and a task never admitted at readiness counts as full.
+_Avoid_: tier (the runtime tiers), plan, account kind
+
+**Small box**:
+A company task at half a vCPU with the full box's memory, for a company with exactly one active member while the fleet's small-boxes switch is on; it is off by default. Guests never count. A team never gets one, a one-member company takes a full spare when no small one is ready, and a small box is released ten minutes after its last tab lets go rather than thirty.
+_Avoid_: solo account, individual plan, personal workspace
+
 **Spare**:
-An execution task that has never been bound to a company and is available for a first bind. Replenishment targets the spare floor or wake rate multiplied by measured cold-start time, plus waiting companies for the current revision, as defined in `docs/limits.md`.
+An execution task that has never been bound to a company and is available for a first bind. Each box size has its own replenishment target: the size's spare floor or its wake rate multiplied by its measured cold-start time, plus companies waiting for that size on the current revision, as defined in `docs/limits.md`. Small spares are kept for the current revision only, while small boxes are on.
 _Avoid_: idle company task, recycled task
 
 **Bind / release**:
@@ -77,7 +85,7 @@ Assigning a spare to one company, and ending that assignment after fencing admis
 _Avoid_: publish, process load, connection checkout
 
 **Agent idle**:
-The minute after an agent's last call settles for which a company task stays bound when no document holds it; a person's tab holds it while they use it and for thirty minutes after, on a clock agent work never touches.
+The minute after an agent's last call settles for which a company task stays bound when no document holds it; a person's tab holds it while they use it and for thirty minutes after (ten on a small box), on a clock agent work never touches.
 _Avoid_: keep-alive, polling window, wake (Runtime's post-commit hint)
 
 **Housekeeping lease**:

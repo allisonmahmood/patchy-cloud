@@ -45,7 +45,8 @@ export const make = (): TaskProvider.TaskProvider["Service"] => {
         : Effect.fail(refuse(operation, taskId, "stopped"));
     });
   return TaskProvider.TaskProvider.of({
-    start: Effect.fnUntraced(function* ({ taskId, deploymentRevision }) {
+    // A task runs at the size it was first asked for, as a launch token's task does.
+    start: Effect.fnUntraced(function* ({ taskId, deploymentRevision, size }) {
       const existing = tasks.get(taskId);
       if (existing !== undefined)
         return existing.task.deploymentRevision === deploymentRevision
@@ -58,7 +59,8 @@ export const make = (): TaskProvider.TaskProvider["Service"] => {
         state: "running",
         startedAt: now,
         readyAt: now,
-        stoppedAt: null
+        stoppedAt: null,
+        size
       };
       tasks.set(taskId, { task, companyId: null, bindingEpoch: 0, quiesced: false });
       return task;

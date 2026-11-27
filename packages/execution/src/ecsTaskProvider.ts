@@ -30,6 +30,28 @@ const validDefinition = Schema.is(taskDefinition);
 const validIdentity = Schema.is(Schema.NonEmptyString.check(Schema.isMaxLength(256)));
 const validPort = Schema.is(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 })));
 const validCallbackUrls = Schema.is(Management.CallbackUrls);
+const validUnits = Schema.is(Schema.Int.check(Schema.isGreaterThan(0)));
+// The SDK's retry middleware records how many attempts a call took; an earlier attempt that
+// failed ambiguously, such as a lost reply, may have created the task a later refusal hides.
+const OneAttempt = Schema.Struct({ attempts: Schema.Literal(1) });
+const isOneAttempt = Schema.is(OneAttempt);
+const ErrorAnswer = Schema.Struct({
+  name: Schema.optionalKey(Schema.String),
+  $fault: Schema.Literal("client"),
+  $metadata: Schema.Struct({
+    ...OneAttempt.fields,
+    httpStatusCode: Schema.Int.check(Schema.isBetween({ minimum: 400, maximum: 499 }))
+  })
+});
+const isErrorAnswer = Schema.is(ErrorAnswer);
+/**
+ * Whether a failed RunTask is ECS answering that it started nothing: a client error it sent with
+ * a 4xx status on the SDK's only attempt. The SDK also marks an unmodeled 5xx as a client fault,
+ * and a network failure or an abort carries no status, so neither counts. A conflict may answer
+ * a token whose task exists.
+ */
+const refusedOutright = (cause: unknown) =>
+  isErrorAnswer(cause) && cause.name !== "ConflictException";
 const familyOf = (definition: string) =>
   definition.slice(definition.indexOf("/") + 1, definition.lastIndexOf(":"));
 const ownerTag = "patchy:execution-fleet";
@@ -132,7 +154,10 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
   const limits = yield* DeploymentConfig.load;
   const startupTimeout = limits.get("execution.pool.wait");
   const endpointLifetime = limits.get("execution.endpoint.lifetime");
-  const endpointCapacity = limits.get("execution.fleet.budget");
+  // The most live tasks the fleet's vCPU budget allows, were every one a small box.
+  const endpointCapacity = Math.ceil(
+    (limits.get("execution.fleet.budget") * TaskProvider.full.cpu) / TaskProvider.small.cpu
+  );
   const managementTimeout = registry["tier2.settlement.cleanup"].default + 5_000;
   const managementPort = options.managementPort ?? 8788;
   const containerName = options.containerName ?? "exec";
@@ -188,6 +213,7 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
     if (endpoints.size >= endpointCapacity) endpoints.delete(endpoints.keys().next().value!);
     endpoints.set(task.taskId, { task, expiresAt: now + endpointLifetime });
   };
+  // Bounds a call in time; a provider error or a launch refused outright passes through as it is.
   const bounded = <A, E>(
     operation: Operation,
     taskId: string | undefined,
@@ -197,7 +223,7 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
     effect.pipe(
       Effect.timeout(timeout),
       Effect.mapError((cause) =>
-        isProviderError(cause)
+        isProviderError(cause) || TaskProvider.isLaunchRefused(cause)
           ? cause
           : new TaskProvider.TaskProviderError({
               operation,
@@ -378,13 +404,17 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
       addresses.delete(task.taskId);
       readiness.delete(task.taskId);
     }
+    // ECS reports the size Fargate runs the task at, as strings of CPU units and MiB.
+    const cpu = Number(task.value.cpu);
+    const memory = Number(task.value.memory);
     return {
       taskId: task.taskId,
       deploymentRevision: task.deploymentRevision,
       state: stopped ? ("stopped" as const) : ("running" as const),
       startedAt,
       readyAt,
-      stoppedAt: stopped ? stoppedAt! : null
+      stoppedAt: stopped ? stoppedAt! : null,
+      ...(validUnits(cpu) && validUnits(memory) ? { size: { cpu, memory } } : {})
     };
   });
   const post = Effect.fn("EcsTaskProvider.post")(function* (
@@ -603,67 +633,95 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
               reason: "binding_conflict"
             });
           if (existing.length === 0 && !addresses.has(input.taskId)) {
-            const response = yield* aws(
+            // A full box is the definition's own size, so a full launch sends no size at all.
+            const resized =
+              input.size.cpu === TaskProvider.full.cpu &&
+              input.size.memory === TaskProvider.full.memory
+                ? {}
+                : { cpu: String(input.size.cpu), memory: String(input.size.memory) };
+            const response = yield* bounded(
               "start",
               input.taskId,
-              client.runTask({
-                cluster: options.cluster,
-                taskDefinition: revision.taskDefinition,
-                launchType: "FARGATE",
-                platformVersion: "1.4.0",
-                propagateTags: "TASK_DEFINITION",
-                count: 1,
-                clientToken: yield* cryptography.sha256(`${options.fleetId}\0${input.taskId}`),
-                startedBy,
-                group,
-                enableExecuteCommand: false,
-                networkConfiguration: {
-                  awsvpcConfiguration: {
-                    subnets: [...options.subnetIds],
-                    securityGroups: [options.bootstrapSecurityGroupId],
-                    assignPublicIp: "DISABLED"
-                  }
-                },
-                tags: [
-                  { key: ownerTag, value: options.fleetId },
-                  { key: roleTag, value: "exec" },
-                  { key: taskTag, value: input.taskId },
-                  { key: revisionTag, value: input.deploymentRevision }
-                ],
-                overrides: {
-                  // No command: each release's definition names its own runtime, so a host
-                  // can launch the spares of a release on another runtime beside it.
-                  containerOverrides: [
-                    {
-                      name: containerName,
-                      environment: [
-                        { name: "EXECUTION_TASK_ID", value: input.taskId },
-                        {
-                          name: "EXECUTION_DEPLOYMENT_REVISION",
-                          value: input.deploymentRevision
-                        },
-                        {
-                          name: "EXECUTION_MANAGEMENT_SECRET",
-                          value: Redacted.value(revision.secret)
-                        },
-                        ...(revision !== options.current || options.previous === undefined
-                          ? []
-                          : [
-                              {
-                                name: "EXECUTION_MANAGEMENT_PREVIOUS_SECRET",
-                                value: Redacted.value(options.previous.secret)
-                              }
-                            ]),
-                        { name: "EXECUTION_MANAGEMENT_HOST", value: "auto" },
-                        { name: "EXECUTION_MANAGEMENT_PORT", value: String(managementPort) },
-                        { name: "EXECUTION_MANAGEMENT_PRIVATE_INTERFACE", value: "true" },
-                        { name: "EXECUTION_CALLBACK_URLS", value: "[]" }
-                      ]
+              client
+                .runTask({
+                  cluster: options.cluster,
+                  taskDefinition: revision.taskDefinition,
+                  launchType: "FARGATE",
+                  platformVersion: "1.4.0",
+                  propagateTags: "TASK_DEFINITION",
+                  count: 1,
+                  clientToken: yield* cryptography.sha256(`${options.fleetId}\0${input.taskId}`),
+                  startedBy,
+                  group,
+                  enableExecuteCommand: false,
+                  networkConfiguration: {
+                    awsvpcConfiguration: {
+                      subnets: [...options.subnetIds],
+                      securityGroups: [options.bootstrapSecurityGroupId],
+                      assignPublicIp: "DISABLED"
                     }
-                  ]
-                }
-              })
+                  },
+                  tags: [
+                    { key: ownerTag, value: options.fleetId },
+                    { key: roleTag, value: "exec" },
+                    { key: taskTag, value: input.taskId },
+                    { key: revisionTag, value: input.deploymentRevision }
+                  ],
+                  overrides: {
+                    ...resized,
+                    // No command: each release's definition names its own runtime, so a host
+                    // can launch the spares of a release on another runtime beside it.
+                    containerOverrides: [
+                      {
+                        name: containerName,
+                        environment: [
+                          { name: "EXECUTION_TASK_ID", value: input.taskId },
+                          {
+                            name: "EXECUTION_DEPLOYMENT_REVISION",
+                            value: input.deploymentRevision
+                          },
+                          {
+                            name: "EXECUTION_MANAGEMENT_SECRET",
+                            value: Redacted.value(revision.secret)
+                          },
+                          ...(revision !== options.current || options.previous === undefined
+                            ? []
+                            : [
+                                {
+                                  name: "EXECUTION_MANAGEMENT_PREVIOUS_SECRET",
+                                  value: Redacted.value(options.previous.secret)
+                                }
+                              ]),
+                          { name: "EXECUTION_MANAGEMENT_HOST", value: "auto" },
+                          { name: "EXECUTION_MANAGEMENT_PORT", value: String(managementPort) },
+                          { name: "EXECUTION_MANAGEMENT_PRIVATE_INTERFACE", value: "true" },
+                          { name: "EXECUTION_CALLBACK_URLS", value: "[]" }
+                        ]
+                      }
+                    ]
+                  }
+                })
+                .pipe(
+                  Effect.mapError((cause) =>
+                    refusedOutright(cause.cause)
+                      ? new TaskProvider.LaunchRefused({ taskId: input.taskId, cause })
+                      : new TaskProvider.TaskProviderError({
+                          operation: "start",
+                          taskId: input.taskId,
+                          reason: "provider",
+                          cause
+                        })
+                  )
+                )
             );
+            // Failures and no task, on the SDK's only attempt, is ECS answering that it started
+            // nothing.
+            if (
+              response.failures?.length &&
+              !response.tasks?.length &&
+              isOneAttempt(response.$metadata)
+            )
+              return yield* new TaskProvider.LaunchRefused({ taskId: input.taskId });
             if (
               response.failures?.length ||
               response.tasks?.length !== 1 ||

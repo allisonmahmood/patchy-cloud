@@ -1,6 +1,8 @@
 import type * as WideEvents from "@patchy/analytics/wide-events";
+import { Users } from "@patchy/companies";
 import type { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { Cryptography } from "@patchy/core";
+import * as ActiveMembers from "@patchy/execution/active-members";
 import * as Fleet from "@patchy/execution/fleet";
 import * as Ecs from "@patchy/execution/ecs";
 import * as EcsTaskProvider from "@patchy/execution/ecs-task-provider";
@@ -67,7 +69,8 @@ type Dependencies =
   | RuntimeMutationTransaction.MutationTransaction
   | OperatingLimits.OperatingLimits
   | LoadedVersions.LoadedVersions
-  | WideEvents.WideEvents;
+  | WideEvents.WideEvents
+  | ActiveMembers.ActiveMembers;
 
 export const enabled = Config.map(
   Config.String("EXECUTION_PROVIDER").pipe(Config.withDefault("local")),
@@ -163,6 +166,12 @@ export const make: (
   );
 });
 
+// Companies counts the active members a claim sizes its box by, on the claim's own transaction.
+const activeMembers = Layer.effect(
+  ActiveMembers.ActiveMembers,
+  Effect.map(Users.Users, (users) => ActiveMembers.ActiveMembers.of({ count: users.activeMembers }))
+);
+
 export const layer = (
   handlers: Readonly<Record<string, Runtime.Handler>>
 ): Layer.Layer<
@@ -183,9 +192,11 @@ export const layer = (
   | WideEvents.WideEvents
   | Cryptography.Cryptography
   | Digest.Digest
+  | Users.Users
 > =>
   Layer.effectContext(make(handlers)).pipe(
     Layer.provide([InvocationLog.layer, QuerySnapshot.layer, MutationTransaction.layer]),
+    Layer.provide(activeMembers),
     Layer.provide(InvocationCapabilities.layer),
     Layer.provide(FetchHttpClient.layer)
   );

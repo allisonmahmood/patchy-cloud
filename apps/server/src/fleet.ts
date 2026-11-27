@@ -9,6 +9,14 @@
  * earlier revision. It exits nonzero if the revision has no hosts or its
  * spares are not ready within five minutes.
  *
+ * `bun dist/fleet.js small-boxes on|off|status` turns small boxes on or off for
+ * the whole fleet, or only reads them (docs/OPERATIONS.md › Small boxes). On, a
+ * company with exactly one active member claims a half-vCPU box; off, every
+ * claim is full. Both print the status afterwards: the switch, ready small
+ * tasks by state, and every row never admitted at readiness and not stopped
+ * that asked for a small box or was seen running at one, all from one database
+ * snapshot.
+ *
  * `bun dist/fleet.js share-by-default` shares every existing table and file
  * store unless the newest retained version that defines it says `shared: false`,
  * in every ready company database, once the release that made sharing the
@@ -64,6 +72,42 @@ const promote = Command.make(
   })
 ).pipe(
   Command.withDescription("Stage a deployment revision and promote it once its spares are warm")
+);
+
+const smallBoxes = Command.make(
+  "small-boxes",
+  {
+    mode: Argument.Literals("mode", ["on", "off", "status"]).pipe(
+      Argument.withDescription("on or off to turn small boxes on or off, status to read them")
+    )
+  },
+  Effect.fn(function* ({ mode }) {
+    if (mode !== "status") {
+      yield* Fleet.setSmallBoxes(mode === "on");
+      yield* Console.log(`Small boxes are now ${mode}.`);
+    }
+    const status = yield* Fleet.smallBoxesStatus;
+    yield* Console.log(`Small boxes: ${status.smallBoxes ? "on" : "off"}`);
+    const states = Object.entries(status.small);
+    yield* Console.log(
+      states.length === 0
+        ? "Ready small tasks not stopped: none"
+        : `Ready small tasks not stopped: ${states.map(([state, tasks]) => `${state}=${tasks}`).join(" ")}`
+    );
+    if (status.unverified.length === 0)
+      yield* Console.log("Unverified small tasks not stopped: none");
+    else {
+      yield* Console.log(`Unverified small tasks not stopped: ${status.unverified.length}`);
+      for (const task of status.unverified)
+        yield* Console.log(
+          `  ${task.taskId} ${task.state}${task.launchedNothing ? " (nothing launched)" : ""}`
+        );
+    }
+  }, Effect.provide(Sql.layer))
+).pipe(
+  Command.withDescription(
+    "Turn small boxes for one-member companies on or off, or read their status"
+  )
 );
 
 // Company databases as a host reaches them. Changes wake live queries on every host
@@ -133,7 +177,7 @@ const shareByDefault = Command.make(
 );
 
 Command.make("fleet").pipe(
-  Command.withSubcommands([promote, shareByDefault]),
+  Command.withSubcommands([promote, smallBoxes, shareByDefault]),
   Command.run({ version: "0.0.0" }),
   Effect.provide(NodeServices.layer),
   NodeRuntime.runMain

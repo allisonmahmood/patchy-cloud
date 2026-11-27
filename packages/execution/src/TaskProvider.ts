@@ -4,6 +4,21 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
+/** A company box's size as Fargate counts it: CPU units (1024 is one vCPU) and MiB of memory. */
+export interface Size {
+  readonly cpu: number;
+  readonly memory: number;
+}
+/** Today's box, the exec task definition's own size; a full launch asks for nothing else. */
+export const full: Size = { cpu: 1024, memory: 2048 };
+/**
+ * A one-member company's box: half a vCPU with the same memory, so the supervisor's memory lines
+ * and process cap hold unchanged.
+ */
+export const small: Size = { cpu: 512, memory: 2048 };
+/** Whether a box of this size serves only a one-member company: anything less than full. */
+export const isSmall = (size: Pick<Size, "cpu">) => size.cpu < full.cpu;
+
 export interface Task {
   readonly taskId: string;
   readonly deploymentRevision: string;
@@ -11,6 +26,8 @@ export interface Task {
   readonly startedAt: number;
   readonly readyAt: number;
   readonly stoppedAt: number | null;
+  /** The size the provider observed the task running at; absent when it reported none valid. */
+  readonly size?: Size;
 }
 
 export class TaskProviderError extends Schema.TaggedError<TaskProviderError>()(
@@ -44,6 +61,21 @@ export class TaskProviderError extends Schema.TaggedError<TaskProviderError>()(
     return `Execution task ${this.operation} failed: ${this.reason}.`;
   }
 }
+
+/**
+ * A start the provider answered by certainly creating nothing: ECS refused it outright on the
+ * SDK's only attempt. Any failure less certain than that is a `TaskProviderError`. The ECS error,
+ * when ECS answered with one rather than with failures, is its cause.
+ */
+export class LaunchRefused extends Schema.TaggedError<LaunchRefused>()("TaskLaunchRefused", {
+  taskId: Schema.String,
+  cause: Schema.optionalKey(Schema.Defect())
+}) {
+  override get message() {
+    return `Execution task ${this.taskId} was refused at launch; nothing was created.`;
+  }
+}
+export const isLaunchRefused = Schema.is(LaunchRefused);
 
 /**
  * Refusals of a bind by hash that prove it had no effect: a supervisor without the version, and
@@ -90,6 +122,8 @@ export type TouchResult = Management.TouchReply | { readonly outcome: "unsupport
  * All host clients address the same shared inventory. Identity survives ambiguous starts
  * and stops; closing a host does not stop its tasks. A stopped observation certifies actual exit.
  * Omitted tasks and management timeouts are uncertainty, never evidence that a task stopped.
+ * A start asks for a size and a retry asks for the same one; the task it answers reports the
+ * size it really runs at. A start fails `LaunchRefused` only when it certainly created nothing.
  */
 export class TaskProvider extends Context.Service<
   TaskProvider,
@@ -97,7 +131,8 @@ export class TaskProvider extends Context.Service<
     readonly start: (input: {
       readonly taskId: string;
       readonly deploymentRevision: string;
-    }) => Effect.Effect<Task, TaskProviderError>;
+      readonly size: Size;
+    }) => Effect.Effect<Task, TaskProviderError | LaunchRefused>;
     readonly list: Effect.Effect<readonly Task[], TaskProviderError>;
     /** Stop guest processes but retain the supervisor until reports are persisted and acknowledged. */
     readonly quiesce: (
