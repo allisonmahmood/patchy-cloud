@@ -229,8 +229,8 @@ importers:
   packages/auth:
     dependencies:
       '@clerk/backend':
-        specifier: 3.27.0
-        version: 3.27.0
+        specifier: 3.32.0
+        version: 3.32.0
       '@patchy/analytics':
         specifier: workspace:*
         version: link:../analytics
@@ -269,8 +269,8 @@ importers:
   packages/companies:
     dependencies:
       '@clerk/backend':
-        specifier: 3.27.0
-        version: 3.27.0
+        specifier: 3.32.0
+        version: 3.32.0
       '@patchy/analytics':
         specifier: workspace:*
         version: link:../analytics
@@ -1172,12 +1172,12 @@ packages:
     resolution: {integrity: sha512-uXt6qt2f5G61jZwNIzK1RKu7l5Xjt1VXtPPOGuVveha9fxbx0QM94U1kM4pFZKTRLjWK+X8vmwjwbIemJjiQTA==}
     engines: {node: ^22.18.0 || >=24.11.0}
 
-  '@clerk/backend@3.27.0':
-    resolution: {integrity: sha512-pmhVVP9EsAOL1rlRU4xR0XSL1BJczxGAJIqv8c+C9fRz7TYzCndGUMSSE/Zg7i2QOA24ExJbEJUiOjILdUL2EQ==}
+  '@clerk/backend@3.32.0':
+    resolution: {integrity: sha512-2Inv2m6kMmLFEEdLOWsbbKmco5Is5ReTENume2aDV4/AqsrSurVox7njTUgH/SN1xNikq0LS3Jnm/QcpYSha3A==}
     engines: {node: '>=20.9.0'}
 
-  '@clerk/shared@4.44.1':
-    resolution: {integrity: sha512-c06U6GtlLJNOKj900rHDSqjVRz0/0zb3RZXVGKUqTulfQxr4Ym543JE6cbOnZVJZCbm0fGPhdRKvHq6fO/SvVw==}
+  '@clerk/shared@4.48.3':
+    resolution: {integrity: sha512-lcwTiQkmmmcN3KjAwEfycFv0+fNyLJQJjhC4T+zr405QyypkTZmvaNkoBQW7QpRdX8UlNW63IoTrIX/vT37EhQ==}
     engines: {node: '>=20.9.0'}
     peerDependencies:
       react: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
@@ -3449,15 +3449,15 @@ snapshots:
       '@babel/helper-string-parser': 8.1.2
       '@babel/helper-validator-identifier': 8.0.6
 
-  '@clerk/backend@3.27.0':
+  '@clerk/backend@3.32.0':
     dependencies:
-      '@clerk/shared': 4.44.1
+      '@clerk/shared': 4.48.3
       standardwebhooks: 1.1.1
     transitivePeerDependencies:
       - react
       - react-dom
 
-  '@clerk/shared@4.44.1':
+  '@clerk/shared@4.48.3':
     dependencies:
       '@tanstack/query-core': 5.104.0
       dequal: 2.0.3
