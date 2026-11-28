@@ -1078,7 +1078,7 @@ patchy publish ./plan.html --api-url https://pages.example.com --json
 ```
 
 Use the returned code, not the placeholder. The person opens the URL in their
-own browser, signs in with Google, Microsoft or an emailed code if needed,
+own browser, signs in with Google or an emailed code if needed,
 and checks the email on create-or-join if this is their first sign-in. They
 join an invited company or, with no invitation, create one with a name and
 handle, then return to the confirmation page. If the email is wrong, use

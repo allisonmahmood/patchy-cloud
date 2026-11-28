@@ -796,10 +796,16 @@ to the app's host and keeps the Clerk domain and keys.
   browser. A release never names a revision whose dated page doesn't answer
   yet. Someone who signs up in between is recorded with the older revisions,
   the ones the running release names, and is asked once after the release.
-- **Sign-in** is by email code. Clerk's shared OAuth credentials work only in
-  development, so cloning carries social providers over without credentials.
-  Production keeps them off until it has its own
-  ([#490](https://github.com/allisonmahmood/patchy-cloud/issues/490) for Google).
+- **Sign-in** is by Google or email code. Production's Google uses Patchy's own
+  OAuth client in Google Cloud, redirecting to
+  `https://clerk.patchyhq.com/v1/oauth_callback`, and always shows Google's
+  account picker. Clerk's shared credentials work only in development, so
+  cloning carries social providers over without credentials, and Microsoft stays
+  off in production. Google signs in the account with its verified email, the
+  same one an email code reaches. A Google account that matches nobody is a
+  sign-up, which the waitlist refuses. To rotate the secret, add one to the
+  client in Google Cloud, set it in Clerk's Google connection, then delete the
+  old one.
 - **The demo link** signs whoever opens it in as one account, for reviewers
   nobody can invite by email. `PATCHY_DEMO_LINK` is
   `<sha-256 hex of the secret>:<Clerk user id>:<YYYY-MM-DD>`, and the link is

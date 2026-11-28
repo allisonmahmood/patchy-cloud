@@ -486,8 +486,8 @@ or environment-selected instance; both outrank saved config.
 
 Call the credential the user's **publishing key**: it is this machine's user-owned
 machine token, not the browser's sign-in. Say **sign in** for the person in their
-browser and **log this machine in** for publishing. Signing in uses Google,
-Microsoft or an emailed code. The poll mints the key after browser confirmation;
+browser and **log this machine in** for publishing. Signing in uses Google or
+an emailed code. The poll mints the key after browser confirmation;
 it works for 90 days or 30 idle days, whichever comes first, and the person can
 disconnect this computer on **Your agents** at `/agents`. Re-login replaces the saved login key only
 when it belongs to the same user, without changing ownership of their pages.
