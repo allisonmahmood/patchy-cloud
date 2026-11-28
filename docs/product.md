@@ -808,7 +808,7 @@ Log in once, and every patch you have access to opens when someone sends you its
 
 ### Signing in
 
-A person signs in with Google, Microsoft or a code sent to their email through Clerk's Account Portal. There are no passwords. One Clerk session opens the company's patches and first-party pages, including the portal. A company link opened without a session shows the login door, whose Sign in link returns the person to that patch. Company patches use this door on tiers 1 and 2. A public patch needs no sign-in.
+A person signs in with Google or a code sent to their email through Clerk's Account Portal. Either way opens the same account: Google signs in whoever has its verified email. There are no passwords. One Clerk session opens the company's patches and first-party pages, including the portal. A company link opened without a session shows the login door, whose Sign in link returns the person to that patch. Company patches use this door on tiers 1 and 2. A public patch needs no sign-in.
 
 During the private beta, Clerk creates a new account only from an invitation's link: a company's invitation, a beta link's, or an approval from the waitlist. The login door says so and offers **Join the waitlist** under Sign in.
 

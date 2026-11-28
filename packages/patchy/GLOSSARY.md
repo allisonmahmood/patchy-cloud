@@ -29,7 +29,7 @@ The URL, code and next command that `patchy login` returns for an agent to relay
 _Avoid_: prompt, browser login
 
 **Sign-in**:
-The person's act of entering a browser [session](../auth/GLOSSARY.md) with Google, Microsoft or an emailed code. It enables company-page reading and device-login confirmation, independently of whether the machine holds a publishing key.
+The person's act of entering a browser [session](../auth/GLOSSARY.md) with Google or an emailed code. It enables company-page reading and device-login confirmation, independently of whether the machine holds a publishing key.
 _Avoid_: authentication (in user-facing copy), publishing key (a machine's credential, not a browser session)
 
 **Driver**:
