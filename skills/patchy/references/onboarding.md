@@ -101,7 +101,7 @@ failure handling. On `status: "awaiting_confirmation"`, say:
 
 > To publish as you, this machine needs to be logged in. Open `<verificationUrl>`
 > in your own browser and check that it shows `<userCode>`. Sign in if needed
-> with Google, Microsoft or an emailed code. If you reach create-or-join, check
+> with Google or an emailed code. If you reach create-or-join, check
 > the email: join an invited company or create one with a name and handle if
 > there is no invitation, then return here. Check the code, company and email,
 > name this machine, then confirm. I'll finish logging it in here.
